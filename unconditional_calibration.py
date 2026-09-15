@@ -25,6 +25,16 @@ computed from SHARED.PERIOD's actual start/end timestamps) crossed
 with the cushion/margin buckets and selection. Cushion/margin quantile
 cutpoints are computed once globally (not per period) so "bucket 3"
 means the same point range in every table, keeping tables comparable.
+
+MAX_GAP_SECONDS bounds how stale a matched GAMEPLAI quote is allowed to
+be relative to the scoring event it's paired with. Without this, a
+sparse cell could be dominated by matches where the nearest available
+quote was actually minutes later (this feed has known message gaps),
+pairing a probability GAMEPLAI computed for a more-advanced game state
+against a cushion/margin computed from the older, stale score --
+diagnosed directly in diagnose_totals_line_match.py (one case had a
+1500-second gap). 30s covers ~96% of matches (median gap is 0s, p90 is
+13s) while rejecting the stale-match long tail.
 """
 
 import statistics as stats
@@ -35,6 +45,7 @@ from snowflake_connect import get_connection
 DATABASE = "SIS_PROD_CG_CURATED"
 PERIOD_FLOOR = 2
 N_QUANTILE_BINS = 8
+MAX_GAP_SECONDS = 30
 
 ML_SELECTION_NAMES = {1: "Home", 2: "Away"}
 TOT_SELECTION_NAMES = {1: "Over", 2: "Under"}
@@ -199,6 +210,7 @@ def main():
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (50, 51)
                         AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
                         AND g.PUBLISH_TIME >= e.FILE_TIME
+                        AND DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME) <= {MAX_GAP_SECONDS}
                     QUALIFY ROW_NUMBER() OVER (
                         PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC
                     ) = 1
@@ -257,6 +269,7 @@ def main():
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (54, 55)
                         AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
                         AND g.PUBLISH_TIME >= e.FILE_TIME
+                        AND DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME) <= {MAX_GAP_SECONDS}
                     QUALIFY ROW_NUMBER() OVER (
                         PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC
                     ) = 1
