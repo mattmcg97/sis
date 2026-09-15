@@ -209,10 +209,9 @@ def main():
                     JOIN {DATABASE}.SHARED.GAMEPLAI_STREAM g
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (50, 51)
                         AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
-                        AND g.PUBLISH_TIME >= e.FILE_TIME
-                        AND DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME) <= {MAX_GAP_SECONDS}
+                        AND ABS(DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME)) <= {MAX_GAP_SECONDS}
                     QUALIFY ROW_NUMBER() OVER (
-                        PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC
+                        PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY ABS(DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME)) ASC, g.MODIFIED_EPOCH ASC
                     ) = 1
                 )
                 SELECT e.MATCH_CODE, e.PERIOD_NUMBER, e.PLAYER_1_SCORE_CUMULATIVE, e.PLAYER_2_SCORE_CUMULATIVE,
@@ -268,10 +267,9 @@ def main():
                     JOIN {DATABASE}.SHARED.GAMEPLAI_STREAM g
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (54, 55)
                         AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
-                        AND g.PUBLISH_TIME >= e.FILE_TIME
-                        AND DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME) <= {MAX_GAP_SECONDS}
+                        AND ABS(DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME)) <= {MAX_GAP_SECONDS}
                     QUALIFY ROW_NUMBER() OVER (
-                        PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC
+                        PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY ABS(DATEDIFF('second', e.FILE_TIME, g.PUBLISH_TIME)) ASC, g.MODIFIED_EPOCH ASC
                     ) = 1
                 )
                 SELECT e.MATCH_CODE, e.PERIOD_NUMBER, e.PLAYER_1_SCORE_CUMULATIVE, e.PLAYER_2_SCORE_CUMULATIVE,
