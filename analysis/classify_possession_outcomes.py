@@ -104,11 +104,13 @@ def clean_and_build_drives(plays, scores):
                 "start_pos": pos, "end_pos": pos,
                 "start_msg": msg, "end_msg": msg,
                 "last_down": down,
+                "plays": [],
             }
         current["n"] += 1
         current["end_pos"] = pos
         current["end_msg"] = msg
         current["last_down"] = down
+        current["plays"].append((msg, period, team, down, dist, pos))
     if current is not None:
         drives.append(current)
 
@@ -157,12 +159,25 @@ def classify_drives(drives, scores):
     return drives
 
 
+LONG_DRIVE_THRESHOLD = 15  # plays -- a real drive essentially never gets this long;
+                           # flag it and dump the raw rows so we can see what got merged
+
+
 def print_drives(drives):
     print(f"  {len(drives)} drives")
     for i, d in enumerate(drives, 1):
+        flag = "  !!! SUSPICIOUSLY LONG -- likely several merged possessions !!!" if d["n"] > LONG_DRIVE_THRESHOLD else ""
         print(f"    {i:>2}. {d['team']:<11} {d['n']:>3} plays  "
               f"field {d['start_pos']:>3} -> {d['end_pos']:>3} (net {d['end_pos'] - d['start_pos']:+d})  "
-              f"last_down={d['last_down']}  ==> {d['outcome']}")
+              f"last_down={d['last_down']}  ==> {d['outcome']}{flag}")
+
+    for i, d in enumerate(drives, 1):
+        if d["n"] > LONG_DRIVE_THRESHOLD:
+            print(f"\n  --- raw rows inside drive {i} ({d['team']}, {d['n']} plays) ---")
+            print(f"  {'MSG#':>5} {'PER':>3} {'DN':>2} {'DIST':>4} {'FLD_POS':>7}")
+            for msg, period, team, down, dist, pos in d["plays"]:
+                note = " <- 1st down" if down == 1 else ""
+                print(f"  {msg:>5} {period:>3} {down:>2} {dist:>4} {pos:>7}{note}")
 
 
 def inspect_match(cur, match_code):
