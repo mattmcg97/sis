@@ -4,7 +4,7 @@ Personal workspace for work-related scripts and utilities.
 
 ## Snowflake connection
 
-`inplay/snowflake_connect.py` opens a connection to Snowflake using
+`analysis/snowflake_connect.py` opens a connection to Snowflake using
 credentials from environment variables (never hardcoded).
 
 By default it authenticates via SSO (`SNOWFLAKE_AUTHENTICATOR=externalbrowser`):
@@ -22,7 +22,7 @@ cp .env.example .env   # then fill in your account and user
 ### Run
 
 ```bash
-python inplay/snowflake_connect.py
+python analysis/snowflake_connect.py
 ```
 
 A browser window opens for SSO login; it prints the Snowflake version once
@@ -30,8 +30,13 @@ connected. `.env` is gitignored so credentials never get committed.
 
 ## Folders
 
-- `inplay/` — American football in-play model investigation: raw feed
+- `analysis/` — American football in-play model investigation: raw feed
   exploration, book P&L analysis, and GAMEPLAI calibration checks against
-  realized outcomes. All scripts here share `inplay/snowflake_connect.py`
-  for the connection, so run them as `python inplay/<script>.py` from the
+  realized outcomes. All scripts here share `analysis/snowflake_connect.py`
+  for the connection, so run them as `python analysis/<script>.py` from the
   repo root.
+- `nb2/` — Pre-match NB2 rating model (Adrian's): fitting (`NBRatingTrial.py`),
+  schedule pricing (`NB2_schedule_predict.py`), and out-of-sample calibration
+  backtests in both Python and R (`backtest_nb2_calibration.py`,
+  `backtest_nb2_halflife.R`). `AMFELO.csv` is the full historical match
+  dataset both the Python and R fits are trained and tested on.
