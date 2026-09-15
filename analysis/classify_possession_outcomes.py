@@ -24,6 +24,12 @@ the outcome is inferred:
   Interception/Fumble  no score, not a 4th-down/zero-gap handoff, and the
                    field-position jump is within a plausible return
                    distance rather than a punt's.
+  (end of half)    no score, and the next drive starts in a later period
+                   than this one ended in, out of Q2 -- the team change is
+                   just the kickoff to start the second half, not a play
+                   outcome, so the gap logic above would misread it as a
+                   punt/turnover and must be skipped.
+  (end of period)  same idea for any other period boundary (e.g. Q4 -> OT).
   (end of match)   the last drive has no following drive to hand off to.
 
 FIELD_POSITION is each play's own-team frame (yards from that team's own
@@ -146,14 +152,24 @@ def classify_drives(drives, scores):
                 outcome = "(end of match)"
             else:
                 nxt = drives[i + 1]
-                complementary_pos = 100 - d["end_pos"]
-                gap = nxt["start_pos"] - complementary_pos
-                if d["last_down"] == 4 and abs(gap) <= TOD_GAP_TOLERANCE:
-                    outcome = "Turnover on downs"
-                elif gap > PUNT_GAP_THRESHOLD:
-                    outcome = "Punt"
+                last_period = d["plays"][-1][1]
+                next_period = nxt["plays"][0][1]
+                if next_period != last_period:
+                    # A period boundary with no score in between is the clock
+                    # expiring, not a play outcome -- the "team change" here is
+                    # just the kickoff to start the next half (or OT), so the
+                    # field-position jump is meaningless and must not be run
+                    # through the punt/turnover-on-downs/INT-fumble gap logic.
+                    outcome = "(end of half)" if last_period == 2 else "(end of period)"
                 else:
-                    outcome = "Interception/Fumble"
+                    complementary_pos = 100 - d["end_pos"]
+                    gap = nxt["start_pos"] - complementary_pos
+                    if d["last_down"] == 4 and abs(gap) <= TOD_GAP_TOLERANCE:
+                        outcome = "Turnover on downs"
+                    elif gap > PUNT_GAP_THRESHOLD:
+                        outcome = "Punt"
+                    else:
+                        outcome = "Interception/Fumble"
 
         d["outcome"] = outcome
     return drives
