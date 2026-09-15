@@ -3,6 +3,11 @@
 Credentials are read from environment variables so nothing sensitive is
 hardcoded or committed. Copy .env.example to .env and fill in your values,
 or export the variables in your shell before running.
+
+Defaults to SSO login (SNOWFLAKE_AUTHENTICATOR=externalbrowser): this opens
+your default browser to authenticate through your org's identity provider
+and needs no password. Set SNOWFLAKE_AUTHENTICATOR=snowflake and provide
+SNOWFLAKE_PASSWORD to use password auth instead.
 """
 
 import os
@@ -16,7 +21,6 @@ load_dotenv()
 REQUIRED_VARS = [
     "SNOWFLAKE_ACCOUNT",
     "SNOWFLAKE_USER",
-    "SNOWFLAKE_PASSWORD",
 ]
 
 
@@ -25,15 +29,25 @@ def get_connection() -> snowflake.connector.SnowflakeConnection:
     if missing:
         sys.exit(f"Missing required environment variables: {', '.join(missing)}")
 
-    return snowflake.connector.connect(
+    authenticator = os.environ.get("SNOWFLAKE_AUTHENTICATOR", "externalbrowser")
+
+    connect_kwargs = dict(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
-        password=os.environ["SNOWFLAKE_PASSWORD"],
+        authenticator=authenticator,
         warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE"),
         database=os.environ.get("SNOWFLAKE_DATABASE"),
         schema=os.environ.get("SNOWFLAKE_SCHEMA"),
         role=os.environ.get("SNOWFLAKE_ROLE"),
     )
+
+    if authenticator == "snowflake":
+        password = os.environ.get("SNOWFLAKE_PASSWORD")
+        if not password:
+            sys.exit("SNOWFLAKE_PASSWORD is required when SNOWFLAKE_AUTHENTICATOR=snowflake")
+        connect_kwargs["password"] = password
+
+    return snowflake.connector.connect(**connect_kwargs)
 
 
 def main() -> None:
