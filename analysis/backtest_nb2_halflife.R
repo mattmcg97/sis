@@ -1,12 +1,20 @@
 #!/usr/bin/env Rscript
 #
-# Backtest different recency half-lives for a glmmTMB (nbinom2) mixed-effects
-# version of the NB2 pre-match rating model, to find how heavily recent
-# matches should be weighted -- the Python model hardcodes a 60-day half-life
-# (weight = 2^(-age_days / half_life)); this fits the SAME structure once per
-# candidate half-life on an identical chronological TRAIN split, and checks
-# out-of-sample calibration on the held-out TEST split for each, so the
-# choice of half-life is picked by backtest rather than guessed.
+# Backtest different recency half-lives for an lme4::glmer.nb (negative
+# binomial) mixed-effects version of the NB2 pre-match rating model, to find
+# how heavily recent matches should be weighted -- the Python model hardcodes
+# a 60-day half-life (weight = 2^(-age_days / half_life)); this fits the SAME
+# structure once per candidate half-life on an identical chronological TRAIN
+# split, and checks out-of-sample calibration on the held-out TEST split for
+# each, so the choice of half-life is picked by backtest rather than guessed.
+# HALF_LIVES below is that "weighting as a setting" -- edit the vector to try
+# other candidates.
+#
+# Uses lme4::glmer.nb rather than glmmTMB: lme4 ships precompiled Windows
+# binaries on CRAN, so it installs without Rtools/a C++ toolchain. The
+# tradeoff is a single global dispersion (theta) fit across all players --
+# glmmTMB defaults to the same thing anyway unless given a dispformula, so
+# this loses nothing relative to what was actually being compared.
 #
 # Structure mirrors backtest_nb2_calibration.py's Python NB2 model, but as a
 # mixed-effects model: attack/defense/team/stream are all random intercepts
@@ -34,11 +42,11 @@
 # Usage:
 #   Rscript backtest_nb2_halflife.R
 #
-# Requires: glmmTMB, dplyr, tidyr
-#   install.packages(c("glmmTMB", "dplyr", "tidyr"))
+# Requires: lme4, dplyr, tidyr
+#   install.packages(c("lme4", "dplyr", "tidyr"))
 
 suppressMessages({
-  library(glmmTMB)
+  library(lme4)
   library(dplyr)
   library(tidyr)
 })
@@ -130,15 +138,15 @@ evaluate_halflife <- function(half_life) {
   w <- w / mean(w)
 
   fit <- tryCatch(
-    glmmTMB(
+    glmer.nb(
       Score ~ (1 | Player) + (1 | OpponentPlayer) + (1 | Team) + (1 | OpponentTeam) + (1 | Stream),
-      data = train_long, family = nbinom2, weights = w
+      data = train_long, weights = w
     ),
     error = function(e) { message(sprintf("  half_life=%s: fit failed: %s", half_life, e$message)); NULL }
   )
   if (is.null(fit)) return(NULL)
 
-  theta <- sigma(fit)  # glmmTMB nbinom2: Var = mu + mu^2/theta  <=>  alpha = 1/theta
+  theta <- getME(fit, "glmer.nb.theta")  # Var = mu + mu^2/theta  <=>  alpha = 1/theta, same convention as before
 
   p1_pred <- data.frame(Player = test_df$PLAYER_1_HANDLE, OpponentPlayer = test_df$PLAYER_2_HANDLE,
                          Team = test_df$PLAYER_1_TEAM, OpponentTeam = test_df$PLAYER_2_TEAM,
@@ -173,7 +181,7 @@ evaluate_halflife <- function(half_life) {
        p1_fair_ml = p1_fair_ml, p1_won = p1_won)
 }
 
-cat("\n=== Fitting one glmmTMB model per candidate half-life on TRAIN, evaluating on TEST ===\n")
+cat("\n=== Fitting one glmer.nb model per candidate half-life on TRAIN, evaluating on TEST ===\n")
 results <- list()
 for (hl in HALF_LIVES) {
   cat(sprintf("\nHalf-life = %s days...\n", ifelse(is.infinite(hl), "Inf (no decay)", hl)))
