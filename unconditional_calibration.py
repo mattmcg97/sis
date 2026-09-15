@@ -152,7 +152,7 @@ def main():
                     FROM score_events e
                     JOIN {DATABASE}.SHARED.GAMEPLAI_STREAM g
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (50, 51)
-                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true'
+                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
                         AND g.PUBLISH_TIME >= e.FILE_TIME
                     QUALIFY ROW_NUMBER() OVER (
                         PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC
@@ -204,7 +204,7 @@ def main():
                     FROM score_events e
                     JOIN {DATABASE}.SHARED.GAMEPLAI_STREAM g
                         ON g.MATCH_CODE = e.MATCH_CODE AND g.MARKET_ID IN (54, 55)
-                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true'
+                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
                         AND g.PUBLISH_TIME >= e.FILE_TIME
                     QUALIFY ROW_NUMBER() OVER (
                         PARTITION BY e.EVENT_ID, g.MARKET_ID ORDER BY g.PUBLISH_TIME ASC, g.MODIFIED_EPOCH ASC

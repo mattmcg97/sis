@@ -118,7 +118,7 @@ def main():
                     JOIN {DATABASE}.SHARED.GAMEPLAI_STREAM g
                         ON g.MATCH_CODE = b.MATCH_CODE
                         AND g.MARKET_ID = b.FEED_MARKET_ID
-                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true'
+                        AND g.STATUS = 'open' AND g.IS_ACTIVE = 'true' AND g.PROBABILITY > 0
                         AND g.PUBLISH_TIME <= DATEADD('second', -{LAG_SECONDS}, b.BET_DATE_UTC)
                     QUALIFY ROW_NUMBER() OVER (
                         PARTITION BY b.BET_ID ORDER BY g.PUBLISH_TIME DESC, g.MODIFIED_EPOCH DESC
