@@ -7,6 +7,16 @@ then check calibration -- does the book's quoted implied probability
 This is the concrete mechanism check behind the margin collapse found
 in af_revenue_analysis.py: is GAMEPLAI mispricing specific late-game
 states rather than being uniformly weak?
+
+BET_DATE_UTC lags the true feed/game state by an operator-dependent
+delay (network + operator processing before the bet is logged). As a
+generic first-pass correction, LAG_SECONDS is subtracted from
+BET_DATE_UTC before matching to the score state, so a bet is compared
+against what the feed actually showed ~10s before it was logged --
+closer to the price the customer actually saw and acted on. If losses
+concentrate right after a scoring event within that window, it points
+to stale-price arbitrage (bettors getting a bet in before the price
+catches up to a score change) rather than a general model weakness.
 """
 
 from collections import defaultdict
@@ -14,6 +24,7 @@ from collections import defaultdict
 from snowflake_connect import get_connection
 
 DATABASE = "SIS_PROD_CG_CURATED"
+LAG_SECONDS = 10
 
 
 def fetch_all(cur, sql, params=None):
@@ -50,7 +61,7 @@ def main():
     conn = get_connection()
     try:
         with conn.cursor() as cur:
-            print("=== Pulling late-game (period >= 4) AF moneyline + totals bets, joined to score state ===")
+            print(f"=== Pulling late-game (period >= 4) AF moneyline + totals bets, joined to score state as of BET_DATE_UTC - {LAG_SECONDS}s ===")
             _, rows = fetch_all(cur, f"""
                 WITH late_bets AS (
                     SELECT ROW_NUMBER() OVER (ORDER BY MATCH_CODE, BET_DATE_UTC) AS BET_ID,
@@ -64,7 +75,8 @@ def main():
                     SELECT b.BET_ID, sc.PLAYER_1_SCORE_CUMULATIVE, sc.PLAYER_2_SCORE_CUMULATIVE
                     FROM late_bets b
                     JOIN {DATABASE}.SHARED.SCORE_CHANGES sc
-                        ON sc.MATCH_CODE = b.MATCH_CODE AND sc.FILE_TIME <= b.BET_DATE_UTC
+                        ON sc.MATCH_CODE = b.MATCH_CODE
+                        AND sc.FILE_TIME <= DATEADD('second', -{LAG_SECONDS}, b.BET_DATE_UTC)
                     QUALIFY ROW_NUMBER() OVER (PARTITION BY b.BET_ID ORDER BY sc.FILE_TIME DESC) = 1
                 )
                 SELECT b.BET_ID, b.MARKET_TYPE_ID, b.SELECTION_ID, b.ODDS, b.STAKE_GBP,
