@@ -17,6 +17,14 @@ probability, inflating apparent sample size without adding independent
 information. The real sample size for calibration purposes is bounded
 by the number of distinct MATCHES, not rows -- both are reported per
 bucket below so that's visible rather than hidden behind a big N.
+
+Split into 5 period groups (Q1, Q2, Q3, Q4, OT -- all overtime periods
+pooled since individually they're too sparse), one table each, further
+split by quarter-elapsed-time quartile (0-25%/25-50%/50-75%/75-100%,
+computed from SHARED.PERIOD's actual start/end timestamps) crossed
+with the cushion/margin buckets and selection. Cushion/margin quantile
+cutpoints are computed once globally (not per period) so "bucket 3"
+means the same point range in every table, keeping tables comparable.
 """
 
 import statistics as stats
@@ -31,6 +39,8 @@ N_QUANTILE_BINS = 8
 ML_SELECTION_NAMES = {1: "Home", 2: "Away"}
 TOT_SELECTION_NAMES = {1: "Over", 2: "Under"}
 
+TIME_QUARTILE_LABELS = ["0-25%", "25-50%", "50-75%", "75-100%"]
+
 
 def fetch_all(cur, sql, params=None):
     cur.execute(sql, params or ())
@@ -41,11 +51,35 @@ def fetch_all(cur, sql, params=None):
 def period_group(period):
     if period is None:
         return "0_unknown"
-    if period <= 2:
-        return "1_Q1-Q2"
+    if period == 1:
+        return "1_Q1"
+    if period == 2:
+        return "2_Q2"
     if period == 3:
-        return "2_Q3"
-    return "3_Q4+OT"
+        return "3_Q3"
+    if period == 4:
+        return "4_Q4"
+    return "5_OT"
+
+
+def time_quartile_index(elapsed_frac):
+    if elapsed_frac is None:
+        return None
+    return min(int(elapsed_frac * 4), 3)
+
+
+def time_quartile_label(idx):
+    return "unknown" if idx is None else TIME_QUARTILE_LABELS[idx]
+
+
+def elapsed_fraction(file_time, period_start, period_end):
+    if file_time is None or period_start is None or period_end is None:
+        return None
+    total = (period_end - period_start).total_seconds()
+    if total <= 0:
+        return None
+    frac = (file_time - period_start).total_seconds() / total
+    return min(max(frac, 0.0), 1.0)
 
 
 def quantile_cutpoints(values, n_bins):
@@ -72,18 +106,20 @@ def bucket_label(idx, cutpoints):
 
 
 def analyze(label, data, selection_names):
-    # data: list of (period, sel_id, x, won, model_prob, match_code)
+    # data: list of (period, sel_id, x, won, model_prob, match_code, elapsed_frac)
     print(f"\n=== {label}: {len(data)} scoring-play observations, "
-          f"quantile-binned into {N_QUANTILE_BINS} equal-population buckets ===")
+          f"quantile-binned into {N_QUANTILE_BINS} equal-population buckets, "
+          f"split by period and quarter-elapsed-time quartile ===")
     cutpoints = quantile_cutpoints([d[2] for d in data], N_QUANTILE_BINS)
     if not cutpoints:
         print("  Not enough data to bin.")
         return
 
     buckets = defaultdict(lambda: {"n": 0, "matches": set(), "model_sum": 0.0, "model_n": 0, "wins": 0})
-    for period, sel_id, x, won, model_prob, match_code in data:
+    for period, sel_id, x, won, model_prob, match_code, elapsed_frac in data:
         idx = bucket_index(x, cutpoints)
-        key = (period_group(period), idx, sel_id)
+        tq = time_quartile_index(elapsed_frac)
+        key = (period_group(period), tq, idx, sel_id)
         d = buckets[key]
         d["n"] += 1
         d["matches"].add(match_code)
@@ -92,32 +128,38 @@ def analyze(label, data, selection_names):
             d["model_sum"] += model_prob
             d["model_n"] += 1
 
-    header = (f"  {'PERIOD_GROUP':<12}{'RANGE':<16}{'SEL':<7}{'N':>8}{'MATCHES':>9}"
-              f"{'MODEL_%':>9}{'REALIZED_%':>12}{'GAP_MODEL':>11}")
-    print(header)
-    for (pg, idx, sel_id) in sorted(buckets):
-        d = buckets[(pg, idx, sel_id)]
-        model_pct = d["model_sum"] / d["model_n"] if d["model_n"] else float("nan")
-        realized = 100 * d["wins"] / d["n"] if d["n"] else float("nan")
-        gap_model = realized - model_pct if d["model_n"] else float("nan")
-        rng = bucket_label(idx, cutpoints)
-        sel_name = selection_names.get(sel_id, sel_id)
-        print(f"  {pg:<12}{rng:<16}{sel_name:<7}{d['n']:>8}{len(d['matches']):>9}"
-              f"{model_pct:>9.2f}{realized:>12.2f}{gap_model:>11.2f}")
+    for pg in sorted(set(k[0] for k in buckets)):
+        print(f"\n--- {label}: {pg} ---")
+        header = (f"  {'TIME_Q':<10}{'RANGE':<16}{'SEL':<7}{'N':>8}{'MATCHES':>9}"
+                  f"{'MODEL_%':>9}{'REALIZED_%':>12}{'GAP_MODEL':>11}")
+        print(header)
+        pg_keys = sorted(
+            (k for k in buckets if k[0] == pg),
+            key=lambda k: (k[1] is None, k[1] if k[1] is not None else -1, k[2], k[3]),
+        )
+        for (_, tq, idx, sel_id) in pg_keys:
+            d = buckets[(pg, tq, idx, sel_id)]
+            model_pct = d["model_sum"] / d["model_n"] if d["model_n"] else float("nan")
+            realized = 100 * d["wins"] / d["n"] if d["n"] else float("nan")
+            gap_model = realized - model_pct if d["model_n"] else float("nan")
+            rng = bucket_label(idx, cutpoints)
+            sel_name = selection_names.get(sel_id, sel_id)
+            print(f"  {time_quartile_label(tq):<10}{rng:<16}{sel_name:<7}{d['n']:>8}{len(d['matches']):>9}"
+                  f"{model_pct:>9.2f}{realized:>12.2f}{gap_model:>11.2f}")
 
     reliable = [(k, v) for k, v in buckets.items() if v["model_n"] >= 30 and len(v["matches"]) >= 20]
     worst = sorted(
         reliable,
         key=lambda kv: abs(kv[1]["model_sum"] / kv[1]["model_n"] - 100 * kv[1]["wins"] / kv[1]["n"]),
         reverse=True,
-    )[:8]
-    print("\n  Worst cells by |GAP_MODEL| (min 30 observations, min 20 distinct matches):")
-    for (pg, idx, sel_id), d in worst:
+    )[:10]
+    print("\n  Worst cells overall by |GAP_MODEL| (min 30 observations, min 20 distinct matches):")
+    for (pg, tq, idx, sel_id), d in worst:
         model_pct = d["model_sum"] / d["model_n"]
         realized = 100 * d["wins"] / d["n"]
-        print(f"    {pg} {bucket_label(idx, cutpoints)} {selection_names.get(sel_id, sel_id)}: "
-              f"n={d['n']} matches={len(d['matches'])} model={model_pct:.2f}% "
-              f"realized={realized:.2f}% gap_model={realized - model_pct:+.2f}pp")
+        print(f"    {pg} {time_quartile_label(tq)} {bucket_label(idx, cutpoints)} "
+              f"{selection_names.get(sel_id, sel_id)}: n={d['n']} matches={len(d['matches'])} "
+              f"model={model_pct:.2f}% realized={realized:.2f}% gap_model={realized - model_pct:+.2f}pp")
 
 
 def main():
@@ -141,10 +183,13 @@ def main():
                 ),
                 score_events AS (
                     SELECT ROW_NUMBER() OVER (ORDER BY sc.MATCH_CODE, sc.FILE_TIME) AS EVENT_ID,
-                           sc.MATCH_CODE, sc.PERIOD_NUMBER,
-                           sc.PLAYER_1_SCORE_CUMULATIVE, sc.PLAYER_2_SCORE_CUMULATIVE, sc.FILE_TIME
+                           sc.MATCH_CODE, sc.PERIOD_NUMBER, sc.FILE_TIME,
+                           sc.PLAYER_1_SCORE_CUMULATIVE, sc.PLAYER_2_SCORE_CUMULATIVE,
+                           p.PERIOD_ACTUAL_START_TIME, p.PERIOD_ACTUAL_END_TIME
                     FROM {DATABASE}.SHARED.SCORE_CHANGES sc
                     JOIN af_matches m ON m.MATCH_CODE = sc.MATCH_CODE
+                    LEFT JOIN {DATABASE}.SHARED.PERIOD p
+                        ON p.MATCH_CODE = sc.MATCH_CODE AND p.PERIOD_NUMBER = sc.PERIOD_NUMBER
                     WHERE sc.PERIOD_NUMBER >= {PERIOD_FLOOR}
                 ),
                 model_at_event AS (
@@ -159,7 +204,8 @@ def main():
                     ) = 1
                 )
                 SELECT e.MATCH_CODE, e.PERIOD_NUMBER, e.PLAYER_1_SCORE_CUMULATIVE, e.PLAYER_2_SCORE_CUMULATIVE,
-                       mo.MARKET_ID, mo.PROBABILITY, f.PLAYER_1_SCORE AS FINAL_P1, f.PLAYER_2_SCORE AS FINAL_P2
+                       mo.MARKET_ID, mo.PROBABILITY, f.PLAYER_1_SCORE AS FINAL_P1, f.PLAYER_2_SCORE AS FINAL_P2,
+                       e.FILE_TIME, e.PERIOD_ACTUAL_START_TIME, e.PERIOD_ACTUAL_END_TIME
                 FROM score_events e
                 JOIN model_at_event mo ON mo.EVENT_ID = e.EVENT_ID
                 JOIN {DATABASE}.SHARED.SCORE_ENDGAME f ON f.MATCH_CODE = e.MATCH_CODE
@@ -167,7 +213,8 @@ def main():
             print(f"  {len(ml_raw)} moneyline (event x market) rows pulled")
 
             ml_data = []
-            for match_code, period, p1, p2, market_id, prob, final_p1, final_p2 in ml_raw:
+            for (match_code, period, p1, p2, market_id, prob, final_p1, final_p2,
+                 file_time, period_start, period_end) in ml_raw:
                 if final_p1 is None or final_p2 is None:
                     continue
                 p1 = p1 or 0
@@ -178,7 +225,8 @@ def main():
                 margin = sel_score - opp_score
                 won = sel_final > opp_final
                 model_prob = float(prob) if prob is not None else None
-                ml_data.append((period, sel_id, margin, won, model_prob, match_code))
+                elapsed_frac = elapsed_fraction(file_time, period_start, period_end)
+                ml_data.append((period, sel_id, margin, won, model_prob, match_code, elapsed_frac))
 
             analyze("Moneyline (margin = selection's score lead)", ml_data, ML_SELECTION_NAMES)
 
@@ -192,10 +240,13 @@ def main():
                 ),
                 score_events AS (
                     SELECT ROW_NUMBER() OVER (ORDER BY sc.MATCH_CODE, sc.FILE_TIME) AS EVENT_ID,
-                           sc.MATCH_CODE, sc.PERIOD_NUMBER,
-                           sc.PLAYER_1_SCORE_CUMULATIVE, sc.PLAYER_2_SCORE_CUMULATIVE, sc.FILE_TIME
+                           sc.MATCH_CODE, sc.PERIOD_NUMBER, sc.FILE_TIME,
+                           sc.PLAYER_1_SCORE_CUMULATIVE, sc.PLAYER_2_SCORE_CUMULATIVE,
+                           p.PERIOD_ACTUAL_START_TIME, p.PERIOD_ACTUAL_END_TIME
                     FROM {DATABASE}.SHARED.SCORE_CHANGES sc
                     JOIN af_matches m ON m.MATCH_CODE = sc.MATCH_CODE
+                    LEFT JOIN {DATABASE}.SHARED.PERIOD p
+                        ON p.MATCH_CODE = sc.MATCH_CODE AND p.PERIOD_NUMBER = sc.PERIOD_NUMBER
                     WHERE sc.PERIOD_NUMBER >= {PERIOD_FLOOR}
                 ),
                 model_at_event AS (
@@ -212,7 +263,8 @@ def main():
                 )
                 SELECT e.MATCH_CODE, e.PERIOD_NUMBER, e.PLAYER_1_SCORE_CUMULATIVE, e.PLAYER_2_SCORE_CUMULATIVE,
                        mo.MARKET_ID, mo.PROBABILITY, mo.LINE_VALUE,
-                       f.PLAYER_1_SCORE AS FINAL_P1, f.PLAYER_2_SCORE AS FINAL_P2
+                       f.PLAYER_1_SCORE AS FINAL_P1, f.PLAYER_2_SCORE AS FINAL_P2,
+                       e.FILE_TIME, e.PERIOD_ACTUAL_START_TIME, e.PERIOD_ACTUAL_END_TIME
                 FROM score_events e
                 JOIN model_at_event mo ON mo.EVENT_ID = e.EVENT_ID
                 JOIN {DATABASE}.SHARED.SCORE_ENDGAME f ON f.MATCH_CODE = e.MATCH_CODE
@@ -220,7 +272,8 @@ def main():
             print(f"  {len(tot_raw)} totals (event x market) rows pulled")
 
             tot_data = []
-            for match_code, period, p1, p2, market_id, prob, line_value, final_p1, final_p2 in tot_raw:
+            for (match_code, period, p1, p2, market_id, prob, line_value, final_p1, final_p2,
+                 file_time, period_start, period_end) in tot_raw:
                 if final_p1 is None or final_p2 is None or line_value is None:
                     continue
                 p1 = p1 or 0
@@ -231,7 +284,8 @@ def main():
                 final_total = final_p1 + final_p2
                 won = final_total > line_value if sel_id == 1 else final_total < line_value
                 model_prob = float(prob) if prob is not None else None
-                tot_data.append((period, sel_id, cushion, won, model_prob, match_code))
+                elapsed_frac = elapsed_fraction(file_time, period_start, period_end)
+                tot_data.append((period, sel_id, cushion, won, model_prob, match_code, elapsed_frac))
 
             analyze("Totals (cushion = points still needed to reach line)", tot_data, TOT_SELECTION_NAMES)
     finally:
