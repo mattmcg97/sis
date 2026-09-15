@@ -93,6 +93,8 @@ def main():
                                                "implied_sum": 0.0, "implied_n": 0, "wins": 0})
             tot_buckets = defaultdict(lambda: {"n": 0, "stake": 0.0, "revenue": 0.0,
                                                 "implied_sum": 0.0, "implied_n": 0, "wins": 0})
+            ML_SELECTION_NAMES = {1: "Home", 2: "Away"}
+            TOT_SELECTION_NAMES = {1: "Over", 2: "Under"}
 
             for (bet_id, mtid, sel_id, odds, stake, revenue, period, mline, bet_type,
                  p1, p2, final_p1, final_p2) in rows:
@@ -108,14 +110,14 @@ def main():
                     sel_final, opp_final = (final_p1, final_p2) if sel_id == 1 else (final_p2, final_p1)
                     margin = sel_score - opp_score
                     won = sel_final > opp_final
-                    bucket = moneyline_bucket(margin)
+                    bucket = (moneyline_bucket(margin), sel_id)
                     d = ml_buckets[bucket]
                 elif mtid == 3 and mline is not None:
                     current_total = p1 + p2
                     cushion = float(mline) - current_total
                     final_total = final_p1 + final_p2
                     won = final_total > float(mline) if sel_id == 1 else final_total < float(mline)
-                    bucket = totals_bucket(cushion)
+                    bucket = (totals_bucket(cushion), sel_id)
                     d = tot_buckets[bucket]
                 else:
                     continue
@@ -128,22 +130,23 @@ def main():
                     d["implied_sum"] += 100.0 / float(odds)
                     d["implied_n"] += 1
 
-            def print_buckets(title, buckets):
+            def print_buckets(title, buckets, selection_names):
                 print(f"\n=== {title} ===")
-                header = f"  {'BUCKET':<22}{'N':>8}{'STAKE_GBP':>14}{'MARGIN_%':>10}{'IMPLIED_%':>11}{'REALIZED_%':>12}{'GAP':>8}"
+                header = f"  {'BUCKET':<22}{'SELECTION':<10}{'N':>8}{'STAKE_GBP':>14}{'MARGIN_%':>10}{'IMPLIED_%':>11}{'REALIZED_%':>12}{'GAP':>8}"
                 print(header)
-                for bucket in sorted(buckets):
-                    d = buckets[bucket]
+                for bucket, sel_id in sorted(buckets):
+                    d = buckets[(bucket, sel_id)]
                     margin_pct = 100 * d["revenue"] / d["stake"] if d["stake"] else float("nan")
                     implied = d["implied_sum"] / d["implied_n"] if d["implied_n"] else float("nan")
                     realized = 100 * d["wins"] / d["n"] if d["n"] else float("nan")
                     gap = realized - implied if d["implied_n"] else float("nan")
-                    print(f"  {bucket:<22}{d['n']:>8}{d['stake']:>14.0f}{margin_pct:>10.2f}{implied:>11.2f}{realized:>12.2f}{gap:>8.2f}")
+                    sel_name = selection_names.get(sel_id, sel_id)
+                    print(f"  {bucket:<22}{sel_name:<10}{d['n']:>8}{d['stake']:>14.0f}{margin_pct:>10.2f}{implied:>11.2f}{realized:>12.2f}{gap:>8.2f}")
                 print("  (IMPLIED_% = avg 100/ODDS on Single bets only; REALIZED_% = actual win rate, all bet types;")
                 print("   GAP = REALIZED - IMPLIED: positive means the book priced this selection too generously)")
 
-            print_buckets("Moneyline: bucketed by selection's score margin at bet time", ml_buckets)
-            print_buckets("Totals: bucketed by points still needed to reach the line at bet time", tot_buckets)
+            print_buckets("Moneyline: bucketed by selection's score margin at bet time", ml_buckets, ML_SELECTION_NAMES)
+            print_buckets("Totals: bucketed by points still needed to reach the line at bet time", tot_buckets, TOT_SELECTION_NAMES)
     finally:
         conn.close()
 
