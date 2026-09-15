@@ -104,7 +104,7 @@ def main():
                 FROM {DATABASE}.SHARED.EVENT e
                 JOIN {DATABASE}.SHARED.INPLAY_FIELD_POSITION_PERIOD fp ON fp.MATCH_CODE = e.MATCH_CODE
                 WHERE e.SPORT_CODE = 'AF' AND e.INPLAY_EVENT_STATUS = 'SETTLED'
-                GROUP BY e.MATCH_CODE
+                GROUP BY e.MATCH_CODE, e.SCHEDULED_START_TIME_UTC
                 ORDER BY e.SCHEDULED_START_TIME_UTC DESC
                 LIMIT {N_MATCHES}
             """)
