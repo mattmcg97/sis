@@ -35,13 +35,31 @@ def print_header(header, stats):
           f"{header.get('window_matches', 0):,} matches")
     print(f"Actual quote span   : {header.get('window_first')}  ->  {header.get('window_last')}")
     print(f"{'Settled ' + config.SPORT_CODE + ' universe':<20}: {header.get('universe_matches', 0):,} matches")
-    print(f"Play clock column   : {header.get('play_time_column')}")
+    print(f"Snapshot clock      : {header.get('clock_mode')}")
     print(f"Match tolerance     : {config.MATCH_TOLERANCE_SECONDS}s ({config.QUOTE_DIRECTION})")
     print(f"Time axis           : {buckets.time_axis_name()}")
 
     print("\nCoverage:")
     print(f"  drive snapshots built            : {stats.get('snapshots', 0):,}")
     print(f"  snapshots with >=1 matched quote : {stats.get('snapshots_matched', 0):,}")
+
+    exact = stats.get("clock_exact", 0)
+    interpolated = stats.get("clock_interpolated", 0)
+    unresolved = stats.get("clock_unresolved", 0)
+    from_feed = stats.get("clock_from_play_feed", 0)
+    timed = exact + interpolated + unresolved + from_feed
+    if timed:
+        print("\n  Snapshot clock provenance:")
+        if from_feed:
+            print(f"    from the play feed's own column: {from_feed:,}")
+        if exact or interpolated or unresolved:
+            print(f"    exact message hit              : {exact:,} ({100 * exact / timed:.1f}%)")
+            print(f"    interpolated between messages  : {interpolated:,} ({100 * interpolated / timed:.1f}%)")
+            print(f"    unresolved (dropped)           : {unresolved:,} ({100 * unresolved / timed:.1f}%)")
+        if exact and 100 * exact / timed < 50:
+            print("    ^ under half the play feed's message counts appear in the stream.")
+            print("      Check that both are numbering the same sequence before trusting")
+            print("      the sub-3-second gaps.")
     for label, key in [
         ("snapshots with no clock", "snapshots_without_time"),
         ("no quote at all for market", "no_quote_for_market"),

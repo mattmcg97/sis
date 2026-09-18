@@ -10,7 +10,7 @@ Run with:  py -m unittest discover eAMFCalibrator
 import datetime as dt
 import unittest
 
-from .. import buckets, config, markets, metrics
+from .. import buckets, clock, config, markets, metrics
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -277,6 +277,65 @@ class TestMetrics(unittest.TestCase):
     def test_empty(self):
         self.assertIsNone(metrics.brier_score([]))
         self.assertEqual(metrics.summarize([], 10)["n"], 0)
+
+
+class TestMatchClock(unittest.TestCase):
+    def setUp(self):
+        # Stream quoted messages 10, 12 and 30. Message 11 sits in a tight
+        # bracket; 20 sits in a 18-wide one.
+        self.clock = clock.MatchClock({
+            10: BASE,
+            12: BASE + dt.timedelta(seconds=4),
+            30: BASE + dt.timedelta(seconds=40),
+        })
+
+    def test_exact_message_needs_no_estimation(self):
+        when, provenance = self.clock.time_for(12)
+        self.assertEqual(provenance, clock.EXACT)
+        self.assertEqual(when, BASE + dt.timedelta(seconds=4))
+
+    def test_interpolates_inside_a_tight_bracket(self):
+        when, provenance = self.clock.time_for(11)
+        self.assertEqual(provenance, clock.INTERPOLATED)
+        self.assertEqual(when, BASE + dt.timedelta(seconds=2))
+
+    def test_bracket_wider_than_limit_is_unresolved(self):
+        when, provenance = self.clock.time_for(20, max_bracket=10)
+        self.assertIsNone(when)
+        self.assertEqual(provenance, clock.UNRESOLVED)
+
+    def test_wide_bracket_allowed_when_limit_raised(self):
+        when, provenance = self.clock.time_for(20, max_bracket=50)
+        self.assertEqual(provenance, clock.INTERPOLATED)
+        self.assertEqual(when, BASE + dt.timedelta(seconds=4 + 36 * (8 / 18)))
+
+    def test_outside_the_streams_range_is_unresolved(self):
+        for message in (5, 99):
+            when, provenance = self.clock.time_for(message)
+            self.assertIsNone(when, f"message={message}")
+            self.assertEqual(provenance, clock.UNRESOLVED)
+
+    def test_empty_clock_and_null_message(self):
+        empty = clock.MatchClock({})
+        self.assertEqual(empty.time_for(10), (None, clock.UNRESOLVED))
+        self.assertEqual(self.clock.time_for(None), (None, clock.UNRESOLVED))
+
+    def test_build_clocks_takes_earliest_time_per_message(self):
+        # One message carries a row per market, published together.
+        rows = [
+            ("AF1", 7, BASE + dt.timedelta(seconds=1)),
+            ("AF1", 7, BASE),
+            ("AF1", 8, BASE + dt.timedelta(seconds=2)),
+            ("AF2", 7, BASE + dt.timedelta(seconds=9)),
+        ]
+        clocks = clock.build_clocks(rows)
+        self.assertEqual(set(clocks), {"AF1", "AF2"})
+        self.assertEqual(clocks["AF1"].time_for(7), (BASE, clock.EXACT))
+        self.assertEqual(len(clocks["AF1"]), 2)
+
+    def test_build_clocks_skips_null_rows(self):
+        clocks = clock.build_clocks([("AF1", None, BASE), ("AF1", 3, None), ("AF1", 4, BASE)])
+        self.assertEqual(len(clocks["AF1"]), 1)
 
 
 class TestConfigSanity(unittest.TestCase):

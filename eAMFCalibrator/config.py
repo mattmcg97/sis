@@ -32,6 +32,29 @@ SPORT_CODE = "AF"
 # seconds of it. The nearest surviving quote wins.
 MATCH_TOLERANCE_SECONDS = 3.0
 
+# INPLAY_FIELD_POSITION_PERIOD carries no timestamp -- confirmed by
+# preflight, it has 7 columns and none is a clock. What it does carry is
+# EVENT_MESSAGE_COUNT, the same feed sequence the GAMEPLAI streams are keyed
+# on, so a snapshot's wall-clock time is recovered from the stream itself:
+# the PUBLISH_TIME of the quotes published for that same message.
+#
+# Exact hits need no estimation at all. Where the play feed has a message
+# the stream never quoted, the time is interpolated between the bracketing
+# quoted messages, and only if that bracket is tight enough to be worth
+# trusting (see MAX_BRACKET_MESSAGES).
+#
+# The clock comes from ONE stream for every run, so prod and candidate are
+# calibrated against an identical set of snapshot times and the comparison
+# is not confounded by the two feeds stamping the same message a few hundred
+# milliseconds apart. Set to a key of STREAMS, or None to use whichever
+# stream is being calibrated.
+CLOCK_SOURCE = "prod"
+
+# Widest message-count bracket an interpolated snapshot time may sit in.
+# Beyond this the stream went quiet either side of the play and the
+# interpolation is guesswork, so the snapshot is dropped instead.
+MAX_BRACKET_MESSAGES = 10
+
 # "nearest"  -- closest quote either side of the snapshot (what was asked for)
 # "forward"  -- only quotes at or after the snapshot; avoids pairing a price
 #               that predates the snapshot's own game state, at the cost of

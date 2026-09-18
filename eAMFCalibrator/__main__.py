@@ -48,12 +48,12 @@ def cmd_preflight(args):
             if time_column:
                 print(f"  Using {snowflake_io.PLAY_TABLE}.{time_column} as the snapshot timestamp.")
             else:
-                print(f"  !! {snowflake_io.PLAY_TABLE} carries no TIMESTAMP column.")
-                print("  The 3-second snapshot-to-quote match needs one. Options:")
-                print("    - pick a timestamped table that shares EVENT_MESSAGE_COUNT, or")
-                print("    - match on EVENT_MESSAGE_COUNT directly instead of on time.")
-                print("  Both streams and the play feed carry EVENT_MESSAGE_COUNT, so the")
-                print("  second is exact rather than approximate -- say the word and I'll switch it.")
+                print(f"  {snowflake_io.PLAY_TABLE} carries no TIMESTAMP column, as expected.")
+                clock_key = config.CLOCK_SOURCE or "the calibrated stream"
+                print(f"  Snapshot times will be reconstructed from the {clock_key} stream's")
+                print("  EVENT_MESSAGE_COUNT -> PUBLISH_TIME map: exact where the stream quoted")
+                print(f"  that message, interpolated across gaps up to {config.MAX_BRACKET_MESSAGES}")
+                print("  messages wide, dropped beyond that. Every run reports the split.")
 
             for key, table in sorted(config.STREAMS.items()):
                 n_rows, n_matches, first, last = snowflake_io.stream_window_summary(cur, table)
@@ -68,11 +68,6 @@ def cmd_preflight(args):
 def run_one(stream_key, out_dir):
     print(f"\nRunning calibration for stream: {stream_key}")
     observations, stats, header = pipeline.run(stream_key)
-
-    if header.get("play_time_column") is None:
-        print("\n  !! Aborted: the play feed has no timestamp column, so snapshots cannot")
-        print("     be matched to quotes on time. Run `preflight` for the column list.")
-        return None
 
     report.print_header(header, stats)
     if not observations:

@@ -4,13 +4,11 @@ Credentials come from analysis/snowflake_connect.py so there is exactly
 one place in the repo that knows how to authenticate. That module lives
 in a sibling folder rather than a package, hence the path insert.
 
-The play feed's timestamp column is DISCOVERED rather than assumed: none
-of the existing analysis scripts ever needed a clock on
-INPLAY_FIELD_POSITION_PERIOD (they order by EVENT_MESSAGE_COUNT), so
-which timestamp it carries -- if any -- is genuinely unknown until a run
-looks. detect_play_time_column() reports what it found, and the run stops
-with the real column list if there is nothing usable, rather than
-silently pairing quotes against a clock that does not exist.
+INPLAY_FIELD_POSITION_PERIOD has no timestamp column -- preflight
+confirmed 7 columns, none of them a clock -- so a play's time is
+reconstructed from the stream's own message clock instead (see clock.py).
+detect_play_time_column() is kept anyway: if the feed ever gains a real
+timestamp, it is preferred over the reconstruction automatically.
 """
 
 import sys
@@ -150,6 +148,25 @@ def fetch_quotes(cur, stream_table, match_codes):
           AND {predicate}
         ORDER BY MATCH_CODE, MARKET_ID, PUBLISH_TIME
     """, tuple(list(match_codes) + list(MARKET_IDS) + params))
+    return rows
+
+
+def fetch_message_times(cur, stream_table, match_codes):
+    """(match, message count, time) for rebuilding the play clock.
+
+    Deliberately NOT filtered on STATUS or PROBABILITY the way quotes are:
+    this is establishing when a feed message happened, and a suspended or
+    zero-priced market timestamps that message just as well as a live one.
+    """
+    predicate, params = window_predicate("PUBLISH_TIME")
+    _, rows = fetch_all(cur, f"""
+        SELECT MATCH_CODE, EVENT_MESSAGE_COUNT, MIN(PUBLISH_TIME)
+        FROM {qualified(stream_table)}
+        WHERE MATCH_CODE IN ({_in_clause(match_codes)})
+          AND EVENT_MESSAGE_COUNT IS NOT NULL
+          AND {predicate}
+        GROUP BY MATCH_CODE, EVENT_MESSAGE_COUNT
+    """, tuple(list(match_codes) + params))
     return rows
 
 

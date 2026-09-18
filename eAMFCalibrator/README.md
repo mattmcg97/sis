@@ -13,8 +13,8 @@ py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
 
-**Run `preflight` first.** It verifies one thing this suite depends on that
-nothing else in the repo has ever needed — see *Open questions* below.
+`preflight` confirms the tables and reports how the snapshot clock is being
+reconstructed — worth a look after any feed change.
 
 ## How an observation is built
 
@@ -24,6 +24,12 @@ nothing else in the repo has ever needed — see *Open questions* below.
 2. **Quote** — for each of the six selections, the model quote nearest in
    time to the snapshot, within **3 seconds**. Snapshots with no quote in
    range are counted in the coverage block, not silently dropped.
+
+   The play feed has no clock of its own (see below), so a snapshot's time
+   comes from the stream's `EVENT_MESSAGE_COUNT` → `PUBLISH_TIME` map:
+   exact where the stream quoted that same message, interpolated across
+   short gaps, dropped where the gap is too wide to trust. Every run prints
+   the split.
 3. **Outcome** — did that selection result true, from `SCORE_ENDGAME`.
    Pushes (final lands exactly on the line) are counted and excluded, since
    there is no 0/1 outcome to score a probability against.
@@ -78,17 +84,32 @@ the snapshot — stricter about a price predating its own game state, at the
 cost of dropped snapshots. The signed gap is on every observation row, so
 the bias is measurable either way.
 
-## Open questions
+## The snapshot clock
 
-**Does the play feed carry a clock?** The 3-second match needs a timestamp
-on `INPLAY_FIELD_POSITION_PERIOD`, and every existing script orders that
-table by `EVENT_MESSAGE_COUNT` instead — so whether it has a usable
-timestamp is genuinely unknown until a run looks. `preflight` reports what
-it finds and `run` stops cleanly if there is nothing usable.
+`INPLAY_FIELD_POSITION_PERIOD` carries no timestamp — it has seven columns
+(`MATCH_CODE`, `EVENT_MESSAGE_COUNT`, `PERIOD_NUMBER`, `OFFENSIVE_TEAM`,
+`DOWN_NUMBER`, `DISTANCE`, `FIELD_POSITION`) and none of them is a clock.
+That is why every existing script in `analysis/` orders it by
+`EVENT_MESSAGE_COUNT`.
 
-If there isn't one: both streams **and** the play feed carry
-`EVENT_MESSAGE_COUNT`, which is the same underlying feed sequence. Matching
-on that would be exact rather than approximate, and is a small change.
+`EVENT_MESSAGE_COUNT` is the same feed sequence the GAMEPLAI streams are
+keyed on, and those do carry `PUBLISH_TIME`, so the clock is reconstructed
+from the stream (`clock.py`):
+
+| Provenance | Meaning |
+| --- | --- |
+| `exact` | the stream quoted that same message; its `PUBLISH_TIME` *is* the message's time, nothing estimated |
+| `interpolated` | the stream never quoted that message, so the time is placed linearly between the bracketing quoted messages |
+| `unresolved` | outside the stream's range, or the bracket is wider than `MAX_BRACKET_MESSAGES` — dropped rather than guessed |
+
+The clock is taken from **one** stream for every run (`CLOCK_SOURCE`,
+default `prod`), so prod and candidate are calibrated against an identical
+set of snapshot times rather than each stamping the same message a few
+hundred milliseconds apart.
+
+A low exact-hit rate would mean the play feed and the stream are not
+numbering the same sequence, which would undermine the whole pairing. The
+run header calls it out below 50%.
 
 **Sample size is bounded by matches, not rows.** Drives within a match share
 a game and are not independent. Every cell reports both counts; read the
@@ -101,6 +122,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-41 tests covering line parsing, market resolution, bucket edges, drive
-cleaning, quote matching and the scoring rules. No Snowflake needed — the
-database half is exercised separately against a mock.
+49 tests covering line parsing, market resolution, bucket edges, drive
+cleaning, clock reconstruction, quote matching and the scoring rules. No
+Snowflake needed — the database half is exercised separately against a mock
+shaped like the real schema, play feed with no clock included.
