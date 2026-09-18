@@ -336,23 +336,31 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
-def print_directional_breakdown(title, grouped, order=None, label_width=14):
+def print_directional_breakdown(title, grouped, order=None, label_width=14,
+                                mode="probability"):
+    # In line mode the errors are points, so squaring them gives squared
+    # points -- a number with no readable meaning. Show mean points instead.
+    line_mode = mode == "line"
+    second_label = "" if line_mode else "BRIER_D"
+    first_label = "POINTS_D" if line_mode else "MAE_D"
     print(f"\n{'-' * 92}\n{title}\n{'-' * 92}")
     print(f"  {'GROUP':<{label_width}}{'PAIRS':>8}{'MATCH':>7}{'CAND':>7}{'PROD':>7}"
-          f"{'TIE':>6}{'WIN%':>8}{'MAE_D':>9}{'BRIER_D':>9}{'P':>9}")
+          f"{'TIE':>6}{'WIN%':>8}{first_label:>10}{second_label:>9}{'P':>9}")
     keys = order if order is not None else sorted(grouped)
     for key in keys:
         row = grouped.get(key)
         if not row or not row["n"]:
             continue
         label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        first = _fmt(row['mae_delta'], '+.3f' if line_mode else '+.4f')
+        second = "" if line_mode else _fmt(row['brier_delta'], '+.4f')
         print(f"  {label:<{label_width}}{row['n']:>8,}{row['n_matches']:>7,}"
               f"{row['candidate']:>7,}{row['prod']:>7,}{row['tie']:>6,}"
               f"{_pct(row['candidate_win_rate']):>8}"
-              f"{_fmt(row['mae_delta'], '+.4f'):>9}{_fmt(row['brier_delta'], '+.4f'):>9}"
-              f"{_p(row['p_value']):>9}")
-    print("\n  WIN% is the candidate's share of decisive pairs. MAE_D and BRIER_D are")
-    print("  prod minus candidate, so positive means the candidate is better.")
+              f"{first:>10}{second:>9}{_p(row['p_value']):>9}")
+    unit = "points" if line_mode else "probability"
+    print(f"\n  WIN% is the candidate's share of decisive pairs. Deltas are prod minus")
+    print(f"  candidate in {unit}, so positive means the candidate is better.")
 
 
 def write_pairs_csv(path, pairs):
@@ -426,9 +434,11 @@ def print_line_agreement(lines):
     print("  different question, and only the line-closeness view compares fairly.")
     print(f"\n  pairs on the same line : {lines['same']:,} / {lines['n']:,} "
           f"({_pct(lines['same_rate'])})")
-    if lines["delta_median"] is not None:
-        print(f"  line gap where different: median {lines['delta_median']:.2f}, "
-              f"mean {lines['delta_mean']:.2f}, max {lines['delta_max']:.2f}")
+    if lines.get("differing_n"):
+        print(f"  gap on the {lines['differing_n']:,} pairs that DIFFER: "
+              f"median {lines['differing_median']:.2f}, "
+              f"mean {lines['differing_mean']:.2f}, "
+              f"max {lines['differing_max']:.2f}")
     print(f"\n  {'MARKET':<12}{'PAIRS':>8}{'SAME':>8}"
           f"{'PROD half/whole':>20}{'CAND half/whole':>20}")
     for group in ("moneyline", "spread", "total"):
@@ -479,16 +489,25 @@ def print_block(title, subtitle, block):
               f"{_ci_text(mae)} p {_p(mae['p_value'])}")
         metric_label, metric_key, metric_spec = "BRIER_D", "brier_delta", "+.4f"
 
-    print(f"\n  {'MARKET':<12}{'PAIRS':>8}{'MATCH':>7}{'CAND':>7}{'PROD':>7}"
-          f"{'TIE':>6}{'WIN%':>8}{metric_label:>10}{'P':>9}")
+    print(f"\n  {'MARKET':<11}{'PAIRS':>7}{'MATCH':>6}{'WIN%':>7}{'VOTE':>9}"
+          f"{metric_label:>10}{'95% CI':>22}{'P_CLUST':>9}{'P_ROW':>8}")
     for group in ("moneyline", "spread", "total"):
         row = block["by_market"].get(group)
         if not row or not row["n"]:
             continue
-        print(f"  {group:<12}{row['n']:>8,}{row['n_matches']:>7,}"
-              f"{row['candidate']:>7,}{row['prod']:>7,}{row['tie']:>6,}"
-              f"{_pct(row['candidate_win_rate']):>8}"
-              f"{_fmt(row[metric_key], metric_spec):>10}{_p(row['p_value']):>9}")
+        detail = block.get("markets", {}).get(group, {})
+        clustered = detail.get("mae" if line_mode else "brier", {})
+        votes_m = detail.get("votes", {})
+        vote_text = (f"{votes_m.get('candidate', 0)}-{votes_m.get('prod', 0)}"
+                     if votes_m else "")
+        ci = _ci_text(clustered, metric_spec) or ""
+        print(f"  {group:<11}{row['n']:>7,}{row['n_matches']:>6,}"
+              f"{_pct(row['candidate_win_rate']):>7}{vote_text:>9}"
+              f"{_fmt(clustered.get('mean'), metric_spec):>10}{ci:>22}"
+              f"{_p(clustered.get('p_value')):>9}{_p(row['p_value']):>8}")
+    print("\n  P_CLUST is the match-clustered paired test -- the one to read.")
+    print("  P_ROW is the row-level sign test, which treats every pair as")
+    print("  independent and so overstates significance.")
 
 
 def _ci_text(summary, spec="+.4f"):

@@ -154,6 +154,7 @@ def cmd_directional(args):
         "By line gap (line-closeness mode)",
         summary["by_line_delta"],
         order=directional.LINE_DELTA_ORDER,
+        mode=directional.LINE,
     )
 
     same_pairs, _ = directional.split_by_line(pairs)

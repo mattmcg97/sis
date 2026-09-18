@@ -494,6 +494,7 @@ def line_agreement(pairs):
                                      "prod_whole": 0, "prod_half": 0,
                                      "candidate_whole": 0, "candidate_half": 0})
     deltas = []
+    differing_deltas = []
     same = 0
     for pair in pairs:
         group = markets.market_group(pair.market_id)
@@ -504,6 +505,8 @@ def line_agreement(pairs):
             bucket["same"] += 1
         if pair.line_delta is not None:
             deltas.append(pair.line_delta)
+            if not pair.same_line:
+                differing_deltas.append(pair.line_delta)
         for side, line in (("prod", pair.prod_line), ("candidate", pair.candidate_line)):
             if line is None:
                 continue
@@ -513,12 +516,23 @@ def line_agreement(pairs):
     out = {"n": len(pairs), "same": same, "different": len(pairs) - same,
            "same_rate": same / len(pairs) if pairs else None,
            "by_market": dict(by_market),
-           "delta_median": None, "delta_mean": None, "delta_max": None}
+           "delta_median": None, "delta_mean": None, "delta_max": None,
+           "differing_median": None, "differing_mean": None,
+           "differing_max": None, "differing_n": 0}
+    # Two distributions, because mixing them is misleading: including the
+    # same-line zeros drags the median to 0 and hides how far apart the
+    # lines actually are when they do differ.
     if deltas:
         ordered = sorted(deltas)
         out["delta_median"] = ordered[len(ordered) // 2]
         out["delta_mean"] = sum(ordered) / len(ordered)
         out["delta_max"] = ordered[-1]
+    if differing_deltas:
+        ordered = sorted(differing_deltas)
+        out["differing_median"] = ordered[len(ordered) // 2]
+        out["differing_mean"] = sum(ordered) / len(ordered)
+        out["differing_max"] = ordered[-1]
+        out["differing_n"] = len(ordered)
     return out
 
 
@@ -591,6 +605,27 @@ def cell_key(pair):
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 
 
+def market_blocks(pairs, mode, n_bootstrap=2000):
+    """Per-market tallies WITH their own match-clustered paired delta.
+
+    The pooled figure averages over markets, so a real effect confined to
+    one of them gets diluted by the flat ones. Each market needs its own
+    clustered test to be read on its own.
+    """
+    out = {}
+    for group in MARKET_ORDER:
+        subset = [p for p in pairs if markets.market_group(p.market_id) == group]
+        if not subset:
+            continue
+        out[group] = {
+            "tally": tally(subset, mode),
+            "votes": match_level_votes(subset, mode),
+            "brier": paired_delta_summary(subset, SQUARED, mode, n_bootstrap),
+            "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
+        }
+    return out
+
+
 def build_summary(pairs, n_bootstrap=2000):
     """Everything both the console and the HTML report need.
 
@@ -613,6 +648,7 @@ def build_summary(pairs, n_bootstrap=2000):
             "brier": paired_delta_summary(subset, SQUARED, mode, n_bootstrap),
             "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
             "by_market": group_by(subset, market_label, mode),
+            "markets": market_blocks(subset, mode, n_bootstrap),
         }
 
     return {
