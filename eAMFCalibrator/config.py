@@ -93,6 +93,30 @@ DRIVE_BUCKETS = [
     (13, None, "drives 13+"),
 ]
 
+# Directional (paired) comparison: prod and candidate quotes are paired on
+# the SAME EVENT_MESSAGE_COUNT, not matched to each stream's own nearest
+# quote in time. Pairing on time independently would let one stream land a
+# quote 0.1s from the snapshot while the other lands 2.5s away, comparing
+# two different game states and flattering whichever got the closer quote.
+# Same message means same feed event for both, which is what makes the
+# comparison paired at all.
+#
+# Widest departure from the snapshot's own message allowed when the streams
+# never both quoted it.
+MAX_PAIR_MESSAGE_GAP = 3
+
+# Disagreement bands for the directional breakdown, as (low, high, label) on
+# |prod - candidate| in probability points. Where the two models agree the
+# comparison carries almost no information, so it is worth seeing the win
+# rate separately at each level of disagreement.
+DISAGREEMENT_BANDS = [
+    (0.0, 0.01, "< 1pp"),
+    (0.01, 0.03, "1-3pp"),
+    (0.03, 0.05, "3-5pp"),
+    (0.05, 0.10, "5-10pp"),
+    (0.10, None, "> 10pp"),
+]
+
 # Cells thinner than this are printed but excluded from the "worst cells"
 # summary, where noise would otherwise dominate.
 MIN_CELL_OBSERVATIONS = 30

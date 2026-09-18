@@ -7,11 +7,20 @@ into cells, and asks the only question that matters for a probability:
 
 ```
 py -m eAMFCalibrator preflight              # check tables + the play clock
+py -m eAMFCalibrator directional            # paired head-to-head (start here)
 py -m eAMFCalibrator run prod
 py -m eAMFCalibrator run candidate
 py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
+
+Two different questions:
+
+- **`directional`** — at the same snapshot, on the same selection, which
+  model was closer to the result? Paired, so the between-snapshot variance
+  cancels. This is the one a day of data can answer.
+- **`run`** — is this model's 30% really 30%? Needs many snapshots per cell
+  before a realized rate means anything.
 
 `preflight` confirms the tables and reports how the snapshot clock is being
 reconstructed — worth a look after any feed change.
@@ -37,6 +46,44 @@ reconstructed — worth a look after any feed change.
 Observations are then aggregated into cells and scored with Brier, log loss
 and ECE. Each run writes `<stream>_cells.csv` and `<stream>_observations.csv`
 to `out/`, so runs are comparable over time as data accumulates.
+
+## Directional comparison
+
+Pairs prod against candidate at each drive-start snapshot and reports both
+halves of the comparison, because they do not always agree.
+
+**Win rate** — how often each model was closer to the realized 0/1. This is
+the intuitive reading, and it is a weak test. If both models are unbiased
+around the same truth and differ only in noise, then whichever lands closer
+to the realization is decided by which noise draw happened to point at the
+outcome — a coin flip, regardless of which model is actually better.
+Simulated with the candidate at half prod's noise:
+
+| truth | candidate win rate | Brier improvement |
+| --- | --- | --- |
+| 0.50 | 49.9% | +0.0129 |
+| 0.65 | 49.9% | +0.0133 |
+| 0.80 | 49.9% | +0.0102 |
+| 0.95 | 52.5% | +0.0069 |
+
+A strictly better model barely wins more often. The win rate throws away
+magnitude, so it cannot see an improvement that consists of being less wrong.
+
+**Paired error difference** — mean per-match `prod_loss - candidate_loss`,
+for Brier and for absolute error, with a bootstrap CI over matches. This
+does see it, and it clusters correctly: matches are independent, pairs
+inside them are not. If the CI straddles zero, the data has not separated
+the two models yet.
+
+Read the win rate as a direction check and the paired difference as the
+verdict. Both are broken down by market, by how much the two models
+disagree, by prod's probability, and by the three split axes below.
+
+Pairing is on `EVENT_MESSAGE_COUNT`, not on each stream's nearest quote in
+time: both streams carry the same feed sequence, so the same message is the
+same event for both. Matching independently on time would let one stream
+land 0.1s from the snapshot and the other 2.5s away, scoring two different
+game states against one outcome.
 
 ## The split axes
 
@@ -122,7 +169,12 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-49 tests covering line parsing, market resolution, bucket edges, drive
-cleaning, clock reconstruction, quote matching and the scoring rules. No
-Snowflake needed — the database half is exercised separately against a mock
-shaped like the real schema, play feed with no clock included.
+84 tests covering line parsing, market resolution, bucket edges, drive
+cleaning, clock reconstruction, quote matching, message pairing, the sign
+test and the paired-delta machinery. No Snowflake needed — the database
+half is exercised separately against a mock shaped like the real schema,
+play feed with no clock included.
+
+One test pins the win-rate blind spot directly: a candidate that is much
+closer on half the pairs and barely further on the other half sits at a 50%
+win rate while the paired loss difference is clearly positive.

@@ -10,7 +10,7 @@ Run with:  py -m unittest discover eAMFCalibrator
 import datetime as dt
 import unittest
 
-from .. import buckets, clock, config, markets, metrics
+from .. import buckets, clock, config, directional, markets, metrics
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -336,6 +336,245 @@ class TestMatchClock(unittest.TestCase):
     def test_build_clocks_skips_null_rows(self):
         clocks = clock.build_clocks([("AF1", None, BASE), ("AF1", 3, None), ("AF1", 4, BASE)])
         self.assertEqual(len(clocks["AF1"]), 1)
+
+
+def pair(prod, candidate, outcome, match="AF1", market_id=50, drive=1,
+         period=1, score_diff=0, team="Home Team", message=100, gap=0):
+    return directional.PairedObservation(
+        match_code=match, drive_number=drive, period_number=period,
+        score_diff=score_diff, offensive_team=team, market_id=market_id,
+        line=None, message_count=message, message_gap=gap,
+        prod_probability=prod, candidate_probability=candidate, outcome=outcome)
+
+
+class TestPairedObservation(unittest.TestCase):
+    def test_errors_against_a_win(self):
+        p = pair(0.60, 0.80, True)
+        self.assertAlmostEqual(p.prod_error, 0.40)
+        self.assertAlmostEqual(p.candidate_error, 0.20)
+        self.assertEqual(p.winner, directional.CANDIDATE)
+
+    def test_errors_against_a_loss(self):
+        # The same probabilities, opposite outcome, flip the winner.
+        p = pair(0.60, 0.80, False)
+        self.assertAlmostEqual(p.prod_error, 0.60)
+        self.assertAlmostEqual(p.candidate_error, 0.80)
+        self.assertEqual(p.winner, directional.PROD)
+
+    def test_identical_probabilities_tie(self):
+        self.assertEqual(pair(0.5, 0.5, True).winner, directional.TIE)
+
+    def test_disagreement_is_absolute(self):
+        self.assertAlmostEqual(pair(0.8, 0.6, True).disagreement, 0.2)
+        self.assertAlmostEqual(pair(0.6, 0.8, True).disagreement, 0.2)
+
+
+class TestNearestMessage(unittest.TestCase):
+    def test_prefers_an_exact_hit(self):
+        self.assertEqual(directional.nearest_message([98, 100, 102], 100, 3), (100, 0))
+
+    def test_takes_the_closer_side(self):
+        self.assertEqual(directional.nearest_message([98, 103], 100, 3), (98, -2))
+
+    def test_respects_the_gap_limit(self):
+        self.assertIsNone(directional.nearest_message([90, 110], 100, 3))
+
+    def test_boundary_is_inclusive(self):
+        self.assertEqual(directional.nearest_message([97], 100, 3), (97, -3))
+
+    def test_empty(self):
+        self.assertIsNone(directional.nearest_message([], 100, 3))
+        self.assertIsNone(directional.nearest_message([100], None, 3))
+
+
+class TestPairingIndexes(unittest.TestCase):
+    def test_index_by_message_keeps_probability_and_description(self):
+        rows = [("AF1", 50, BASE, 85.26, 1.11, "Home team (PLAYER 1) to win", 300)]
+        index = directional.index_by_message(rows)
+        self.assertEqual(index[("AF1", 50)][300][0], 85.26)
+
+    def test_index_by_message_skips_null_message_or_probability(self):
+        rows = [("AF1", 50, BASE, 85.0, 1.1, "d", None),
+                ("AF1", 50, BASE, None, 1.1, "d", 300)]
+        self.assertEqual(directional.index_by_message(rows), {})
+
+    def test_common_messages_is_the_intersection(self):
+        prod = {("AF1", 50): {1: (10.0, "d"), 2: (20.0, "d"), 3: (30.0, "d")}}
+        cand = {("AF1", 50): {2: (21.0, "d"), 3: (31.0, "d"), 9: (90.0, "d")}}
+        self.assertEqual(directional.common_messages(prod, cand), {("AF1", 50): [2, 3]})
+
+    def test_market_missing_from_one_stream_is_excluded(self):
+        prod = {("AF1", 50): {1: (10.0, "d")}, ("AF1", 51): {1: (10.0, "d")}}
+        cand = {("AF1", 50): {1: (11.0, "d")}}
+        self.assertEqual(list(directional.common_messages(prod, cand)), [("AF1", 50)])
+
+
+class TestTally(unittest.TestCase):
+    def test_counts_and_deltas(self):
+        pairs = [
+            pair(0.60, 0.80, True),    # candidate closer
+            pair(0.60, 0.80, True),    # candidate closer
+            pair(0.60, 0.80, False),   # prod closer
+            pair(0.50, 0.50, True),    # tie
+        ]
+        t = directional.tally(pairs)
+        self.assertEqual(t["n"], 4)
+        self.assertEqual(t[directional.CANDIDATE], 2)
+        self.assertEqual(t[directional.PROD], 1)
+        self.assertEqual(t[directional.TIE], 1)
+        self.assertEqual(t["decisive"], 3)
+        self.assertAlmostEqual(t["candidate_win_rate"], 2 / 3)
+        # Positive delta means the candidate carries the smaller error.
+        self.assertAlmostEqual(t["mae_delta"], (0.40 + 0.40 + 0.60 + 0.50) / 4
+                                              - (0.20 + 0.20 + 0.80 + 0.50) / 4)
+
+    def test_empty(self):
+        t = directional.tally([])
+        self.assertEqual(t["n"], 0)
+        self.assertIsNone(t["candidate_win_rate"])
+        self.assertIsNone(t["p_value"])
+
+
+class TestMatchLevelVotes(unittest.TestCase):
+    def test_each_match_votes_once(self):
+        pairs = (
+            # AF1: candidate takes 3 of 4 -> one vote for candidate
+            [pair(0.6, 0.8, True, match="AF1")] * 3
+            + [pair(0.6, 0.8, False, match="AF1")]
+            # AF2: prod takes 2 of 2 -> one vote for prod
+            + [pair(0.6, 0.8, False, match="AF2")] * 2
+            # AF3: one each -> split
+            + [pair(0.6, 0.8, True, match="AF3"), pair(0.6, 0.8, False, match="AF3")]
+        )
+        votes = directional.match_level_votes(pairs)
+        self.assertEqual(votes["n_matches"], 3)
+        self.assertEqual(votes[directional.CANDIDATE], 1)
+        self.assertEqual(votes[directional.PROD], 1)
+        self.assertEqual(votes[directional.TIE], 1)
+
+    def test_one_lopsided_match_cannot_carry_the_vote(self):
+        # 50 pairs in one match, all won by the candidate, against two
+        # matches won by prod: row level says candidate, match level does not.
+        pairs = ([pair(0.6, 0.8, True, match="AF1")] * 50
+                 + [pair(0.6, 0.8, False, match="AF2")]
+                 + [pair(0.6, 0.8, False, match="AF3")])
+        row_level = directional.tally(pairs)
+        votes = directional.match_level_votes(pairs)
+        self.assertAlmostEqual(row_level["candidate_win_rate"], 50 / 52)
+        self.assertEqual(votes[directional.CANDIDATE], 1)
+        self.assertEqual(votes[directional.PROD], 2)
+        self.assertAlmostEqual(votes["candidate_win_rate"], 1 / 3)
+
+
+class TestPairedDelta(unittest.TestCase):
+    def test_per_match_delta_positive_when_candidate_is_closer(self):
+        pairs = [pair(0.60, 0.80, True, match="AF1"), pair(0.60, 0.80, True, match="AF1")]
+        deltas = directional.per_match_deltas(pairs, directional.SQUARED)
+        # prod error 0.40 -> 0.16, candidate 0.20 -> 0.04
+        self.assertAlmostEqual(deltas["AF1"], 0.16 - 0.04)
+
+    def test_per_match_delta_absolute_variant(self):
+        pairs = [pair(0.60, 0.80, True, match="AF1")]
+        deltas = directional.per_match_deltas(pairs, directional.ABSOLUTE)
+        self.assertAlmostEqual(deltas["AF1"], 0.40 - 0.20)
+
+    def test_identical_models_give_zero_delta(self):
+        pairs = [pair(0.7, 0.7, True, match=f"AF{i}") for i in range(10)]
+        summary = directional.paired_delta_summary(pairs, n_bootstrap=100)
+        self.assertAlmostEqual(summary["mean"], 0.0)
+        self.assertEqual(summary["matches_favouring_candidate"], 0)
+        self.assertEqual(summary["matches_favouring_prod"], 0)
+
+    def test_consistent_improvement_is_detected(self):
+        # 30 matches, candidate closer in every one.
+        pairs = [pair(0.60, 0.80, True, match=f"AF{i}") for i in range(30)]
+        summary = directional.paired_delta_summary(pairs, n_bootstrap=200)
+        self.assertEqual(summary["n_matches"], 30)
+        self.assertGreater(summary["mean"], 0)
+        self.assertEqual(summary["matches_favouring_candidate"], 30)
+
+    def test_bootstrap_ci_brackets_the_mean(self):
+        pairs = ([pair(0.60, 0.80, True, match=f"AF{i}") for i in range(20)]
+                 + [pair(0.60, 0.80, False, match=f"AF{i}") for i in range(20, 25)])
+        summary = directional.paired_delta_summary(pairs, n_bootstrap=500)
+        self.assertLessEqual(summary["ci_low"], summary["mean"])
+        self.assertGreaterEqual(summary["ci_high"], summary["mean"])
+
+    def test_single_match_has_no_standard_error(self):
+        summary = directional.paired_delta_summary([pair(0.6, 0.8, True, match="AF1")])
+        self.assertEqual(summary["n_matches"], 1)
+        self.assertIsNotNone(summary["mean"])
+        self.assertIsNone(summary["se"])
+
+    def test_empty(self):
+        summary = directional.paired_delta_summary([])
+        self.assertEqual(summary["n_matches"], 0)
+        self.assertIsNone(summary["mean"])
+
+    def test_win_rate_is_blind_to_a_better_model_that_paired_loss_sees(self):
+        """The reason both views are reported.
+
+        Candidate is closer on half the pairs by a wide margin and further on
+        the other half by a narrow one: a 50% win rate, but clearly lower loss.
+        """
+        pairs = []
+        for i in range(20):
+            pairs.append(pair(0.10, 0.60, True, match=f"AF{i}"))   # cand much closer
+            pairs.append(pair(0.50, 0.45, True, match=f"AF{i}"))   # prod barely closer
+        tallied = directional.tally(pairs)
+        self.assertAlmostEqual(tallied["candidate_win_rate"], 0.5)
+        summary = directional.paired_delta_summary(pairs, n_bootstrap=200)
+        self.assertGreater(summary["mean"], 0)
+        self.assertGreater(summary["ci_low"], 0)
+
+
+class TestSignTest(unittest.TestCase):
+    def test_unanimous_ten(self):
+        self.assertAlmostEqual(metrics.sign_test(10, 0), 2 / 1024)
+
+    def test_even_split_is_capped_at_one(self):
+        self.assertEqual(metrics.sign_test(5, 5), 1.0)
+
+    def test_symmetric_in_its_arguments(self):
+        self.assertEqual(metrics.sign_test(9, 3), metrics.sign_test(3, 9))
+
+    def test_single_pair_is_uninformative(self):
+        self.assertEqual(metrics.sign_test(1, 0), 1.0)
+
+    def test_no_decisive_pairs(self):
+        self.assertIsNone(metrics.sign_test(0, 0))
+
+    def test_large_lopsided_split_is_significant(self):
+        self.assertLess(metrics.sign_test(120, 80), 0.01)
+
+    def test_thousands_of_pairs_do_not_overflow(self):
+        # The exact form builds integers with hundreds of digits; scaling
+        # one of those to float overflows, so large n takes the normal path.
+        for wins, losses in [(2200, 2120), (30000, 29000), (5000, 5000)]:
+            value = metrics.sign_test(wins, losses)
+            self.assertIsNotNone(value)
+            self.assertGreaterEqual(value, 0.0)
+            self.assertLessEqual(value, 1.0)
+
+    def test_exact_and_approximate_agree_across_the_threshold(self):
+        # Same win rate either side of the switch should give a similar p.
+        n_exact = metrics.EXACT_SIGN_TEST_MAX_N
+        exact = metrics.sign_test(int(n_exact * 0.55), n_exact - int(n_exact * 0.55))
+        n_approx = n_exact + 2
+        approx = metrics.sign_test(int(n_approx * 0.55), n_approx - int(n_approx * 0.55))
+        self.assertAlmostEqual(exact, approx, places=3)
+
+    def test_approximation_still_capped_at_one(self):
+        self.assertEqual(metrics.sign_test(600, 600), 1.0)
+
+
+class TestDisagreementBands(unittest.TestCase):
+    def test_bands(self):
+        cases = {0.000: "< 1pp", 0.005: "< 1pp", 0.02: "1-3pp",
+                 0.04: "3-5pp", 0.07: "5-10pp", 0.5: "> 10pp"}
+        for gap, expected in cases.items():
+            p = pair(0.5, 0.5 + gap, True)
+            self.assertEqual(directional.disagreement_band(p), expected, f"gap={gap}")
 
 
 class TestConfigSanity(unittest.TestCase):

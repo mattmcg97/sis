@@ -243,3 +243,165 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
     print(f"  sits closer to realized in that cell.")
     print(f"  {label_b} closer in {better} cells, {label_a} closer in {worse}, "
           f"tied in {len(scored) - better - worse}.")
+
+
+# ---------------------------------------------------------------------------
+# Directional (paired) comparison
+# ---------------------------------------------------------------------------
+
+PAIR_FIELDS = [
+    "match_code", "drive_number", "period_number", "score_diff", "offensive_team",
+    "market_id", "line", "message_count", "message_gap",
+    "prod_probability", "candidate_probability", "outcome",
+    "prod_error", "candidate_error", "disagreement", "winner",
+]
+
+
+def _pct(value):
+    return "n/a" if value is None else f"{100 * value:.1f}%"
+
+
+def _p(value):
+    if value is None:
+        return "n/a"
+    return "<0.001" if value < 0.001 else f"{value:.3f}"
+
+
+def print_directional_header(header, stats):
+    print(f"\n{'=' * 78}")
+    print("Directional comparison: prod vs candidate, paired at each snapshot")
+    print(f"{'=' * 78}")
+    print(f"Window start        : {config.CUTOFF_START}")
+    for key in ("prod", "candidate"):
+        info = header.get(key, {})
+        print(f"{key:<20}: {info.get('rows', 0):,} rows, {info.get('matches', 0):,} matches"
+              f"   {info.get('first')} -> {info.get('last')}")
+    print(f"Matches in both     : {header.get('paired_matches', 0):,}"
+          f"  (prod-only {header.get('prod_only_matches', 0)},"
+          f" candidate-only {header.get('candidate_only_matches', 0)})")
+    print(f"Paired on           : EVENT_MESSAGE_COUNT, max gap "
+          f"{config.MAX_PAIR_MESSAGE_GAP} messages")
+
+    print("\nCoverage:")
+    print(f"  drive snapshots built     : {stats.get('snapshots', 0):,}")
+    print(f"  snapshots with >=1 pair   : {stats.get('snapshots_paired', 0):,}")
+    exact = stats.get("exact_message_pair", 0)
+    offset = stats.get("offset_message_pair", 0)
+    if exact + offset:
+        share = 100 * exact / (exact + offset)
+        print(f"  pairs on the exact message: {exact:,} ({share:.1f}%)")
+        print(f"  pairs on a nearby message : {offset:,}")
+    for label, key in [
+        ("market never quoted by both", "no_common_message_for_market"),
+        ("nearest common message too far", "outside_message_gap"),
+        ("line could not be parsed", "unparsed_line"),
+        ("push / unresolved", "pushes_or_unresolved"),
+        ("matches with no play rows", "matches_without_plays"),
+        ("matches with no final score", "matches_without_final"),
+    ]:
+        if stats.get(key):
+            print(f"  {label:<31}: {stats[key]:,}")
+
+
+def print_directional_headline(overall, votes):
+    print(f"\n{'-' * 78}\nHeadline\n{'-' * 78}")
+    print(f"  pairs                     : {overall['n']:,} "
+          f"across {overall['n_matches']:,} matches")
+    print(f"  candidate closer          : {overall['candidate']:,}")
+    print(f"  prod closer               : {overall['prod']:,}")
+    print(f"  identical probability     : {overall['tie']:,}")
+    print(f"  candidate win rate        : {_pct(overall['candidate_win_rate'])}"
+          f"  (of {overall['decisive']:,} decisive pairs)")
+    print(f"  sign test p               : {_p(overall['p_value'])}   [row level]")
+    print()
+    print(f"  mean |error|  prod        : {_fmt(overall['prod_mae'])}")
+    print(f"  mean |error|  candidate   : {_fmt(overall['candidate_mae'])}")
+    print(f"  improvement (prod - cand) : {_fmt(overall['mae_delta'], '+.4f')}")
+    print(f"  Brier         prod        : {_fmt(overall['prod_brier'])}")
+    print(f"  Brier         candidate   : {_fmt(overall['candidate_brier'])}")
+    print(f"  improvement (prod - cand) : {_fmt(overall['brier_delta'], '+.4f')}")
+
+    print(f"\n{'-' * 78}\nMatch-level vote (clustering-robust)\n{'-' * 78}")
+    print("  Each match votes once, by which model won more of its pairs.")
+    print("  Pairs inside a match are not independent; matches are.")
+    print(f"  matches                   : {votes['n_matches']:,}")
+    print(f"  candidate won the match   : {votes['candidate']:,}")
+    print(f"  prod won the match        : {votes['prod']:,}")
+    print(f"  split evenly              : {votes['tie']:,}")
+    print(f"  candidate win rate        : {_pct(votes['candidate_win_rate'])}")
+    print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
+    print("\n  If the two levels disagree, the match level is the one to trust.")
+
+
+def print_directional_breakdown(title, grouped, order=None, label_width=14):
+    print(f"\n{'-' * 92}\n{title}\n{'-' * 92}")
+    print(f"  {'GROUP':<{label_width}}{'PAIRS':>8}{'MATCH':>7}{'CAND':>7}{'PROD':>7}"
+          f"{'TIE':>6}{'WIN%':>8}{'MAE_D':>9}{'BRIER_D':>9}{'P':>9}")
+    keys = order if order is not None else sorted(grouped)
+    for key in keys:
+        row = grouped.get(key)
+        if not row or not row["n"]:
+            continue
+        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        print(f"  {label:<{label_width}}{row['n']:>8,}{row['n_matches']:>7,}"
+              f"{row['candidate']:>7,}{row['prod']:>7,}{row['tie']:>6,}"
+              f"{_pct(row['candidate_win_rate']):>8}"
+              f"{_fmt(row['mae_delta'], '+.4f'):>9}{_fmt(row['brier_delta'], '+.4f'):>9}"
+              f"{_p(row['p_value']):>9}")
+    print("\n  WIN% is the candidate's share of decisive pairs. MAE_D and BRIER_D are")
+    print("  prod minus candidate, so positive means the candidate is better.")
+
+
+def write_pairs_csv(path, pairs):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=PAIR_FIELDS)
+        writer.writeheader()
+        for p in pairs:
+            writer.writerow({
+                "match_code": p.match_code,
+                "drive_number": p.drive_number,
+                "period_number": p.period_number,
+                "score_diff": p.score_diff,
+                "offensive_team": p.offensive_team,
+                "market_id": p.market_id,
+                "line": p.line,
+                "message_count": p.message_count,
+                "message_gap": p.message_gap,
+                "prod_probability": p.prod_probability,
+                "candidate_probability": p.candidate_probability,
+                "outcome": int(p.outcome),
+                "prod_error": p.prod_error,
+                "candidate_error": p.candidate_error,
+                "disagreement": p.disagreement,
+                "winner": p.winner,
+            })
+    print(f"\n  paired observations -> {path}")
+
+
+def print_paired_delta(brier, mae):
+    """The powerful half of the comparison: paired loss difference."""
+    print(f"\n{'-' * 78}\nPaired error difference, averaged per match\n{'-' * 78}")
+    print("  The win rate above discards magnitude. If both models are unbiased")
+    print("  around the same truth and differ only in noise, whichever lands")
+    print("  closer to the realized 0/1 is a coin flip regardless of which is")
+    print("  actually better -- so a real improvement can sit at a ~50% win rate.")
+    print("  This difference does see it, and clusters by match.\n")
+    print(f"  {'LOSS':<10}{'MATCHES':>9}{'MEAN_DELTA':>12}{'SE':>10}"
+          f"{'95% CI':>22}{'T':>8}{'P':>9}")
+    for name, summary in (("Brier", brier), ("MAE", mae)):
+        if summary["mean"] is None:
+            continue
+        ci = ("n/a" if summary["ci_low"] is None
+              else f"[{summary['ci_low']:+.4f}, {summary['ci_high']:+.4f}]")
+        print(f"  {name:<10}{summary['n_matches']:>9,}"
+              f"{summary['mean']:>+12.4f}{_fmt(summary['se']):>10}"
+              f"{ci:>22}{_fmt(summary['t'], '+.2f'):>8}{_p(summary['p_value']):>9}")
+
+    print("\n  MEAN_DELTA is prod minus candidate, so positive favours the candidate.")
+    print(f"  Matches favouring candidate: {brier['matches_favouring_candidate']:,}"
+          f"   favouring prod: {brier['matches_favouring_prod']:,}"
+          f"   (sign test p {_p(brier.get('sign_p_value'))})")
+    print("  CI is a bootstrap over matches, so it carries the same clustering")
+    print("  assumption as the point estimate. If it straddles zero, one day of")
+    print("  data has not separated the two models.")

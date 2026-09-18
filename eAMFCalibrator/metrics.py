@@ -75,6 +75,41 @@ def expected_calibration_error(pairs, n_bins):
     return ece
 
 
+# Above this many decisive pairs the exact binomial is both slow (thousands
+# of big-integer binomials) and unnecessary, so a normal approximation with
+# a continuity correction takes over. The two agree to several decimals well
+# before the switch.
+EXACT_SIGN_TEST_MAX_N = 1000
+
+
+def sign_test(wins, losses):
+    """Two-sided binomial test against a 50/50 coin.
+
+    Ties are excluded by the caller, which is the standard sign test: if
+    both models quote the same probability there is no directional
+    information in that pair.
+
+    Returned p-value is the probability of seeing a split at least this
+    lopsided if the two models were equally good. Exact for small samples,
+    normal-approximated above EXACT_SIGN_TEST_MAX_N.
+    """
+    n = wins + losses
+    if n == 0:
+        return None
+
+    if n <= EXACT_SIGN_TEST_MAX_N:
+        k = min(wins, losses)
+        tail = sum(math.comb(n, i) for i in range(k + 1))
+        # Divide before scaling: 2.0 * tail would force a float conversion
+        # of a number with hundreds of digits and overflow.
+        return min(1.0, 2.0 * (tail / (2 ** n)))
+
+    z = (abs(wins - n / 2) - 0.5) / (0.5 * math.sqrt(n))
+    if z <= 0:
+        return 1.0
+    return min(1.0, math.erfc(z / math.sqrt(2)))
+
+
 def summarize(pairs, n_bins):
     pairs = list(pairs)
     if not pairs:

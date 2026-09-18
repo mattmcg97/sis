@@ -1,6 +1,7 @@
 """CLI for the eAMF calibration suite.
 
     py -m eAMFCalibrator preflight
+    py -m eAMFCalibrator directional
     py -m eAMFCalibrator run prod
     py -m eAMFCalibrator run candidate
     py -m eAMFCalibrator run both
@@ -16,7 +17,7 @@ import argparse
 import os
 import sys
 
-from . import config, pipeline, report, snowflake_io
+from . import config, directional, pipeline, report, snowflake_io
 
 
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "out")
@@ -116,6 +117,85 @@ def cmd_compare(args):
     return 0
 
 
+def cmd_directional(args):
+    """Paired head-to-head, which is what a single day of data can answer."""
+    out_dir = args.out or DEFAULT_OUT
+    print("\nPairing prod against candidate at each drive-start snapshot")
+    pairs, stats, header = directional.run()
+
+    report.print_directional_header(header, stats)
+    if not pairs:
+        print("\n  No paired observations. Nothing to compare.")
+        return 1
+
+    overall = directional.tally(pairs)
+    votes = directional.match_level_votes(pairs)
+    report.print_directional_headline(overall, votes)
+
+    report.print_paired_delta(
+        directional.paired_delta_summary(pairs, directional.SQUARED),
+        directional.paired_delta_summary(pairs, directional.ABSOLUTE),
+    )
+
+    report.print_directional_breakdown(
+        "By market",
+        directional.group_by(pairs, lambda p: markets_label(p)),
+        label_width=18,
+    )
+    report.print_directional_breakdown(
+        "By how much the two models disagree",
+        directional.group_by(pairs, directional.disagreement_band),
+        order=[label for _, _, label in config.DISAGREEMENT_BANDS],
+    )
+    report.print_directional_breakdown(
+        "By prod's probability",
+        directional.group_by(pairs, directional.probability_band),
+    )
+    report.print_directional_breakdown(
+        "By score difference",
+        directional.group_by(pairs, lambda p: _score_label(p)),
+        order=[label for _, _, label in config.SCORE_DIFF_BUCKETS],
+    )
+    report.print_directional_breakdown(
+        "By quarter",
+        directional.group_by(pairs, lambda p: _time_label(p)),
+        order=["Q1", "Q2", "Q3", "Q4", "OT", "unknown"],
+    )
+    report.print_directional_breakdown(
+        "By possession",
+        directional.group_by(pairs, lambda p: _possession_label(p)),
+        order=["Home", "Away", "unknown"],
+    )
+    report.print_directional_breakdown(
+        "By full cell (score x quarter x possession)",
+        directional.group_by(pairs, directional.cell_key),
+        label_width=26,
+    )
+
+    report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
+    return 0
+
+
+def markets_label(pair):
+    from . import markets as m
+    return f"{m.market_group(pair.market_id)} {m.selection_label(pair.market_id)}"
+
+
+def _score_label(pair):
+    from . import buckets
+    return buckets.score_diff_bucket(pair.score_diff)
+
+
+def _time_label(pair):
+    from . import buckets
+    return buckets.time_bucket(pair.period_number, pair.drive_number)
+
+
+def _possession_label(pair):
+    from . import buckets
+    return buckets.possession_bucket(pair.offensive_team)
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="eAMFCalibrator", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -126,6 +206,11 @@ def build_parser():
     run_parser = sub.add_parser("run", help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
     run_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    dir_parser = sub.add_parser(
+        "directional",
+        help="paired head-to-head: which model is closer to the result at each snapshot")
+    dir_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     cmp_parser = sub.add_parser("compare", help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
@@ -140,6 +225,8 @@ def main(argv=None):
         return cmd_preflight(args)
     if args.command == "run":
         return cmd_run(args)
+    if args.command == "directional":
+        return cmd_directional(args)
     if args.command == "compare":
         return cmd_compare(args)
     return 1
