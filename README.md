@@ -34,7 +34,10 @@ connected. `.env` is gitignored so credentials never get committed.
   exploration, book P&L analysis, and GAMEPLAI calibration checks against
   realized outcomes. All scripts here share `analysis/snowflake_connect.py`
   for the connection, so run them as `python analysis/<script>.py` from the
-  repo root.
+  repo root. `inspect_model_and_price_tables.py` is the starting point for a
+  GAMEPLAI candidate-vs-prod review: it profiles the prod stream, the
+  candidate stream and the price changes table, diffs the two model schemas,
+  and reports where all three overlap in matches and in time.
 - `nb2/` — Pre-match NB2 rating model (Adrian's): fitting (`NBRatingTrial.py`),
   schedule pricing (`NB2_schedule_predict.py`), and out-of-sample calibration
   backtests in both Python and R (`backtest_nb2_calibration.py`,
