@@ -67,6 +67,22 @@ def needs_line(market_id):
     return entry[2] if entry else False
 
 
+def realized_value(market_id, final_p1, final_p2):
+    """The quantity this market's line is compared against.
+
+    Spread: the selection's own final margin. Total: the combined score.
+    Moneyline carries no line, so None.
+    """
+    if final_p1 is None or final_p2 is None or market_id not in MARKETS:
+        return None
+    group = market_group(market_id)
+    if group == SPREAD:
+        return (final_p1 - final_p2) if market_id == 52 else (final_p2 - final_p1)
+    if group == TOTAL:
+        return final_p1 + final_p2
+    return None
+
+
 def resolve(market_id, line, final_p1, final_p2):
     """Did this selection result true, given the final score?
 

@@ -49,8 +49,40 @@ to `out/`, so runs are comparable over time as data accumulates.
 
 ## Directional comparison
 
+```
+py -m eAMFCalibrator directional            # console + one-screen HTML
+py -m eAMFCalibrator directional --html report.html
+```
+
 Pairs prod against candidate at each drive-start snapshot and reports both
 halves of the comparison, because they do not always agree.
+
+### Each stream is graded against its own line
+
+The streams do not always quote the same line, so the run splits on that
+before comparing anything:
+
+- **Same line** — both quoted the same number, so their probabilities answer
+  the same question. Compared directly on which sat closer to its 0/1. This
+  is the clean comparison.
+- **Different line** — the probabilities are answering different questions,
+  so comparing them head to head would score two questions against one
+  outcome. Compared instead on **which line landed closer** to the actual
+  margin or total, in points. A secondary view still scores each probability
+  against its own line, which is fair but measures line choice and
+  probability together.
+
+Grading both streams against *one* stream's line is a bug, not a
+simplification: a total of 45 is over 44.5 but under 46.5, so the other
+stream gets marked on a question it never asked. `TestOwnLineGrading` pins
+this, including the direction of the error it used to cause.
+
+A stream quoting whole-number lines against a half-point book will rarely
+share a line, and whole numbers can push (the result lands exactly on the
+line, so there is no 0/1 for that side). Pushes are counted per stream, and
+line closeness still works for them — a line on the number is a perfect
+line. The run header reports same-line rate and the half/whole split per
+market, so this is visible before any verdict.
 
 **Win rate** — how often each model was closer to the realized 0/1. This is
 the intuitive reading, and it is a weak test. If both models are unbiased
@@ -169,12 +201,14 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-84 tests covering line parsing, market resolution, bucket edges, drive
+96 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,
 play feed with no clock included.
 
-One test pins the win-rate blind spot directly: a candidate that is much
-closer on half the pairs and barely further on the other half sits at a 50%
-win rate while the paired loss difference is clearly positive.
+Two tests pin known traps directly: a candidate much closer on half the
+pairs and barely further on the rest sits at a 50% win rate while the paired
+loss difference is clearly positive; and grading both streams against one
+stream's line inverts the winner on a total that falls between the two
+lines.

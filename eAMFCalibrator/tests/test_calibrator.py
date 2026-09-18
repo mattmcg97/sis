@@ -340,11 +340,132 @@ class TestMatchClock(unittest.TestCase):
 
 def pair(prod, candidate, outcome, match="AF1", market_id=50, drive=1,
          period=1, score_diff=0, team="Home Team", message=100, gap=0):
+    """A moneyline pair: no line, so both streams answer the same question."""
     return directional.PairedObservation(
         match_code=match, drive_number=drive, period_number=period,
         score_diff=score_diff, offensive_team=team, market_id=market_id,
-        line=None, message_count=message, message_gap=gap,
-        prod_probability=prod, candidate_probability=candidate, outcome=outcome)
+        message_count=message, message_gap=gap,
+        prod_probability=prod, candidate_probability=candidate,
+        prod_line=None, candidate_line=None,
+        prod_outcome=outcome, candidate_outcome=outcome, realized=None)
+
+
+def line_pair(prod, candidate, prod_line, candidate_line, final_p1, final_p2,
+              match="AF1", market_id=54):
+    """A pair on a lined market, each side graded against ITS OWN line."""
+    return directional.PairedObservation(
+        match_code=match, drive_number=1, period_number=1, score_diff=0,
+        offensive_team="Home Team", market_id=market_id,
+        message_count=100, message_gap=0,
+        prod_probability=prod, candidate_probability=candidate,
+        prod_line=prod_line, candidate_line=candidate_line,
+        prod_outcome=markets.resolve(market_id, prod_line, final_p1, final_p2),
+        candidate_outcome=markets.resolve(market_id, candidate_line, final_p1, final_p2),
+        realized=markets.realized_value(market_id, final_p1, final_p2))
+
+
+class TestOwnLineGrading(unittest.TestCase):
+    """The bug this guards: grading both streams against prod's line.
+
+    Total finishes at 45. Prod quoted over 44.5 (true), candidate quoted
+    over 46.5 (false). Each must be scored against its own question.
+    """
+
+    def setUp(self):
+        self.p = line_pair(prod=0.55, candidate=0.60,
+                           prod_line=44.5, candidate_line=46.5,
+                           final_p1=24, final_p2=21, market_id=54)
+
+    def test_outcomes_differ_when_lines_differ(self):
+        self.assertTrue(self.p.prod_outcome)
+        self.assertFalse(self.p.candidate_outcome)
+
+    def test_each_error_uses_its_own_outcome(self):
+        self.assertAlmostEqual(self.p.prod_error, 1 - 0.55)
+        self.assertAlmostEqual(self.p.candidate_error, 0.60)
+
+    def test_grading_against_prods_line_would_have_flattered_prod(self):
+        # Under the old behaviour both used prod's outcome (True), making the
+        # candidate's error 0.40 and handing it the win it did not earn.
+        wrong_candidate_error = abs(0.60 - 1.0)
+        self.assertLess(wrong_candidate_error, self.p.prod_error)
+        self.assertGreater(self.p.candidate_error, self.p.prod_error)
+        self.assertEqual(self.p.winner(directional.PROBABILITY), directional.PROD)
+
+    def test_line_closeness_is_available_when_lines_differ(self):
+        self.assertAlmostEqual(self.p.realized, 45)
+        self.assertAlmostEqual(self.p.prod_line_error, 0.5)
+        self.assertAlmostEqual(self.p.candidate_line_error, 1.5)
+        self.assertEqual(self.p.winner(directional.LINE), directional.PROD)
+
+    def test_flagged_as_different_line(self):
+        self.assertFalse(self.p.same_line)
+        self.assertAlmostEqual(self.p.line_delta, 2.0)
+
+
+class TestSameLineDetection(unittest.TestCase):
+    def test_moneyline_has_no_line_and_counts_as_same(self):
+        self.assertTrue(pair(0.6, 0.7, True).same_line)
+        self.assertIsNone(pair(0.6, 0.7, True).line_delta)
+
+    def test_identical_lines(self):
+        p = line_pair(0.5, 0.5, 44.5, 44.5, 24, 21)
+        self.assertTrue(p.same_line)
+        self.assertAlmostEqual(p.line_delta, 0.0)
+        self.assertEqual(p.prod_outcome, p.candidate_outcome)
+
+    def test_whole_number_candidate_line_can_push(self):
+        # Total lands exactly on a whole-number line: no 0/1 for that side.
+        p = line_pair(0.5, 0.5, 44.5, 45.0, 24, 21, market_id=54)
+        self.assertTrue(p.prod_outcome)
+        self.assertIsNone(p.candidate_outcome)
+        self.assertIsNone(p.candidate_error)
+        self.assertFalse(p.comparable(directional.PROBABILITY))
+        # Line closeness still works, and a line on the number is perfect.
+        self.assertTrue(p.comparable(directional.LINE))
+        self.assertAlmostEqual(p.candidate_line_error, 0.0)
+        self.assertEqual(p.winner(directional.LINE), directional.CANDIDATE)
+
+    def test_spread_line_closeness_uses_the_selections_own_margin(self):
+        # Home wins 24-21, margin +3. Prod -2.5, candidate -6.5.
+        p = line_pair(0.5, 0.5, -2.5, -6.5, 24, 21, market_id=52)
+        self.assertAlmostEqual(p.realized, 3)
+        self.assertAlmostEqual(p.prod_line_error, 5.5)
+        self.assertAlmostEqual(p.candidate_line_error, 9.5)
+        self.assertEqual(p.winner(directional.LINE), directional.PROD)
+
+
+class TestLineAgreement(unittest.TestCase):
+    def test_counts_same_and_different(self):
+        pairs = [
+            line_pair(0.5, 0.5, 44.5, 44.5, 24, 21),
+            line_pair(0.5, 0.5, 44.5, 46.5, 24, 21),
+            pair(0.6, 0.7, True),
+        ]
+        report = directional.line_agreement(pairs)
+        self.assertEqual(report["n"], 3)
+        self.assertEqual(report["same"], 2)   # identical line + moneyline
+        self.assertEqual(report["different"], 1)
+        self.assertAlmostEqual(report["delta_max"], 2.0)
+
+    def test_whole_versus_half_lines_are_counted(self):
+        pairs = [line_pair(0.5, 0.5, 44.5, 45.0, 24, 22)]
+        report = directional.line_agreement(pairs)
+        total = report["by_market"]["total"]
+        self.assertEqual(total["prod_half"], 1)
+        self.assertEqual(total["prod_whole"], 0)
+        self.assertEqual(total["candidate_whole"], 1)
+        self.assertEqual(total["candidate_half"], 0)
+
+
+class TestSplitByLine(unittest.TestCase):
+    def test_split(self):
+        same, different = directional.split_by_line([
+            line_pair(0.5, 0.5, 44.5, 44.5, 24, 21),
+            line_pair(0.5, 0.5, 44.5, 46.5, 24, 21),
+        ])
+        self.assertEqual(len(same), 1)
+        self.assertEqual(len(different), 1)
 
 
 class TestPairedObservation(unittest.TestCase):
@@ -352,17 +473,17 @@ class TestPairedObservation(unittest.TestCase):
         p = pair(0.60, 0.80, True)
         self.assertAlmostEqual(p.prod_error, 0.40)
         self.assertAlmostEqual(p.candidate_error, 0.20)
-        self.assertEqual(p.winner, directional.CANDIDATE)
+        self.assertEqual(p.winner(), directional.CANDIDATE)
 
     def test_errors_against_a_loss(self):
         # The same probabilities, opposite outcome, flip the winner.
         p = pair(0.60, 0.80, False)
         self.assertAlmostEqual(p.prod_error, 0.60)
         self.assertAlmostEqual(p.candidate_error, 0.80)
-        self.assertEqual(p.winner, directional.PROD)
+        self.assertEqual(p.winner(), directional.PROD)
 
     def test_identical_probabilities_tie(self):
-        self.assertEqual(pair(0.5, 0.5, True).winner, directional.TIE)
+        self.assertEqual(pair(0.5, 0.5, True).winner(), directional.TIE)
 
     def test_disagreement_is_absolute(self):
         self.assertAlmostEqual(pair(0.8, 0.6, True).disagreement, 0.2)

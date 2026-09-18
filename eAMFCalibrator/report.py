@@ -251,9 +251,12 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
 
 PAIR_FIELDS = [
     "match_code", "drive_number", "period_number", "score_diff", "offensive_team",
-    "market_id", "line", "message_count", "message_gap",
-    "prod_probability", "candidate_probability", "outcome",
-    "prod_error", "candidate_error", "disagreement", "winner",
+    "market_id", "message_count", "message_gap",
+    "prod_line", "candidate_line", "line_delta", "same_line",
+    "prod_probability", "candidate_probability",
+    "prod_outcome", "candidate_outcome", "realized",
+    "prod_error", "candidate_error", "prod_line_error", "candidate_line_error",
+    "disagreement", "probability_winner", "line_winner",
 ]
 
 
@@ -365,16 +368,25 @@ def write_pairs_csv(path, pairs):
                 "score_diff": p.score_diff,
                 "offensive_team": p.offensive_team,
                 "market_id": p.market_id,
-                "line": p.line,
                 "message_count": p.message_count,
                 "message_gap": p.message_gap,
+                "prod_line": p.prod_line,
+                "candidate_line": p.candidate_line,
+                "line_delta": p.line_delta,
+                "same_line": int(p.same_line),
                 "prod_probability": p.prod_probability,
                 "candidate_probability": p.candidate_probability,
-                "outcome": int(p.outcome),
+                "prod_outcome": "" if p.prod_outcome is None else int(p.prod_outcome),
+                "candidate_outcome": ("" if p.candidate_outcome is None
+                                      else int(p.candidate_outcome)),
+                "realized": p.realized,
                 "prod_error": p.prod_error,
                 "candidate_error": p.candidate_error,
+                "prod_line_error": p.prod_line_error,
+                "candidate_line_error": p.candidate_line_error,
                 "disagreement": p.disagreement,
-                "winner": p.winner,
+                "probability_winner": p.winner("probability"),
+                "line_winner": p.winner("line"),
             })
     print(f"\n  paired observations -> {path}")
 
@@ -405,3 +417,81 @@ def print_paired_delta(brier, mae):
     print("  CI is a bootstrap over matches, so it carries the same clustering")
     print("  assumption as the point estimate. If it straddles zero, one day of")
     print("  data has not separated the two models.")
+
+
+def print_line_agreement(lines):
+    """Whether the two streams are even quoting the same question."""
+    print(f"\n{'-' * 78}\nLine agreement\n{'-' * 78}")
+    print("  If the candidate quotes a different line, its probability answers a")
+    print("  different question, and only the line-closeness view compares fairly.")
+    print(f"\n  pairs on the same line : {lines['same']:,} / {lines['n']:,} "
+          f"({_pct(lines['same_rate'])})")
+    if lines["delta_median"] is not None:
+        print(f"  line gap where different: median {lines['delta_median']:.2f}, "
+              f"mean {lines['delta_mean']:.2f}, max {lines['delta_max']:.2f}")
+    print(f"\n  {'MARKET':<12}{'PAIRS':>8}{'SAME':>8}"
+          f"{'PROD half/whole':>20}{'CAND half/whole':>20}")
+    for group in ("moneyline", "spread", "total"):
+        bucket = lines["by_market"].get(group)
+        if not bucket or not bucket["n"]:
+            continue
+        same_rate = bucket["same"] / bucket["n"]
+        print(f"  {group:<12}{bucket['n']:>8,}{100 * same_rate:>7.1f}%"
+              f"{bucket['prod_half']:>12,} /{bucket['prod_whole']:>6,}"
+              f"{bucket['candidate_half']:>12,} /{bucket['candidate_whole']:>6,}")
+    print("\n  'whole' counts lines on an integer, which can push. A stream that")
+    print("  only quotes whole numbers will rarely share a line with a .5 book.")
+
+
+def print_block(title, subtitle, block):
+    overall = block["overall"]
+    brier = block["brier"]
+    mae = block["mae"]
+    votes = block["votes"]
+
+    print(f"\n{'=' * 78}\n{title}\n{'=' * 78}")
+    print(f"  {subtitle}")
+    if not overall["n"]:
+        print("\n  No comparable pairs here.")
+        return
+
+    print(f"\n  pairs {overall['n']:,} of {overall['n_offered']:,} offered"
+          f"   across {overall['n_matches']:,} matches")
+    print(f"  candidate closer {overall['candidate']:,}"
+          f"   prod closer {overall['prod']:,}"
+          f"   level {overall['tie']:,}"
+          f"   win rate {_pct(overall['candidate_win_rate'])}")
+    print(f"  match vote: candidate {votes['candidate']}, prod {votes['prod']}, "
+          f"level {votes['tie']}  (p {_p(votes['p_value'])})")
+    line_mode = overall.get("mode") == "line"
+    if line_mode:
+        # Errors here are in points, so squaring them gives squared points --
+        # not a unit anyone can read. Mean absolute points leads instead.
+        print(f"  paired delta per match: points {_fmt(mae['mean'], '+.3f')} "
+              f"{_ci_text(mae, '+.3f')} p {_p(mae['p_value'])}")
+        print("                          (positive = candidate's line landed closer,"
+              " in points)")
+        metric_label, metric_key, metric_spec = "POINTS_D", "mae_delta", "+.3f"
+    else:
+        print(f"  paired delta per match: Brier {_fmt(brier['mean'], '+.4f')} "
+              f"{_ci_text(brier)} p {_p(brier['p_value'])}")
+        print(f"                          MAE   {_fmt(mae['mean'], '+.4f')} "
+              f"{_ci_text(mae)} p {_p(mae['p_value'])}")
+        metric_label, metric_key, metric_spec = "BRIER_D", "brier_delta", "+.4f"
+
+    print(f"\n  {'MARKET':<12}{'PAIRS':>8}{'MATCH':>7}{'CAND':>7}{'PROD':>7}"
+          f"{'TIE':>6}{'WIN%':>8}{metric_label:>10}{'P':>9}")
+    for group in ("moneyline", "spread", "total"):
+        row = block["by_market"].get(group)
+        if not row or not row["n"]:
+            continue
+        print(f"  {group:<12}{row['n']:>8,}{row['n_matches']:>7,}"
+              f"{row['candidate']:>7,}{row['prod']:>7,}{row['tie']:>6,}"
+              f"{_pct(row['candidate_win_rate']):>8}"
+              f"{_fmt(row[metric_key], metric_spec):>10}{_p(row['p_value']):>9}")
+
+
+def _ci_text(summary, spec="+.4f"):
+    if summary.get("ci_low") is None:
+        return ""
+    return f"[{format(summary['ci_low'], spec)}, {format(summary['ci_high'], spec)}]"

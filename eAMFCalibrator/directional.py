@@ -42,6 +42,13 @@ CANDIDATE = "candidate"
 PROD = "prod"
 TIE = "tie"
 
+# Two ways to decide a pair, because the streams do not always quote the
+# same line.
+PROBABILITY = "probability"   # whose stated probability was closer to its own 0/1
+LINE = "line"                 # whose line was closer to what actually happened
+
+LINE_EPSILON = 1e-6
+
 
 @dataclass(frozen=True)
 class PairedObservation:
@@ -51,36 +58,78 @@ class PairedObservation:
     score_diff: int
     offensive_team: Optional[str]
     market_id: int
-    line: Optional[float]
     message_count: int
     message_gap: int
     prod_probability: float
     candidate_probability: float
-    outcome: bool
+    prod_line: Optional[float]
+    candidate_line: Optional[float]
+    # Each stream is graded against ITS OWN line, so the two outcomes can
+    # differ: a total of 45 is over 44.5 but under 46.5.
+    prod_outcome: Optional[bool]
+    candidate_outcome: Optional[bool]
+    realized: Optional[float]
 
     @property
-    def target(self):
-        return 1.0 if self.outcome else 0.0
+    def same_line(self):
+        if self.prod_line is None and self.candidate_line is None:
+            return True
+        if self.prod_line is None or self.candidate_line is None:
+            return False
+        return abs(self.prod_line - self.candidate_line) < LINE_EPSILON
+
+    @property
+    def line_delta(self):
+        if self.prod_line is None or self.candidate_line is None:
+            return None
+        return abs(self.prod_line - self.candidate_line)
 
     @property
     def prod_error(self):
-        return abs(self.prod_probability - self.target)
+        if self.prod_outcome is None:
+            return None
+        return abs(self.prod_probability - (1.0 if self.prod_outcome else 0.0))
 
     @property
     def candidate_error(self):
-        return abs(self.candidate_probability - self.target)
+        if self.candidate_outcome is None:
+            return None
+        return abs(self.candidate_probability - (1.0 if self.candidate_outcome else 0.0))
+
+    @property
+    def prod_line_error(self):
+        if self.prod_line is None or self.realized is None:
+            return None
+        return abs(self.prod_line - self.realized)
+
+    @property
+    def candidate_line_error(self):
+        if self.candidate_line is None or self.realized is None:
+            return None
+        return abs(self.candidate_line - self.realized)
+
+    def errors(self, mode):
+        if mode == LINE:
+            return self.prod_line_error, self.candidate_line_error
+        return self.prod_error, self.candidate_error
+
+    def comparable(self, mode):
+        prod_error, candidate_error = self.errors(mode)
+        return prod_error is not None and candidate_error is not None
+
+    def winner(self, mode=PROBABILITY):
+        prod_error, candidate_error = self.errors(mode)
+        if prod_error is None or candidate_error is None:
+            return None
+        if candidate_error < prod_error:
+            return CANDIDATE
+        if prod_error < candidate_error:
+            return PROD
+        return TIE
 
     @property
     def disagreement(self):
         return abs(self.prod_probability - self.candidate_probability)
-
-    @property
-    def winner(self):
-        if self.candidate_error < self.prod_error:
-            return CANDIDATE
-        if self.prod_error < self.candidate_error:
-            return PROD
-        return TIE
 
 
 def index_by_message(quote_rows):
@@ -185,33 +234,51 @@ def build_pairs(cur, match_codes, time_column, stats):
                 stats["exact_message_pair" if gap == 0 else "offset_message_pair"] += 1
 
                 prod_probability, prod_description = prod_index[(match_code, market_id)][message]
-                candidate_probability, _ = candidate_index[(match_code, market_id)][message]
+                candidate_probability, candidate_description = \
+                    candidate_index[(match_code, market_id)][message]
 
-                line = markets.parse_line(prod_description) if markets.needs_line(market_id) else None
-                if markets.needs_line(market_id) and line is None:
+                needs_line = markets.needs_line(market_id)
+                prod_line = markets.parse_line(prod_description) if needs_line else None
+                candidate_line = markets.parse_line(candidate_description) if needs_line else None
+                if needs_line and (prod_line is None or candidate_line is None):
                     stats["unparsed_line"] += 1
                     continue
 
-                outcome = markets.resolve(market_id, line, final_p1, final_p2)
-                if outcome is None:
-                    stats["pushes_or_unresolved"] += 1
+                # Each stream graded against its own line. Grading the
+                # candidate against prod's line would score it on a question
+                # it never asked.
+                prod_outcome = markets.resolve(market_id, prod_line, final_p1, final_p2)
+                candidate_outcome = markets.resolve(market_id, candidate_line, final_p1, final_p2)
+                realized = markets.realized_value(market_id, final_p1, final_p2)
+
+                if prod_outcome is None:
+                    stats["prod_push"] += 1
+                if candidate_outcome is None:
+                    stats["candidate_push"] += 1
+                if prod_outcome is None and candidate_outcome is None and realized is None:
+                    stats["unresolvable"] += 1
                     continue
 
-                paired_any = True
-                pairs.append(PairedObservation(
+                observation = PairedObservation(
                     match_code=match_code,
                     drive_number=snap.drive_number,
                     period_number=snap.period_number,
                     score_diff=snap.score_diff,
                     offensive_team=snap.offensive_team,
                     market_id=market_id,
-                    line=line,
                     message_count=message,
                     message_gap=gap,
                     prod_probability=prod_probability / 100.0,
                     candidate_probability=candidate_probability / 100.0,
-                    outcome=outcome,
-                ))
+                    prod_line=prod_line,
+                    candidate_line=candidate_line,
+                    prod_outcome=prod_outcome,
+                    candidate_outcome=candidate_outcome,
+                    realized=realized,
+                )
+                stats["same_line" if observation.same_line else "different_line"] += 1
+                paired_any = True
+                pairs.append(observation)
             if paired_any:
                 stats["snapshots_paired"] += 1
 
@@ -259,19 +326,26 @@ def run(verbose=True):
 
     return pairs, stats, header
 
+def tally(pairs, mode=PROBABILITY):
+    """Win/loss/tie counts and error means, under one decision mode.
 
-def tally(pairs):
-    """Win/loss/tie counts and error means for a set of pairs."""
-    result = {"n": len(pairs), CANDIDATE: 0, PROD: 0, TIE: 0,
+    Pairs the mode cannot decide are excluded and counted separately, so a
+    mode that only applies to part of the data says so rather than quietly
+    shrinking the sample.
+    """
+    usable = [p for p in pairs if p.comparable(mode)]
+    result = {"mode": mode, "n": len(usable), "n_offered": len(pairs),
+              CANDIDATE: 0, PROD: 0, TIE: 0,
               "prod_error_sum": 0.0, "candidate_error_sum": 0.0,
               "prod_brier_sum": 0.0, "candidate_brier_sum": 0.0,
               "matches": set()}
-    for pair in pairs:
-        result[pair.winner] += 1
-        result["prod_error_sum"] += pair.prod_error
-        result["candidate_error_sum"] += pair.candidate_error
-        result["prod_brier_sum"] += pair.prod_error ** 2
-        result["candidate_brier_sum"] += pair.candidate_error ** 2
+    for pair in usable:
+        prod_error, candidate_error = pair.errors(mode)
+        result[pair.winner(mode)] += 1
+        result["prod_error_sum"] += prod_error
+        result["candidate_error_sum"] += candidate_error
+        result["prod_brier_sum"] += prod_error ** 2
+        result["candidate_brier_sum"] += candidate_error ** 2
         result["matches"].add(pair.match_code)
     return finalize(result)
 
@@ -292,7 +366,7 @@ def finalize(result):
     return result
 
 
-def match_level_votes(pairs):
+def match_level_votes(pairs, mode=PROBABILITY):
     """One vote per match, by which model won more of that match's pairs.
 
     This is the clustering-robust reading: matches are independent, the
@@ -300,7 +374,9 @@ def match_level_votes(pairs):
     """
     per_match = defaultdict(lambda: {CANDIDATE: 0, PROD: 0, TIE: 0})
     for pair in pairs:
-        per_match[pair.match_code][pair.winner] += 1
+        won = pair.winner(mode)
+        if won is not None:
+            per_match[pair.match_code][won] += 1
 
     votes = {CANDIDATE: 0, PROD: 0, TIE: 0}
     for counts in per_match.values():
@@ -322,41 +398,35 @@ def match_level_votes(pairs):
 # Paired error difference
 # ---------------------------------------------------------------------------
 #
-# The win rate above answers "which model was closer more often", which is
-# what was asked for and is worth seeing. It is also a weak test, and it is
-# worth knowing why before reading it.
-#
-# If both models are unbiased around the same underlying truth and differ
-# only in how noisy they are, then which one lands closer to the realized 0
-# or 1 is decided by which noise draw happened to point at the outcome --
-# and that is a coin flip regardless of variance. Simulated with the
-# candidate at half prod's noise, the candidate's win rate is ~50% while its
-# Brier score is clearly better. The win rate discards magnitude, so it
-# cannot see an improvement that consists of being less wrong.
-#
-# The paired difference in loss does see it. Computed per match and then
-# averaged across matches, it also respects the clustering: matches are
-# independent, pairs inside them are not.
+# The win rate answers "which model was closer more often". It is also a weak
+# test: if both models are unbiased around the same truth and differ only in
+# noise, which one lands closer to the realized 0/1 is decided by which noise
+# draw pointed at the outcome -- a coin flip regardless of variance. It
+# discards magnitude, so it cannot see an improvement that consists of being
+# less wrong. The paired difference in loss does see it, and computing it per
+# match before averaging respects the clustering.
 
 SQUARED = "brier"
 ABSOLUTE = "mae"
 
 
-def _loss(pair, kind):
-    error = pair.candidate_error, pair.prod_error
+def _loss(pair, kind, mode):
+    prod_error, candidate_error = pair.errors(mode)
     if kind == SQUARED:
-        return pair.prod_error ** 2, pair.candidate_error ** 2
-    return error[1], error[0]
+        return prod_error ** 2, candidate_error ** 2
+    return prod_error, candidate_error
 
 
-def per_match_deltas(pairs, kind=SQUARED):
+def per_match_deltas(pairs, kind=SQUARED, mode=PROBABILITY):
     """match -> mean(prod loss) - mean(candidate loss).
 
     Positive means the candidate carried less loss in that match.
     """
     totals = defaultdict(lambda: [0.0, 0.0, 0])
     for pair in pairs:
-        prod_loss, candidate_loss = _loss(pair, kind)
+        if not pair.comparable(mode):
+            continue
+        prod_loss, candidate_loss = _loss(pair, kind, mode)
         bucket = totals[pair.match_code]
         bucket[0] += prod_loss
         bucket[1] += candidate_loss
@@ -365,16 +435,18 @@ def per_match_deltas(pairs, kind=SQUARED):
             for match, (prod_sum, candidate_sum, n) in totals.items()}
 
 
-def paired_delta_summary(pairs, kind=SQUARED, n_bootstrap=2000, seed=0):
+def paired_delta_summary(pairs, kind=SQUARED, mode=PROBABILITY,
+                         n_bootstrap=2000, seed=0):
     """Match-clustered test on the paired loss difference.
 
     Bootstrap resamples MATCHES, not rows, so the confidence interval
     carries the same clustering assumption as the point estimate.
     """
-    deltas = list(per_match_deltas(pairs, kind).values())
+    deltas = list(per_match_deltas(pairs, kind, mode).values())
     m = len(deltas)
-    out = {"kind": kind, "n_matches": m, "mean": None, "se": None,
+    out = {"kind": kind, "mode": mode, "n_matches": m, "mean": None, "se": None,
            "t": None, "p_value": None, "ci_low": None, "ci_high": None,
+           "sign_p_value": None,
            "matches_favouring_candidate": sum(1 for d in deltas if d > 0),
            "matches_favouring_prod": sum(1 for d in deltas if d < 0)}
     if m == 0:
@@ -382,6 +454,8 @@ def paired_delta_summary(pairs, kind=SQUARED, n_bootstrap=2000, seed=0):
 
     mean = sum(deltas) / m
     out["mean"] = mean
+    out["sign_p_value"] = metrics.sign_test(out["matches_favouring_candidate"],
+                                            out["matches_favouring_prod"])
     if m < 2:
         return out
 
@@ -402,16 +476,86 @@ def paired_delta_summary(pairs, kind=SQUARED, n_bootstrap=2000, seed=0):
     means.sort()
     out["ci_low"] = means[int(0.025 * n_bootstrap)]
     out["ci_high"] = means[min(int(0.975 * n_bootstrap), n_bootstrap - 1)]
-    out["sign_p_value"] = metrics.sign_test(out["matches_favouring_candidate"],
-                                            out["matches_favouring_prod"])
     return out
 
 
-def group_by(pairs, key_function):
+# ---------------------------------------------------------------------------
+# Line agreement
+# ---------------------------------------------------------------------------
+
+def line_agreement(pairs):
+    """How often the two streams quote the same line, and by how much not.
+
+    The whole comparison turns on this. If the candidate quotes a different
+    line, its probability answers a different question, and only the
+    line-closeness view compares the two fairly.
+    """
+    by_market = defaultdict(lambda: {"n": 0, "same": 0,
+                                     "prod_whole": 0, "prod_half": 0,
+                                     "candidate_whole": 0, "candidate_half": 0})
+    deltas = []
+    same = 0
+    for pair in pairs:
+        group = markets.market_group(pair.market_id)
+        bucket = by_market[group]
+        bucket["n"] += 1
+        if pair.same_line:
+            same += 1
+            bucket["same"] += 1
+        if pair.line_delta is not None:
+            deltas.append(pair.line_delta)
+        for side, line in (("prod", pair.prod_line), ("candidate", pair.candidate_line)):
+            if line is None:
+                continue
+            whole = abs(line - round(line)) < LINE_EPSILON
+            bucket[f"{side}_{'whole' if whole else 'half'}"] += 1
+
+    out = {"n": len(pairs), "same": same, "different": len(pairs) - same,
+           "same_rate": same / len(pairs) if pairs else None,
+           "by_market": dict(by_market),
+           "delta_median": None, "delta_mean": None, "delta_max": None}
+    if deltas:
+        ordered = sorted(deltas)
+        out["delta_median"] = ordered[len(ordered) // 2]
+        out["delta_mean"] = sum(ordered) / len(ordered)
+        out["delta_max"] = ordered[-1]
+    return out
+
+
+def line_delta_band(pair):
+    delta = pair.line_delta
+    if delta is None:
+        return "no line"
+    if delta < LINE_EPSILON:
+        return "same line"
+    if delta <= 0.5:
+        return "0.5"
+    if delta <= 1.0:
+        return "1.0"
+    if delta <= 2.0:
+        return "2.0"
+    return "> 2.0"
+
+
+LINE_DELTA_ORDER = ["same line", "0.5", "1.0", "2.0", "> 2.0", "no line"]
+
+
+# ---------------------------------------------------------------------------
+# Grouping helpers
+# ---------------------------------------------------------------------------
+
+def group_by(pairs, key_function, mode=PROBABILITY):
     grouped = defaultdict(list)
     for pair in pairs:
         grouped[key_function(pair)].append(pair)
-    return {key: tally(group) for key, group in grouped.items()}
+    return {key: tally(group, mode) for key, group in grouped.items()}
+
+
+def split_by_line(pairs):
+    """(same-line pairs, different-line pairs)."""
+    same = [p for p in pairs if p.same_line]
+    different = [p for p in pairs if not p.same_line]
+    return same, different
 
 
 def disagreement_band(pair):
@@ -428,9 +572,57 @@ def probability_band(pair):
     return f"{edge / 10:.1f}-{(edge + 1) / 10:.1f}"
 
 
+def market_label(pair):
+    return markets.market_group(pair.market_id)
+
+
 def cell_key(pair):
     return (
         buckets.score_diff_bucket(pair.score_diff),
         buckets.time_bucket(pair.period_number, pair.drive_number),
         buckets.possession_bucket(pair.offensive_team),
     )
+
+
+# ---------------------------------------------------------------------------
+# Assembled summary
+# ---------------------------------------------------------------------------
+
+MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
+
+
+def build_summary(pairs, n_bootstrap=2000):
+    """Everything both the console and the HTML report need.
+
+    Assembled once so the two cannot drift apart.
+
+    The split matters because the two streams do not always quote the same
+    line. Where they do, their probabilities answer the same question and can
+    be compared directly. Where they do not, the fair comparison is which
+    LINE landed closer to what actually happened -- each probability still
+    refers to its own line, so comparing them head to head would be scoring
+    two different questions against one outcome.
+    """
+    same, different = split_by_line(pairs)
+
+    def block(subset, mode):
+        return {
+            "n": len(subset),
+            "overall": tally(subset, mode),
+            "votes": match_level_votes(subset, mode),
+            "brier": paired_delta_summary(subset, SQUARED, mode, n_bootstrap),
+            "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
+            "by_market": group_by(subset, market_label, mode),
+        }
+
+    return {
+        "pairs": len(pairs),
+        "lines": line_agreement(pairs),
+        "same_line": block(same, PROBABILITY),
+        "different_line": block(different, LINE),
+        # Secondary view: on different-line pairs, each stream scored against
+        # its own line. Fair, but it measures line and probability together.
+        "different_line_probability": block(different, PROBABILITY),
+        "all_probability": block(pairs, PROBABILITY),
+        "by_line_delta": group_by(pairs, line_delta_band, LINE),
+    }
