@@ -1,18 +1,24 @@
-"""First look at the three tables behind a GAMEPLAI candidate-vs-prod review.
+"""First look at the three tables behind the GAMEPLAI model and latency audit.
 
-Before comparing anything we need to know what we are actually holding:
+Two separate questions share these tables:
 
-  * prod model      SHARED.GAMEPLAI_STREAM
-  * candidate model SHARED.GAMEPLAI_STREAM_CANDIDATE
-  * price changes   SHARED.PRICE_CHANGES  (name unverified -- see below)
+  * prod model      SHARED.GAMEPLAI_STREAM            what GAMEPLAI send us
+  * candidate model SHARED.GAMEPLAI_STREAM_CANDIDATE  same, their candidate
+  * price changes   SHARED.PRICE_CHANGES              what we send customers
+
+Candidate vs prod is a model comparison. Prod vs price changes is a
+pipeline audit: PRICE_CHANGES is our own outbound feed, so in theory it
+should trail GAMEPLAI_STREAM by only a fraction of a second, and the
+point of the audit is to find out whether it really does.
 
 For each table this prints size and freshness, the full column layout, a
 few sample rows, the span of every time column, and a profile of the
 price/probability columns. It then diffs the prod and candidate schemas
-(what is comparable at all) and measures where the three tables overlap
-in matches and in time -- the candidate stream is likely to cover only a
+(what is comparable at all), measures where the three tables overlap in
+matches and in time -- the candidate stream is likely to cover only a
 short recent window, and that window, not the prod history, is what caps
-any comparison.
+any comparison -- and finally sizes up the inbound/outbound relationship
+per match, both in timing offset and in message volume.
 
 PRICE_CHANGES is a guess from the SCORE_CHANGES naming convention. If it
 does not resolve, the script lists the real tables whose names look like
@@ -309,6 +315,107 @@ def compare_coverage(cur, targets):
         print(f"  {str(sport):<8} {src:<16} {n:,}")
 
 
+def latency_readiness(cur, resolved):
+    """Size up the inbound -> outbound relationship before measuring latency.
+
+    PRICE_CHANGES is our outbound feed, GAMEPLAI_STREAM the inbound one,
+    so the gap between them should be fractional. Two things have to hold
+    before any such number means anything, and both are checked here:
+
+      1. The timestamps must share a clock. If the inbound time is
+         stamped by GAMEPLAI and the outbound by us, the per-match offset
+         below is latency PLUS clock skew, and a negative offset (prices
+         out before quotes in) is the tell that they do not share one.
+      2. The message counts must be comparable. If we publish far fewer
+         rows per match than we receive, prices are being throttled or
+         filtered, and a per-tick latency figure would be measuring only
+         the subset that survived.
+
+    This is a per-match sketch, not the audit itself -- matching a price
+    change to the quote that caused it needs the market/selection key,
+    which the schema dump above is there to establish.
+    """
+    by_label = {label: (schema, table, columns) for label, (schema, table), columns in resolved}
+    pairs = [("prod model", "price changes"), ("candidate model", "price changes")]
+
+    print(f"\n{'=' * 80}\nInbound vs outbound, per match (last {LOOKBACK_DAYS} days)\n{'=' * 80}")
+
+    for inbound_label, outbound_label in pairs:
+        if inbound_label not in by_label or outbound_label not in by_label:
+            continue
+        in_schema, in_table, in_cols = by_label[inbound_label]
+        out_schema, out_table, out_cols = by_label[outbound_label]
+
+        in_time = primary_time_column(in_cols)
+        out_time = primary_time_column(out_cols)
+        in_names = {c[0] for c in in_cols}
+        out_names = {c[0] for c in out_cols}
+
+        print(f"\n--- {inbound_label} -> {outbound_label} ---")
+        if "MATCH_CODE" not in in_names or "MATCH_CODE" not in out_names:
+            print("  No shared MATCH_CODE; cannot pair these two without a manual key.")
+            continue
+        if in_time is None or out_time is None:
+            print("  One side has no time column; nothing to measure.")
+            continue
+
+        print(f"  inbound time: {in_time}    outbound time: {out_time}")
+        window = f"DATEADD(day, -{LOOKBACK_DAYS}, CURRENT_TIMESTAMP())"
+        _, rows = fetch_all(
+            cur,
+            f"""
+            WITH inbound AS (
+                SELECT MATCH_CODE, MIN({in_time}) AS FIRST_T, MAX({in_time}) AS LAST_T,
+                       COUNT(*) AS N
+                FROM {DATABASE}.{in_schema}.{in_table}
+                WHERE {in_time} >= {window}
+                GROUP BY MATCH_CODE
+            ), outbound AS (
+                SELECT MATCH_CODE, MIN({out_time}) AS FIRST_T, MAX({out_time}) AS LAST_T,
+                       COUNT(*) AS N
+                FROM {DATABASE}.{out_schema}.{out_table}
+                WHERE {out_time} >= {window}
+                GROUP BY MATCH_CODE
+            ), paired AS (
+                SELECT DATEDIFF(millisecond, i.FIRST_T, o.FIRST_T) AS FIRST_GAP_MS,
+                       DATEDIFF(millisecond, i.LAST_T, o.LAST_T) AS LAST_GAP_MS,
+                       i.N AS IN_N, o.N AS OUT_N
+                FROM inbound i JOIN outbound o USING (MATCH_CODE)
+            )
+            SELECT COUNT(*) AS MATCHES,
+                   MIN(FIRST_GAP_MS), PERCENTILE_CONT(0.05) WITHIN GROUP (ORDER BY FIRST_GAP_MS),
+                   PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY FIRST_GAP_MS),
+                   PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY FIRST_GAP_MS),
+                   MAX(FIRST_GAP_MS),
+                   PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY LAST_GAP_MS),
+                   COUNT_IF(FIRST_GAP_MS < 0) AS NEGATIVE_GAPS,
+                   SUM(IN_N), SUM(OUT_N),
+                   PERCENTILE_CONT(0.50) WITHIN GROUP (ORDER BY OUT_N / NULLIF(IN_N, 0))
+            FROM paired
+            """,
+        )
+        (matches, gap_min, gap_p05, gap_p50, gap_p95, gap_max,
+         last_gap_p50, negative, in_total, out_total, ratio_p50) = rows[0]
+
+        if not matches:
+            print("  No matches present in both tables in this window.")
+            continue
+
+        print(f"  matches paired: {matches:,}")
+        print("  first-message offset, outbound minus inbound (ms):")
+        print(f"    min={gap_min}  p05={gap_p05}  median={gap_p50}  p95={gap_p95}  max={gap_max}")
+        print(f"  last-message offset, median (ms): {last_gap_p50}")
+        print(f"  matches where outbound STARTS BEFORE inbound: {negative:,} / {matches:,}")
+        if negative:
+            print("    ^ impossible as pure latency -- these two timestamps are on different")
+            print("      clocks, or the time columns do not mean what their names suggest.")
+        print(f"  rows: inbound={in_total:,}  outbound={out_total:,}")
+        print(f"  median per-match outbound/inbound row ratio: {ratio_p50}")
+        if ratio_p50 is not None and ratio_p50 < 0.9:
+            print("    ^ we publish materially fewer rows than we receive: throttled,")
+            print("      filtered, or deduplicated. Establish which before reading latency.")
+
+
 def resolve_tables(cur, requested):
     """Confirm each table exists; if not, show the closest real names."""
     resolved = []
@@ -363,7 +470,9 @@ def main():
 
             by_label = {label: columns for label, _, columns, _ in resolved}
             compare_schemas(by_label["prod model"], by_label["candidate model"])
-            compare_coverage(cur, [(label, t, columns) for label, t, columns, _ in resolved])
+            trimmed = [(label, t, columns) for label, t, columns, _ in resolved]
+            compare_coverage(cur, trimmed)
+            latency_readiness(cur, trimmed)
     finally:
         conn.close()
 
