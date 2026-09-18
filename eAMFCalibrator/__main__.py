@@ -17,7 +17,7 @@ import argparse
 import os
 import sys
 
-from . import config, directional, pipeline, report, snowflake_io
+from . import config, directional, html_report, pipeline, report, snowflake_io
 
 
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "out")
@@ -128,51 +128,52 @@ def cmd_directional(args):
         print("\n  No paired observations. Nothing to compare.")
         return 1
 
-    overall = directional.tally(pairs)
-    votes = directional.match_level_votes(pairs)
-    report.print_directional_headline(overall, votes)
+    summary = directional.build_summary(pairs)
 
-    report.print_paired_delta(
-        directional.paired_delta_summary(pairs, directional.SQUARED),
-        directional.paired_delta_summary(pairs, directional.ABSOLUTE),
-    )
+    report.print_line_agreement(summary["lines"])
+
+    report.print_block(
+        "SAME LINE -- whose probability was closer to its own 0/1",
+        "Both streams quoted the same line, so the probabilities answer the "
+        "same question. This is the clean comparison.",
+        summary["same_line"])
+
+    report.print_block(
+        "DIFFERENT LINE -- whose line was closer to what happened",
+        "Lines differ, so the probabilities are not comparable. Scored on "
+        "which line landed nearer the actual margin or total.",
+        summary["different_line"])
+
+    report.print_block(
+        "DIFFERENT LINE -- each probability against its own line (secondary)",
+        "Fair, but it measures line choice and probability together, so read "
+        "the line-closeness view above first.",
+        summary["different_line_probability"])
 
     report.print_directional_breakdown(
-        "By market",
-        directional.group_by(pairs, lambda p: markets_label(p)),
-        label_width=18,
+        "By line gap (line-closeness mode)",
+        summary["by_line_delta"],
+        order=directional.LINE_DELTA_ORDER,
     )
-    report.print_directional_breakdown(
-        "By how much the two models disagree",
-        directional.group_by(pairs, directional.disagreement_band),
-        order=[label for _, _, label in config.DISAGREEMENT_BANDS],
-    )
-    report.print_directional_breakdown(
-        "By prod's probability",
-        directional.group_by(pairs, directional.probability_band),
-    )
-    report.print_directional_breakdown(
-        "By score difference",
-        directional.group_by(pairs, lambda p: _score_label(p)),
-        order=[label for _, _, label in config.SCORE_DIFF_BUCKETS],
-    )
-    report.print_directional_breakdown(
-        "By quarter",
-        directional.group_by(pairs, lambda p: _time_label(p)),
-        order=["Q1", "Q2", "Q3", "Q4", "OT", "unknown"],
-    )
-    report.print_directional_breakdown(
-        "By possession",
-        directional.group_by(pairs, lambda p: _possession_label(p)),
-        order=["Home", "Away", "unknown"],
-    )
-    report.print_directional_breakdown(
-        "By full cell (score x quarter x possession)",
-        directional.group_by(pairs, directional.cell_key),
-        label_width=26,
-    )
+
+    same_pairs, _ = directional.split_by_line(pairs)
+    if same_pairs:
+        report.print_directional_breakdown(
+            "Same-line pairs by quarter",
+            directional.group_by(same_pairs, _time_label),
+            order=["Q1", "Q2", "Q3", "Q4", "OT", "unknown"],
+        )
+        report.print_directional_breakdown(
+            "Same-line pairs by score difference",
+            directional.group_by(same_pairs, _score_label),
+            order=[label for _, _, label in config.SCORE_DIFF_BUCKETS],
+        )
 
     report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
+
+    html_path = args.html or os.path.join(out_dir, "directional.html")
+    html_report.write(html_path, summary, header, stats)
+    print(f"  one-screen report  -> {html_path}")
     return 0
 
 
@@ -211,6 +212,7 @@ def build_parser():
         "directional",
         help="paired head-to-head: which model is closer to the result at each snapshot")
     dir_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    dir_parser.add_argument("--html", help="path for the one-screen HTML report")
 
     cmp_parser = sub.add_parser("compare", help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
