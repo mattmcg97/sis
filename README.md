@@ -41,6 +41,13 @@ connected. `.env` is gitignored so credentials never get committed.
   where they overlap in matches and in time, and sketches the per-match
   timing offset and message-volume ratio between inbound quotes and
   outbound prices.
+- `eAMFCalibrator/` — Calibration suite for the GAMEPLAI in-play models on
+  eAMF. Takes either stream (prod or candidate) as input, samples one
+  snapshot per drive, pairs it with the model quote within 3 seconds, and
+  scores predicted against realized across score-difference / quarter /
+  possession cells. Re-runnable: each run writes CSVs that `compare` diffs,
+  so prod vs candidate (or the same stream week on week) is one command.
+  See `eAMFCalibrator/README.md`.
 - `nb2/` — Pre-match NB2 rating model (Adrian's): fitting (`NBRatingTrial.py`),
   schedule pricing (`NB2_schedule_predict.py`), and out-of-sample calibration
   backtests in both Python and R (`backtest_nb2_calibration.py`,
