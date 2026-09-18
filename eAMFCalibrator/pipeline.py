@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from bisect import bisect_left
 from typing import Optional
 
-from . import buckets, config, markets, metrics, snowflake_io
+from . import buckets, clock, config, markets, metrics, snowflake_io
 from .drives import PlayRow, ScoreRow, build_snapshots
 
 
@@ -92,12 +92,38 @@ def group_rows(rows, key_index):
     return out
 
 
-def observations_for_chunk(cur, stream_table, match_codes, time_column, stats):
+def snapshot_time(snap, match_clock, stats):
+    """A snapshot's wall-clock time, and where it came from.
+
+    The play feed's own column wins if it ever gains one; otherwise the
+    time is reconstructed from the stream's message clock.
+    """
+    if snap.play_time is not None:
+        stats["clock_from_play_feed"] += 1
+        return snap.play_time
+
+    if match_clock is None:
+        stats["clock_unresolved"] += 1
+        return None
+
+    when, provenance = match_clock.time_for(snap.event_message_count)
+    stats[f"clock_{provenance}"] += 1
+    return when
+
+
+def observations_for_chunk(cur, stream_table, match_codes, time_column, stats,
+                           clock_table=None):
     """Build every observation for one chunk of matches."""
     play_rows = snowflake_io.fetch_plays(cur, match_codes, time_column)
     score_rows = snowflake_io.fetch_scores(cur, match_codes)
     finals = snowflake_io.fetch_final_scores(cur, match_codes)
     quote_rows = snowflake_io.fetch_quotes(cur, stream_table, match_codes)
+
+    clocks = {}
+    if time_column is None:
+        clock_rows = snowflake_io.fetch_message_times(
+            cur, clock_table or stream_table, match_codes)
+        clocks = clock.build_clocks(clock_rows)
 
     plays_by_match = group_rows(play_rows, 0)
     scores_by_match = group_rows(score_rows, 0)
@@ -127,9 +153,11 @@ def observations_for_chunk(cur, stream_table, match_codes, time_column, stats):
 
         snapshots = build_snapshots(match_code, plays, scores)
         stats["snapshots"] += len(snapshots)
+        match_clock = clocks.get(match_code)
 
         for snap in snapshots:
-            if snap.play_time is None:
+            snap_time = snapshot_time(snap, match_clock, stats)
+            if snap_time is None:
                 stats["snapshots_without_time"] += 1
                 continue
             matched_any = False
@@ -139,7 +167,7 @@ def observations_for_chunk(cur, stream_table, match_codes, time_column, stats):
                     stats["no_quote_for_market"] += 1
                     continue
                 times, rows = entry
-                hit = nearest_quote(times, snap.play_time,
+                hit = nearest_quote(times, snap_time,
                                     config.MATCH_TOLERANCE_SECONDS, config.QUOTE_DIRECTION)
                 if hit is None:
                     stats["quote_outside_tolerance"] += 1
@@ -222,8 +250,14 @@ def run(stream_key, verbose=True):
             time_column, play_columns = snowflake_io.detect_play_time_column(cur)
             header["play_time_column"] = time_column
             header["play_columns"] = play_columns
+
+            clock_table = None
             if time_column is None:
-                return observations, stats, header
+                clock_key = config.CLOCK_SOURCE or stream_key
+                clock_table = config.STREAMS.get(clock_key, stream_table)
+                header["clock_mode"] = f"reconstructed from {clock_key} message clock"
+            else:
+                header["clock_mode"] = f"{snowflake_io.PLAY_TABLE}.{time_column}"
 
             n_rows, n_matches, first, last = snowflake_io.stream_window_summary(cur, stream_table)
             header.update({"stream": stream_key, "table": stream_table,
@@ -241,7 +275,8 @@ def run(stream_key, verbose=True):
                 if verbose:
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
                 observations.extend(
-                    observations_for_chunk(cur, stream_table, batch, time_column, stats)
+                    observations_for_chunk(cur, stream_table, batch, time_column,
+                                           stats, clock_table)
                 )
     finally:
         conn.close()

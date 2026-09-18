@@ -32,6 +32,29 @@ SPORT_CODE = "AF"
 # seconds of it. The nearest surviving quote wins.
 MATCH_TOLERANCE_SECONDS = 3.0
 
+# INPLAY_FIELD_POSITION_PERIOD carries no timestamp -- confirmed by
+# preflight, it has 7 columns and none is a clock. What it does carry is
+# EVENT_MESSAGE_COUNT, the same feed sequence the GAMEPLAI streams are keyed
+# on, so a snapshot's wall-clock time is recovered from the stream itself:
+# the PUBLISH_TIME of the quotes published for that same message.
+#
+# Exact hits need no estimation at all. Where the play feed has a message
+# the stream never quoted, the time is interpolated between the bracketing
+# quoted messages, and only if that bracket is tight enough to be worth
+# trusting (see MAX_BRACKET_MESSAGES).
+#
+# The clock comes from ONE stream for every run, so prod and candidate are
+# calibrated against an identical set of snapshot times and the comparison
+# is not confounded by the two feeds stamping the same message a few hundred
+# milliseconds apart. Set to a key of STREAMS, or None to use whichever
+# stream is being calibrated.
+CLOCK_SOURCE = "prod"
+
+# Widest message-count bracket an interpolated snapshot time may sit in.
+# Beyond this the stream went quiet either side of the play and the
+# interpolation is guesswork, so the snapshot is dropped instead.
+MAX_BRACKET_MESSAGES = 10
+
 # "nearest"  -- closest quote either side of the snapshot (what was asked for)
 # "forward"  -- only quotes at or after the snapshot; avoids pairing a price
 #               that predates the snapshot's own game state, at the cost of
@@ -68,6 +91,30 @@ DRIVE_BUCKETS = [
     (5, 8, "drives 5-8"),
     (9, 12, "drives 9-12"),
     (13, None, "drives 13+"),
+]
+
+# Directional (paired) comparison: prod and candidate quotes are paired on
+# the SAME EVENT_MESSAGE_COUNT, not matched to each stream's own nearest
+# quote in time. Pairing on time independently would let one stream land a
+# quote 0.1s from the snapshot while the other lands 2.5s away, comparing
+# two different game states and flattering whichever got the closer quote.
+# Same message means same feed event for both, which is what makes the
+# comparison paired at all.
+#
+# Widest departure from the snapshot's own message allowed when the streams
+# never both quoted it.
+MAX_PAIR_MESSAGE_GAP = 3
+
+# Disagreement bands for the directional breakdown, as (low, high, label) on
+# |prod - candidate| in probability points. Where the two models agree the
+# comparison carries almost no information, so it is worth seeing the win
+# rate separately at each level of disagreement.
+DISAGREEMENT_BANDS = [
+    (0.0, 0.01, "< 1pp"),
+    (0.01, 0.03, "1-3pp"),
+    (0.03, 0.05, "3-5pp"),
+    (0.05, 0.10, "5-10pp"),
+    (0.10, None, "> 10pp"),
 ]
 
 # Cells thinner than this are printed but excluded from the "worst cells"
