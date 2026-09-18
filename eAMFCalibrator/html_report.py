@@ -55,24 +55,34 @@ def _verdict(brier, votes):
             f"The {side} is better, and the interval excludes zero.")
 
 
-def _market_rows(block, metric_key, spec):
+def _market_rows(block, metric_key, spec, clustered_key):
+    """Per market, with its OWN match-clustered test.
+
+    The pooled figure averages across markets, so an effect confined to one
+    of them is diluted by the flat ones. Each market carries its own p.
+    """
     rows = []
     for group in (markets.MONEYLINE, markets.SPREAD, markets.TOTAL):
         tallied = block["by_market"].get(group)
         if not tallied or not tallied["n"]:
             continue
+        detail = block.get("markets", {}).get(group, {})
+        clustered = detail.get(clustered_key, {})
         win = tallied["candidate_win_rate"]
         cls = "" if win is None else ("good" if win > 0.5 else "bad")
+        p_value = clustered.get("p_value")
+        p_cls = "good" if (p_value is not None and p_value < 0.05) else "dim"
         rows.append(f"""<tr>
             <th>{MARKET_TITLES[group]}</th>
             <td>{tallied['n']:,}</td>
             <td>{tallied['n_matches']:,}</td>
             <td class="{cls}">{_pct(win)}</td>
-            <td>{_num(tallied[metric_key], spec)}</td>
-            <td>{_p(tallied['p_value'])}</td>
+            <td>{_num(clustered.get('mean'), spec)}</td>
+            <td class="dim">{_ci(clustered, spec)}</td>
+            <td class="{p_cls}">{_p(p_value)}</td>
         </tr>""")
     if not rows:
-        rows.append('<tr><td colspan="6" class="dim">no comparable pairs</td></tr>')
+        rows.append('<tr><td colspan="7" class="dim">no comparable pairs</td></tr>')
     return "\n".join(rows)
 
 
@@ -85,12 +95,12 @@ def _block_table(title, subtitle, block):
     if line_mode:
         # Squaring a points error gives squared points, which reads as noise.
         summary = block["mae"]
-        metric_key, spec = "mae_delta", "+.3f"
+        metric_key, spec, clustered_key = "mae_delta", "+.3f", "mae"
         column = "&Delta;points"
         stat_label = "Paired &Delta;points per match"
     else:
         summary = block["brier"]
-        metric_key, spec = "brier_delta", "+.4f"
+        metric_key, spec, clustered_key = "brier_delta", "+.4f", "brier"
         column = "&Delta;Brier"
         stat_label = "Paired &Delta;Brier per match"
 
@@ -100,15 +110,16 @@ def _block_table(title, subtitle, block):
       <p class="sub">{subtitle}</p>
       <table>
         <thead><tr><th>Market</th><th>Pairs</th><th>Matches</th>
-          <th>Cand win</th><th>{column}</th><th>p</th></tr></thead>
-        <tbody>{_market_rows(block, metric_key, spec)}</tbody>
+          <th>Cand win</th><th>{column}</th><th>95% CI</th><th>p</th></tr></thead>
+        <tbody>{_market_rows(block, metric_key, spec, clustered_key)}</tbody>
         <tfoot><tr>
           <th>All</th>
           <td>{overall['n']:,}</td>
           <td>{overall['n_matches']:,}</td>
           <td>{_pct(overall['candidate_win_rate'])}</td>
-          <td>{_num(overall[metric_key], spec)}</td>
-          <td>{_p(overall['p_value'])}</td>
+          <td>{_num(summary.get('mean'), spec)}</td>
+          <td class="dim">{_ci(summary, spec)}</td>
+          <td>{_p(summary.get('p_value'))}</td>
         </tr></tfoot>
       </table>
       <dl class="stats">
@@ -244,9 +255,10 @@ def render(summary, header, stats):
     <section class="panel wide">
       <h2>Line agreement</h2>
       <p class="sub">The two streams quoted the same line on
-         <b>{_pct(lines['same_rate'])}</b> of pairs. Median gap where they differ:
-         <b>{_num(lines['delta_median'], '.2f')}</b>, max
-         <b>{_num(lines['delta_max'], '.2f')}</b>.</p>
+         <b>{_pct(lines['same_rate'])}</b> of pairs. On the
+         <b>{lines.get('differing_n', 0):,}</b> that differ, the gap runs to a median of
+         <b>{_num(lines.get('differing_median'), '.2f')}</b> and a max of
+         <b>{_num(lines.get('differing_max'), '.2f')}</b>.</p>
       <table>
         <thead><tr><th>Market</th><th>Pairs</th><th>Same line</th>
           <th>Prod half / whole</th><th>Cand half / whole</th></tr></thead>

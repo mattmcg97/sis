@@ -458,6 +458,64 @@ class TestLineAgreement(unittest.TestCase):
         self.assertEqual(total["candidate_half"], 0)
 
 
+class TestLineGapDistribution(unittest.TestCase):
+    """Same-line zeros must not be mixed into the "where they differ" stats."""
+
+    def setUp(self):
+        self.pairs = [
+            line_pair(0.5, 0.5, 44.5, 44.5, 24, 21),   # same
+            line_pair(0.5, 0.5, 44.5, 44.5, 24, 21),   # same
+            line_pair(0.5, 0.5, 44.5, 46.5, 24, 21),   # differ by 2
+            line_pair(0.5, 0.5, 44.5, 48.5, 24, 21),   # differ by 4
+        ]
+        self.report = directional.line_agreement(self.pairs)
+
+    def test_differing_stats_exclude_the_same_line_zeros(self):
+        self.assertEqual(self.report["differing_n"], 2)
+        self.assertAlmostEqual(self.report["differing_mean"], 3.0)
+        self.assertAlmostEqual(self.report["differing_max"], 4.0)
+
+    def test_all_pairs_median_is_dragged_to_zero_by_the_same_line_pairs(self):
+        # This is exactly why the two are reported separately.
+        self.assertAlmostEqual(self.report["delta_median"], 2.0)
+        self.assertAlmostEqual(self.report["differing_median"], 4.0)
+
+    def test_no_differing_pairs(self):
+        report = directional.line_agreement([line_pair(0.5, 0.5, 44.5, 44.5, 24, 21)])
+        self.assertEqual(report["differing_n"], 0)
+        self.assertIsNone(report["differing_median"])
+
+
+class TestMarketBlocks(unittest.TestCase):
+    def test_each_market_gets_its_own_clustered_test(self):
+        pairs = ([pair(0.6, 0.8, True, match=f"AF{i}", market_id=50) for i in range(12)]
+                 + [line_pair(0.5, 0.5, 44.5, 44.5, 24, 21, match=f"AF{i}", market_id=54)
+                    for i in range(12)])
+        blocks = directional.market_blocks(pairs, directional.PROBABILITY, n_bootstrap=100)
+        self.assertIn(markets.MONEYLINE, blocks)
+        self.assertIn(markets.TOTAL, blocks)
+        for group in blocks.values():
+            self.assertIn("brier", group)
+            self.assertIn("votes", group)
+            self.assertEqual(group["tally"]["n_matches"], 12)
+
+    def test_a_flat_market_does_not_mask_a_moving_one(self):
+        """The reason per-market clustering exists.
+
+        Moneyline strongly favours the candidate; totals are dead level.
+        Pooled, the effect is halved; split, it survives intact.
+        """
+        moving = [pair(0.2, 0.9, True, match=f"AF{i}", market_id=50) for i in range(20)]
+        flat = [line_pair(0.5, 0.5, 44.5, 44.5, 24, 21, match=f"AF{i}", market_id=54)
+                for i in range(20)]
+        blocks = directional.market_blocks(moving + flat, directional.PROBABILITY,
+                                           n_bootstrap=100)
+        pooled = directional.paired_delta_summary(moving + flat, n_bootstrap=100)
+        moneyline_mean = blocks[markets.MONEYLINE]["brier"]["mean"]
+        self.assertGreater(moneyline_mean, pooled["mean"])
+        self.assertAlmostEqual(blocks[markets.TOTAL]["brier"]["mean"], 0.0)
+
+
 class TestSplitByLine(unittest.TestCase):
     def test_split(self):
         same, different = directional.split_by_line([
