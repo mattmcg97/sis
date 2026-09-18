@@ -44,8 +44,16 @@ SPORT_CODE = "AF"
 MAX_VALUE_CHARS = 200
 
 # Time column to anchor windowed queries on, most preferred first.
+#
+# PRICE_ISSUE_TIME_UTC beats FILE_TIME for PRICE_CHANGES: FILE_TIME is when
+# the outbound file was written, which sampling shows runs 180-240ms behind
+# the price issue itself. Anchoring on it would charge that file-write lag
+# to pipeline latency. FILE_LOADED is not a load timestamp at all -- in
+# GAMEPLAI_STREAM it lands ~80s BEFORE PUBLISH_TIME -- so it stays out of
+# this list entirely.
 TIME_COLUMN_PREFERENCE = [
     "PUBLISH_TIME",
+    "PRICE_ISSUE_TIME_UTC",
     "CHANGE_TIME",
     "FILE_TIME",
     "EVENT_TIME",
