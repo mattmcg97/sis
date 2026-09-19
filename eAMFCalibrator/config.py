@@ -117,6 +117,15 @@ DISAGREEMENT_BANDS = [
     (0.10, None, "> 10pp"),
 ]
 
+# One selection per market, for the cross-sectional calibration view.
+#
+# Pooling both sides of a market destroys the measurement: the sides are
+# complements, so every (p, y) comes with a mirror (1-p, 1-y) and BOTH the
+# realized rate and the mean prediction average to exactly 0.5 whatever the
+# model does. Taking one side loses nothing -- the other is its complement --
+# and lets the calibration gap exist at all.
+CANONICAL_SELECTIONS = {50: "Home", 52: "Home", 54: "Over"}
+
 # Cells thinner than this are printed but excluded from the "worst cells"
 # summary, where noise would otherwise dominate.
 MIN_CELL_OBSERVATIONS = 30

@@ -41,6 +41,22 @@ only the predictions differ, which reduces each cell to "whose number was
 nearer the truth". `TestCrossSectionalLineRule` pins that invariant, along
 with the two views partitioning the pairs exactly.
 
+## One selection per market, always
+
+A market's two sides are complements, so every `(p, y)` arrives with a mirror
+`(1-p, 1-y)`. Pool them and the realized rate **and** the mean prediction
+both average to exactly 0.500 whatever the model does — the calibration gap
+is cancelled out of existence before you can measure it. A realized rate of
+0.500 in every cell is the signature of this bug, not a fact about the data.
+
+So the cross-sectional view takes one side per market
+(`config.CANONICAL_SELECTIONS`: moneyline Home, spread Home, total Over) and
+never mixes markets in a cell — moneyline, spread and total are different
+questions with different base rates, and their average describes none of
+them. `TestMirrorCancellation` pins both halves of this.
+
+Nothing is lost by taking one side: the other is its complement.
+
 `preflight` confirms the tables and reports how the snapshot clock is being
 reconstructed — worth a look after any feed change.
 
@@ -220,7 +236,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-109 tests covering line parsing, market resolution, bucket edges, drive
+113 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,

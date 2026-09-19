@@ -521,36 +521,47 @@ def _ci_text(summary, spec="+.4f"):
 # ---------------------------------------------------------------------------
 
 CROSS_FIELDS = [
-    "axis", "cell", "n", "matches", "realized",
+    "axis", "cell", "market", "selection", "n", "matches", "realized",
     "prod_predicted", "prod_gap", "prod_brier",
     "candidate_predicted", "candidate_gap", "candidate_brier",
     "brier_delta", "ci_low", "ci_high", "p_value", "closer",
 ]
 
 
-def print_calibration_cells(title, cells, order=None, label_width=16):
-    """Same-line cells: one shared realized rate, two predicted values."""
-    print(f"\n{'=' * 104}\n{title}\n{'=' * 104}")
+MARKET_PRINT_ORDER = ["moneyline", "spread", "total"]
+
+
+def print_calibration_cells(title, cells, order=None, label_width=16,
+                            markets_shown=None):
+    """Same-line cells, one selection per market so REALIZED can vary."""
+    print(f"\n{'=' * 110}\n{title}\n{'=' * 110}")
     if not cells:
         print("  No same-line pairs in this cut.")
         return
-    print("  Same line means same question, so both streams resolve to the SAME")
-    print("  outcome -- REAL is one number and only the predictions differ.")
-    print(f"\n  {'CELL':<{label_width}}{'N':>7}{'MATCH':>6}{'REAL':>8}"
-          f"{'PROD':>8}{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}"
-          f"{'ΔBRIER':>9}{'P':>8}{'CLOSER':>8}")
-    keys = order if order is not None else sorted(cells, key=str)
-    for key in keys:
-        row = cells.get(key)
-        if not row or not row["n"]:
-            continue
-        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
-        closer = "cand" if row["winner"] == "candidate" else "prod"
-        print(f"  {label:<{label_width}}{row['n']:>7,}{row['matches']:>6,}"
-              f"{_fmt(row['realized'], '.3f'):>8}"
-              f"{_fmt(row['prod_predicted'], '.3f'):>8}{_fmt(row['prod_gap'], '+.3f'):>8}"
-              f"{_fmt(row['candidate_predicted'], '.3f'):>8}{_fmt(row['candidate_gap'], '+.3f'):>8}"
-              f"{_fmt(row['brier_delta'], '+.4f'):>9}{_p(row['p_value']):>8}{closer:>8}")
+    print("  One selection per market (moneyline Home, spread Home, total Over).")
+    print("  Pooling both sides would force REAL and the predictions to 0.500 by")
+    print("  construction, since the sides are complements.")
+    print(f"\n  {'CELL':<{label_width}}{'MARKET':<11}{'SEL':<6}{'N':>6}{'MATCH':>6}"
+          f"{'REAL':>8}{'PROD':>8}{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}"
+          f"{'ΔBRIER':>9}{'P':>8}{'CLOSER':>7}")
+
+    wanted = markets_shown or MARKET_PRINT_ORDER
+    cell_labels = order if order is not None else sorted({k[0] for k in cells}, key=str)
+    for cell_label in cell_labels:
+        for market in wanted:
+            row = cells.get((cell_label, market))
+            if not row or not row["n"]:
+                continue
+            label = cell_label if isinstance(cell_label, str) else " ".join(
+                str(k) for k in cell_label)
+            closer = "cand" if row["winner"] == "candidate" else "prod"
+            print(f"  {label:<{label_width}}{market:<11}{row['selection']:<6}"
+                  f"{row['n']:>6,}{row['matches']:>6,}"
+                  f"{_fmt(row['realized'], '.3f'):>8}"
+                  f"{_fmt(row['prod_predicted'], '.3f'):>8}{_fmt(row['prod_gap'], '+.3f'):>8}"
+                  f"{_fmt(row['candidate_predicted'], '.3f'):>8}"
+                  f"{_fmt(row['candidate_gap'], '+.3f'):>8}"
+                  f"{_fmt(row['brier_delta'], '+.4f'):>9}{_p(row['p_value']):>8}{closer:>7}")
     print("\n  P_GAP / C_GAP are realized minus predicted: positive means that stream")
     print("  underpriced the selection. CLOSER is whichever gap is smaller in size.")
     print("  ΔBRIER is prod minus candidate, match-clustered; positive favours the")
@@ -596,10 +607,14 @@ def write_cross_csv(path, rows):
 def cross_rows(axis_name, cells):
     rows = []
     for key, row in cells.items():
-        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        cell_label, market = key
+        label = cell_label if isinstance(cell_label, str) else " ".join(
+            str(k) for k in cell_label)
         rows.append({
             "axis": axis_name,
             "cell": label,
+            "market": market,
+            "selection": row["selection"],
             "n": row["n"],
             "matches": row["matches"],
             "realized": row["realized"],
