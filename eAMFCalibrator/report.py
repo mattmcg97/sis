@@ -514,3 +514,105 @@ def _ci_text(summary, spec="+.4f"):
     if summary.get("ci_low") is None:
         return ""
     return f"[{format(summary['ci_low'], spec)}, {format(summary['ci_high'], spec)}]"
+
+
+# ---------------------------------------------------------------------------
+# Cross-sectional cells, under the line rule
+# ---------------------------------------------------------------------------
+
+CROSS_FIELDS = [
+    "axis", "cell", "n", "matches", "realized",
+    "prod_predicted", "prod_gap", "prod_brier",
+    "candidate_predicted", "candidate_gap", "candidate_brier",
+    "brier_delta", "ci_low", "ci_high", "p_value", "closer",
+]
+
+
+def print_calibration_cells(title, cells, order=None, label_width=16):
+    """Same-line cells: one shared realized rate, two predicted values."""
+    print(f"\n{'=' * 104}\n{title}\n{'=' * 104}")
+    if not cells:
+        print("  No same-line pairs in this cut.")
+        return
+    print("  Same line means same question, so both streams resolve to the SAME")
+    print("  outcome -- REAL is one number and only the predictions differ.")
+    print(f"\n  {'CELL':<{label_width}}{'N':>7}{'MATCH':>6}{'REAL':>8}"
+          f"{'PROD':>8}{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}"
+          f"{'ΔBRIER':>9}{'P':>8}{'CLOSER':>8}")
+    keys = order if order is not None else sorted(cells, key=str)
+    for key in keys:
+        row = cells.get(key)
+        if not row or not row["n"]:
+            continue
+        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        closer = "cand" if row["winner"] == "candidate" else "prod"
+        print(f"  {label:<{label_width}}{row['n']:>7,}{row['matches']:>6,}"
+              f"{_fmt(row['realized'], '.3f'):>8}"
+              f"{_fmt(row['prod_predicted'], '.3f'):>8}{_fmt(row['prod_gap'], '+.3f'):>8}"
+              f"{_fmt(row['candidate_predicted'], '.3f'):>8}{_fmt(row['candidate_gap'], '+.3f'):>8}"
+              f"{_fmt(row['brier_delta'], '+.4f'):>9}{_p(row['p_value']):>8}{closer:>8}")
+    print("\n  P_GAP / C_GAP are realized minus predicted: positive means that stream")
+    print("  underpriced the selection. CLOSER is whichever gap is smaller in size.")
+    print("  ΔBRIER is prod minus candidate, match-clustered; positive favours the")
+    print("  candidate. P is the clustered test.")
+
+
+def print_line_cells(title, cells, order=None, label_width=16):
+    """Different-line cells: the line overrules the probability."""
+    print(f"\n{'=' * 104}\n{title}\n{'=' * 104}")
+    if not cells:
+        print("  No different-line pairs in this cut.")
+        return
+    print("  Lines differ here, so the probabilities are not comparable and the")
+    print("  line decides. Errors are in points from the actual margin or total.")
+    print(f"\n  {'CELL':<{label_width}}{'N':>7}{'MATCH':>6}{'GAP':>7}"
+          f"{'PROD_ERR':>10}{'CAND_ERR':>10}{'ΔPOINTS':>9}"
+          f"{'95% CI':>20}{'P':>8}")
+    keys = order if order is not None else sorted(cells, key=str)
+    for key in keys:
+        row = cells.get(key)
+        if not row or not row["n"]:
+            continue
+        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        ci = ("" if row["ci_low"] is None
+              else f"[{row['ci_low']:+.3f}, {row['ci_high']:+.3f}]")
+        print(f"  {label:<{label_width}}{row['n']:>7,}{row['matches']:>6,}"
+              f"{row['mean_line_gap']:>7.2f}"
+              f"{row['prod_line_error']:>10.3f}{row['candidate_line_error']:>10.3f}"
+              f"{_fmt(row['points_delta'], '+.3f'):>9}{ci:>20}{_p(row['p_value']):>8}")
+    print("\n  GAP is the mean distance between the two lines. ΔPOINTS is prod minus")
+    print("  candidate line error, so positive means the candidate's line was closer.")
+
+
+def write_cross_csv(path, rows):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=CROSS_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f"\n  cross-sectional cells -> {path}")
+
+
+def cross_rows(axis_name, cells):
+    rows = []
+    for key, row in cells.items():
+        label = key if isinstance(key, str) else " ".join(str(k) for k in key)
+        rows.append({
+            "axis": axis_name,
+            "cell": label,
+            "n": row["n"],
+            "matches": row["matches"],
+            "realized": row["realized"],
+            "prod_predicted": row["prod_predicted"],
+            "prod_gap": row["prod_gap"],
+            "prod_brier": row["prod_brier"],
+            "candidate_predicted": row["candidate_predicted"],
+            "candidate_gap": row["candidate_gap"],
+            "candidate_brier": row["candidate_brier"],
+            "brier_delta": row["brier_delta"],
+            "ci_low": row["ci_low"],
+            "ci_high": row["ci_high"],
+            "p_value": row["p_value"],
+            "closer": row["winner"],
+        })
+    return rows
