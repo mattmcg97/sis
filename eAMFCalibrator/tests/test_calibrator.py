@@ -1067,6 +1067,51 @@ class TestSpreadInterpretation(unittest.TestCase):
         self.assertEqual(report["verdict"][0], "unclear")
 
 
+class TestFullReport(unittest.TestCase):
+    def setUp(self):
+        self.pairs = ([pair(0.6, 0.8, True, match=f"AF{i}", market_id=50)
+                       for i in range(6)]
+                      + [line_pair(0.5, 0.5, 44.5, 44.5, 24, 21, match=f"AF{i}",
+                                   market_id=54) for i in range(6)]
+                      + [line_pair(0.5, 0.6, 44.5, 46.5, 24, 21, match=f"AF{i}",
+                                   market_id=54) for i in range(6, 10)])
+
+    def test_report_carries_every_section(self):
+        built = directional.build_full_report(self.pairs, n_bootstrap=50)
+        for key in ("summary", "complement", "spread", "both_sides", "axes",
+                    "full_cell", "full_cell_order"):
+            self.assertIn(key, built)
+        self.assertEqual([axis["name"] for axis in built["axes"]],
+                         ["Score difference", "Quarter", "Possession"])
+
+    def test_every_axis_carries_both_views(self):
+        built = directional.build_full_report(self.pairs, n_bootstrap=50)
+        for axis in built["axes"]:
+            self.assertIn("probability", axis)
+            self.assertIn("line", axis)
+            self.assertTrue(axis["order"])
+
+    def test_sorted_by_descending_disagreement(self):
+        ordered = directional.sorted_pairs_by_disagreement(self.pairs)
+        gaps = [p.disagreement for p in ordered]
+        self.assertEqual(gaps, sorted(gaps, reverse=True))
+        self.assertEqual(len(ordered), len(self.pairs))
+
+    def test_sort_is_stable_on_ties(self):
+        # Equal gaps fall back to match, drive, market so runs are reproducible.
+        tied = [pair(0.5, 0.5, True, match="AF2", market_id=51),
+                pair(0.5, 0.5, True, match="AF1", market_id=50),
+                pair(0.5, 0.5, True, match="AF1", market_id=51)]
+        ordered = directional.sorted_pairs_by_disagreement(tied)
+        self.assertEqual([(p.match_code, p.market_id) for p in ordered],
+                         [("AF1", 50), ("AF1", 51), ("AF2", 51)])
+
+    def test_report_survives_no_pairs(self):
+        built = directional.build_full_report([], n_bootstrap=10)
+        self.assertEqual(built["summary"]["pairs"], 0)
+        self.assertEqual(built["full_cell"], {})
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS
