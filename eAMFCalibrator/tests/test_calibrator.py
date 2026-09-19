@@ -971,6 +971,102 @@ class TestBothSidesCalibration(unittest.TestCase):
         self.assertAlmostEqual(cells[50]["prod_gap"], -cells[51]["prod_gap"])
 
 
+def spread_sides(line_home, line_away, final_p1, final_p2, match="AF1",
+                 p_home=0.5, p_away=0.5, message=100):
+    """Both spread selections for one market, each with its own line."""
+    out = []
+    for market_id, line in ((52, line_home), (53, line_away)):
+        out.append(directional.PairedObservation(
+            match_code=match, drive_number=1, period_number=1, score_diff=0,
+            offensive_team="Home Team", market_id=market_id,
+            message_count=message, message_gap=0,
+            prod_probability=p_home if market_id == 52 else p_away,
+            candidate_probability=p_home if market_id == 52 else p_away,
+            prod_line=line, candidate_line=line,
+            prod_outcome=markets.resolve(market_id, line, final_p1, final_p2),
+            candidate_outcome=markets.resolve(market_id, line, final_p1, final_p2),
+            realized=markets.realized_value(market_id, final_p1, final_p2)))
+    return out
+
+
+class TestSpreadResolutionSwitch(unittest.TestCase):
+    def tearDown(self):
+        config.SPREAD_RESOLUTION = "literal"
+
+    def test_literal_lets_both_sides_win_inside_the_band(self):
+        # Home by 1, both sides at -2.5: -2.5 < 1 < 2.5, so both clear.
+        config.SPREAD_RESOLUTION = "literal"
+        self.assertTrue(markets.resolve(52, -2.5, 22, 21))
+        self.assertTrue(markets.resolve(53, -2.5, 22, 21))
+
+    def test_complement_partitions(self):
+        config.SPREAD_RESOLUTION = "complement"
+        self.assertTrue(markets.resolve(52, -2.5, 22, 21))
+        self.assertFalse(markets.resolve(53, -2.5, 22, 21))
+
+    def test_complement_flips_when_the_home_margin_misses(self):
+        config.SPREAD_RESOLUTION = "complement"
+        # Home loses by 7, margin -7, which does not clear -2.5.
+        self.assertFalse(markets.resolve(52, -2.5, 17, 24))
+        self.assertTrue(markets.resolve(53, -2.5, 17, 24))
+
+    def test_market_52_is_unaffected_by_the_switch(self):
+        for mode in ("literal", "complement"):
+            config.SPREAD_RESOLUTION = mode
+            self.assertTrue(markets.resolve(52, -2.5, 22, 21), mode)
+            self.assertFalse(markets.resolve(52, 10.5, 22, 21), mode)
+
+
+class TestSpreadInterpretation(unittest.TestCase):
+    def tearDown(self):
+        config.SPREAD_RESOLUTION = "literal"
+
+    def test_mirrored_lines_that_partition_confirm_the_literal_reading(self):
+        # 52 at -2.5 and 53 at +2.5 partition on margin_1 vs -2.5.
+        pairs = []
+        for i, (p1, p2) in enumerate([(24, 21), (17, 24), (30, 10), (14, 20)]):
+            pairs += spread_sides(-2.5, 2.5, p1, p2, match=f"AF{i}",
+                                  p_home=0.55, p_away=0.45, message=100 + i)
+        report = directional.spread_interpretation_report(pairs)
+        self.assertEqual(report["n"], 4)
+        self.assertEqual(report["lines_mirrored"], 4)
+        self.assertEqual(report["lines_equal"], 0)
+        self.assertEqual(report["literal_partition"], 4)
+        self.assertEqual(report["verdict"][0], "literal")
+
+    def test_same_line_with_fair_probabilities_that_overlap_says_complement(self):
+        # Both sides at -2.5 and probabilities summing to 1, but margins
+        # inside the band make the literal reading double-count.
+        pairs = []
+        for i, (p1, p2) in enumerate([(22, 21), (21, 22), (23, 22), (20, 21),
+                                      (24, 23), (19, 20)]):
+            pairs += spread_sides(-2.5, -2.5, p1, p2, match=f"AF{i}",
+                                  p_home=0.52, p_away=0.48, message=100 + i)
+        report = directional.spread_interpretation_report(pairs)
+        self.assertEqual(report["lines_equal"], 6)
+        self.assertAlmostEqual(report["prob_sum_mean"], 1.0)
+        self.assertEqual(report["literal_partition"], 0)
+        self.assertEqual(report["literal_both_won"], 6)
+        self.assertEqual(report["verdict"][0], "complement")
+
+    def test_verdict_is_recomputed_from_lines_not_stored_outcomes(self):
+        """Building the pairs under one reading must not bias the verdict."""
+        config.SPREAD_RESOLUTION = "complement"
+        pairs = []
+        for i, (p1, p2) in enumerate([(24, 21), (17, 24), (30, 10), (14, 20)]):
+            pairs += spread_sides(-2.5, 2.5, p1, p2, match=f"AF{i}", message=100 + i)
+        report = directional.spread_interpretation_report(pairs)
+        # Mirrored lines still read as literal despite the pairs being built
+        # with the complement resolution active.
+        self.assertEqual(report["verdict"][0], "literal")
+
+    def test_no_spread_pairs(self):
+        report = directional.spread_interpretation_report(
+            [pair(0.6, 0.6, True, market_id=50)])
+        self.assertEqual(report["n"], 0)
+        self.assertEqual(report["verdict"][0], "unclear")
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS

@@ -126,6 +126,25 @@ DISAGREEMENT_BANDS = [
 # and lets the calibration gap exist at all.
 CANONICAL_SELECTIONS = {50: "Home", 52: "Home", 54: "Over"}
 
+# How to resolve the spread's second selection.
+#
+# Market 52 reads "PLAYER 1 to score over L more than PLAYER 2" and 53 reads
+# "PLAYER 2 to score over L more than PLAYER 1". Two readings are possible
+# and they disagree:
+#
+#   "literal"     two separate propositions. 52 wins on margin_1 > L_52,
+#                 53 wins on margin_2 > L_53. If both sides carry the SAME L
+#                 they overlap -- at L = -2.5 both win for any margin in
+#                 (-2.5, +2.5) -- so they are not two sides of one market.
+#   "complement"  one proposition, 53 being the NO of 52: 53 wins on
+#                 margin_1 <= L. Partitions by construction.
+#
+# `cross` prints a spread interpretation report that tests both against the
+# data. The probabilities summing to 1 while the two sides carry the same L
+# is proof the literal reading is wrong, because complementary probabilities
+# require complementary events.
+SPREAD_RESOLUTION = "literal"
+
 # Cells thinner than this are printed but excluded from the "worst cells"
 # summary, where noise would otherwise dominate.
 MIN_CELL_OBSERVATIONS = 30

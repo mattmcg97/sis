@@ -898,3 +898,91 @@ def both_sides_calibration(pairs, n_bootstrap=200):
             "canonical": market_id in config.CANONICAL_SELECTIONS,
         }
     return out
+
+
+def spread_interpretation_report(pairs):
+    """Which reading of the spread's second selection does the data support?
+
+    Both readings are recomputed here from the line and the realized margin
+    rather than taken from the stored outcome, so the answer does not depend
+    on whichever resolution was active when the pairs were built.
+
+    The decisive combination is probabilities summing to 1 while the two
+    sides carry the SAME line. Complementary probabilities require
+    complementary events, so that pairing is proof the literal reading --
+    two independent propositions -- is wrong.
+    """
+    grouped = defaultdict(dict)
+    for pair in pairs:
+        if markets.market_group(pair.market_id) == markets.SPREAD:
+            grouped[(pair.match_code, pair.message_count)][pair.market_id] = pair
+
+    out = {"n": 0, "lines_equal": 0, "lines_mirrored": 0, "lines_other": 0,
+           "prob_sums": [], "literal_partition": 0, "literal_both_won": 0,
+           "literal_both_lost": 0, "readings_agree": 0, "unresolved": 0}
+
+    for sides in grouped.values():
+        if 52 not in sides or 53 not in sides:
+            continue
+        home, away = sides[52], sides[53]
+        if (home.prod_line is None or away.prod_line is None
+                or home.realized is None or away.realized is None):
+            out["unresolved"] += 1
+            continue
+
+        out["n"] += 1
+        out["prob_sums"].append(home.prod_probability + away.prod_probability)
+
+        if abs(home.prod_line - away.prod_line) < LINE_EPSILON:
+            out["lines_equal"] += 1
+        elif abs(home.prod_line + away.prod_line) < LINE_EPSILON:
+            out["lines_mirrored"] += 1
+        else:
+            out["lines_other"] += 1
+
+        home_margin = home.realized                 # PLAYER 1 minus PLAYER 2
+        away_margin = away.realized                 # the negation
+        literal_home = home_margin > home.prod_line
+        literal_away = away_margin > away.prod_line
+        complement_away = home_margin < away.prod_line
+
+        if literal_home != literal_away:
+            out["literal_partition"] += 1
+        elif literal_home:
+            out["literal_both_won"] += 1
+        else:
+            out["literal_both_lost"] += 1
+
+        if literal_away == complement_away:
+            out["readings_agree"] += 1
+
+    sums = out["prob_sums"]
+    out["prob_sum_mean"] = sum(sums) / len(sums) if sums else None
+    out["prob_sum_min"] = min(sums) if sums else None
+    out["prob_sum_max"] = max(sums) if sums else None
+
+    n = out["n"]
+    if n:
+        complementary_probabilities = abs((out["prob_sum_mean"] or 0) - 1.0) < 0.02
+        same_line = out["lines_equal"] / n > 0.9
+        mirrored_line = out["lines_mirrored"] / n > 0.9
+        partitions = out["literal_partition"] / n > 0.99
+
+        if mirrored_line and partitions:
+            out["verdict"] = ("literal", "Sides carry mirrored lines and partition "
+                                         "cleanly: two sides of one market, literal "
+                                         "reading is correct.")
+        elif same_line and complementary_probabilities and not partitions:
+            out["verdict"] = ("complement", "Same line AND probabilities summing to 1, "
+                                            "but the literal reading does not partition. "
+                                            "53 is the NO of 52 -- set "
+                                            "SPREAD_RESOLUTION = \"complement\".")
+        elif partitions:
+            out["verdict"] = ("literal", "The literal reading partitions, so it is "
+                                         "self-consistent.")
+        else:
+            out["verdict"] = ("unclear", "Neither reading is clearly supported. "
+                                         "Inspect a handful of spread rows directly.")
+    else:
+        out["verdict"] = ("unclear", "No spread pairs carrying both sides.")
+    return out

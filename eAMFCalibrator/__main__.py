@@ -230,6 +230,7 @@ def cmd_cross(args):
 
     # Before any cell table: is the one-side-per-market shortcut sound?
     report.print_complement_report(directional.complement_report(pairs))
+    report.print_spread_interpretation(directional.spread_interpretation_report(pairs))
     report.print_both_sides(directional.both_sides_calibration(pairs))
 
     csv_rows = []

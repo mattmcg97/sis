@@ -17,6 +17,12 @@ of the calibration arithmetic, since a pushed selection has no realized
 
 import re
 
+
+def spread_resolution():
+    """Read the switch lazily so tests can flip it without reimporting."""
+    from . import config
+    return getattr(config, "SPREAD_RESOLUTION", "literal")
+
 MONEYLINE = "moneyline"
 SPREAD = "spread"
 TOTAL = "total"
@@ -104,6 +110,12 @@ def resolve(market_id, line, final_p1, final_p2):
         return None
 
     if group == SPREAD:
+        if market_id == 53 and spread_resolution() == "complement":
+            # 53 is the NO of 52: the home margin failed to clear the line.
+            margin = final_p1 - final_p2
+            if margin == line:
+                return None
+            return margin < line
         margin = (final_p1 - final_p2) if market_id == 52 else (final_p2 - final_p1)
         if margin == line:
             return None

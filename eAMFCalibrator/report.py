@@ -688,3 +688,39 @@ def print_both_sides(cells):
                   f"{realized_sum:>8.3f}{'':>8}{gap_sum:>+8.3f}   <- {verdict}")
     print("\n  USED marks the selection the cross-sectional tables calibrate.")
     print("  A realized sum of 1.000 and gaps cancelling is the check passing.")
+
+
+def print_spread_interpretation(report):
+    """Which reading of the spread's second selection the data supports."""
+    print(f"\n{'=' * 96}\nSpread: are the two selections yes/no on one proposition?\n{'=' * 96}")
+    print('  52 reads "PLAYER 1 to score over L more than PLAYER 2".')
+    print('  53 reads "PLAYER 2 to score over L more than PLAYER 1".')
+    print("  Literal    = two propositions. Same L means they OVERLAP: both win on")
+    print("               any margin between -L and +L.")
+    print("  Complement = one proposition, 53 the NO of 52. Partitions by design.")
+
+    n = report["n"]
+    if not n:
+        print("\n  No spread pairs carrying both sides.")
+        return
+
+    print(f"\n  spread markets with both sides : {n:,}")
+    print(f"  probabilities summed           : mean {_fmt(report['prob_sum_mean'], '.4f')}"
+          f"  min {_fmt(report['prob_sum_min'], '.3f')}"
+          f"  max {_fmt(report['prob_sum_max'], '.3f')}")
+    print(f"  the two sides' lines           : equal {100 * report['lines_equal'] / n:.1f}%"
+          f"   mirrored {100 * report['lines_mirrored'] / n:.1f}%"
+          f"   neither {100 * report['lines_other'] / n:.1f}%")
+    print(f"  literal reading partitions     : {100 * report['literal_partition'] / n:.1f}%"
+          f"   (both won {report['literal_both_won']:,},"
+          f" both lost {report['literal_both_lost']:,})")
+    print(f"  the two readings agree on 53   : {100 * report['readings_agree'] / n:.1f}%")
+
+    verdict, explanation = report["verdict"]
+    print(f"\n  VERDICT: {verdict.upper()}")
+    for line in explanation.split(" -- "):
+        print(f"    {line}")
+    print(f"\n  Currently resolving as: {config.SPREAD_RESOLUTION}")
+    if verdict != "unclear" and verdict != config.SPREAD_RESOLUTION:
+        print(f"  !! That does not match. Set SPREAD_RESOLUTION = \"{verdict}\" in")
+        print("     config.py and re-run; every spread number above is affected.")
