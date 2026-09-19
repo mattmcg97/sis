@@ -55,7 +55,47 @@ never mixes markets in a cell — moneyline, spread and total are different
 questions with different base rates, and their average describes none of
 them. `TestMirrorCancellation` pins both halves of this.
 
-Nothing is lost by taking one side: the other is its complement.
+Nothing is lost by taking one side — **provided the sides really are
+complements**, which `cross` now tests rather than assumes:
+
+- **P_SUM** — the two sides' probabilities added. 1.0000 means a fair book
+  with no overround, so each side is exactly the other's complement and one
+  can be dropped for free. Above 1 means the discarded side holds a little
+  information the kept one does not.
+- **PARTITION** — should be 100%: exactly one side wins. Spread is the one to
+  watch, because market 52 reads "PLAYER 1 over L" and 53 reads "PLAYER 2
+  over L". If both carry the *same* L they overlap rather than partition: at
+  L = -2.5 both win for any margin between -2.5 and +2.5. `BOTH WON` counts
+  those cases.
+
+## Spread: two propositions, or one with a yes and a no?
+
+Market 52 reads "PLAYER 1 to score over L more than PLAYER 2"; 53 reads
+"PLAYER 2 to score over L more than PLAYER 1". Two readings are possible and
+they give **different outcomes**:
+
+| Reading | 53 wins when | Behaviour at the same L |
+| --- | --- | --- |
+| `literal` | `margin_2 > L` | overlaps 52 — both win on any margin in (−L, +L) |
+| `complement` | `margin_1 <= L` | partitions by construction |
+
+`config.SPREAD_RESOLUTION` switches between them, and `cross` prints a report
+that decides from the data rather than from a reading of the text. Both
+readings are recomputed there from the line and the realized margin, so the
+verdict does not depend on whichever resolution was active when the pairs were
+built.
+
+The decisive combination is **probabilities summing to 1 while the two sides
+carry the same L** — complementary probabilities require complementary events,
+so that pairing proves the literal reading wrong. Mirrored lines (−2.5 against
++2.5) that partition cleanly prove it right. The report names the reading it
+supports and flags a mismatch with the configured one.
+
+A **both-sides table** prints every selection's calibration next to the one
+actually used. That is a consistency check, not an extra finding: if the
+sides are complements, each pair of rows has realized summing to 1.000 and
+gaps that are equal and opposite. If they do not, the pipeline is measuring
+something other than what it claims.
 
 `preflight` confirms the tables and reports how the snapshot clock is being
 reconstructed — worth a look after any feed change.
@@ -236,7 +276,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-113 tests covering line parsing, market resolution, bucket edges, drive
+128 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,
