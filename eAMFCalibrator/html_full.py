@@ -347,6 +347,9 @@ def _pair_rows(pairs):
             f'<tr>'
             f'<td>{html.escape(p.match_code)}</td>'
             f'<td data-v="{p.drive_number}">{p.drive_number}</td>'
+            f'<td data-v="{p.message_count}">{p.message_count}</td>'
+            f'<td data-v="{abs(p.message_gap)}" class="{"" if p.message_gap == 0 else "warn"}">'
+            f'{p.message_gap:+d}</td>'
             f'<td>{"Q" + str(p.period_number) if p.period_number and p.period_number <= 4 else ("OT" if p.period_number else "?")}</td>'
             f'<td data-v="{p.score_diff}">{p.score_diff:+d}</td>'
             f'<td>{"H" if p.offensive_team == "Home Team" else ("A" if p.offensive_team == "Away Team" else "?")}</td>'
@@ -382,7 +385,8 @@ def _pair_table(pairs):
       <div class="scroll">
       <table class="sortable" id="pairTable">
         <thead><tr>
-          <th>Match</th><th>Drive</th><th>Qtr</th><th>Score</th><th>Poss</th>
+          <th>Match</th><th>Drive</th><th>Msg</th><th>&plusmn;Msg</th>
+          <th>Qtr</th><th>Score</th><th>Poss</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
           <th>Prod price</th><th>Cand price</th>
@@ -393,6 +397,12 @@ def _pair_table(pairs):
         <tbody>{_pair_rows(pairs)}</tbody>
       </table>
       </div>
+      <p class="note"><b>&plusmn;Msg</b> is how far the paired message sits from the
+         snapshot's own. Zero is an exact hit; anything else means the two
+         streams never both quoted that message and the nearest common one was
+         used. Worth checking on a large &Delta;prob, because late in a close
+         game a one-message offset can straddle a decisive play and manufacture
+         a disagreement that is not a model difference.</p>
       <p class="note">RESULT is the realized margin (spread) or combined total
          (total); moneyline has none. PROD and CAND under it are whether that
          stream's selection won <em>at its own line</em> &mdash; they can differ
@@ -405,6 +415,10 @@ def _pair_table(pairs):
 
 def render(report, header, stats, pairs):
     verdict_class, verdict_text = _verdict(report)
+    # The settled universe and the matches that actually produced pairs are
+    # not the same number: a match can be settled, carry quotes, and still
+    # pair nothing. Report both rather than implying one.
+    contributing = len({p.match_code for p in pairs})
     exact = stats.get("exact_message_pair", 0)
     offset = stats.get("offset_message_pair", 0)
     exact_rate = _pct(exact / (exact + offset)) if exact + offset else "&mdash;"
@@ -488,7 +502,8 @@ def render(report, header, stats, pairs):
   <header>
     <h1>eAMF &mdash; candidate vs prod</h1>
     <span class="meta">from <b>{html.escape(str(config.CUTOFF_START))}</b></span>
-    <span class="meta"><b>{header.get('paired_matches', 0)}</b> matches</span>
+    <span class="meta"><b>{contributing}</b> matches with pairs</span>
+    <span class="meta" title="settled matches in both streams">of <b>{header.get('paired_matches', 0)}</b> settled</span>
     <span class="meta"><b>{report['summary']['pairs']:,}</b> pairs</span>
     <span class="meta"><b>{stats.get('snapshots', 0):,}</b> drive snapshots</span>
     <span class="meta">exact-message pairing <b>{exact_rate}</b></span>
