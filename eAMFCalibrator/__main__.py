@@ -242,10 +242,14 @@ def cmd_cross(args):
             line_view, order=order_factory())
 
     # The three axes crossed, which is the cell the calibrator was built for.
+    # The three axes crossed. Moneyline only on screen -- three markets per
+    # cell would be 130+ rows, and moneyline is the market with no line to
+    # complicate it. The CSV carries all three.
     full = directional.calibration_cells(pairs, directional.cell_key)
+    cell_order = sorted({k[0] for k in full}, key=buckets.sort_key)
     report.print_calibration_cells(
-        "SAME LINE by full cell (score x quarter x possession)",
-        full, order=sorted(full, key=buckets.sort_key), label_width=26)
+        "SAME LINE by full cell (score x quarter x possession) -- moneyline only",
+        full, order=cell_order, label_width=26, markets_shown=["moneyline"])
     csv_rows.extend(report.cross_rows("full cell", full))
 
     report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)

@@ -774,21 +774,21 @@ class TestCrossSectionalLineRule(unittest.TestCase):
     def test_probability_cells_use_only_same_line_pairs(self):
         cells = directional.calibration_cells(self.pairs, lambda p: "cell",
                                               n_bootstrap=50)
-        self.assertEqual(cells["cell"]["n"], 2)
-        self.assertEqual(cells["cell"]["matches"], 2)
+        self.assertEqual(cells[("cell", "total")]["n"], 2)
+        self.assertEqual(cells[("cell", "total")]["matches"], 2)
 
     def test_same_line_means_one_shared_realized_rate(self):
         # Same line, same question, so the two streams resolve identically.
         cells = directional.calibration_cells(self.pairs, lambda p: "cell",
                                               n_bootstrap=50)
-        row = cells["cell"]
+        row = cells[("cell", "total")]
         self.assertEqual(row["realized"], row["realized_check"])
         self.assertAlmostEqual(row["realized"], 1.0)   # total 45 is over 44.5
 
     def test_predicted_differs_while_realized_does_not(self):
         cells = directional.calibration_cells(self.pairs, lambda p: "cell",
                                               n_bootstrap=50)
-        row = cells["cell"]
+        row = cells[("cell", "total")]
         self.assertAlmostEqual(row["prod_predicted"], 0.55)
         self.assertAlmostEqual(row["candidate_predicted"], 0.65)
         # Candidate's 0.65 is nearer a realized 1.0 than prod's 0.55.
@@ -810,13 +810,13 @@ class TestCrossSectionalLineRule(unittest.TestCase):
     def test_the_two_views_partition_the_pairs(self):
         prob = directional.calibration_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
         line = directional.line_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
-        self.assertEqual(prob["cell"]["n"] + line["cell"]["n"], len(self.pairs))
+        self.assertEqual(prob[("cell", "total")]["n"] + line["cell"]["n"], len(self.pairs))
 
     def test_moneyline_always_lands_in_the_probability_view(self):
         pairs = [pair(0.6, 0.7, True, match=f"AF{i}") for i in range(4)]
         prob = directional.calibration_cells(pairs, lambda p: "cell", n_bootstrap=50)
         line = directional.line_cells(pairs, lambda p: "cell", n_bootstrap=50)
-        self.assertEqual(prob["cell"]["n"], 4)
+        self.assertEqual(prob[("cell", "moneyline")]["n"], 4)
         self.assertEqual(line, {})
 
     def test_cross_axes_cover_the_three_requested_splits(self):
@@ -824,6 +824,64 @@ class TestCrossSectionalLineRule(unittest.TestCase):
         self.assertEqual(names, ["Score difference", "Quarter", "Possession"])
         for _, key_function, order_factory in directional.CROSS_AXES:
             self.assertIn(key_function(self.same[0]), order_factory())
+
+
+class TestMirrorCancellation(unittest.TestCase):
+    """Pooling both sides of a market destroys the calibration measurement.
+
+    The sides are complements, so every (p, y) comes with a mirror
+    (1-p, 1-y): realized and mean prediction BOTH average to exactly 0.5
+    whatever the model does. A realized rate of exactly 0.500 in every cell
+    is the signature of this bug, not a property of the data.
+    """
+
+    def _both_sides(self, prod_probability, candidate_probability, outcome, match):
+        """Home and Away rows for one moneyline market, as the feed supplies."""
+        return [
+            pair(prod_probability, candidate_probability, outcome,
+                 match=match, market_id=50),
+            pair(1 - prod_probability, 1 - candidate_probability, not outcome,
+                 match=match, market_id=51),
+        ]
+
+    def setUp(self):
+        self.pairs = []
+        for i, (p, y) in enumerate([(0.85, True), (0.30, False), (0.62, True),
+                                    (0.10, False), (0.55, True)]):
+            self.pairs += self._both_sides(p, p + 0.02, y, f"AF{i}")
+
+    def test_pooling_both_sides_would_pin_realized_to_one_half(self):
+        pooled = metrics.summarize(
+            [(p.prod_probability, p.prod_outcome) for p in self.pairs], 10)
+        self.assertAlmostEqual(pooled["realized"], 0.5)
+        self.assertAlmostEqual(pooled["mean_predicted"], 0.5)
+        self.assertAlmostEqual(pooled["gap"], 0.0)
+
+    def test_canonical_selection_lets_realized_move(self):
+        cells = directional.calibration_cells(self.pairs, lambda p: "cell",
+                                              n_bootstrap=50)
+        row = cells[("cell", "moneyline")]
+        # Only market 50 survives, so 5 rows not 10, and realized is the real
+        # 3-of-5 rather than a forced 0.5.
+        self.assertEqual(row["n"], 5)
+        self.assertAlmostEqual(row["realized"], 0.6)
+        self.assertNotAlmostEqual(row["realized"], 0.5)
+
+    def test_only_canonical_market_ids_are_used(self):
+        self.assertEqual(set(config.CANONICAL_SELECTIONS), {50, 52, 54})
+        for market_id in config.CANONICAL_SELECTIONS:
+            self.assertIn(market_id, markets.MARKET_IDS)
+
+    def test_markets_are_kept_apart(self):
+        # Different markets are different questions with different base
+        # rates, so they must not share a cell.
+        mixed = ([pair(0.9, 0.9, True, match=f"AF{i}", market_id=50) for i in range(4)]
+                 + [line_pair(0.2, 0.2, 44.5, 44.5, 10, 10, match=f"AF{i}",
+                              market_id=54) for i in range(4)])
+        cells = directional.calibration_cells(mixed, lambda p: "cell", n_bootstrap=50)
+        self.assertEqual(set(cells), {("cell", "moneyline"), ("cell", "total")})
+        self.assertAlmostEqual(cells[("cell", "moneyline")]["realized"], 1.0)
+        self.assertAlmostEqual(cells[("cell", "total")]["realized"], 0.0)
 
 
 class TestConfigSanity(unittest.TestCase):

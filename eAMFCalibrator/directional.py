@@ -678,17 +678,31 @@ def build_summary(pairs, n_bootstrap=2000):
 # common to both and only the predicted values differ, which turns each
 # cell into a direct "whose number was nearer the truth".
 
-def calibration_cells(pairs, key_function, n_bootstrap=500):
-    """Per cell, both streams' calibration on an identical population.
+def calibration_cells(pairs, key_function, n_bootstrap=500, market_ids=None):
+    """Per (cell, market), both streams' calibration on an identical population.
 
-    Only same-line pairs are used, so realized is shared. Returns a dict of
-    cell -> stats, plus the paired clustered test for that cell.
+    Two restrictions, both load-bearing:
+
+    Same line only, so the two streams answer the same question and share one
+    realized outcome per cell.
+
+    One selection per market (config.CANONICAL_SELECTIONS). Pooling both sides
+    of a market cancels the measurement dead: the sides are complements, so
+    every (p, y) arrives with a mirror (1-p, 1-y) and the realized rate and
+    the mean prediction BOTH average to exactly 0.5 no matter how good or bad
+    the model is. Splitting by market matters for the same reason at one
+    remove -- moneyline, spread and total are different questions with
+    different base rates, and averaging them gives a rate that describes none
+    of them.
+
+    Keyed by (cell, market group).
     """
+    allowed = set(config.CANONICAL_SELECTIONS if market_ids is None else market_ids)
     same, _ = split_by_line(pairs)
     grouped = defaultdict(list)
     for pair in same:
-        if pair.comparable(PROBABILITY):
-            grouped[key_function(pair)].append(pair)
+        if pair.market_id in allowed and pair.comparable(PROBABILITY):
+            grouped[(key_function(pair), markets.market_group(pair.market_id))].append(pair)
 
     cells = {}
     for key, subset in grouped.items():
@@ -700,6 +714,7 @@ def calibration_cells(pairs, key_function, n_bootstrap=500):
         cells[key] = {
             "n": len(subset),
             "matches": len({p.match_code for p in subset}),
+            "selection": config.CANONICAL_SELECTIONS.get(subset[0].market_id, ""),
             # Same line means same question, so both streams resolve to the
             # same outcome; realized is one number, not two.
             "realized": prod_stats["realized"],
