@@ -8,19 +8,38 @@ into cells, and asks the only question that matters for a probability:
 ```
 py -m eAMFCalibrator preflight              # check tables + the play clock
 py -m eAMFCalibrator directional            # paired head-to-head (start here)
+py -m eAMFCalibrator cross                  # cell view, under the line rule
 py -m eAMFCalibrator run prod
 py -m eAMFCalibrator run candidate
 py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
 
-Two different questions:
+Three views:
 
 - **`directional`** — at the same snapshot, on the same selection, which
   model was closer to the result? Paired, so the between-snapshot variance
   cancels. This is the one a day of data can answer.
-- **`run`** — is this model's 30% really 30%? Needs many snapshots per cell
-  before a realized rate means anything.
+- **`cross`** — the same pairing, shown as cells: score difference, quarter
+  and possession, with both streams' predicted against the shared realized
+  rate. Applies the line rule (below).
+- **`run`** — single-stream calibration: is this model's 30% really 30%?
+  Needs many snapshots per cell before a realized rate means anything. Its
+  per-stream numbers are sound, but `run both`'s side-by-side does **not**
+  apply the line rule — use `cross` for a rule-respecting comparison.
+
+## The line rule
+
+A different line overrules the probability. Probabilities are only compared
+where both streams quoted the **same** line; where the lines differ, the
+comparison is on which line landed closer to the result.
+
+Restricting to same-line pairs buys a property that makes the cell tables
+readable: the same line is the same question, so both streams resolve to
+**one shared realized outcome** per cell. The realized column is common and
+only the predictions differ, which reduces each cell to "whose number was
+nearer the truth". `TestCrossSectionalLineRule` pins that invariant, along
+with the two views partitioning the pairs exactly.
 
 `preflight` confirms the tables and reports how the snapshot clock is being
 reconstructed — worth a look after any feed change.
@@ -201,7 +220,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-96 tests covering line parsing, market resolution, bucket edges, drive
+109 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,

@@ -756,6 +756,76 @@ class TestDisagreementBands(unittest.TestCase):
             self.assertEqual(directional.disagreement_band(p), expected, f"gap={gap}")
 
 
+class TestCrossSectionalLineRule(unittest.TestCase):
+    """The rule: a different line overrules the probability outright."""
+
+    def setUp(self):
+        # Two same-line pairs and two different-line pairs, same cell.
+        self.same = [
+            line_pair(0.55, 0.65, 44.5, 44.5, 24, 21, match="AF1"),
+            line_pair(0.55, 0.65, 44.5, 44.5, 24, 21, match="AF2"),
+        ]
+        self.different = [
+            line_pair(0.55, 0.65, 44.5, 46.5, 24, 21, match="AF3"),
+            line_pair(0.55, 0.65, 44.5, 48.5, 24, 21, match="AF4"),
+        ]
+        self.pairs = self.same + self.different
+
+    def test_probability_cells_use_only_same_line_pairs(self):
+        cells = directional.calibration_cells(self.pairs, lambda p: "cell",
+                                              n_bootstrap=50)
+        self.assertEqual(cells["cell"]["n"], 2)
+        self.assertEqual(cells["cell"]["matches"], 2)
+
+    def test_same_line_means_one_shared_realized_rate(self):
+        # Same line, same question, so the two streams resolve identically.
+        cells = directional.calibration_cells(self.pairs, lambda p: "cell",
+                                              n_bootstrap=50)
+        row = cells["cell"]
+        self.assertEqual(row["realized"], row["realized_check"])
+        self.assertAlmostEqual(row["realized"], 1.0)   # total 45 is over 44.5
+
+    def test_predicted_differs_while_realized_does_not(self):
+        cells = directional.calibration_cells(self.pairs, lambda p: "cell",
+                                              n_bootstrap=50)
+        row = cells["cell"]
+        self.assertAlmostEqual(row["prod_predicted"], 0.55)
+        self.assertAlmostEqual(row["candidate_predicted"], 0.65)
+        # Candidate's 0.65 is nearer a realized 1.0 than prod's 0.55.
+        self.assertEqual(row["winner"], directional.CANDIDATE)
+
+    def test_line_cells_use_only_different_line_pairs(self):
+        cells = directional.line_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
+        self.assertEqual(cells["cell"]["n"], 2)
+        self.assertEqual(cells["cell"]["matches"], 2)
+
+    def test_line_cells_measure_distance_from_the_result(self):
+        cells = directional.line_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
+        row = cells["cell"]
+        # Total 45. Prod at 44.5 twice -> 0.5. Candidate at 46.5 and 48.5 -> 1.5, 3.5.
+        self.assertAlmostEqual(row["prod_line_error"], 0.5)
+        self.assertAlmostEqual(row["candidate_line_error"], 2.5)
+        self.assertAlmostEqual(row["points_delta"], -2.0)   # prod's line closer
+
+    def test_the_two_views_partition_the_pairs(self):
+        prob = directional.calibration_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
+        line = directional.line_cells(self.pairs, lambda p: "cell", n_bootstrap=50)
+        self.assertEqual(prob["cell"]["n"] + line["cell"]["n"], len(self.pairs))
+
+    def test_moneyline_always_lands_in_the_probability_view(self):
+        pairs = [pair(0.6, 0.7, True, match=f"AF{i}") for i in range(4)]
+        prob = directional.calibration_cells(pairs, lambda p: "cell", n_bootstrap=50)
+        line = directional.line_cells(pairs, lambda p: "cell", n_bootstrap=50)
+        self.assertEqual(prob["cell"]["n"], 4)
+        self.assertEqual(line, {})
+
+    def test_cross_axes_cover_the_three_requested_splits(self):
+        names = [name for name, _, _ in directional.CROSS_AXES]
+        self.assertEqual(names, ["Score difference", "Quarter", "Possession"])
+        for _, key_function, order_factory in directional.CROSS_AXES:
+            self.assertIn(key_function(self.same[0]), order_factory())
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS

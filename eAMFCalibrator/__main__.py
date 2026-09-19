@@ -17,7 +17,7 @@ import argparse
 import os
 import sys
 
-from . import config, directional, html_report, pipeline, report, snowflake_io
+from . import buckets, config, directional, html_report, pipeline, report, snowflake_io
 
 
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "out")
@@ -105,6 +105,11 @@ def cmd_run(args):
         order = ["prod", "candidate"]
         a, b = [k for k in order if k in results] or sorted(results)
         report.print_comparison(results[a], results[b], a, b)
+        print("\n  !! This comparison does NOT apply the line rule: each stream was")
+        print("     calibrated on its own quotes, so a cell can mix pairs where the")
+        print("     two streams priced different lines. Each stream's OWN calibration")
+        print("     above is sound; it is the side-by-side that is loose.")
+        print("     Use `cross` for the comparison restricted to same-line pairs.")
     return 0
 
 
@@ -198,6 +203,55 @@ def _possession_label(pair):
     return buckets.possession_bucket(pair.offensive_team)
 
 
+def cmd_cross(args):
+    """Cross-sectional calibration by cell, under the line rule.
+
+    Same pairing as `directional`, but the output is the cell view: for each
+    score-difference / quarter / possession bucket, both streams' predicted
+    against the shared realized rate. Probability is only used where the two
+    streams quoted the SAME line; where lines differ the line decides, and
+    those pairs get their own table.
+    """
+    out_dir = args.out or DEFAULT_OUT
+    print("\nPairing prod against candidate at each drive-start snapshot")
+    pairs, stats, header = directional.run()
+
+    report.print_directional_header(header, stats)
+    if not pairs:
+        print("\n  No paired observations. Nothing to compare.")
+        return 1
+
+    lines = directional.line_agreement(pairs)
+    report.print_line_agreement(lines)
+
+    same, different = directional.split_by_line(pairs)
+    print(f"\n  Probability comparison uses the {len(same):,} same-line pairs.")
+    print(f"  The {len(different):,} different-line pairs are judged on the line instead.")
+
+    csv_rows = []
+    for axis_name, key_function, order_factory in directional.CROSS_AXES:
+        cells = directional.calibration_cells(pairs, key_function)
+        report.print_calibration_cells(
+            f"SAME LINE by {axis_name.lower()} -- predicted vs realized",
+            cells, order=order_factory())
+        csv_rows.extend(report.cross_rows(axis_name, cells))
+
+        line_view = directional.line_cells(pairs, key_function)
+        report.print_line_cells(
+            f"DIFFERENT LINE by {axis_name.lower()} -- whose line was closer",
+            line_view, order=order_factory())
+
+    # The three axes crossed, which is the cell the calibrator was built for.
+    full = directional.calibration_cells(pairs, directional.cell_key)
+    report.print_calibration_cells(
+        "SAME LINE by full cell (score x quarter x possession)",
+        full, order=sorted(full, key=buckets.sort_key), label_width=26)
+    csv_rows.extend(report.cross_rows("full cell", full))
+
+    report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="eAMFCalibrator", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -215,6 +269,12 @@ def build_parser():
     dir_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     dir_parser.add_argument("--html", help="path for the one-screen HTML report")
 
+    cross_parser = sub.add_parser(
+        "cross",
+        help="cross-sectional calibration by score diff / quarter / possession, "
+             "under the line rule")
+    cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     cmp_parser = sub.add_parser("compare", help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -230,6 +290,8 @@ def main(argv=None):
         return cmd_run(args)
     if args.command == "directional":
         return cmd_directional(args)
+    if args.command == "cross":
+        return cmd_cross(args)
     if args.command == "compare":
         return cmd_compare(args)
     return 1

@@ -662,3 +662,107 @@ def build_summary(pairs, n_bootstrap=2000):
         "all_probability": block(pairs, PROBABILITY),
         "by_line_delta": group_by(pairs, line_delta_band, LINE),
     }
+
+
+# ---------------------------------------------------------------------------
+# Cross-sectional calibration, under the line rule
+# ---------------------------------------------------------------------------
+#
+# The line rule: a different line overrules the probability entirely, so a
+# probability comparison is only made where both streams quoted the same
+# line. Where they differ, the comparison is on the line.
+#
+# Restricting to same-line pairs buys a property that makes the cell tables
+# far easier to read: the same line means the same question, so the two
+# streams share ONE realized outcome per cell. The realized column is
+# common to both and only the predicted values differ, which turns each
+# cell into a direct "whose number was nearer the truth".
+
+def calibration_cells(pairs, key_function, n_bootstrap=500):
+    """Per cell, both streams' calibration on an identical population.
+
+    Only same-line pairs are used, so realized is shared. Returns a dict of
+    cell -> stats, plus the paired clustered test for that cell.
+    """
+    same, _ = split_by_line(pairs)
+    grouped = defaultdict(list)
+    for pair in same:
+        if pair.comparable(PROBABILITY):
+            grouped[key_function(pair)].append(pair)
+
+    cells = {}
+    for key, subset in grouped.items():
+        prod_points = [(p.prod_probability, p.prod_outcome) for p in subset]
+        candidate_points = [(p.candidate_probability, p.candidate_outcome) for p in subset]
+        prod_stats = metrics.summarize(prod_points, config.N_RELIABILITY_BINS)
+        candidate_stats = metrics.summarize(candidate_points, config.N_RELIABILITY_BINS)
+        brier = paired_delta_summary(subset, SQUARED, PROBABILITY, n_bootstrap)
+        cells[key] = {
+            "n": len(subset),
+            "matches": len({p.match_code for p in subset}),
+            # Same line means same question, so both streams resolve to the
+            # same outcome; realized is one number, not two.
+            "realized": prod_stats["realized"],
+            "realized_check": candidate_stats["realized"],
+            "prod_predicted": prod_stats["mean_predicted"],
+            "prod_gap": prod_stats["gap"],
+            "prod_brier": prod_stats["brier"],
+            "candidate_predicted": candidate_stats["mean_predicted"],
+            "candidate_gap": candidate_stats["gap"],
+            "candidate_brier": candidate_stats["brier"],
+            "brier_delta": brier["mean"],
+            "ci_low": brier["ci_low"],
+            "ci_high": brier["ci_high"],
+            "p_value": brier["p_value"],
+            "winner": (CANDIDATE if (candidate_stats["gap"] is not None
+                                     and abs(candidate_stats["gap"]) < abs(prod_stats["gap"]))
+                       else PROD),
+        }
+    return cells
+
+
+def line_cells(pairs, key_function, n_bootstrap=500):
+    """Per cell, whose LINE landed closer, for the different-line pairs."""
+    _, different = split_by_line(pairs)
+    grouped = defaultdict(list)
+    for pair in different:
+        if pair.comparable(LINE):
+            grouped[key_function(pair)].append(pair)
+
+    cells = {}
+    for key, subset in grouped.items():
+        prod_errors = [p.prod_line_error for p in subset]
+        candidate_errors = [p.candidate_line_error for p in subset]
+        points = paired_delta_summary(subset, ABSOLUTE, LINE, n_bootstrap)
+        cells[key] = {
+            "n": len(subset),
+            "matches": len({p.match_code for p in subset}),
+            "mean_line_gap": sum(p.line_delta for p in subset) / len(subset),
+            "prod_line_error": sum(prod_errors) / len(prod_errors),
+            "candidate_line_error": sum(candidate_errors) / len(candidate_errors),
+            "points_delta": points["mean"],
+            "ci_low": points["ci_low"],
+            "ci_high": points["ci_high"],
+            "p_value": points["p_value"],
+        }
+    return cells
+
+
+def possession_label(pair):
+    return buckets.possession_bucket(pair.offensive_team)
+
+
+def score_label(pair):
+    return buckets.score_diff_bucket(pair.score_diff)
+
+
+def quarter_label(pair):
+    return buckets.time_bucket(pair.period_number, pair.drive_number)
+
+
+CROSS_AXES = [
+    ("Score difference", score_label,
+     lambda: [label for _, _, label in config.SCORE_DIFF_BUCKETS] + ["unknown"]),
+    ("Quarter", quarter_label, lambda: ["Q1", "Q2", "Q3", "Q4", "OT", "unknown"]),
+    ("Possession", possession_label, lambda: ["Home", "Away", "unknown"]),
+]
