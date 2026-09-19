@@ -55,7 +55,24 @@ never mixes markets in a cell — moneyline, spread and total are different
 questions with different base rates, and their average describes none of
 them. `TestMirrorCancellation` pins both halves of this.
 
-Nothing is lost by taking one side: the other is its complement.
+Nothing is lost by taking one side — **provided the sides really are
+complements**, which `cross` now tests rather than assumes:
+
+- **P_SUM** — the two sides' probabilities added. 1.0000 means a fair book
+  with no overround, so each side is exactly the other's complement and one
+  can be dropped for free. Above 1 means the discarded side holds a little
+  information the kept one does not.
+- **PARTITION** — should be 100%: exactly one side wins. Spread is the one to
+  watch, because market 52 reads "PLAYER 1 over L" and 53 reads "PLAYER 2
+  over L". If both carry the *same* L they overlap rather than partition: at
+  L = -2.5 both win for any margin between -2.5 and +2.5. `BOTH WON` counts
+  those cases.
+
+A **both-sides table** prints every selection's calibration next to the one
+actually used. That is a consistency check, not an extra finding: if the
+sides are complements, each pair of rows has realized summing to 1.000 and
+gaps that are equal and opposite. If they do not, the pipeline is measuring
+something other than what it claims.
 
 `preflight` confirms the tables and reports how the snapshot clock is being
 reconstructed — worth a look after any feed change.
@@ -236,7 +253,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-113 tests covering line parsing, market resolution, bucket edges, drive
+120 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,

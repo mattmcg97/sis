@@ -781,3 +781,120 @@ CROSS_AXES = [
     ("Quarter", quarter_label, lambda: ["Q1", "Q2", "Q3", "Q4", "OT", "unknown"]),
     ("Possession", possession_label, lambda: ["Home", "Away", "unknown"]),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Are the two sides of a market actually complements?
+# ---------------------------------------------------------------------------
+#
+# The cross-sectional view calibrates one selection per market on the
+# argument that the other side carries no extra information: if Over is
+# overpriced by 11 points then Under is underpriced by 11, the same fact with
+# its sign flipped. That argument holds only if the two sides really are
+# complements -- probabilities summing to 1, outcomes partitioning.
+#
+# It is worth testing rather than assuming, for two reasons. If the
+# probabilities carry an overround the sides are not quite mirrors and the
+# discarded side holds a little information. And if the outcomes do NOT
+# partition -- both sides winning, or both losing -- then the two are not
+# opposite sides of one market at all and the resolution logic is wrong.
+#
+# Spread is the one to watch. Market 52 reads "PLAYER 1 to score over L more
+# than PLAYER 2" and 53 reads "PLAYER 2 to score over L more than PLAYER 1".
+# If both carry the SAME L, they overlap rather than partition: at L = -2.5
+# both win whenever the margin sits between -2.5 and +2.5.
+
+def complement_report(pairs):
+    """Per market: do the two sides sum to 1, and do their outcomes partition?"""
+    grouped = defaultdict(dict)
+    for pair in pairs:
+        group = markets.market_group(pair.market_id)
+        grouped[(pair.match_code, pair.message_count, group)][pair.market_id] = pair
+
+    per_market = defaultdict(lambda: {
+        "both_sides": 0, "prob_sums": [], "line_equal": 0,
+        "outcomes_partition": 0, "both_won": 0, "both_lost": 0,
+        "outcome_unresolved": 0})
+
+    for (_, _, group), sides in grouped.items():
+        if len(sides) != 2:
+            continue
+        first, second = (sides[k] for k in sorted(sides))
+        bucket = per_market[group]
+        bucket["both_sides"] += 1
+        bucket["prob_sums"].append(first.prod_probability + second.prod_probability)
+
+        if first.same_line and second.same_line:
+            # Both sides agreed with the candidate; compare the two sides'
+            # own lines to each other.
+            pass
+        if (first.prod_line is None and second.prod_line is None) or (
+                first.prod_line is not None and second.prod_line is not None
+                and abs(first.prod_line - second.prod_line) < LINE_EPSILON):
+            bucket["line_equal"] += 1
+
+        a, b = first.prod_outcome, second.prod_outcome
+        if a is None or b is None:
+            bucket["outcome_unresolved"] += 1
+        elif a != b:
+            bucket["outcomes_partition"] += 1
+        elif a:
+            bucket["both_won"] += 1
+        else:
+            bucket["both_lost"] += 1
+
+    out = {}
+    for group, bucket in per_market.items():
+        sums = bucket["prob_sums"]
+        out[group] = {
+            "both_sides": bucket["both_sides"],
+            "prob_sum_mean": sum(sums) / len(sums) if sums else None,
+            "prob_sum_min": min(sums) if sums else None,
+            "prob_sum_max": max(sums) if sums else None,
+            "line_equal": bucket["line_equal"],
+            "outcomes_partition": bucket["outcomes_partition"],
+            "both_won": bucket["both_won"],
+            "both_lost": bucket["both_lost"],
+            "outcome_unresolved": bucket["outcome_unresolved"],
+        }
+    return out
+
+
+def both_sides_calibration(pairs, n_bootstrap=200):
+    """Calibration for every selection, so mirroring can be eyeballed.
+
+    Not an extra finding -- a consistency check. If the two sides of a market
+    are complements, the second row's realized rate is one minus the first's
+    and its gap is the first's negated. If they are not, the pipeline is
+    measuring something other than what it claims.
+    """
+    same, _ = split_by_line(pairs)
+    grouped = defaultdict(list)
+    for pair in same:
+        if pair.comparable(PROBABILITY):
+            grouped[pair.market_id].append(pair)
+
+    out = {}
+    for market_id in markets.MARKET_IDS:
+        subset = grouped.get(market_id)
+        if not subset:
+            continue
+        prod_stats = metrics.summarize(
+            [(p.prod_probability, p.prod_outcome) for p in subset],
+            config.N_RELIABILITY_BINS)
+        candidate_stats = metrics.summarize(
+            [(p.candidate_probability, p.candidate_outcome) for p in subset],
+            config.N_RELIABILITY_BINS)
+        out[market_id] = {
+            "market": markets.market_group(market_id),
+            "selection": markets.selection_label(market_id),
+            "n": len(subset),
+            "matches": len({p.match_code for p in subset}),
+            "realized": prod_stats["realized"],
+            "prod_predicted": prod_stats["mean_predicted"],
+            "prod_gap": prod_stats["gap"],
+            "candidate_predicted": candidate_stats["mean_predicted"],
+            "candidate_gap": candidate_stats["gap"],
+            "canonical": market_id in config.CANONICAL_SELECTIONS,
+        }
+    return out

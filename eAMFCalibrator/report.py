@@ -631,3 +631,60 @@ def cross_rows(axis_name, cells):
             "closer": row["winner"],
         })
     return rows
+
+
+def print_complement_report(report):
+    """Are the two sides of each market really complements?"""
+    print(f"\n{'=' * 96}\nAre the two sides of each market complements?\n{'=' * 96}")
+    print("  Calibrating one side per market assumes the other adds nothing: if Over")
+    print("  is overpriced by 11 points then Under is underpriced by 11. That holds")
+    print("  only if the sides really do partition. This tests it.")
+    print(f"\n  {'MARKET':<12}{'BOTH SIDES':>11}{'P_SUM MEAN':>12}{'MIN':>8}{'MAX':>8}"
+          f"{'SAME LINE':>11}{'PARTITION':>11}{'BOTH WON':>10}{'BOTH LOST':>11}")
+    for group in ("moneyline", "spread", "total"):
+        row = report.get(group)
+        if not row or not row["both_sides"]:
+            continue
+        n = row["both_sides"]
+        print(f"  {group:<12}{n:>11,}"
+              f"{_fmt(row['prob_sum_mean'], '.4f'):>12}"
+              f"{_fmt(row['prob_sum_min'], '.3f'):>8}{_fmt(row['prob_sum_max'], '.3f'):>8}"
+              f"{100 * row['line_equal'] / n:>10.1f}%"
+              f"{100 * row['outcomes_partition'] / n:>10.1f}%"
+              f"{row['both_won']:>10,}{row['both_lost']:>11,}")
+    print("\n  P_SUM is the two sides' probabilities added. 1.0000 means a fair book")
+    print("  with no overround, so each side is exactly the other's complement and")
+    print("  one of them can be dropped without losing anything.")
+    print("  PARTITION should be 100%: exactly one side wins. Anything less means")
+    print("  the two are not opposite sides of one market, and BOTH WON / BOTH LOST")
+    print("  count the cases -- which would invalidate the one-side shortcut.")
+
+
+def print_both_sides(cells):
+    """Every selection's calibration, as a mirroring check."""
+    print(f"\n{'=' * 96}\nEvery selection, as a mirroring check\n{'=' * 96}")
+    print("  Not an extra finding. If the sides are complements, each pair of rows")
+    print("  should show REAL summing to 1.000 and gaps that are equal and opposite.")
+    print(f"\n  {'MARKET':<11}{'SEL':<7}{'USED':>6}{'N':>7}{'MATCH':>6}"
+          f"{'REAL':>8}{'PROD':>8}{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}")
+    by_market = {}
+    for market_id, row in sorted(cells.items()):
+        by_market.setdefault(row["market"], []).append((market_id, row))
+    for group in ("moneyline", "spread", "total"):
+        rows = by_market.get(group, [])
+        for _, row in rows:
+            used = "yes" if row["canonical"] else "-"
+            print(f"  {row['market']:<11}{row['selection']:<7}{used:>6}"
+                  f"{row['n']:>7,}{row['matches']:>6,}"
+                  f"{_fmt(row['realized'], '.3f'):>8}"
+                  f"{_fmt(row['prod_predicted'], '.3f'):>8}{_fmt(row['prod_gap'], '+.3f'):>8}"
+                  f"{_fmt(row['candidate_predicted'], '.3f'):>8}"
+                  f"{_fmt(row['candidate_gap'], '+.3f'):>8}")
+        if len(rows) == 2:
+            realized_sum = sum(r["realized"] for _, r in rows if r["realized"] is not None)
+            gap_sum = sum(r["prod_gap"] for _, r in rows if r["prod_gap"] is not None)
+            verdict = "mirror ok" if abs(realized_sum - 1.0) < 1e-9 else "NOT MIRRORED"
+            print(f"  {'':<11}{'sum':<7}{'':>6}{'':>7}{'':>6}"
+                  f"{realized_sum:>8.3f}{'':>8}{gap_sum:>+8.3f}   <- {verdict}")
+    print("\n  USED marks the selection the cross-sectional tables calibrate.")
+    print("  A realized sum of 1.000 and gaps cancelling is the check passing.")

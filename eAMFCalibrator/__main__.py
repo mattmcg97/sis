@@ -228,6 +228,10 @@ def cmd_cross(args):
     print(f"\n  Probability comparison uses the {len(same):,} same-line pairs.")
     print(f"  The {len(different):,} different-line pairs are judged on the line instead.")
 
+    # Before any cell table: is the one-side-per-market shortcut sound?
+    report.print_complement_report(directional.complement_report(pairs))
+    report.print_both_sides(directional.both_sides_calibration(pairs))
+
     csv_rows = []
     for axis_name, key_function, order_factory in directional.CROSS_AXES:
         cells = directional.calibration_cells(pairs, key_function)
