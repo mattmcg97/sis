@@ -7,7 +7,8 @@ into cells, and asks the only question that matters for a probability:
 
 ```
 py -m eAMFCalibrator preflight              # check tables + the play clock
-py -m eAMFCalibrator directional            # paired head-to-head (start here)
+py -m eAMFCalibrator report                 # everything, one HTML (start here)
+py -m eAMFCalibrator directional            # paired head-to-head
 py -m eAMFCalibrator cross                  # cell view, under the line rule
 py -m eAMFCalibrator run prod
 py -m eAMFCalibrator run candidate
@@ -15,7 +16,15 @@ py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
 
-Three views:
+Four views:
+
+- **`report`** — one pairing pass, both console views, and a single combined
+  HTML: directional headline, per-market clustered tests, the integrity checks,
+  the cross-sectional cells, and **every paired observation** at the bottom
+  with both streams' line, price, probability, outcome and error, sorted by
+  widest probability disagreement. Column headers sort. Around 600 bytes per
+  pair row, so a two-day window lands near 4 MB.
+
 
 - **`directional`** — at the same snapshot, on the same selection, which
   model was closer to the result? Paired, so the between-snapshot variance
@@ -276,7 +285,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-128 tests covering line parsing, market resolution, bucket edges, drive
+133 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,

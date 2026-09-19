@@ -17,7 +17,8 @@ import argparse
 import os
 import sys
 
-from . import buckets, config, directional, html_report, pipeline, report, snowflake_io
+from . import (buckets, config, directional, html_full, html_report, pipeline,
+               report, snowflake_io)
 
 
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "out")
@@ -261,6 +262,72 @@ def cmd_cross(args):
     return 0
 
 
+def cmd_report(args):
+    """One pairing pass, both console views, and one combined HTML file.
+
+    Everything is built from directional.build_full_report() so the
+    directional numbers, the cross-sectional cells and the per-pair table at
+    the bottom cannot disagree with each other.
+    """
+    out_dir = args.out or DEFAULT_OUT
+    print("\nPairing prod against candidate at each drive-start snapshot")
+    pairs, stats, header = directional.run()
+
+    report.print_directional_header(header, stats)
+    if not pairs:
+        print("\n  No paired observations. Nothing to compare.")
+        return 1
+
+    full = directional.build_full_report(pairs)
+    summary = full["summary"]
+
+    # --- directional half ---
+    report.print_line_agreement(summary["lines"])
+    report.print_complement_report(full["complement"])
+    report.print_spread_interpretation(full["spread"])
+    report.print_both_sides(full["both_sides"])
+
+    report.print_block(
+        "SAME LINE -- whose probability was closer to its own 0/1",
+        "Both streams quoted the same line, so the probabilities answer the "
+        "same question. This is the clean comparison.",
+        summary["same_line"])
+    report.print_block(
+        "DIFFERENT LINE -- whose line was closer to what happened",
+        "Lines differ, so the probabilities are not comparable. Scored on "
+        "which line landed nearer the actual margin or total.",
+        summary["different_line"])
+
+    # --- cross-sectional half ---
+    csv_rows = []
+    for axis in full["axes"]:
+        report.print_calibration_cells(
+            f"SAME LINE by {axis['name'].lower()} -- predicted vs realized",
+            axis["probability"], order=axis["order"])
+        report.print_line_cells(
+            f"DIFFERENT LINE by {axis['name'].lower()} -- whose line was closer",
+            axis["line"], order=axis["order"])
+        csv_rows.extend(report.cross_rows(axis["name"], axis["probability"]))
+
+    report.print_calibration_cells(
+        "SAME LINE by full cell (score x quarter x possession) -- moneyline only",
+        full["full_cell"], order=full["full_cell_order"], label_width=26,
+        markets_shown=["moneyline"])
+    csv_rows.extend(report.cross_rows("full cell", full["full_cell"]))
+
+    # --- outputs ---
+    report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)
+    report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
+
+    ordered = directional.sorted_pairs_by_disagreement(pairs)
+    html_path = args.html or os.path.join(out_dir, "eamf_report.html")
+    html_full.write(html_path, full, header, stats, ordered)
+    size = os.path.getsize(html_path) / 1024 ** 2
+    print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
+          f"{len(ordered):,} pair rows)")
+    return 0
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="eAMFCalibrator", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -277,6 +344,13 @@ def build_parser():
         help="paired head-to-head: which model is closer to the result at each snapshot")
     dir_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     dir_parser.add_argument("--html", help="path for the one-screen HTML report")
+
+    report_parser = sub.add_parser(
+        "report",
+        help="everything in one go: directional + cross-sectional + one HTML "
+             "with every pair listed")
+    report_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    report_parser.add_argument("--html", help="path for the combined HTML report")
 
     cross_parser = sub.add_parser(
         "cross",
@@ -301,6 +375,8 @@ def main(argv=None):
         return cmd_directional(args)
     if args.command == "cross":
         return cmd_cross(args)
+    if args.command == "report":
+        return cmd_report(args)
     if args.command == "compare":
         return cmd_compare(args)
     return 1

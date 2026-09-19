@@ -69,6 +69,8 @@ class PairedObservation:
     prod_outcome: Optional[bool]
     candidate_outcome: Optional[bool]
     realized: Optional[float]
+    prod_decimal: Optional[float] = None
+    candidate_decimal: Optional[float] = None
 
     @property
     def same_line(self):
@@ -133,13 +135,16 @@ class PairedObservation:
 
 
 def index_by_message(quote_rows):
-    """(match, market) -> {message_count: (probability, description)}."""
+    """(match, market) -> {message_count: (probability, description, decimal)}."""
     out = defaultdict(dict)
     for match_code, market_id, publish_time, probability, decimal_odd, description, message in quote_rows:
         if message is None or probability is None:
             continue
         # A message carries one row per market; keep the first seen.
-        out[(match_code, market_id)].setdefault(message, (float(probability), description))
+        out[(match_code, market_id)].setdefault(
+            message,
+            (float(probability), description,
+             float(decimal_odd) if decimal_odd is not None else None))
     return out
 
 
@@ -233,8 +238,9 @@ def build_pairs(cur, match_codes, time_column, stats):
                 message, gap = hit
                 stats["exact_message_pair" if gap == 0 else "offset_message_pair"] += 1
 
-                prod_probability, prod_description = prod_index[(match_code, market_id)][message]
-                candidate_probability, candidate_description = \
+                prod_probability, prod_description, prod_decimal = \
+                    prod_index[(match_code, market_id)][message]
+                candidate_probability, candidate_description, candidate_decimal = \
                     candidate_index[(match_code, market_id)][message]
 
                 needs_line = markets.needs_line(market_id)
@@ -275,6 +281,8 @@ def build_pairs(cur, match_codes, time_column, stats):
                     prod_outcome=prod_outcome,
                     candidate_outcome=candidate_outcome,
                     realized=realized,
+                    prod_decimal=prod_decimal,
+                    candidate_decimal=candidate_decimal,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -986,3 +994,43 @@ def spread_interpretation_report(pairs):
     else:
         out["verdict"] = ("unclear", "No spread pairs carrying both sides.")
     return out
+
+
+def build_full_report(pairs, n_bootstrap=2000):
+    """Everything the combined HTML report and both console views need.
+
+    Assembled once from one pairing pass so the directional numbers, the
+    cross-sectional cells and the per-pair table cannot disagree with each
+    other.
+    """
+    axes = []
+    for axis_name, key_function, order_factory in CROSS_AXES:
+        axes.append({
+            "name": axis_name,
+            "order": order_factory(),
+            "probability": calibration_cells(pairs, key_function),
+            "line": line_cells(pairs, key_function),
+        })
+
+    full = calibration_cells(pairs, cell_key)
+    return {
+        "summary": build_summary(pairs, n_bootstrap),
+        "complement": complement_report(pairs),
+        "spread": spread_interpretation_report(pairs),
+        "both_sides": both_sides_calibration(pairs),
+        "axes": axes,
+        "full_cell": full,
+        "full_cell_order": sorted({k[0] for k in full}, key=buckets.sort_key),
+    }
+
+
+def sorted_pairs_by_disagreement(pairs):
+    """Every pair, widest probability disagreement first.
+
+    Sorted on the probability gap because that is what the reader is hunting
+    for -- where the two models actually said different things. The line gap
+    rides along as its own column, since on a different-line pair the
+    probability gap is not what decided it.
+    """
+    return sorted(pairs, key=lambda p: (-p.disagreement, p.match_code,
+                                        p.drive_number, p.market_id))
