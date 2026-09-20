@@ -750,3 +750,49 @@ def print_daily(daily):
         signs = {m > 0 for m in means}
         print("  all days agree on direction." if len(signs) == 1
               else "  days disagree on direction -- the effect is not stable yet.")
+
+
+def print_checks_summary(full):
+    """One block saying whether the diagnostics passed, instead of four tables.
+
+    The full tables are still a flag away; what matters on a routine run is
+    whether anything needs looking at.
+    """
+    print(f"\n{'-' * 78}\nChecks\n{'-' * 78}")
+    lines = full["summary"]["lines"]
+    print(f"  same line            : {_pct(lines['same_rate'])} of pairs")
+
+    issues = []
+    for market in ("moneyline", "spread", "total"):
+        row = full["complement"].get(market)
+        if not row or not row["both_sides"]:
+            continue
+        both = row["both_sides"]
+        partition = row["outcomes_partition"] / both
+        state = "ok" if partition > 0.999 else f"ONLY {100*partition:.1f}%"
+        if partition <= 0.999:
+            issues.append(f"{market} sides do not partition ({100*partition:.1f}%)")
+        print(f"  {market:<21}: P(both sides) {row['prob_sum_mean']:.4f}"
+              f"   partition {state}")
+
+    verdict = full["spread"]["verdict"][0]
+    flag = "" if verdict in ("unclear", config.SPREAD_RESOLUTION) else "  <-- MISMATCH"
+    print(f"  spread reading       : {verdict}"
+          f" (configured {config.SPREAD_RESOLUTION}){flag}")
+    if flag:
+        issues.append(f"spread reads {verdict}, configured {config.SPREAD_RESOLUTION}")
+
+    mirrors = {}
+    for market_id, row in full["both_sides"].items():
+        mirrors.setdefault(row["market"], []).append(row["realized"])
+    for market, values in mirrors.items():
+        if len(values) == 2 and abs(sum(values) - 1.0) > 1e-9:
+            issues.append(f"{market} realized does not mirror")
+    print(f"  mirror check         : "
+          f"{'ok' if not any('mirror' in i for i in issues) else 'BROKEN'}")
+
+    print(f"\n  {'ALL PASS' if not issues else 'NEEDS ATTENTION:'}")
+    for issue in issues:
+        print(f"    - {issue}")
+    if not issues:
+        print("  Run with --axes for the full integrity tables and single-axis views.")

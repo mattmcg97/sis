@@ -282,40 +282,42 @@ def cmd_report(args):
     full = directional.build_full_report(pairs)
     summary = full["summary"]
 
-    # --- directional half ---
-    report.print_line_agreement(summary["lines"])
-    report.print_complement_report(full["complement"])
-    report.print_spread_interpretation(full["spread"])
-    report.print_both_sides(full["both_sides"])
-    report.print_daily(full["daily"])
-
+    # --- 1. directional calibration ---
     report.print_block(
-        "SAME LINE -- whose probability was closer to its own 0/1",
+        "DIRECTIONAL -- same line, whose probability was closer to its own 0/1",
         "Both streams quoted the same line, so the probabilities answer the "
         "same question. This is the clean comparison.",
         summary["same_line"])
     report.print_block(
-        "DIFFERENT LINE -- whose line was closer to what happened",
+        "DIRECTIONAL -- different line, whose line was closer",
         "Lines differ, so the probabilities are not comparable. Scored on "
         "which line landed nearer the actual margin or total.",
         summary["different_line"])
 
-    # --- cross-sectional half ---
-    csv_rows = []
+    # --- 2. cross-section calibration: the three axes as one bucket ---
+    report.print_calibration_cells(
+        "CROSS-SECTION -- score difference x quarter x possession",
+        full["full_cell"], order=full["full_cell_order"], label_width=26)
+
+    csv_rows = report.cross_rows("full cell", full["full_cell"])
     for axis in full["axes"]:
-        report.print_calibration_cells(
-            f"SAME LINE by {axis['name'].lower()} -- predicted vs realized",
-            axis["probability"], order=axis["order"])
-        report.print_line_cells(
-            f"DIFFERENT LINE by {axis['name'].lower()} -- whose line was closer",
-            axis["line"], order=axis["order"])
         csv_rows.extend(report.cross_rows(axis["name"], axis["probability"]))
 
-    report.print_calibration_cells(
-        "SAME LINE by full cell (score x quarter x possession) -- moneyline only",
-        full["full_cell"], order=full["full_cell_order"], label_width=26,
-        markets_shown=["moneyline"])
-    csv_rows.extend(report.cross_rows("full cell", full["full_cell"]))
+    # --- 3. checks, compact unless asked for in full ---
+    report.print_checks_summary(full)
+    report.print_daily(full["daily"])
+    if args.axes:
+        report.print_line_agreement(summary["lines"])
+        report.print_complement_report(full["complement"])
+        report.print_spread_interpretation(full["spread"])
+        report.print_both_sides(full["both_sides"])
+        for axis in full["axes"]:
+            report.print_calibration_cells(
+                f"{axis['name']} -- predicted vs realized",
+                axis["probability"], order=axis["order"])
+            report.print_line_cells(
+                f"{axis['name']} -- whose line was closer",
+                axis["line"], order=axis["order"])
 
     # --- outputs ---
     report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)
@@ -425,6 +427,9 @@ def build_parser():
              "with every pair listed")
     report_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     report_parser.add_argument("--html", help="path for the combined HTML report")
+    report_parser.add_argument("--axes", action="store_true",
+                               help="also print the integrity tables and the "
+                                    "single-axis breakdowns")
 
     cross_parser = sub.add_parser(
         "cross", parents=[shared],
