@@ -250,7 +250,7 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
 # ---------------------------------------------------------------------------
 
 PAIR_FIELDS = [
-    "match_code", "drive_number", "period_number", "score_diff", "offensive_team",
+    "publish_time", "match_code", "drive_number", "period_number", "score_diff", "offensive_team",
     "market_id", "message_count", "message_gap",
     "prod_line", "candidate_line", "line_delta", "same_line",
     "prod_probability", "candidate_probability",
@@ -370,6 +370,7 @@ def write_pairs_csv(path, pairs):
         writer.writeheader()
         for p in pairs:
             writer.writerow({
+                "publish_time": p.publish_time,
                 "match_code": p.match_code,
                 "drive_number": p.drive_number,
                 "period_number": p.period_number,
@@ -724,3 +725,28 @@ def print_spread_interpretation(report):
     if verdict != "unclear" and verdict != config.SPREAD_RESOLUTION:
         print(f"  !! That does not match. Set SPREAD_RESOLUTION = \"{verdict}\" in")
         print("     config.py and re-run; every spread number above is affected.")
+
+
+def print_daily(daily):
+    """Per-day view, for watching a growing window settle or drift."""
+    print(f"\n{'=' * 96}\nBy day (same-line pairs)\n{'=' * 96}")
+    print("  The window only grows, so the question as games accumulate is whether")
+    print("  the answer is stable. A day out of step with its neighbours is worth a")
+    print("  look before it gets averaged away.")
+    if not daily:
+        print("\n  No same-line pairs.")
+        return
+    print(f"\n  {'DAY':<12}{'PAIRS':>8}{'MATCH':>7}{'WIN%':>8}"
+          f"{'ΔBRIER':>10}{'95% CI':>22}{'P':>8}")
+    for day, row in sorted(daily.items()):
+        brier = row["brier"]
+        print(f"  {day:<12}{row['pairs']:>8,}{row['matches']:>7,}"
+              f"{_pct(row['win_rate']):>8}{_fmt(brier.get('mean'), '+.4f'):>10}"
+              f"{_ci_text(brier) or '':>22}{_p(brier.get('p_value')):>8}")
+    means = [r["brier"].get("mean") for r in daily.values()
+             if r["brier"].get("mean") is not None]
+    if len(means) > 1:
+        print(f"\n  spread of daily ΔBrier: {min(means):+.4f} to {max(means):+.4f}")
+        signs = {m > 0 for m in means}
+        print("  all days agree on direction." if len(signs) == 1
+              else "  days disagree on direction -- the effect is not stable yet.")

@@ -14,6 +14,7 @@ in the repo has ever needed that column.
 """
 
 import argparse
+import datetime as dt
 import os
 import sys
 
@@ -286,6 +287,7 @@ def cmd_report(args):
     report.print_complement_report(full["complement"])
     report.print_spread_interpretation(full["spread"])
     report.print_both_sides(full["both_sides"])
+    report.print_daily(full["daily"])
 
     report.print_block(
         "SAME LINE -- whose probability was closer to its own 0/1",
@@ -328,37 +330,109 @@ def cmd_report(args):
     return 0
 
 
+def common_options():
+    """Options every command shares, so nothing needs a config.py edit.
+
+    The window default stays anchored to when the candidate changed, because
+    quotes before that instant came out of the OLD candidate and would
+    pollute the comparison. --days is for slicing a rolling window on top of
+    that; it does not replace the anchor's purpose.
+    """
+    parent = argparse.ArgumentParser(add_help=False)
+    window = parent.add_argument_group("window")
+    window.add_argument("--since", metavar="TS",
+                        help="window start, 'YYYY-MM-DD HH:MM:SS' "
+                             f"(default {config.CUTOFF_START})")
+    window.add_argument("--until", metavar="TS",
+                        help="window end (default: latest data available)")
+    window.add_argument("--days", type=float, metavar="N",
+                        help="rolling window of the last N days, overrides --since")
+    tuning = parent.add_argument_group("tuning")
+    tuning.add_argument("--sport", help=f"sport code (default {config.SPORT_CODE})")
+    tuning.add_argument("--tolerance", type=float, metavar="SEC",
+                        help="snapshot-to-quote match tolerance in seconds "
+                             f"(default {config.MATCH_TOLERANCE_SECONDS})")
+    tuning.add_argument("--message-gap", type=int, metavar="N",
+                        help="widest message offset allowed when pairing "
+                             f"(default {config.MAX_PAIR_MESSAGE_GAP})")
+    tuning.add_argument("--clock", choices=sorted(config.STREAMS) + ["self"],
+                        help=f"stream supplying the snapshot clock "
+                             f"(default {config.CLOCK_SOURCE})")
+    tuning.add_argument("--spread-resolution", choices=["literal", "complement"],
+                        help=f"how to resolve the spread's second selection "
+                             f"(default {config.SPREAD_RESOLUTION})")
+    tuning.add_argument("--chunk", type=int, metavar="N",
+                        help="matches fetched per batch, lower it if memory is "
+                             f"tight on a long window (default {config.MATCH_CHUNK_SIZE})")
+    tuning.add_argument("--time-axis", choices=["period", "drive"],
+                        help=f"time axis for the cells (default {config.TIME_AXIS})")
+    return parent
+
+
+def apply_overrides(args):
+    """Push CLI options into config, and report the window actually used."""
+    if getattr(args, "days", None):
+        start = dt.datetime.utcnow() - dt.timedelta(days=args.days)
+        config.CUTOFF_START = start.strftime("%Y-%m-%d %H:%M:%S")
+    elif getattr(args, "since", None):
+        config.CUTOFF_START = args.since
+    if getattr(args, "until", None):
+        config.CUTOFF_END = args.until
+
+    for attribute, key in (("sport", "SPORT_CODE"),
+                           ("tolerance", "MATCH_TOLERANCE_SECONDS"),
+                           ("message_gap", "MAX_PAIR_MESSAGE_GAP"),
+                           ("spread_resolution", "SPREAD_RESOLUTION"),
+                           ("time_axis", "TIME_AXIS"),
+                           ("chunk", "MATCH_CHUNK_SIZE")):
+        value = getattr(args, attribute, None)
+        if value is not None:
+            setattr(config, key, value)
+
+    clock = getattr(args, "clock", None)
+    if clock is not None:
+        config.CLOCK_SOURCE = None if clock == "self" else clock
+
+    if getattr(args, "command", None) == "compare":
+        return
+    end = config.CUTOFF_END or "latest available"
+    print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
+          f"   sport {config.SPORT_CODE}"
+          f"   spread {config.SPREAD_RESOLUTION}")
+
+
 def build_parser():
     parser = argparse.ArgumentParser(prog="eAMFCalibrator", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    shared = common_options()
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("preflight", help="check tables, clock column and window volume")
+    sub.add_parser("preflight", parents=[shared], help="check tables, clock column and window volume")
 
-    run_parser = sub.add_parser("run", help="calibrate one stream, or both")
+    run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
     run_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     dir_parser = sub.add_parser(
-        "directional",
+        "directional", parents=[shared],
         help="paired head-to-head: which model is closer to the result at each snapshot")
     dir_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     dir_parser.add_argument("--html", help="path for the one-screen HTML report")
 
     report_parser = sub.add_parser(
-        "report",
+        "report", parents=[shared],
         help="everything in one go: directional + cross-sectional + one HTML "
              "with every pair listed")
     report_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     report_parser.add_argument("--html", help="path for the combined HTML report")
 
     cross_parser = sub.add_parser(
-        "cross",
+        "cross", parents=[shared],
         help="cross-sectional calibration by score diff / quarter / possession, "
              "under the line rule")
     cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
-    cmp_parser = sub.add_parser("compare", help="diff two cell-summary CSVs")
+    cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
 
@@ -367,6 +441,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    apply_overrides(args)
     if args.command == "preflight":
         return cmd_preflight(args)
     if args.command == "run":

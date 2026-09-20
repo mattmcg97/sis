@@ -1160,6 +1160,93 @@ class TestReportRendering(unittest.TestCase):
         self.assertNotIn("@import", rendered)
 
 
+class TestRuntimeOverrides(unittest.TestCase):
+    """The window and tuning must be settable without editing config.py."""
+
+    def setUp(self):
+        from ..__main__ import build_parser, apply_overrides
+        self.parse = build_parser().parse_args
+        self.apply = apply_overrides
+        self.saved = {k: getattr(config, k) for k in
+                      ("CUTOFF_START", "CUTOFF_END", "SPORT_CODE",
+                       "MATCH_TOLERANCE_SECONDS", "MAX_PAIR_MESSAGE_GAP",
+                       "SPREAD_RESOLUTION", "TIME_AXIS", "CLOCK_SOURCE",
+                       "MATCH_CHUNK_SIZE")}
+
+    def tearDown(self):
+        for key, value in self.saved.items():
+            setattr(config, key, value)
+
+    def test_days_gives_a_rolling_window(self):
+        self.apply(self.parse(["report", "--days", "3"]))
+        start = dt.datetime.strptime(config.CUTOFF_START, "%Y-%m-%d %H:%M:%S")
+        age = (dt.datetime.utcnow() - start).total_seconds() / 86400
+        self.assertAlmostEqual(age, 3.0, places=2)
+
+    def test_days_beats_since(self):
+        self.apply(self.parse(["report", "--since", "2020-01-01 00:00:00",
+                               "--days", "1"]))
+        self.assertNotIn("2020", config.CUTOFF_START)
+
+    def test_since_and_until(self):
+        self.apply(self.parse(["report", "--since", "2026-09-17 10:00:00",
+                               "--until", "2026-09-19 00:00:00"]))
+        self.assertEqual(config.CUTOFF_START, "2026-09-17 10:00:00")
+        self.assertEqual(config.CUTOFF_END, "2026-09-19 00:00:00")
+
+    def test_tuning_flags(self):
+        self.apply(self.parse(["report", "--sport", "NB", "--tolerance", "5",
+                               "--message-gap", "7", "--time-axis", "drive",
+                               "--spread-resolution", "complement",
+                               "--chunk", "25"]))
+        self.assertEqual(config.SPORT_CODE, "NB")
+        self.assertEqual(config.MATCH_TOLERANCE_SECONDS, 5.0)
+        self.assertEqual(config.MAX_PAIR_MESSAGE_GAP, 7)
+        self.assertEqual(config.TIME_AXIS, "drive")
+        self.assertEqual(config.SPREAD_RESOLUTION, "complement")
+        self.assertEqual(config.MATCH_CHUNK_SIZE, 25)
+
+    def test_clock_self_means_the_calibrated_stream(self):
+        self.apply(self.parse(["report", "--clock", "self"]))
+        self.assertIsNone(config.CLOCK_SOURCE)
+        self.apply(self.parse(["report", "--clock", "candidate"]))
+        self.assertEqual(config.CLOCK_SOURCE, "candidate")
+
+    def test_defaults_are_left_alone(self):
+        before = config.CUTOFF_START
+        self.apply(self.parse(["report"]))
+        self.assertEqual(config.CUTOFF_START, before)
+
+    def test_every_command_accepts_the_window_flags(self):
+        for command in ("preflight", "directional", "cross", "report"):
+            argv = [command, "--days", "2"]
+            if command == "run":
+                argv.insert(1, "both")
+            self.assertIsNotNone(self.parse(argv))
+
+
+class TestDailyBreakdown(unittest.TestCase):
+    def _at(self, day, **kw):
+        p = pair(0.6, 0.8, True, **kw)
+        return directional.PairedObservation(
+            **{**p.__dict__, "publish_time": dt.datetime(2026, 9, day, 12, 0, 0)})
+
+    def test_groups_by_calendar_day(self):
+        pairs = ([self._at(17, match=f"AF{i}") for i in range(3)]
+                 + [self._at(18, match=f"AF{i}") for i in range(3, 7)])
+        daily = directional.daily_breakdown(pairs, n_bootstrap=20)
+        self.assertEqual(sorted(daily), ["2026-09-17", "2026-09-18"])
+        self.assertEqual(daily["2026-09-17"]["pairs"], 3)
+        self.assertEqual(daily["2026-09-18"]["pairs"], 4)
+
+    def test_day_property_reads_the_publish_time(self):
+        self.assertEqual(self._at(19).day, "2026-09-19")
+
+    def test_missing_timestamp_is_not_a_crash(self):
+        daily = directional.daily_breakdown([pair(0.6, 0.8, True)], n_bootstrap=20)
+        self.assertEqual(list(daily), ["unknown"])
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS

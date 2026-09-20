@@ -245,6 +245,44 @@ def _both_sides_block(report):
     </section>"""
 
 
+def _daily(report):
+    daily = report.get("daily") or {}
+    if not daily:
+        return ""
+    rows = []
+    for day, row in sorted(daily.items()):
+        brier = row["brier"]
+        rows.append(f"""<tr>
+            <th>{html.escape(day)}</th>
+            <td>{row['pairs']:,}</td><td>{row['matches']:,}</td>
+            <td class="{_cls((row['win_rate'] or 0.5) - 0.5)}">{_pct(row['win_rate'])}</td>
+            <td class="{_cls(brier.get('mean'))}">{_n(brier.get('mean'))}</td>
+            <td class="dim">{_ci(brier)}</td>
+            <td>{_p(brier.get('p_value'))}</td>
+        </tr>""")
+    means = [r["brier"].get("mean") for r in daily.values()
+             if r["brier"].get("mean") is not None]
+    note = ""
+    if len(means) > 1:
+        agree = len({m > 0 for m in means}) == 1
+        note = (f"Daily &Delta;Brier spans {min(means):+.4f} to {max(means):+.4f}. "
+                + ("All days agree on direction." if agree
+                   else "Days disagree on direction &mdash; the effect is not stable yet."))
+    return f"""
+    <section class="panel" id="daily">
+      <h2>By day</h2>
+      <p class="sub">The window only grows, so the question as games accumulate is
+         whether the answer is stable. A day out of step with its neighbours is
+         worth a look before it gets averaged away.</p>
+      <table>
+        <thead><tr><th>Day</th><th>Pairs</th><th>Matches</th><th>Cand win</th>
+          <th>&Delta;Brier</th><th>95% CI</th><th>p</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+      <p class="note">{note}</p>
+    </section>"""
+
+
 def _cross_axis(axis):
     prob_rows = []
     for cell_label in axis["order"]:
@@ -345,6 +383,7 @@ def _pair_rows(pairs):
         prod_error, candidate_error = p.errors("line" if not p.same_line else "probability")
         out.append(
             f'<tr>'
+            f'<td>{"" if p.publish_time is None else html.escape(str(p.publish_time)[:19])}</td>'
             f'<td>{html.escape(p.match_code)}</td>'
             f'<td data-v="{p.drive_number}">{p.drive_number}</td>'
             f'<td data-v="{p.message_count}">{p.message_count}</td>'
@@ -385,7 +424,7 @@ def _pair_table(pairs):
       <div class="scroll">
       <table class="sortable" id="pairTable">
         <thead><tr>
-          <th>Match</th><th>Drive</th><th>Msg</th><th>&plusmn;Msg</th>
+          <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th>&plusmn;Msg</th>
           <th>Qtr</th><th>Score</th><th>Poss</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
@@ -513,6 +552,7 @@ def render(report, header, stats, pairs):
   <nav>
     <a href="#headline">Headline</a><a href="#markets">By market</a>
     <a href="#integrity">Integrity</a><a href="#mirror">Mirror check</a>
+    <a href="#daily">By day</a>
     <a href="#cross">Cross-sectional</a><a href="#pairs">Every pair</a>
   </nav>
 
@@ -522,6 +562,7 @@ def render(report, header, stats, pairs):
   <div id="markets">{_market_block(report)}</div>
   <div id="integrity">{_integrity_block(report, stats)}</div>
   <div id="mirror">{_both_sides_block(report)}</div>
+  {_daily(report)}
   <div id="cross">{''.join(_cross_axis(axis) for axis in report['axes'])}
   {_full_cell(report)}</div>
   {_pair_table(pairs)}

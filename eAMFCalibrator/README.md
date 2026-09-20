@@ -8,6 +8,8 @@ into cells, and asks the only question that matters for a probability:
 ```
 py -m eAMFCalibrator preflight              # check tables + the play clock
 py -m eAMFCalibrator report                 # everything, one HTML (start here)
+py -m eAMFCalibrator report --days 7        # rolling window, no config edit
+py -m eAMFCalibrator report --since "2026-09-17 10:00:00" --until "2026-09-19 00:00:00"
 py -m eAMFCalibrator directional            # paired head-to-head
 py -m eAMFCalibrator cross                  # cell view, under the line rule
 py -m eAMFCalibrator run prod
@@ -36,6 +38,37 @@ Four views:
   Needs many snapshots per cell before a realized rate means anything. Its
   per-stream numbers are sound, but `run both`'s side-by-side does **not**
   apply the line rule — use `cross` for a rule-respecting comparison.
+
+## Window and tuning, at runtime
+
+Nothing needs a `config.py` edit. Every command takes the same flags:
+
+| flag | what it does |
+| --- | --- |
+| `--days N` | rolling window of the last N days (overrides `--since`) |
+| `--since` / `--until` | explicit window bounds |
+| `--sport` | sport code |
+| `--tolerance` | snapshot-to-quote match tolerance, seconds |
+| `--message-gap` | widest message offset allowed when pairing |
+| `--clock` | which stream supplies the snapshot clock, or `self` |
+| `--spread-resolution` | `literal` or `complement` |
+| `--time-axis` | `period` or `drive` |
+| `--chunk` | matches per batch, if memory gets tight on a long window |
+
+Every run prints the window it actually used.
+
+**The default start stays anchored to when the candidate changed**, and should:
+quotes before that instant came out of the *old* candidate and would pollute
+the comparison. `--days` is for slicing on top of that, not for replacing the
+anchor's purpose. The window grows on its own as matches settle — that is the
+intended behaviour, not drift.
+
+## By day
+
+Because the window only grows, the question as games accumulate is whether the
+answer is **stable**. The per-day table gives each day's pairs, win rate,
+clustered ΔBrier and CI, and says whether the days agree on direction. A day
+out of step with its neighbours is worth a look before it gets averaged away.
 
 ## The line rule
 
@@ -285,7 +318,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-133 tests covering line parsing, market resolution, bucket edges, drive
+148 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,
