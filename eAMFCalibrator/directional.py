@@ -71,6 +71,12 @@ class PairedObservation:
     realized: Optional[float]
     prod_decimal: Optional[float] = None
     candidate_decimal: Optional[float] = None
+    publish_time: object = None
+
+    @property
+    def day(self):
+        """Calendar day of the quote, for the per-day view."""
+        return self.publish_time.date().isoformat() if self.publish_time else "unknown"
 
     @property
     def same_line(self):
@@ -135,7 +141,7 @@ class PairedObservation:
 
 
 def index_by_message(quote_rows):
-    """(match, market) -> {message_count: (probability, description, decimal)}."""
+    """(match, market) -> {message: (probability, description, decimal, time)}."""
     out = defaultdict(dict)
     for match_code, market_id, publish_time, probability, decimal_odd, description, message in quote_rows:
         if message is None or probability is None:
@@ -144,7 +150,8 @@ def index_by_message(quote_rows):
         out[(match_code, market_id)].setdefault(
             message,
             (float(probability), description,
-             float(decimal_odd) if decimal_odd is not None else None))
+             float(decimal_odd) if decimal_odd is not None else None,
+             publish_time))
     return out
 
 
@@ -238,9 +245,9 @@ def build_pairs(cur, match_codes, time_column, stats):
                 message, gap = hit
                 stats["exact_message_pair" if gap == 0 else "offset_message_pair"] += 1
 
-                prod_probability, prod_description, prod_decimal = \
+                prod_probability, prod_description, prod_decimal, publish_time = \
                     prod_index[(match_code, market_id)][message]
-                candidate_probability, candidate_description, candidate_decimal = \
+                candidate_probability, candidate_description, candidate_decimal, _ = \
                     candidate_index[(match_code, market_id)][message]
 
                 needs_line = markets.needs_line(market_id)
@@ -283,6 +290,7 @@ def build_pairs(cur, match_codes, time_column, stats):
                     realized=realized,
                     prod_decimal=prod_decimal,
                     candidate_decimal=candidate_decimal,
+                    publish_time=publish_time,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -1021,7 +1029,32 @@ def build_full_report(pairs, n_bootstrap=2000):
         "axes": axes,
         "full_cell": full,
         "full_cell_order": sorted({k[0] for k in full}, key=buckets.sort_key),
+        "daily": daily_breakdown(pairs),
     }
+
+
+def daily_breakdown(pairs, n_bootstrap=300):
+    """Per calendar day: how the comparison looked on that day's games.
+
+    The window only grows, so the useful question as days accumulate is
+    whether the answer is stable or drifting. A day that disagrees sharply
+    with its neighbours is worth a look before it gets averaged away.
+    """
+    same, _ = split_by_line(pairs)
+    by_day = defaultdict(list)
+    for pair in same:
+        by_day[pair.day].append(pair)
+
+    out = {}
+    for day, subset in sorted(by_day.items()):
+        tallied = tally(subset, PROBABILITY)
+        out[day] = {
+            "pairs": tallied["n"],
+            "matches": tallied["n_matches"],
+            "win_rate": tallied["candidate_win_rate"],
+            "brier": paired_delta_summary(subset, SQUARED, PROBABILITY, n_bootstrap),
+        }
+    return out
 
 
 def sorted_pairs_by_disagreement(pairs):
