@@ -1247,6 +1247,75 @@ class TestDailyBreakdown(unittest.TestCase):
         self.assertEqual(list(daily), ["unknown"])
 
 
+class TestReportShape(unittest.TestCase):
+    """The report leads with two views; diagnostics move behind a disclosure."""
+
+    def setUp(self):
+        from .. import html_full
+        self.html_full = html_full
+        self.pairs = []
+        for i in range(12):
+            self.pairs.append(pair(0.6, 0.8, True, match=f"AF{i}", market_id=50,
+                                   period=1 + i % 4, score_diff=(i % 5) * 4 - 8,
+                                   team="Home Team" if i % 2 else "Away Team"))
+            self.pairs.append(line_pair(0.5, 0.5, 44.5, 44.5, 24, 21,
+                                        match=f"AF{i}", market_id=54))
+        self.report = directional.build_full_report(self.pairs, n_bootstrap=50)
+        self.rendered = self.html_full.render(
+            self.report, {"paired_matches": 12},
+            {"snapshots": 24, "exact_message_pair": 20, "offset_message_pair": 4},
+            self.pairs)
+
+    def test_cross_section_is_the_three_axes_together(self):
+        self.assertIn("Cross-section calibration", self.rendered)
+        self.assertIn("score difference &times; quarter &times;", self.rendered)
+
+    def test_cross_section_covers_every_market_not_just_moneyline(self):
+        cells = self.report["full_cell"]
+        markets_present = {key[1] for key in cells}
+        self.assertIn("moneyline", markets_present)
+        self.assertIn("total", markets_present)
+
+    def test_diagnostics_are_behind_a_disclosure(self):
+        self.assertIn("<details", self.rendered)
+        self.assertIn("<summary>Checks and breakdowns", self.rendered)
+        # And they are still present, not dropped.
+        self.assertIn("Every selection, as a mirror check", self.rendered)
+        self.assertIn("Integrity checks", self.rendered)
+
+    def test_nav_names_the_two_headline_views(self):
+        nav = self.rendered[self.rendered.index("<nav>"):self.rendered.index("</nav>")]
+        self.assertIn("Directional calibration", nav)
+        self.assertIn("Cross-section calibration", nav)
+
+    def test_thin_cells_are_dimmed_not_dropped(self):
+        # These cells sit well under MIN_CELL_MATCHES, so they must still be
+        # there -- knowing a bucket is thin is part of the information.
+        self.assertIn('class="thin"', self.rendered)
+
+    def test_cross_table_is_sortable(self):
+        self.assertIn('id="crossTable"', self.rendered)
+        self.assertIn("crossTable", self.rendered.split("<script>")[1])
+
+    def test_checks_summary_reports_clean_when_nothing_is_wrong(self):
+        summary = self.html_full._checks_summary(self.report)
+        self.assertIn("all pass", summary)
+
+    def test_checks_summary_flags_a_partition_failure(self):
+        report = dict(self.report)
+        report["complement"] = {"spread": {"both_sides": 100,
+                                           "outcomes_partition": 80,
+                                           "prob_sum_mean": 1.0}}
+        summary = self.html_full._checks_summary(report)
+        self.assertIn("does not partition", summary)
+
+    def test_axes_flag_defaults_off(self):
+        from ..__main__ import build_parser
+        args = build_parser().parse_args(["report"])
+        self.assertFalse(args.axes)
+        self.assertTrue(build_parser().parse_args(["report", "--axes"]).axes)
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS

@@ -20,12 +20,24 @@ py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 
 Four views:
 
-- **`report`** — one pairing pass, both console views, and a single combined
-  HTML: directional headline, per-market clustered tests, the integrity checks,
-  the cross-sectional cells, and **every paired observation** at the bottom
-  with both streams' line, price, probability, outcome and error, sorted by
-  widest probability disagreement. Column headers sort. Around 600 bytes per
-  pair row, so a two-day window lands near 4 MB.
+- **`report`** — one pairing pass, one HTML, two headline views:
+
+  1. **Directional calibration** — paired at each snapshot, with per-market
+     clustered tests.
+  2. **Cross-section calibration** — one bucket is score difference ×
+     quarter × possession, *all three together*, for every market. Sparse by
+     design and denser as matches accumulate; cells under
+     `MIN_CELL_MATCHES` are dimmed rather than dropped, since knowing a
+     bucket is thin is part of the information. Sortable.
+
+  Integrity checks, the mirror check, the by-day view and the single-axis
+  breakdowns sit behind a collapsed **Checks** disclosure whose summary line
+  says whether anything failed. Console prints a compact version; `--axes`
+  prints them in full.
+
+  Then **every paired observation**, with both streams' line, price,
+  probability, outcome and error, sorted by widest probability disagreement.
+  Around 600 bytes per pair row, so a three-day window lands near 5 MB.
 
 
 - **`directional`** — at the same snapshot, on the same selection, which
@@ -318,7 +330,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-148 tests covering line parsing, market resolution, bucket edges, drive
+157 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the sign
 test and the paired-delta machinery. No Snowflake needed — the database
 half is exercised separately against a mock shaped like the real schema,

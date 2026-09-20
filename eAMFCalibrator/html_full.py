@@ -81,9 +81,10 @@ def _headline(report):
     lo, lv, lm = line["overall"], line["votes"], line["mae"]
     return f"""
     <section class="panel">
-      <h2>Directional headline</h2>
-      <p class="sub">Paired at each snapshot. Probability decides where the lines
-         match; the line decides where they do not.</p>
+      <h2>Directional calibration</h2>
+      <p class="sub">Paired at each drive-start snapshot. Where both streams
+         quoted the same line the probability decides; where they differ the
+         line does.</p>
       <div class="cols">
         <div>
           <h3>Same line &mdash; probability</h3>
@@ -340,35 +341,59 @@ def _cross_axis(axis):
 
 
 def _full_cell(report):
+    """Quarter x possession x score difference, all three markets.
+
+    This is the cross-section: one bucket is the three axes together, not
+    each in isolation. It is sparse by design and gets denser as matches
+    accumulate, so rows too thin to read are dimmed rather than dropped --
+    seeing that a bucket exists but has four matches in it is part of the
+    information.
+    """
     rows = []
+    thin = 0
     for cell_label in report["full_cell_order"]:
-        row = report["full_cell"].get((cell_label, markets.MONEYLINE))
-        if not row or not row["n"]:
-            continue
-        label = " ".join(str(part) for part in cell_label)
-        rows.append(f"""<tr>
-            <th>{html.escape(label)}</th>
-            <td>{row['n']:,}</td><td>{row['matches']:,}</td>
-            <td><b>{_n(row['realized'], '.3f')}</b></td>
-            <td>{_n(row['prod_predicted'], '.3f')}</td>
-            <td class="{_cls(row['prod_gap'])}">{_n(row['prod_gap'], '+.3f')}</td>
-            <td>{_n(row['candidate_predicted'], '.3f')}</td>
-            <td class="{_cls(row['candidate_gap'])}">{_n(row['candidate_gap'], '+.3f')}</td>
-            <td class="{_cls(row['brier_delta'])}">{_n(row['brier_delta'])}</td>
-            <td>{_p(row['p_value'])}</td>
-        </tr>""")
+        for market in MARKET_ORDER:
+            row = report["full_cell"].get((cell_label, market))
+            if not row or not row["n"]:
+                continue
+            label = " ".join(str(part) for part in cell_label)
+            sparse = row["matches"] < config.MIN_CELL_MATCHES
+            thin += 1 if sparse else 0
+            rows.append(f"""<tr class="{'thin' if sparse else ''}">
+                <th>{html.escape(label)}</th>
+                <td>{MARKET_TITLES[market]}</td>
+                <td class="dim">{row['selection']}</td>
+                <td data-v="{row['n']}">{row['n']:,}</td>
+                <td data-v="{row['matches']}">{row['matches']:,}</td>
+                <td data-v="{row['realized'] or 0}"><b>{_n(row['realized'], '.3f')}</b></td>
+                <td data-v="{row['prod_predicted'] or 0}">{_n(row['prod_predicted'], '.3f')}</td>
+                <td data-v="{row['prod_gap'] or 0}" class="{_cls(row['prod_gap'])}">{_n(row['prod_gap'], '+.3f')}</td>
+                <td data-v="{row['candidate_predicted'] or 0}">{_n(row['candidate_predicted'], '.3f')}</td>
+                <td data-v="{row['candidate_gap'] or 0}" class="{_cls(row['candidate_gap'])}">{_n(row['candidate_gap'], '+.3f')}</td>
+                <td data-v="{row['brier_delta'] or 0}" class="{_cls(row['brier_delta'])}">{_n(row['brier_delta'])}</td>
+                <td data-v="{row['p_value'] if row['p_value'] is not None else 1}">{_p(row['p_value'])}</td>
+            </tr>""")
     return f"""
-    <section class="panel">
-      <h2>Full cell &mdash; score &times; quarter &times; possession</h2>
-      <p class="sub">Moneyline only; three markets per cell would run past 130 rows.
-         Around 40 cells are tested here, so a couple will clear p&nbsp;&lt;&nbsp;0.05
-         by chance. Read the single-axis tables above first.</p>
-      <table>
-        <thead><tr><th>Cell</th><th>N</th><th>Matches</th><th>Realized</th>
-          <th>Prod</th><th>Gap</th><th>Cand</th><th>Gap</th>
+    <section class="panel" id="cross">
+      <h2>Cross-section calibration</h2>
+      <p class="sub">One bucket is score difference &times; quarter &times;
+         possession, all three together. {len(rows):,} cells, of which
+         {thin:,} sit under {config.MIN_CELL_MATCHES} matches and are dimmed.
+         Predicted against the shared realized rate, one selection per market.
+         Click a header to sort.</p>
+      <div class="scroll">
+      <table class="sortable" id="crossTable">
+        <thead><tr><th>Cell</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
+          <th>Realized</th><th>Prod</th><th>Gap</th><th>Cand</th><th>Gap</th>
           <th>&Delta;Brier</th><th>p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
+      </div>
+      <p class="note">Gap is realized minus predicted: positive means that
+         stream underpriced the selection. &Delta;Brier is prod minus candidate,
+         match-clustered, so positive favours the candidate. With this many
+         cells a couple will clear p&nbsp;&lt;&nbsp;0.05 by chance, so read a
+         lone significant cell as noise unless its neighbours agree.</p>
     </section>"""
 
 
@@ -452,8 +477,26 @@ def _pair_table(pairs):
 
 # ---------------------------------------------------------------------------
 
+def _checks_summary(report):
+    """One line stating whether the diagnostics passed, for the collapsed block."""
+    issues = []
+    for market, row in (report.get("complement") or {}).items():
+        both = row.get("both_sides") or 0
+        if both and row.get("outcomes_partition", 0) / both < 0.999:
+            issues.append(f"{market} does not partition")
+    spread = report.get("spread") or {}
+    verdict = (spread.get("verdict") or ("unclear", ""))[0]
+    if verdict not in ("unclear", config.SPREAD_RESOLUTION):
+        issues.append(f"spread reads {verdict}, configured {config.SPREAD_RESOLUTION}")
+    if issues:
+        return '<span class="bad">' + "; ".join(issues) + "</span>"
+    return ('<span class="good">all pass</span> '
+            '<span class="dim">integrity, mirror, spread reading, by day, single axes</span>')
+
+
 def render(report, header, stats, pairs):
     verdict_class, verdict_text = _verdict(report)
+    checks_summary = _checks_summary(report)
     # The settled universe and the matches that actually produced pairs are
     # not the same number: a match can be settled, carry quotes, and still
     # pair nothing. Report both rather than implying one.
@@ -528,6 +571,16 @@ def render(report, header, stats, pairs):
   .note{{color:var(--dim);font-size:11.5px;margin:9px 0 0}}
   .note.bad{{color:var(--bad)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
+  details.panel{{padding:0}}
+  details.panel > summary{{cursor:pointer;padding:12px 14px;font-size:13px;
+                           font-weight:600;list-style:none}}
+  details.panel > summary::-webkit-details-marker{{display:none}}
+  details.panel > summary::before{{content:"\25B8 ";color:var(--dim)}}
+  details.panel[open] > summary::before{{content:"\25BE "}}
+  details.panel[open] > summary{{border-bottom:1px solid var(--line)}}
+  details.panel .panel{{border:none;margin:0;border-bottom:1px solid var(--line);
+                        border-radius:0}}
+  tr.thin td,tr.thin th{{opacity:0.45}}
   .scroll{{max-height:70vh;overflow:auto;border:1px solid var(--line);border-radius:5px}}
   .scroll thead th{{position:sticky;top:0;z-index:1}}
   .sortable thead th{{cursor:pointer;user-select:none}}
@@ -550,26 +603,28 @@ def render(report, header, stats, pairs):
   </header>
 
   <nav>
-    <a href="#headline">Headline</a><a href="#markets">By market</a>
-    <a href="#integrity">Integrity</a><a href="#mirror">Mirror check</a>
-    <a href="#daily">By day</a>
-    <a href="#cross">Cross-sectional</a><a href="#pairs">Every pair</a>
+    <a href="#headline">Directional calibration</a>
+    <a href="#cross">Cross-section calibration</a>
+    <a href="#checks">Checks</a>
+    <a href="#pairs">Every pair</a>
   </nav>
 
   <div class="verdict {verdict_class}">{verdict_text}</div>
 
-  <div id="headline">{_headline(report)}</div>
-  <div id="markets">{_market_block(report)}</div>
-  <div id="integrity">{_integrity_block(report, stats)}</div>
-  <div id="mirror">{_both_sides_block(report)}</div>
-  {_daily(report)}
-  <div id="cross">{''.join(_cross_axis(axis) for axis in report['axes'])}
-  {_full_cell(report)}</div>
+  <div id="headline">{_headline(report)}{_market_block(report)}</div>
+  {_full_cell(report)}
+  <details class="panel" id="checks">
+    <summary>Checks and breakdowns &mdash; {checks_summary}</summary>
+    {_daily(report)}
+    {_integrity_block(report, stats)}
+    {_both_sides_block(report)}
+    {''.join(_cross_axis(axis) for axis in report['axes'])}
+  </details>
   {_pair_table(pairs)}
 </div>
 <script>
-(function () {{
-  var table = document.getElementById('pairTable');
+['pairTable', 'crossTable'].forEach(function (id) {{
+  var table = document.getElementById(id);
   if (!table) return;
   var headers = table.tHead.rows[0].cells;
   var body = table.tBodies[0];
@@ -598,7 +653,7 @@ def render(report, header, stats, pairs):
       body.appendChild(fragment);
     }});
   }});
-}})();
+}});
 </script>
 </body>
 </html>
