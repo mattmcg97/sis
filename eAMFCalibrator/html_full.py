@@ -80,14 +80,11 @@ def _headline(report):
     o, v, b, m = same["overall"], same["votes"], same["brier"], same["mae"]
     lo, lv, lm = line["overall"], line["votes"], line["mae"]
     return f"""
-    <section class="panel">
-      <h2>Directional calibration</h2>
-      <p class="sub">Paired at each drive-start snapshot. Where both streams
-         quoted the same line the probability decides; where they differ the
-         line does.</p>
+    <section class="panel" id="directional">
+      <h2>Directional calibration <span class="tag">paired per snapshot</span></h2>
       <div class="cols">
         <div>
-          <h3>Same line &mdash; probability</h3>
+          <h3>Same line</h3>
           <dl class="stats">
             <div><dt>Pairs</dt><dd>{o['n']:,} <span class="dim">/ {o['n_matches']:,} matches</span></dd></div>
             <div><dt>Candidate win rate</dt><dd>{_pct(o['candidate_win_rate'])}</dd></div>
@@ -99,7 +96,7 @@ def _headline(report):
           </dl>
         </div>
         <div>
-          <h3>Different line &mdash; whose line was closer</h3>
+          <h3>Different line</h3>
           <dl class="stats">
             <div><dt>Pairs</dt><dd>{lo['n']:,} <span class="dim">/ {lo['n_matches']:,} matches</span></dd></div>
             <div><dt>Candidate win rate</dt><dd>{_pct(lo['candidate_win_rate'])}</dd></div>
@@ -110,9 +107,6 @@ def _headline(report):
           </dl>
         </div>
       </div>
-      <p class="note">&Delta; is prod minus candidate, so positive favours the
-         candidate. The win rate is a direction check only: it discards
-         magnitude, so a genuinely better model can sit near 50%.</p>
     </section>"""
 
 
@@ -137,11 +131,9 @@ def _market_block(report):
     return f"""
     <section class="panel">
       <h2>By market</h2>
-      <p class="sub">Each market with its own match-clustered test. Pooling them
-         dilutes an effect confined to one.</p>
       <table>
         <thead><tr><th>View</th><th>Market</th><th>Pairs</th><th>Matches</th>
-          <th>Cand win</th><th>&Delta;</th><th>95% CI</th><th>p</th></tr></thead>
+          <th title="candidate share of decisive pairs">Cand win</th><th>&Delta;</th><th>95% CI</th><th>p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -171,9 +163,7 @@ def _integrity_block(report, stats):
 
     verdict, explanation = spread["verdict"]
     mismatch = ("" if verdict in ("unclear", config.SPREAD_RESOLUTION)
-                else '<p class="note bad">Does not match the configured resolution '
-                     f'(<code>{config.SPREAD_RESOLUTION}</code>). Every spread number '
-                     'here is affected.</p>')
+                else '')
     spread_body = "<p class=\"dim\">No spread pairs carrying both sides.</p>"
     if spread["n"]:
         spread_body = f"""
@@ -184,22 +174,17 @@ def _integrity_block(report, stats):
           <div><dt>Lines equal</dt><dd>{_pct(spread['lines_equal'] / spread['n'])}</dd></div>
           <div><dt>Literal reading partitions</dt><dd>{_pct(spread['literal_partition'] / spread['n'])}</dd></div>
           <div><dt>Verdict</dt><dd><b>{verdict.upper()}</b></dd></div>
-        </dl>
-        <p class="note">{html.escape(explanation)}</p>{mismatch}"""
+        </dl>{mismatch}"""
 
     return f"""
     <section class="panel">
       <h2>Integrity checks</h2>
-      <p class="sub">Whether the measurement is sound before reading anything off it.</p>
       <table>
         <thead><tr><th>Market</th><th>Pairs</th><th>Same line</th>
-          <th>P(both sides)</th><th>Partition</th><th>Both won / lost</th></tr></thead>
+          <th title="1.0000 means a fair book, so one side can be dropped">P(both sides)</th><th title="should be 100%: exactly one side wins">Partition</th><th>Both won / lost</th></tr></thead>
         <tbody>{''.join(line_rows)}</tbody>
       </table>
-      <p class="note">P(both sides) of 1.0000 means a fair book with no overround,
-         so each selection is exactly its opposite's complement and one can be
-         dropped for free. Partition must be 100%: exactly one side wins.</p>
-      <h3>Spread: two propositions, or one with a yes and a no?</h3>
+      <h3>Spread reading</h3>
       {spread_body}
     </section>"""
 
@@ -235,12 +220,10 @@ def _both_sides_block(report):
             </tr>""")
     return f"""
     <section class="panel">
-      <h2>Every selection, as a mirror check</h2>
-      <p class="sub">Not an extra finding. If the sides are complements, each
-         pair of rows has realized summing to 1.000 and gaps that cancel.</p>
+      <h2>Mirror check</h2>
       <table>
         <thead><tr><th>Market</th><th>Sel</th><th>Used</th><th>N</th><th>Matches</th>
-          <th>Realized</th><th>Prod</th><th>Gap</th><th>Cand</th><th>Gap</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -272,15 +255,11 @@ def _daily(report):
     return f"""
     <section class="panel" id="daily">
       <h2>By day</h2>
-      <p class="sub">The window only grows, so the question as games accumulate is
-         whether the answer is stable. A day out of step with its neighbours is
-         worth a look before it gets averaged away.</p>
       <table>
-        <thead><tr><th>Day</th><th>Pairs</th><th>Matches</th><th>Cand win</th>
+        <thead><tr><th>Day</th><th>Pairs</th><th>Matches</th><th title="candidate share of decisive pairs">Cand win</th>
           <th>&Delta;Brier</th><th>95% CI</th><th>p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
-      <p class="note">{note}</p>
     </section>"""
 
 
@@ -323,17 +302,16 @@ def _cross_axis(axis):
     return f"""
     <section class="panel">
       <h2>{html.escape(axis['name'])}</h2>
-      <h3>Same line &mdash; predicted against realized</h3>
+      <h3>Same line</h3>
       <table>
         <thead><tr><th>Cell</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
-          <th>Realized</th><th>Prod</th><th>Gap</th><th>Cand</th><th>Gap</th>
-          <th>&Delta;Brier</th><th>p</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
         <tbody>{''.join(prob_rows) or '<tr><td colspan="12" class="dim">no pairs</td></tr>'}</tbody>
       </table>
-      <h3>Different line &mdash; whose line was closer, in points</h3>
+      <h3>Different line</h3>
       <table>
         <thead><tr><th>Cell</th><th>N</th><th>Matches</th><th>Line gap</th>
-          <th>Prod err</th><th>Cand err</th><th>&Delta;points</th><th>95% CI</th>
+          <th>Prod err</th><th>Cand err</th><th title="prod minus candidate line error, in points">&Delta;points</th><th>95% CI</th>
           <th>p</th></tr></thead>
         <tbody>{''.join(line_rows) or '<tr><td colspan="9" class="dim">no pairs</td></tr>'}</tbody>
       </table>
@@ -375,25 +353,16 @@ def _full_cell(report):
             </tr>""")
     return f"""
     <section class="panel" id="cross">
-      <h2>Cross-section calibration</h2>
-      <p class="sub">One bucket is score difference &times; quarter &times;
-         possession, all three together. {len(rows):,} cells, of which
-         {thin:,} sit under {config.MIN_CELL_MATCHES} matches and are dimmed.
-         Predicted against the shared realized rate, one selection per market.
-         Click a header to sort.</p>
+      <h2>Cross-section calibration <span class="tag">score diff &times; quarter &times; possession</span></h2>
+      <p class="count">{len(rows):,} cells &middot; {thin:,} under
+         {config.MIN_CELL_MATCHES} matches, dimmed</p>
       <div class="scroll">
       <table class="sortable" id="crossTable">
         <thead><tr><th>Cell</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
-          <th>Realized</th><th>Prod</th><th>Gap</th><th>Cand</th><th>Gap</th>
-          <th>&Delta;Brier</th><th>p</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
       </div>
-      <p class="note">Gap is realized minus predicted: positive means that
-         stream underpriced the selection. &Delta;Brier is prod minus candidate,
-         match-clustered, so positive favours the candidate. With this many
-         cells a couple will clear p&nbsp;&lt;&nbsp;0.05 by chance, so read a
-         lone significant cell as noise unless its neighbours agree.</p>
     </section>"""
 
 
@@ -441,37 +410,23 @@ def _pair_rows(pairs):
 def _pair_table(pairs):
     return f"""
     <section class="panel" id="pairs">
-      <h2>Every pair &mdash; widest disagreement first</h2>
-      <p class="sub">{len(pairs):,} paired observations. Sorted on the probability
-         gap, because that is where the two models actually said different things.
-         Click any header to re-sort. BASIS says which rule decided the row: the
-         probability where both quoted the same line, the line where they did not.</p>
+      <h2>Every pair <span class="tag">{len(pairs):,} rows, widest
+          &Delta;prob first</span></h2>
       <div class="scroll">
       <table class="sortable" id="pairTable">
         <thead><tr>
-          <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th>&plusmn;Msg</th>
+          <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th title="offset from the snapshot's own message; 0 is an exact hit">&plusmn;Msg</th>
           <th>Qtr</th><th>Score</th><th>Poss</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
           <th>Prod price</th><th>Cand price</th>
           <th>Prod prob</th><th>Cand prob</th><th>&Delta;prob</th>
-          <th>Result</th><th>Prod</th><th>Cand</th>
-          <th>Prod err</th><th>Cand err</th><th>Closer</th><th>Basis</th>
+          <th title="realized margin or total">Result</th><th title="won at its own line">Prod</th><th title="won at its own line">Cand</th>
+          <th>Prod err</th><th>Cand err</th><th>Closer</th><th title="prob where both quoted the same line, line where they did not">Basis</th>
         </tr></thead>
         <tbody>{_pair_rows(pairs)}</tbody>
       </table>
       </div>
-      <p class="note"><b>&plusmn;Msg</b> is how far the paired message sits from the
-         snapshot's own. Zero is an exact hit; anything else means the two
-         streams never both quoted that message and the nearest common one was
-         used. Worth checking on a large &Delta;prob, because late in a close
-         game a one-message offset can straddle a decisive play and manufacture
-         a disagreement that is not a model difference.</p>
-      <p class="note">RESULT is the realized margin (spread) or combined total
-         (total); moneyline has none. PROD and CAND under it are whether that
-         stream's selection won <em>at its own line</em> &mdash; they can differ
-         when the lines do. Errors are probability distance from the outcome on a
-         same-line row, and points from the result on a different-line row.</p>
     </section>"""
 
 
@@ -568,8 +523,9 @@ def render(report, header, stats, pairs):
   .stats dt{{color:var(--dim);font-size:10.5px;text-transform:uppercase;
              letter-spacing:0.04em}}
   .stats dd{{margin:1px 0 0;font-size:13px;font-variant-numeric:tabular-nums}}
-  .note{{color:var(--dim);font-size:11.5px;margin:9px 0 0}}
-  .note.bad{{color:var(--bad)}}
+  .tag{{color:var(--dim);font-weight:400;font-size:11px;letter-spacing:0}}
+  .count{{color:var(--dim);font-size:11px;margin:0 0 8px}}
+  th[title]{{cursor:help;border-bottom:1px dotted var(--dim)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
   details.panel{{padding:0}}
   details.panel > summary{{cursor:pointer;padding:12px 14px;font-size:13px;
@@ -614,7 +570,7 @@ def render(report, header, stats, pairs):
   <div id="headline">{_headline(report)}{_market_block(report)}</div>
   {_full_cell(report)}
   <details class="panel" id="checks">
-    <summary>Checks and breakdowns &mdash; {checks_summary}</summary>
+    <summary>Checks &mdash; {checks_summary}</summary>
     {_daily(report)}
     {_integrity_block(report, stats)}
     {_both_sides_block(report)}
