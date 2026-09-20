@@ -7,10 +7,13 @@ matching, scoring -- is pinned down in full instead.
 Run with:  py -m unittest discover eAMFCalibrator
 """
 
+import contextlib
 import datetime as dt
+import io
 import unittest
 
-from .. import buckets, clock, config, directional, markets, metrics
+from .. import (buckets, clock, config, directional, markets, metrics,
+                report)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -78,15 +81,25 @@ class TestResolve(unittest.TestCase):
 
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
+        # Boundaries are what matters here, not the wording, so the expected
+        # labels come from the config the buckets are cut from.
+        away2, away1, tight, home1, home2 = (
+            label for _, _, label in config.SCORE_DIFF_BUCKETS)
         cases = {
-            -30: "<= -9", -9: "<= -9",
-            -8: "-8..-3", -3: "-8..-3",
-            -2: "-2..+2", 0: "-2..+2", 2: "-2..+2",
-            3: "+3..+8", 8: "+3..+8",
-            9: ">= +9", 40: ">= +9",
+            -30: away2, -9: away2,
+            -8: away1, -3: away1,
+            -2: tight, 0: tight, 2: tight,
+            3: home1, 8: home1,
+            9: home2, 40: home2,
         }
         for diff, expected in cases.items():
             self.assertEqual(buckets.score_diff_bucket(diff), expected, f"diff={diff}")
+
+    def test_labels_name_the_game_state(self):
+        labels = [label for _, _, label in config.SCORE_DIFF_BUCKETS]
+        self.assertEqual(
+            labels,
+            ["Away 2 score", "Away 1 score", "Tight", "Home 1 score", "Home 2 score"])
 
     def test_every_integer_lands_somewhere(self):
         for diff in range(-60, 61):
@@ -94,6 +107,30 @@ class TestScoreDiffBuckets(unittest.TestCase):
 
     def test_none(self):
         self.assertEqual(buckets.score_diff_bucket(None), "unknown")
+
+
+class TestTextTableWidths(unittest.TestCase):
+    def test_score_column_fits_the_longest_label_with_a_gap(self):
+        longest = max(len(label) for _, _, label in config.SCORE_DIFF_BUCKETS)
+        self.assertGreater(report.SCORE_WIDTH, longest)
+        self.assertGreater(report.CELL_WIDTH, longest + len(" unknown unknown") - 1)
+
+    def test_printed_cells_stay_in_their_columns(self):
+        rows = [{"score_diff": label, "time_bucket": "Q1", "possession": "Home",
+                 "market": "moneyline", "selection": "Home", "n": 120,
+                 "matches": 40, "mean_predicted": 0.52, "realized": 0.48,
+                 "gap": -0.04, "brier": 0.2471}
+                for _, _, label in config.SCORE_DIFF_BUCKETS]
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            report.print_cells(rows)
+        lines = [line for line in buffer.getvalue().splitlines()
+                 if "moneyline" in line]
+        self.assertEqual(len(lines), len(rows))
+        # Every row must put "moneyline" at the same offset, which only holds
+        # if no bucket label has overflowed its column.
+        offsets = {line.index("moneyline") for line in lines}
+        self.assertEqual(len(offsets), 1, buffer.getvalue())
 
 
 class TestPeriodAndPossession(unittest.TestCase):
@@ -1282,6 +1319,30 @@ class TestReportShape(unittest.TestCase):
         # And they are still present, not dropped.
         self.assertIn("Mirror check", self.rendered)
         self.assertIn("Integrity checks", self.rendered)
+
+    def test_cross_section_axes_are_three_shaded_columns(self):
+        head = self.rendered[self.rendered.index('id="crossTable"'):]
+        head = head[:head.index("</thead>")]
+        for name in ("Score diff", "Quarter", "Possession"):
+            self.assertIn(f'class="ax"', head)
+            self.assertIn(name, head)
+        self.assertNotIn(">Cell<", head)
+        # The shade is a token so it survives both themes.
+        self.assertIn("td.ax,th.ax{background:var(--axis)", self.rendered)
+        self.assertIn("--axis:", self.rendered)
+
+    def test_axis_cells_sort_in_game_order_not_alphabetically(self):
+        # "Tight" sorts last alphabetically but sits in the middle of the
+        # game, so the axis cells carry their bucket index for the sorter.
+        body = self.rendered[self.rendered.index('id="crossTable"'):]
+        body = body[:body.index("</table>")]
+        self.assertIn('class="ax" data-v=', body)
+
+    def test_same_line_headline_drops_the_mae_row(self):
+        head = self.rendered[self.rendered.index('id="directional"'):]
+        head = head[:head.index("</section>")]
+        self.assertNotIn("&Delta;MAE", head)
+        self.assertIn("&Delta;Brier / match", head)
 
     def test_report_carries_no_explanatory_prose(self):
         # The report is a dashboard, not a write-up: column meanings live in

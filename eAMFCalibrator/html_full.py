@@ -12,7 +12,7 @@ outcome and error, and which one finished closer. Column headers sort.
 import html
 import os
 
-from . import config, markets
+from . import buckets, config, markets
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -77,7 +77,7 @@ def _verdict(report):
 def _headline(report):
     same = report["summary"]["same_line"]
     line = report["summary"]["different_line"]
-    o, v, b, m = same["overall"], same["votes"], same["brier"], same["mae"]
+    o, v, b = same["overall"], same["votes"], same["brier"]
     lo, lv, lm = line["overall"], line["votes"], line["mae"]
     return f"""
     <section class="panel" id="directional">
@@ -92,7 +92,6 @@ def _headline(report):
             <div><dt>&Delta;Brier / match</dt><dd class="{_cls(b.get('mean'))}">{_n(b.get('mean'))}</dd></div>
             <div><dt>95% CI</dt><dd class="dim">{_ci(b)}</dd></div>
             <div><dt>p (clustered)</dt><dd>{_p(b.get('p_value'))}</dd></div>
-            <div><dt>&Delta;MAE / match</dt><dd class="{_cls(m.get('mean'))}">{_n(m.get('mean'))}</dd></div>
           </dl>
         </div>
         <div>
@@ -334,11 +333,14 @@ def _full_cell(report):
             row = report["full_cell"].get((cell_label, market))
             if not row or not row["n"]:
                 continue
-            label = " ".join(str(part) for part in cell_label)
+            score, quarter, possession = (str(part) for part in cell_label)
+            order = buckets.sort_key(cell_label)
             sparse = row["matches"] < config.MIN_CELL_MATCHES
             thin += 1 if sparse else 0
             rows.append(f"""<tr class="{'thin' if sparse else ''}">
-                <th>{html.escape(label)}</th>
+                <th class="ax" data-v="{order[0]}">{html.escape(score)}</th>
+                <td class="ax" data-v="{order[1]}">{html.escape(quarter)}</td>
+                <td class="ax" data-v="{order[2]}">{html.escape(possession)}</td>
                 <td>{MARKET_TITLES[market]}</td>
                 <td class="dim">{row['selection']}</td>
                 <td data-v="{row['n']}">{row['n']:,}</td>
@@ -358,7 +360,7 @@ def _full_cell(report):
          {config.MIN_CELL_MATCHES} matches, dimmed</p>
       <div class="scroll">
       <table class="sortable" id="crossTable">
-        <thead><tr><th>Cell</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
+        <thead><tr><th class="ax">Score diff</th><th class="ax">Quarter</th><th class="ax" title="which side has the ball">Possession</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
           <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
@@ -471,18 +473,19 @@ def render(report, header, stats, pairs):
   :root {{
     --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --dim:#6b6b66; --line:#e2e2dd;
     --good:#1c7c4a; --bad:#b3261e; --warn:#8a6d1f; --accent:#2d4a7c;
-    --head:#f0f0ec;
+    --head:#f0f0ec; --axis:#eaeef4;
   }}
   @media (prefers-color-scheme: dark) {{
     :root:not([data-theme="light"]) {{
       --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
       --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
-      --head:#26262c;
+      --head:#26262c; --axis:#232833;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
-    --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8; --head:#26262c;
+    --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
+    --head:#26262c; --axis:#232833;
   }}
   *{{box-sizing:border-box}}
   body{{margin:0;background:var(--bg);color:var(--ink);padding:16px;
@@ -504,7 +507,6 @@ def render(report, header, stats, pairs):
   .verdict.bad{{border-left-color:var(--bad)}}
   .panel{{background:var(--panel);border:1px solid var(--line);border-radius:7px;
           padding:12px 14px;margin-bottom:12px}}
-  .sub{{color:var(--dim);font-size:11.5px;margin:0 0 9px}}
   .cols{{display:grid;grid-template-columns:1fr 1fr;gap:16px}}
   @media (max-width:820px){{.cols{{grid-template-columns:1fr}}}}
   table{{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}}
@@ -523,6 +525,8 @@ def render(report, header, stats, pairs):
   .stats dt{{color:var(--dim);font-size:10.5px;text-transform:uppercase;
              letter-spacing:0.04em}}
   .stats dd{{margin:1px 0 0;font-size:13px;font-variant-numeric:tabular-nums}}
+  td.ax,th.ax{{background:var(--axis);text-align:left}}
+  thead th.ax{{color:var(--ink)}}
   .tag{{color:var(--dim);font-weight:400;font-size:11px;letter-spacing:0}}
   .count{{color:var(--dim);font-size:11px;margin:0 0 8px}}
   th[title]{{cursor:help;border-bottom:1px dotted var(--dim)}}
