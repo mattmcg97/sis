@@ -20,6 +20,12 @@ OBS_FIELDS = [
     "market_id", "line", "probability", "outcome", "gap_seconds",
 ]
 
+# Size the bucket columns from the labels themselves, so renaming a bucket
+# cannot knock the text tables out of alignment. CELL_WIDTH is for the full
+# cross-section label, which is the three axes joined by spaces.
+SCORE_WIDTH = max(len(label) for _, _, label in config.SCORE_DIFF_BUCKETS) + 2
+CELL_WIDTH = SCORE_WIDTH + len(" unknown unknown")
+
 
 def _fmt(value, spec=".4f"):
     return "n/a" if value is None else format(value, spec)
@@ -131,10 +137,12 @@ def cell_rows(stream, cells, cell_matches):
 def print_cells(rows):
     print(f"\n{'-' * 100}\nCalibration by cell "
           f"(score diff x {buckets.time_axis_name().lower()} x possession x selection)\n{'-' * 100}")
-    print(f"  {'SCORE':<9}{buckets.time_axis_name():<12}{'POSS':<7}{'MARKET':<11}{'SEL':<7}"
+    print(f"  {'SCORE':<{SCORE_WIDTH}}{buckets.time_axis_name():<12}{'POSS':<7}"
+          f"{'MARKET':<11}{'SEL':<7}"
           f"{'N':>8}{'MATCH':>7}{'PRED':>8}{'REAL':>8}{'GAP':>8}{'BRIER':>9}")
     for r in rows:
-        print(f"  {r['score_diff']:<9}{r['time_bucket']:<12}{r['possession']:<7}"
+        print(f"  {r['score_diff']:<{SCORE_WIDTH}}{r['time_bucket']:<12}"
+              f"{r['possession']:<7}"
               f"{r['market']:<11}{r['selection']:<7}{r['n']:>8,}{r['matches']:>7,}"
               f"{_fmt(r['mean_predicted'], '.3f'):>8}{_fmt(r['realized'], '.3f'):>8}"
               f"{_fmt(r['gap'], '+.3f'):>8}{_fmt(r['brier'], '.4f'):>9}")
@@ -336,7 +344,8 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
-def print_directional_breakdown(title, grouped, order=None, label_width=14,
+def print_directional_breakdown(title, grouped, order=None,
+                                label_width=SCORE_WIDTH,
                                 mode="probability"):
     # In line mode the errors are points, so squaring them gives squared
     # points -- a number with no readable meaning. Show mean points instead.
@@ -532,7 +541,7 @@ CROSS_FIELDS = [
 MARKET_PRINT_ORDER = ["moneyline", "spread", "total"]
 
 
-def print_calibration_cells(title, cells, order=None, label_width=16,
+def print_calibration_cells(title, cells, order=None, label_width=SCORE_WIDTH,
                             markets_shown=None):
     """Same-line cells, one selection per market so REALIZED can vary."""
     print(f"\n{'=' * 110}\n{title}\n{'=' * 110}")
@@ -569,7 +578,7 @@ def print_calibration_cells(title, cells, order=None, label_width=16,
     print("  candidate. P is the clustered test.")
 
 
-def print_line_cells(title, cells, order=None, label_width=16):
+def print_line_cells(title, cells, order=None, label_width=SCORE_WIDTH):
     """Different-line cells: the line overrules the probability."""
     print(f"\n{'=' * 104}\n{title}\n{'=' * 104}")
     if not cells:

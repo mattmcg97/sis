@@ -72,13 +72,15 @@ MATCH_CHUNK_SIZE = 50
 
 # Score-difference buckets, as (low, high, label) with both ends inclusive.
 # None means unbounded. Read in the PLAYER_1 (home) frame: positive means
-# home leads.
+# home leads. The labels name the game state rather than the arithmetic --
+# a score in this sport is 6-8 points, so a 3-8 point gap is one score
+# behind and 9 or more is two.
 SCORE_DIFF_BUCKETS = [
-    (None, -9, "<= -9"),
-    (-8, -3, "-8..-3"),
-    (-2, 2, "-2..+2"),
-    (3, 8, "+3..+8"),
-    (9, None, ">= +9"),
+    (None, -9, "Away 2 score"),
+    (-8, -3, "Away 1 score"),
+    (-2, 2, "Tight"),
+    (3, 8, "Home 1 score"),
+    (9, None, "Home 2 score"),
 ]
 
 # Which time-axis to split on: "period" (quarter, available now) or
