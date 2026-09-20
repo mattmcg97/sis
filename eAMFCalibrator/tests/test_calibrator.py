@@ -1112,6 +1112,54 @@ class TestFullReport(unittest.TestCase):
         self.assertEqual(built["full_cell"], {})
 
 
+class TestReportRendering(unittest.TestCase):
+    """Guards two things a full audit of a real report turned up."""
+
+    def setUp(self):
+        from .. import html_full
+        self.html_full = html_full
+        self.pairs = [pair(0.6, 0.8, True, match=f"AF{i}", market_id=50,
+                           message=100 + i) for i in range(5)]
+        self.report = directional.build_full_report(self.pairs, n_bootstrap=50)
+        # The universe deliberately exceeds the matches that produced pairs.
+        self.header = {"paired_matches": 9}
+        self.stats = {"snapshots": 12, "exact_message_pair": 4,
+                      "offset_message_pair": 1}
+
+    def _render(self):
+        return self.html_full.render(self.report, self.header, self.stats, self.pairs)
+
+    def test_header_separates_contributing_matches_from_the_universe(self):
+        # 5 matches produced pairs; 9 were settled. Reporting only one
+        # number implied the wrong thing.
+        rendered = self._render()
+        self.assertIn("<b>5</b> matches with pairs", rendered)
+        self.assertIn("<b>9</b> settled", rendered)
+
+    def test_pair_table_carries_the_message_columns(self):
+        rendered = self._render()
+        self.assertIn("<th>Msg</th>", rendered)
+        self.assertIn("&plusmn;Msg</th>", rendered)
+
+    def test_message_gap_is_flagged_when_not_exact(self):
+        offset = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=2)]
+        report = directional.build_full_report(offset, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats, offset)
+        self.assertIn('class="warn"', rendered)
+
+    def test_every_pair_reaches_the_table(self):
+        rendered = self._render()
+        body = rendered[rendered.index('id="pairTable"'):]
+        body = body[body.index("<tbody>"):body.index("</tbody>")]
+        self.assertEqual(body.count("<tr>"), len(self.pairs))
+
+    def test_rendered_page_has_no_external_fetches(self):
+        rendered = self._render()
+        self.assertNotIn('src="http', rendered)
+        self.assertNotIn('href="http', rendered)
+        self.assertNotIn("@import", rendered)
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS
