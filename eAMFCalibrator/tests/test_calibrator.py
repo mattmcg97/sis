@@ -1268,7 +1268,7 @@ class TestReportShape(unittest.TestCase):
 
     def test_cross_section_is_the_three_axes_together(self):
         self.assertIn("Cross-section calibration", self.rendered)
-        self.assertIn("score difference &times; quarter &times;", self.rendered)
+        self.assertIn("score diff &times; quarter &times; possession", self.rendered)
 
     def test_cross_section_covers_every_market_not_just_moneyline(self):
         cells = self.report["full_cell"]
@@ -1278,10 +1278,17 @@ class TestReportShape(unittest.TestCase):
 
     def test_diagnostics_are_behind_a_disclosure(self):
         self.assertIn("<details", self.rendered)
-        self.assertIn("<summary>Checks and breakdowns", self.rendered)
+        self.assertIn("<summary>Checks &mdash;", self.rendered)
         # And they are still present, not dropped.
-        self.assertIn("Every selection, as a mirror check", self.rendered)
+        self.assertIn("Mirror check", self.rendered)
         self.assertIn("Integrity checks", self.rendered)
+
+    def test_report_carries_no_explanatory_prose(self):
+        # The report is a dashboard, not a write-up: column meanings live in
+        # header tooltips so the tables stay readable.
+        self.assertNotIn('class="note"', self.rendered)
+        self.assertNotIn('class="sub"', self.rendered)
+        self.assertGreater(self.rendered.count("<th title="), 20)
 
     def test_nav_names_the_two_headline_views(self):
         nav = self.rendered[self.rendered.index("<nav>"):self.rendered.index("</nav>")]
