@@ -491,17 +491,45 @@ py -m eAMFCalibrator dump --match AF063170926
 py -m eAMFCalibrator dump --matches 5
 ```
 
-Four CSVs in the output directory, all joinable on
+**Two** CSVs in the output directory, joinable on
 `(match_code, event_message_count)`:
 
-| File | One row per | The columns that matter |
+| File | One row per | What it carries |
 |---|---|---|
-| `dump_plays.csv` | raw play row | `cleaning` (which rule fired), `dropped`, `is_snap`, `drive_number`, `is_anchor` |
-| `dump_scores.csv` | score change | `is_touchdown`, `scorer` |
-| `dump_drives.csv` | detected drive | `anchor_kind`, `n_plays`, `n_dropped_inside`, and the three buckets the snapshot lands in |
-| `dump_quotes.csv` | quote row, **both streams, undeduplicated** | `status`, `is_active`, `live`, `line`, `rows_at_this_message`, `chosen` |
-| `dump_timeline.csv` | message | what each source had: `has_play`, `has_score`, `prod_markets`, `prod_live_markets`, `candidate_*`, `markets_both_live` |
-| `dump_pairs.csv` | **pair** | `directional_pairs.csv` for these matches, widened with everything above |
+| `dump_play_by_play.csv` | message | the play, the cleaning verdict, the drive, the score, and both streams' prices on all six selections |
+| `dump_pairs.csv` | **pair** | `directional_pairs.csv` for these matches, widened with everything the play-by-play knows |
+
+It used to be five files. Reconciling a drive meant opening a play row,
+carrying its message number to the scores file, then the drives file,
+then the quotes file, and holding four tabs in your head to answer one
+question. The play-by-play now carries all of it on the row.
+
+### `dump_play_by_play.csv`
+
+| Columns | What they tell you |
+|---|---|
+| `period_number`, `offensive_team`, `down_number`, `distance`, `field_position` | the play as the feed sent it |
+| `is_snap`, `cleaning`, `dropped` | whether it was a scrimmage play at all, which rule fired on it, and whether that rule dropped it |
+| `drive_number`, `is_anchor` | the drive it landed in, and whether it became that drive's snapshot |
+| `score_p1`, `score_p2`, `score_diff` | the scoreboard as of this message |
+| `p1_change`, `p2_change` | the points scored **on** this message, blank otherwise |
+| `ml_home_*`, `ml_away_*`, `sp_home_*`, `sp_away_*`, `tot_over_*`, `tot_under_*` | per selection: `_prod` and `_cand` probability, `_line_prod`/`_line_cand` where the market has a line, and `_live` |
+
+`_live` reads `live` (both tradeable), `prod` or `cand` (that side was
+not), `both` (neither), `missing` (only one stream quoted it), or blank
+(neither did).
+
+A score landing on a message with **no** play row still gets a row, with
+`cleaning = score`. Those are the boundaries the feed never labelled, so
+leaving them out of a table meant to explain the drives would hide the
+thing being looked for.
+
+`cleaning` names the rule rather than just the outcome — `kept`,
+`drive_start`, `kickoff`, `special_teams`, `duplicate`,
+`stale_after_change`, `impossible_down`, `score` — because reconciling by
+eye means seeing *why* a row went, not just that it did.
+`classify_plays` is the single source of truth for it, and `clean_plays`
+is built from it, so the dump and the pipeline cannot disagree.
 
 ### `dump_pairs.csv`
 
@@ -526,32 +554,36 @@ pair differently.
 ### Do the quotes interleave with the plays?
 
 They share **one** `EVENT_MESSAGE_COUNT` sequence — that is what makes
-pairing possible — but they are not one to one, and `dump_timeline.csv` is
-where that shows. A message can carry six markets across two streams and
-no play at all; another can carry a play and no quote.
+pairing possible — but they are not one to one. A message can carry six
+markets across two streams and no play at all; another can carry a play
+and no quote. In the play-by-play that reads as a row with a `cleaning`
+verdict and blank market cells, or the reverse.
 
-`markets_both_live` is the one to read: a snapshot can only pair on a
-market **both** streams had live at that message, so at the anchor rows it
-is the ceiling on pairs before any tolerance or line rule applies.
+The `_live` columns at the anchor rows are the ceiling on pairs before
+any tolerance or line rule applies: a snapshot can only pair on a
+selection **both** streams had live at that message.
 
-`dump_quotes.csv` keeps every row rather than the one the pipeline used,
-with `rows_at_this_message` and `chosen`, so the case that cost the spread
-and total their pairs is visible one row at a time: a message carrying the
-settlement of the old line *and* the open quote for the new one, with the
-settlement published first.
+**Where to look first:** a run of `dropped` rows sitting between two
+kept rows with the **same** `drive_number`. A drive is a maximal run of
+one offensive team, so a possession change the feed never labelled is
+invisible — except as cleaning noise sitting inside a drive that should
+have been two. A `drive_number` that spans an implausible number of rows
+is the same signal from the other end, and the console summary prints
+both.
 
-`cleaning` names the rule rather than just the outcome — `kept`,
-`drive_start`, `kickoff`, `special_teams`, `duplicate`,
-`stale_after_change` — because reconciling by
-eye means seeing *why* a row went, not just that it did.
-`classify_plays` is the single source of truth for it, and `clean_plays`
-is built from it, so the dump and the pipeline cannot disagree.
+### Points end a drive
 
-**Where to look first:** `n_dropped_inside > 1` on `dump_drives.csv`. A
-drive is a maximal run of one offensive team, so a possession change the
-feed never labelled is invisible — except as cleaning noise sitting inside
-a drive that should have been two. An implausible `n_plays` is the same
-signal from the other end.
+Team change alone merged possessions. `AF063170926` drive 10 ran from
+message 310 to 407 — thirteen plays, twenty-six dropped rows inside it,
+the snapshot bucketed at 21-7 while the drive after it opened at 21-22.
+The label never left Away across two Away scores, so nothing in the play
+feed said the possession had changed.
+
+Points are the one boundary the feed cannot argue with: nobody is on the
+same drive either side of a score. A drive now also ends at any scoring
+message, with the break falling **after** the scoring play rather than on
+it — the play that scored is the end of the old drive, not the start of
+the new one.
 
 ## Cleaning the play feed
 

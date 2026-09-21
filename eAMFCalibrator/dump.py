@@ -1,31 +1,18 @@
-"""Write the drive-detection working out to CSV, one match at a time.
+"""Write the drive-detection working out to CSV, two files.
 
-Reconciling drives means answering "why did this snapshot land here?", and
-that is not a question a summary can answer -- it needs the row-by-row
-working: every play the feed sent, which cleaning rule fired on it, which
-drive it ended up in, and which single row became the snapshot.
+Reconciling drives means answering "why did this snapshot land here?",
+and that is not a question a summary can answer -- it needs the row-by-row
+working. It also does not want answering across five files.
 
-Five files, joinable on (match_code, event_message_count):
+  play_by_play   every raw play row, with the cleaning verdict, the drive
+                 it landed in, whether it became the snapshot, the score
+                 as of that message, and what both streams were quoting
+                 on all six selections at the time
+  pairs          directional_pairs.csv for these matches, widened with
+                 what the play-by-play knows about each row
 
-  plays       every raw play row, with the cleaning verdict and the drive
-              it was assigned to
-  scores      every score change, so the play rows can be read against
-              what the scoreboard did
-  drives      one row per detected drive, with its anchor and buckets
-  quotes      every quote row from both streams, undeduplicated, with
-              which one the index chose and why
-  timeline    one row per message: what the play feed, the scoreboard and
-              each stream had at that point in the sequence
-  pairs       directional_pairs.csv for these matches, widened with
-              everything the other four files know about each row
-
-The three sources share one EVENT_MESSAGE_COUNT sequence -- that is what
-makes pairing possible at all -- but they do not line up one to one. A
-message can carry six markets times two streams of quotes and no play at
-all, or a play and no quote. The timeline is where that is visible.
-
-Deliberately the pipeline's own functions rather than a private copy, so
-what is inspected here is what the report is built from.
+Both are built from the pipeline's own functions, so what is inspected
+here is what the report is made of.
 """
 
 import collections
@@ -36,44 +23,65 @@ from . import (buckets, config, directional, drives, markets, report,
                snowflake_io)
 from .drives import PlayRow, ScoreRow, build_snapshots, classify_plays, score_at
 
+# Market columns, three groups of two selections. Named for what they are
+# rather than by ID, since the point of one wide table is to be read.
+MARKET_COLUMNS = [
+    ("ml_home", 50, False), ("ml_away", 51, False),
+    ("sp_home", 52, True), ("sp_away", 53, True),
+    ("tot_over", 54, True), ("tot_under", 55, True),
+]
+
+
+def _market_fields():
+    out = []
+    for name, _, lined in MARKET_COLUMNS:
+        out += [f"{name}_prod", f"{name}_cand"]
+        if lined:
+            out += [f"{name}_line_prod", f"{name}_line_cand"]
+        out.append(f"{name}_live")
+    return out
+
+
 PLAY_FIELDS = [
     "match_code", "event_message_count", "period_number", "offensive_team",
     "down_number", "distance", "field_position", "is_snap",
     "cleaning", "dropped", "drive_number", "is_anchor",
-]
-
-SCORE_FIELDS = [
-    "match_code", "event_message_count", "period_number",
-    "player_1_change", "player_2_change",
-    "player_1_cumulative", "player_2_cumulative",
-    "is_touchdown", "scorer",
-]
-
-QUOTE_FIELDS = [
-    "match_code", "event_message_count", "stream", "market_id", "market",
-    "selection", "publish_time", "probability", "decimal_odd", "line",
-    "market_description", "status", "is_active", "live",
-    "rows_at_this_message", "chosen",
-]
-
-TIMELINE_FIELDS = [
-    "match_code", "event_message_count", "has_play", "cleaning",
-    "drive_number", "is_anchor", "has_score", "score_p1", "score_p2",
-    "prod_markets", "prod_live_markets", "candidate_markets",
-    "candidate_live_markets", "markets_both_live",
-]
-
-DRIVE_FIELDS = [
-    "match_code", "drive_number", "offensive_team",
-    "first_message", "last_message", "n_plays", "n_dropped_inside",
-    "anchor_message", "anchor_kind", "down_number", "distance",
-    "field_position", "score_p1", "score_p2", "score_diff",
-    "score_bucket", "time_bucket", "possession_bucket",
-]
+    "score_p1", "score_p2", "score_diff", "p1_change", "p2_change",
+] + _market_fields()
 
 
-def _rows_for_match(match_code, play_rows, score_rows):
-    """Everything one match contributes to the four files."""
+def _market_cells(match_code, message, indexes):
+    """What both streams were quoting on every selection at this message."""
+    cells = {}
+    for name, market_id, lined in MARKET_COLUMNS:
+        quotes = {}
+        for stream, index in indexes.items():
+            quotes[stream] = index.get((match_code, market_id), {}).get(message)
+        prod, candidate = quotes[directional.PROD], quotes[directional.CANDIDATE]
+        cells[f"{name}_prod"] = "" if prod is None else prod.probability
+        cells[f"{name}_cand"] = "" if candidate is None else candidate.probability
+        if lined:
+            cells[f"{name}_line_prod"] = (
+                "" if prod is None else markets.parse_line(prod.description))
+            cells[f"{name}_line_cand"] = (
+                "" if candidate is None
+                else markets.parse_line(candidate.description))
+        if prod is None and candidate is None:
+            cells[f"{name}_live"] = ""
+        elif prod is not None and candidate is not None and prod.live and candidate.live:
+            cells[f"{name}_live"] = "live"
+        elif prod is None or candidate is None:
+            cells[f"{name}_live"] = "missing"
+        elif not prod.live and not candidate.live:
+            cells[f"{name}_live"] = "both"
+        else:
+            cells[f"{name}_live"] = "prod" if not prod.live else "cand"
+    return cells
+
+
+def _rows_for_match(match_code, play_rows, score_rows, indexes=None):
+    """One match's play-by-play, with its score and market context."""
+    indexes = indexes or {directional.PROD: {}, directional.CANDIDATE: {}}
     plays = [
         PlayRow(event_message_count=r[1], period_number=r[2], offensive_team=r[3],
                 down_number=r[4], distance=r[5], field_position=r[6], play_time=r[7])
@@ -90,12 +98,10 @@ def _rows_for_match(match_code, play_rows, score_rows):
     reasons = classify_plays(plays, scores)
     snapshots = build_snapshots(match_code, plays, scores)
     anchors = {s.event_message_count for s in snapshots}
+    changes = {row.event_message_count: row for row in scores}
 
     # Assign each surviving play to a drive by walking the snapshots the
-    # pipeline produced, rather than re-deriving the grouping here. The
-    # first version segmented by team change alone and so disagreed with
-    # build_snapshots wherever a drive start did not coincide with one --
-    # which is exactly the case this file exists to make visible.
+    # pipeline produced, rather than re-deriving the grouping here.
     drive_of = {}
     boundaries = sorted((s.event_message_count, s.drive_number)
                         for s in snapshots)
@@ -111,10 +117,12 @@ def _rows_for_match(match_code, play_rows, score_rows):
         if current is not None:
             drive_of[play.event_message_count] = current
 
-    play_out = []
+    out = []
     for play in plays:
         reason = reasons[play.event_message_count]
-        play_out.append({
+        p1, p2 = score_at(scores, play.event_message_count)
+        change = changes.get(play.event_message_count)
+        row = {
             "match_code": match_code,
             "event_message_count": play.event_message_count,
             "period_number": play.period_number,
@@ -127,46 +135,74 @@ def _rows_for_match(match_code, play_rows, score_rows):
             "dropped": int(drives.was_dropped(reason)),
             "drive_number": drive_of.get(play.event_message_count, ""),
             "is_anchor": int(play.event_message_count in anchors),
-        })
+            "score_p1": p1,
+            "score_p2": p2,
+            "score_diff": p1 - p2,
+            "p1_change": "" if change is None else (change.p1_change or ""),
+            "p2_change": "" if change is None else (change.p2_change or ""),
+        }
+        row.update(_market_cells(match_code, play.event_message_count, indexes))
+        out.append(row)
 
-    touchdowns = {msg: team for msg, team in
-                  drives._touchdown_scorers(scores).items()}
-    score_out = []
+    # A score can land on a message with no play row of its own. Those are
+    # what separate two drives the feed never relabelled, so they cannot be
+    # left out of a play-by-play that is meant to explain the drives.
+    play_msgs = {p.event_message_count for p in plays}
     for row in scores:
-        score_out.append({
+        if row.event_message_count in play_msgs:
+            continue
+        if not (row.p1_change or row.p2_change):
+            continue
+        p1, p2 = score_at(scores, row.event_message_count)
+        extra = {
             "match_code": match_code,
             "event_message_count": row.event_message_count,
             "period_number": row.period_number,
-            "player_1_change": row.p1_change,
-            "player_2_change": row.p2_change,
-            "player_1_cumulative": row.p1_cumulative,
-            "player_2_cumulative": row.p2_cumulative,
-            "is_touchdown": int(row.event_message_count in touchdowns),
-            "scorer": touchdowns.get(row.event_message_count, ""),
-        })
+            "offensive_team": "", "down_number": "", "distance": "",
+            "field_position": "", "is_snap": "", "cleaning": "score",
+            "dropped": "", "drive_number": "", "is_anchor": 0,
+            "score_p1": p1, "score_p2": p2, "score_diff": p1 - p2,
+            "p1_change": row.p1_change or "", "p2_change": row.p2_change or "",
+        }
+        extra.update(_market_cells(match_code, row.event_message_count, indexes))
+        out.append(extra)
 
-    by_drive = {}
-    for play in plays:
-        number = drive_of.get(play.event_message_count)
-        if number is not None:
-            by_drive.setdefault(number, []).append(play)
+    out.sort(key=lambda r: r["event_message_count"])
+    return out, snapshots
 
-    drive_out = []
+
+def _drive_rows(match_code, play_out, snapshots):
+    """One row per drive, for the console summary.
+
+    Not written out any more -- the play-by-play carries the drive number
+    on every row, so a separate drives file was one more table to flip
+    through. The summary still wants the per-drive shape, so it is built
+    here from the same rows the CSV holds.
+    """
+    out = []
+    by_number = {}
+    for row in play_out:
+        if row["drive_number"] == "":
+            continue
+        by_number.setdefault(row["drive_number"], []).append(row)
+
     for snapshot in snapshots:
-        run = by_drive.get(snapshot.drive_number, [])
-        first = run[0].event_message_count if run else snapshot.event_message_count
-        last = run[-1].event_message_count if run else snapshot.event_message_count
-        inside = sum(1 for p in plays
-                     if first <= p.event_message_count <= last
-                     and drives.was_dropped(reasons[p.event_message_count]))
-        drive_out.append({
+        kept = by_number.get(snapshot.drive_number, [])
+        if not kept:
+            continue
+        first = kept[0]["event_message_count"]
+        last = kept[-1]["event_message_count"]
+        dropped = sum(1 for row in play_out
+                      if row["dropped"] == 1
+                      and first <= row["event_message_count"] <= last)
+        out.append({
             "match_code": match_code,
             "drive_number": snapshot.drive_number,
             "offensive_team": snapshot.offensive_team,
             "first_message": first,
             "last_message": last,
-            "n_plays": snapshot.n_plays,
-            "n_dropped_inside": inside,
+            "n_plays": len(kept),
+            "n_dropped_inside": dropped,
             "anchor_message": snapshot.event_message_count,
             "anchor_kind": snapshot.anchor,
             "down_number": snapshot.down_number,
@@ -175,110 +211,29 @@ def _rows_for_match(match_code, play_rows, score_rows):
             "score_p1": snapshot.score_p1,
             "score_p2": snapshot.score_p2,
             "score_diff": snapshot.score_diff,
-            "score_bucket": buckets.score_diff_bucket(snapshot.score_diff),
-            "time_bucket": buckets.time_bucket(snapshot.period_number,
-                                               snapshot.drive_number),
-            "possession_bucket": buckets.possession_bucket(
-                snapshot.offensive_team),
         })
-    return play_out, score_out, drive_out
+    return out
 
 
-def _quote_rows(match_code, quotes_by_stream):
-    """Every quote row, with which one the index kept and how many it beat.
+def _rows_at_message(quotes_by_stream):
+    """(stream, market, message) -> how many raw rows the index chose from.
 
-    Undeduplicated on purpose. The point is to show the case the pipeline
-    had to make a choice about: a message carrying several rows for one
-    market, some tradeable and some not.
+    A message carrying several rows for one market is where the index had
+    to pick, and picking a dead row over a live one is what made spread
+    liveness collapse. The count travels on the pair so the choice is
+    visible without a second file.
     """
-    out = []
+    counts = collections.Counter()
     for stream, rows in quotes_by_stream.items():
-        index = directional.index_by_message(rows)
-        seen = collections.Counter(
-            (r[1], r[6]) for r in rows if r[6] is not None)
-        for (code, market_id, publish_time, probability, decimal_odd,
-             description, message, status, is_active) in rows:
-            if message is None or probability is None:
+        for row in rows:
+            code, market_id, message = row[0], row[1], row[6]
+            if message is None:
                 continue
-            quote = directional.Quote(
-                probability=float(probability), description=description,
-                decimal=float(decimal_odd) if decimal_odd is not None else None,
-                publish_time=publish_time,
-                live=directional.is_live(status, is_active),
-                state=directional.state_label(status, is_active))
-            kept = index.get((code, market_id), {}).get(message)
-            out.append({
-                "match_code": code,
-                "event_message_count": message,
-                "stream": stream,
-                "market_id": market_id,
-                "market": markets.market_group(market_id),
-                "selection": markets.selection_label(market_id),
-                "publish_time": publish_time,
-                "probability": probability,
-                "decimal_odd": decimal_odd,
-                "line": (markets.parse_line(description)
-                         if markets.needs_line(market_id) else ""),
-                "market_description": description,
-                "status": status,
-                "is_active": is_active,
-                "live": int(quote.live),
-                "rows_at_this_message": seen[(market_id, message)],
-                "chosen": int(kept == quote),
-            })
-    out.sort(key=lambda r: (r["event_message_count"], r["stream"],
-                            r["market_id"], str(r["publish_time"])))
-    return out
+            counts[(code, message, stream, market_id)] += 1
+    return counts
 
 
-def _timeline_rows(match_code, play_out, score_out, quote_out):
-    """One row per message: what each source had at that point.
-
-    Answers the question the other files cannot: whether the play feed,
-    the scoreboard and the two streams are talking about the same moments.
-    """
-    messages = sorted({r["event_message_count"] for r in play_out}
-                      | {r["event_message_count"] for r in score_out}
-                      | {r["event_message_count"] for r in quote_out})
-    plays = {r["event_message_count"]: r for r in play_out}
-    scores = {r["event_message_count"]: r for r in score_out}
-
-    per_stream = collections.defaultdict(lambda: collections.defaultdict(set))
-    per_stream_live = collections.defaultdict(lambda: collections.defaultdict(set))
-    for row in quote_out:
-        if not row["chosen"]:
-            continue
-        per_stream[row["stream"]][row["event_message_count"]].add(row["market_id"])
-        if row["live"]:
-            per_stream_live[row["stream"]][row["event_message_count"]].add(
-                row["market_id"])
-
-    out = []
-    for message in messages:
-        play = plays.get(message)
-        score = scores.get(message)
-        prod_live = per_stream_live["prod"][message]
-        cand_live = per_stream_live["candidate"][message]
-        out.append({
-            "match_code": match_code,
-            "event_message_count": message,
-            "has_play": int(play is not None),
-            "cleaning": play["cleaning"] if play else "",
-            "drive_number": play["drive_number"] if play else "",
-            "is_anchor": play["is_anchor"] if play else 0,
-            "has_score": int(score is not None),
-            "score_p1": score["player_1_cumulative"] if score else "",
-            "score_p2": score["player_2_cumulative"] if score else "",
-            "prod_markets": len(per_stream["prod"][message]),
-            "prod_live_markets": len(prod_live),
-            "candidate_markets": len(per_stream["candidate"][message]),
-            "candidate_live_markets": len(cand_live),
-            "markets_both_live": len(prod_live & cand_live),
-        })
-    return out
-
-
-# directional_pairs.csv, plus every column the rest of the dump can add.
+# directional_pairs.csv, plus every column the play-by-play can add.
 # Same shape, so it reads the same way, with the drive-detection and
 # market-state context that otherwise needs a four-way join.
 PAIR_DUMP_FIELDS = report.PAIR_FIELDS + [
@@ -291,20 +246,16 @@ PAIR_DUMP_FIELDS = report.PAIR_FIELDS + [
 ]
 
 
-def _pair_dump_rows(pairs, play_out, drive_out, quote_out):
-    """One row per pair, carrying the context the other files hold.
+def _pair_dump_rows(pairs, play_out, drive_out, rows_at=None):
+    """One row per pair, carrying the context the play-by-play holds.
 
     Built from report.write_pairs_csv's own row for the shared columns, so
     the two cannot describe the same pair differently.
     """
+    rows_at = rows_at or {}
     by_drive = {(r["match_code"], r["drive_number"]): r for r in drive_out}
     cleaning = {(r["match_code"], r["event_message_count"]): r["cleaning"]
                 for r in play_out}
-    rows_at = collections.defaultdict(int)
-    for row in quote_out:
-        key = (row["match_code"], row["event_message_count"],
-               row["stream"], row["market_id"])
-        rows_at[key] = max(rows_at[key], row["rows_at_this_message"])
 
     out = []
     for pair in pairs:
@@ -377,54 +328,49 @@ def run(cur, match_codes, out_dir, time_column, verbose=True):
         plays_by_match.setdefault(row[0], []).append(row)
     for row in score_rows:
         scores_by_match.setdefault(row[0], []).append(row)
-    quotes_by_match = collections.defaultdict(
-        lambda: {directional.PROD: [], directional.CANDIDATE: []})
-    for stream, rows in quote_rows.items():
-        for row in rows:
-            quotes_by_match[row[0]][stream].append(row)
 
-    all_plays, all_scores, all_drives = [], [], []
-    all_quotes, all_timeline = [], []
+    # The same index the calibrator reads its prices from, so a cell in the
+    # play-by-play is the price the pair was built on and not a second
+    # reading of the feed.
+    indexes = {stream: directional.index_by_message(rows)
+               for stream, rows in quote_rows.items()}
+    rows_at = _rows_at_message(quote_rows)
+
+    all_plays, all_drives = [], []
     for match_code in match_codes:
-        p, s, d = _rows_for_match(match_code,
-                                  plays_by_match.get(match_code, []),
-                                  scores_by_match.get(match_code, []))
-        q = _quote_rows(match_code, quotes_by_match[match_code])
-        t = _timeline_rows(match_code, p, s, q)
-        all_plays.extend(p)
-        all_scores.extend(s)
-        all_drives.extend(d)
-        all_quotes.extend(q)
-        all_timeline.extend(t)
+        rows, snapshots = _rows_for_match(match_code,
+                                          plays_by_match.get(match_code, []),
+                                          scores_by_match.get(match_code, []),
+                                          indexes)
+        drive_rows = _drive_rows(match_code, rows, snapshots)
+        all_plays.extend(rows)
+        all_drives.extend(drive_rows)
         if verbose:
-            kept = sum(1 for row in p if not row["dropped"])
-            off = sum(1 for row in d if row["anchor_kind"] != drives.FIRST_DOWN)
-            shared = sum(1 for row in t if row["markets_both_live"])
-            print(f"  {match_code}: {len(p):,} plays ({kept:,} kept), "
-                  f"{len(d)} drives, {off} off anchor, {len(s)} score changes, "
-                  f"{len(q):,} quote rows, {len(t):,} messages "
-                  f"({shared:,} with a live market in both streams)")
+            dropped = sum(1 for row in rows if row["dropped"] == 1)
+            off = sum(1 for row in drive_rows
+                      if row["anchor_kind"] != drives.FIRST_DOWN)
+            live = sum(1 for row in rows
+                       if any(row[f"{name}_live"] == "live"
+                              for name, _, _ in MARKET_COLUMNS))
+            print(f"  {match_code}: {len(rows):,} rows ({dropped:,} dropped), "
+                  f"{len(drive_rows)} drives, {off} off anchor, "
+                  f"{live:,} messages with a live market in both streams")
 
     # The pairs the calibrator would build from these same matches, so the
-    # snapshot rows above can be read against what they became.
+    # anchor rows above can be read against what they became.
     stats = collections.defaultdict(int)
     pairs = directional.build_pairs(cur, match_codes, time_column, stats,
                                     handles.Scan())
-    pair_rows = _pair_dump_rows(pairs, all_plays, all_drives, all_quotes)
+    pair_rows = _pair_dump_rows(pairs, all_plays, all_drives, rows_at)
     if verbose and pairs:
         live = sum(1 for r in pair_rows if r["live"] == "live")
         print(f"  {len(pair_rows):,} pairs ({live:,} live) from "
               f"{len({r['message_count'] for r in pair_rows}):,} snapshots")
 
     written = [
+        _write(os.path.join(out_dir, "dump_play_by_play.csv"), PLAY_FIELDS,
+               all_plays),
         _write(os.path.join(out_dir, "dump_pairs.csv"), PAIR_DUMP_FIELDS,
                pair_rows),
-        _write(os.path.join(out_dir, "dump_plays.csv"), PLAY_FIELDS, all_plays),
-        _write(os.path.join(out_dir, "dump_scores.csv"), SCORE_FIELDS, all_scores),
-        _write(os.path.join(out_dir, "dump_drives.csv"), DRIVE_FIELDS, all_drives),
-        _write(os.path.join(out_dir, "dump_quotes.csv"), QUOTE_FIELDS, all_quotes),
-        _write(os.path.join(out_dir, "dump_timeline.csv"), TIMELINE_FIELDS,
-               all_timeline),
     ]
-    return (written, all_plays, all_scores, all_drives, all_quotes,
-            all_timeline, pair_rows)
+    return written, all_plays, all_drives, pair_rows
