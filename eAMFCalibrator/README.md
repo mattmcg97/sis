@@ -520,7 +520,8 @@ settlement of the old line *and* the open quote for the new one, with the
 settlement published first.
 
 `cleaning` names the rule rather than just the outcome — `kept`,
-`drive_start`, `kickoff`, `stale_after_change` — because reconciling by
+`drive_start`, `kickoff`, `special_teams`, `duplicate`,
+`stale_after_change` — because reconciling by
 eye means seeing *why* a row went, not just that it did.
 `classify_plays` is the single source of truth for it, and `clean_plays`
 is built from it, so the dump and the pipeline cannot disagree.
@@ -531,50 +532,60 @@ feed never labelled is invisible — except as cleaning noise sitting inside
 a drive that should have been two. An implausible `n_plays` is the same
 signal from the other end.
 
-## Kickoffs
+## Cleaning the play feed
 
-A kickoff reaches the feed as rows showing the **kicking** team at the kick
-spot, then the receiving team still at the kick spot, and only then the
-real snap:
+From `AF063170926`, twenty-five raw rows covering one drive, a touchdown
+and the kickoff after it. Every row arrives **twice**, and the kick spot
+arrives as a full `1&10`:
 
 ```
-team 1 @ 35      kick
-team 1 @ 35      kick
-team 2 @ 35      kick   <- the label changes here, but the drive has not
-team 2 @ 24  1&10       <- this is the drive
+ msg  team   d&d   field   verdict
+   6  Home   1&10    35    kickoff             the kick spot
+   9  Home   1&10    35    duplicate
+  10  Home   1&10    26    drive_start   <--   the drive
+  16  Home   2&11    26    kept
+  20  Home   1&10    37    kept                +11, a first down earned
+  24  Home   1&10    50    kept                +13
+  28  Home   1&10    85    kept                +35
+  32  Home    2&7    88    kept
+  36  Home    3&5    90    kept                the touchdown
+  42  Home    3&5    85    special_teams       the extra point, from the 85
+  47  Home   1&10    35    kickoff             90 -> 35: backwards
+  52  Away   1&10    35    stale_after_change  Away's label on that row
+  54  Away   1&10    30    drive_start   <--   the drive
+  60  Away   2&11    30    kept
 ```
 
-Only kickoffs after a **touchdown** used to be stripped, so the opening
-kickoff and the second-half kickoff each became a drive of their own, for
-the wrong team, at the kick spot. Worse, the row where the label changed
-was being filed as a *stale duplicate* — which both hid what it was and
-claimed a possession change that never happened.
+Five rules, applied in one forward pass over the deduplicated rows, each
+judged against the last row that survived:
 
-The rule now fires at every kickoff: the start of the match, the start of
-a period that begins with one (`KICKOFF_PERIODS`), and **every score** —
-field goals and safeties are followed by a kick too, which the
-touchdown-only version missed entirely.
+| Verdict | Rule |
+|---|---|
+| `duplicate` | An exact republish of the row before it. The feed repeats a play's state until it changes, so almost every row arrives twice — 25 rows here collapse to 13. |
+| `stale_after_change` | The team label changed onto the previous row's down, distance and field, unchanged. |
+| `special_teams` | Down and distance unchanged while the ball moved. A scrimmage play always changes one or the other, so this is a PAT or a kick — the extra point taken from the 85 with the touchdown's 3rd-and-5 still on it. |
+| `kickoff` | A `1&10` that cannot be a snap: either the ball went **backwards** to reach it, which no first down does, or the very next row is the same team's `1&10` again without the ten yards that would earn it. Also any row with no readable down. |
+| `drive_start` | A fresh `1&10` whose predecessor was a different team, or was dropped as a kick. |
 
-### What identifies the drive
+### Why not simpler tests
 
-Not the team change: the label flips mid-kick, and on a transition where
-the feed omits the kick rows there is no flip to key on at all.
+**Down and distance alone cannot find the kick spot** — it arrives as a
+genuine-looking `1&10`.
 
-Not field position: the kick spot is a fixed yard line, but a return can
-legitimately finish on it, so `field == 35` both misses real drives and
-invents others. There is a test for exactly that case.
+**Field position cannot either.** The kick spot is a fixed yard line, but a
+return can legitimately finish on it, so `field == 35` both misses real
+drives and invents others. There is a test for that case.
 
-**Down and distance.** The walk skips rows that are not plausible snaps,
-skips the stale duplicate that rides every team change — it repeats the
-previous row's down, distance and field exactly, which is what tells it
-apart from a genuine play — and stops at the first fresh 1st-and-10. If it
-meets a real snap that is neither, play was already under way, there is no
-kick to strip, and it gives up rather than delete a genuine drive.
+**Two `1&10`s in a row are not automatically wrong.** `37 -> 50 -> 85` is
+three consecutive first downs, each earned. What marks the kick is the ten
+yards *not* being there.
 
-A row the rule positively identifies as a drive start also **ends the
-previous drive**, even when the team label did not change. Otherwise the
-side that has the ball before half time and receives after it has both
-possessions merged into one, with the boundary invisible.
+**The stale row compares against the row immediately before it**, not the
+last surviving one. It rides the kick spot as readily as a real play, and
+at message 52 the row it mirrors had itself just been dropped.
+
+The rules read the play feed alone. Drive detection no longer depends on
+the score feed, and so no longer rests on the `PLAYER_1 = Home` mapping.
 
 ## Where the snapshot lands
 
@@ -703,7 +714,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-283 tests covering line parsing, market resolution, bucket edges, drive
+285 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

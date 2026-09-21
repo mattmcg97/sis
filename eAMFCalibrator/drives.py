@@ -104,133 +104,160 @@ def _touchdown_scorers(scores):
 # as the decision: reconciling drive detection by eye means seeing which
 # rule fired on which row, not just which rows survived.
 KEPT = "kept"
-DRIVE_START = "drive_start"    # kept, and the kickoff rule vouched for it
-KICKOFF = "kickoff"            # a kick row: between a kickoff and the
-                               # receiving team's first fresh 1st-and-10
-STALE_AFTER_CHANGE = "stale_after_change"   # repeats the previous team's
-                                            # down, distance and field
+DRIVE_START = "drive_start"      # a fresh 1st-and-10 that begins a possession
+DUPLICATE = "duplicate"          # an exact republish of the row before it
+KICKOFF = "kickoff"              # a 1st-and-10 that cannot be a real snap
+SPECIAL_TEAMS = "special_teams"  # same down and distance, ball moved: a PAT
+                                 # or a kick, not a scrimmage play
+STALE_AFTER_CHANGE = "stale_after_change"   # a new team label on the old
+                                            # team's down, distance and field
+
+FIRST_DOWN_YARDS = 10
+
+_DROPPED = (DUPLICATE, KICKOFF, SPECIAL_TEAMS, STALE_AFTER_CHANGE)
 
 
-def _kickoff_triggers(plays, scores):
-    """Message counts at or after which a kickoff happens.
+def _state(play):
+    return (play.offensive_team, play.down_number, play.distance,
+            play.field_position)
 
-    Three of them, and only the last was handled before:
 
-      the opening kickoff, which is simply the start of the match
-      the second-half kickoff, and any other period that starts with one
-      every score -- not only the 6-point touchdowns
+def _is_fresh_first_down(play):
+    return play.down_number == 1 and play.distance == FIRST_DOWN_YARDS
 
-    Field goals and safeties are followed by a kick too, so restricting
-    this to touchdowns left most kicks in the feed.
+
+def dedupe(plays):
+    """Collapse runs of identical rows, keeping the first of each.
+
+    The feed republishes a play's state until it changes, so almost every
+    row arrives twice. They carry no information the first did not, and
+    leaving them in doubles every play count and hides the structure.
     """
-    triggers = set()
-    if plays:
-        triggers.add(plays[0].event_message_count - 1)
-
-    previous_period = None
+    out = []
     for play in plays:
-        period = play.period_number
-        if (period != previous_period and period in config.KICKOFF_PERIODS):
-            triggers.add(play.event_message_count - 1)
-        previous_period = period
-
-    for row in scores:
-        if row.p1_change or row.p2_change:
-            triggers.add(row.event_message_count)
-    return sorted(triggers)
-
-
-def _is_stale_duplicate(play, previous):
-    """The documented noise row: a new team label on the old team's state.
-
-    It repeats the previous row's down, distance and field position
-    exactly, which is what distinguishes it from a genuine snap -- and it
-    has to be told apart, because it looks like a legitimate play and
-    would otherwise stop a kickoff walk dead.
-    """
-    if previous is None or play.offensive_team == previous.offensive_team:
-        return False
-    return (play.down_number == previous.down_number
-            and play.distance == previous.distance
-            and play.field_position == previous.field_position)
-
-
-def _drive_start_after(plays, trigger):
-    """The first real 1st-and-10 after the kick that follows `trigger`.
-
-    A kickoff shows the KICKING team first and the receiving team second,
-    both sitting at the kick spot, so neither the team label changing nor
-    the ball being on a particular yard line marks the drive. The kick spot
-    is a fixed line but a return can legitimately finish on it, so field
-    position both misses real drives and invents others.
-
-    Down and distance are what separate a kick from a snap. The walk skips
-    rows that are not snaps, skips the stale duplicate that rides every
-    team change, and stops at the first fresh 1st-and-10. That works
-    whether or not the feed shows the kick rows at all, which matters:
-    keying on the team change would lose the drive entirely on a
-    transition where they are absent.
-
-    Hitting a real snap that is neither stale nor a fresh 1st-and-10 means
-    play was already under way and there is no kick here to strip, so the
-    walk gives up rather than delete a genuine drive.
-    """
-    indexed = list(enumerate(plays))
-    window = [(i, p) for i, p in indexed
-              if p.event_message_count > trigger][:config.KICKOFF_SEARCH_LIMIT]
-    for i, play in window:
-        previous = plays[i - 1] if i else None
-        if _is_stale_duplicate(play, previous):
+        if out and _state(play) == _state(out[-1]):
             continue
-        if not is_snap(play):
-            continue
-        if play.down_number == 1 and play.distance == 10:
-            return play.event_message_count
-        return None
-    return None
+        out.append(play)
+    return out
 
 
-def classify_plays(plays, scores):
+def classify_plays(plays, scores=()):
     """message -> why that row was kept or dropped.
 
-    The single source of truth for the cleaning, so the dump and the
-    pipeline can never disagree about what happened to a row.
+    A single forward pass over the deduplicated rows, each judged against
+    the last row that survived. The rules come from what the feed actually
+    does between one scrimmage play and the next.
+
+      DUPLICATE       an exact republish.
+      STALE           the team label changed onto the previous team's
+                      down, distance and field, unchanged.
+      SPECIAL_TEAMS   down and distance unchanged while the ball moved. A
+                      scrimmage play always changes one or the other, so
+                      this is a PAT or a kick -- the extra point taken
+                      from the 85 with the touchdown's 3rd-and-5 still on
+                      it, in the sequence that prompted this.
+      KICKOFF         a 1st-and-10 that cannot be a snap: either the ball
+                      went BACKWARD to reach it, which no first down does,
+                      or the very next row is another 1st-and-10 for the
+                      same team without the ten yards that would earn it.
+                      That is the kick spot followed by the real start.
+
+    Everything else is play. A fresh 1st-and-10 whose predecessor was a
+    different team, or was dropped as a kick, begins a drive.
+
+    `scores` is accepted and unused: the rules above read the play feed
+    alone, which keeps drive detection independent of the PLAYER_1 frame
+    rather than resting on it.
     """
-    plays = sorted(plays, key=lambda p: p.event_message_count)
-    scores = sorted(scores, key=lambda s: s.event_message_count)
-    reasons = {p.event_message_count: KEPT for p in plays}
-    starts = set()
+    ordered = sorted(plays, key=lambda p: p.event_message_count)
+    kept_rows = dedupe(ordered)
+    keep_msgs = {p.event_message_count for p in kept_rows}
 
-    for trigger in _kickoff_triggers(plays, scores):
-        start = _drive_start_after(plays, trigger)
-        if start is None:
-            continue
-        starts.add(start)
-        reasons[start] = DRIVE_START
-        for play in plays:
-            if trigger < play.event_message_count < start:
-                reasons[play.event_message_count] = KICKOFF
+    reasons = {p.event_message_count:
+               (KEPT if p.event_message_count in keep_msgs else DUPLICATE)
+               for p in ordered}
 
-    # What is left are real possession changes -- a punt, a turnover, a
-    # turnover on downs -- where the first row after the change repeats the
-    # previous team's down, distance and field position.
-    previous_team = None
-    for play in plays:
-        already = reasons[play.event_message_count]
-        if (previous_team is not None
-                and play.offensive_team != previous_team
-                and already == KEPT):
-            # Only a row the kickoff rule had no opinion about. Inside a
-            # kickoff the team label changes from the kicking side to the
-            # receiving side, and calling that row stale would both hide
-            # what it is and claim a possession change that never happened.
-            reasons[play.event_message_count] = STALE_AFTER_CHANGE
-        previous_team = play.offensive_team
+    previous = None          # the last row that survived
+    for i, play in enumerate(kept_rows):
+        # Two predecessors matter and they are not the same row. The stale
+        # duplicate mirrors whatever came immediately before it, kept or
+        # not -- it rides the kick spot as readily as a real play -- while
+        # every other rule compares against the last row that survived.
+        before = kept_rows[i - 1] if i else None
+        following = kept_rows[i + 1] if i + 1 < len(kept_rows) else None
+        reasons[play.event_message_count] = _judge(play, previous, before,
+                                                   following)
+        if reasons[play.event_message_count] not in _DROPPED:
+            previous = play
     return reasons
 
 
+def _judge(play, previous, before, following):
+    """Which rule this row falls under, given its neighbours."""
+    fresh = _is_fresh_first_down(play)
+
+    if not is_snap(play):
+        # No readable down or distance at all: a kick mechanic rather than
+        # a play. Rarer than the 1st-and-10-at-the-kick-spot shape, but it
+        # occurs, and it is not scrimmage either way.
+        return KICKOFF
+
+    if (before is not None
+            and play.offensive_team != before.offensive_team
+            and _state(play)[1:] == _state(before)[1:]):
+        return STALE_AFTER_CHANGE
+
+    if previous is None:
+        # The first row of a match is the opening kick whenever the row
+        # after it is the same team's real 1st-and-10.
+        if fresh and _looks_like_a_kick_spot(play, following):
+            return KICKOFF
+        return DRIVE_START if fresh else KEPT
+
+    if play.offensive_team != previous.offensive_team:
+        return DRIVE_START if fresh else KEPT
+
+    known = (play.field_position is not None
+             and previous.field_position is not None)
+    moved = known and play.field_position != previous.field_position
+    advance = (play.field_position - previous.field_position) if known else 0
+    if (moved and play.down_number == previous.down_number
+            and play.distance == previous.distance
+            and not (fresh and advance >= FIRST_DOWN_YARDS)):
+        # Down and distance unchanged while the ball moved. A scrimmage
+        # play always changes one or the other -- the exception being a
+        # 1st-and-10 converted into another, which needs the ten yards.
+        return SPECIAL_TEAMS
+
+    if fresh:
+        went_backward = moved and advance < 0
+        if went_backward or _looks_like_a_kick_spot(play, following):
+            return KICKOFF
+        # A fresh 1st-and-10 for the same team after a kick was dropped is
+        # the drive that kick produced.
+        return KEPT
+    return KEPT
+
+
+def _looks_like_a_kick_spot(play, following):
+    """Is the row after this one the same team's real 1st-and-10?
+
+    Two fresh 1st-and-10s in a row for one team are only both real if the
+    ball advanced the ten yards that earn the second. Without them, the
+    first row is the spot the kick was taken from and the second is where
+    the drive actually starts.
+    """
+    if following is None or not _is_fresh_first_down(following):
+        return False
+    if following.offensive_team != play.offensive_team:
+        return False
+    if play.field_position is None or following.field_position is None:
+        return True
+    return (following.field_position - play.field_position) < FIRST_DOWN_YARDS
+
+
 def was_dropped(reason):
-    return reason in (KICKOFF, STALE_AFTER_CHANGE)
+    return reason in _DROPPED
 
 
 def clean_plays(plays, scores):

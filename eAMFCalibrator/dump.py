@@ -88,18 +88,25 @@ def _rows_for_match(match_code, play_rows, score_rows):
     snapshots = build_snapshots(match_code, plays, scores)
     anchors = {s.event_message_count for s in snapshots}
 
-    # Re-derive the drive each surviving play landed in, the same way
-    # build_snapshots groups them: a maximal run of one offensive team.
+    # Assign each surviving play to a drive by walking the snapshots the
+    # pipeline produced, rather than re-deriving the grouping here. The
+    # first version segmented by team change alone and so disagreed with
+    # build_snapshots wherever a drive start did not coincide with one --
+    # which is exactly the case this file exists to make visible.
     drive_of = {}
-    drive_number = 0
-    previous_team = None
+    boundaries = sorted((s.event_message_count, s.drive_number)
+                        for s in snapshots)
     for play in plays:
         if drives.was_dropped(reasons[play.event_message_count]):
             continue
-        if play.offensive_team != previous_team:
-            drive_number += 1
-            previous_team = play.offensive_team
-        drive_of[play.event_message_count] = drive_number
+        current = None
+        for message, number in boundaries:
+            if play.event_message_count >= message:
+                current = number
+            else:
+                break
+        if current is not None:
+            drive_of[play.event_message_count] = current
 
     play_out = []
     for play in plays:
