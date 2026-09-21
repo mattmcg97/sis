@@ -1209,6 +1209,114 @@ class TestDuplicateRows(unittest.TestCase):
                          [6, 10, 16, 20])
 
 
+class TestHalfTimeKickoff(unittest.TestCase):
+    """The second-half kick, from AF063170926 messages 176-214.
+
+    Worse than the others because a row sits between the kick spot and the
+    drive it produced: the down jumps 1 to 3 with neither the distance nor
+    the ball moving. While that row is in the way the kick spot cannot see
+    the drive, so the kick is read as a drive and the drive as the kick.
+    """
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def feed(self):
+        raw = [(176, 2, self.HOME, 1, 10, 37), (178, 2, self.HOME, 1, 10, 37),
+               (180, 2, self.HOME, 2, 10, 37), (184, 2, self.HOME, 2, 10, 37),
+               (185, 2, self.HOME, 3, 10, 37), (193, 3, self.AWAY, 1, 10, 35),
+               (196, 3, self.AWAY, 3, 10, 35), (197, 3, self.AWAY, 1, 10, 25),
+               (202, 3, self.AWAY, 1, 10, 25), (203, 3, self.HOME, 1, 10, 25),
+               (205, 3, self.HOME, 1, 10, 68), (209, 3, self.HOME, 1, 10, 68),
+               (210, 3, self.HOME, 2, 8, 71), (213, 3, self.HOME, 2, 8, 71),
+               (214, 3, self.HOME, 1, 1, 99)]
+        return [PlayRow(m, p, t, d, di, f) for m, p, t, d, di, f in raw]
+
+    def test_the_impossible_down_is_caught_first(self):
+        # 1st-and-10 to 3rd-and-10 with the ball on the same yard line.
+        reasons = drives.classify_plays(self.feed())
+        self.assertEqual(reasons[196], drives.IMPOSSIBLE_DOWN)
+
+    def test_the_kick_spot_is_not_the_drive(self):
+        reasons = drives.classify_plays(self.feed())
+        self.assertEqual(reasons[193], drives.KICKOFF)
+        self.assertEqual(reasons[197], drives.DRIVE_START)
+
+    def test_the_drive_anchors_on_the_real_first_down(self):
+        snaps = drives.build_snapshots("AF063170926", self.feed(), [])
+        self.assertEqual([s.event_message_count for s in snaps], [176, 197, 205])
+        away = snaps[1]
+        self.assertEqual(away.offensive_team, self.AWAY)
+        self.assertEqual(away.field_position, 25)
+        self.assertEqual((away.down_number, away.distance), (1, 10))
+        self.assertTrue(all(s.anchor == drives.FIRST_DOWN for s in snaps))
+
+    def test_an_ordinary_incomplete_pass_is_not_impossible(self):
+        # 1st-and-10 to 2nd-and-10 on the same yard line happens every
+        # game, and the rule must not touch it.
+        reasons = drives.classify_plays(self.feed())
+        self.assertEqual(reasons[180], drives.KEPT)
+        self.assertEqual(reasons[185], drives.KEPT)
+
+    def test_the_kick_spot_is_caught_across_a_team_change(self):
+        # At half time the label changes onto the kick spot, so testing it
+        # only where the team stayed the same missed it entirely.
+        plays = [PlayRow(1, 2, self.HOME, 3, 4, 40),
+                 PlayRow(2, 3, self.AWAY, 1, 10, 35),   # the kick
+                 PlayRow(3, 3, self.AWAY, 1, 10, 25)]   # the drive
+        reasons = drives.classify_plays(plays)
+        self.assertEqual(reasons[2], drives.KICKOFF)
+        self.assertEqual(reasons[3], drives.DRIVE_START)
+
+    def test_a_gap_in_the_feed_is_not_an_impossible_down(self):
+        # A missing row shows as a down jump too, but the distance moves
+        # with it. Only a jump with nothing else changing is impossible.
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 30),
+                 PlayRow(2, 1, self.HOME, 3, 4, 36)]
+        self.assertEqual(drives.classify_plays(plays)[2], drives.KEPT)
+
+
+class TestAnchorFieldCheck(unittest.TestCase):
+    """A spike on one yard line means kick spots, not football."""
+
+    @staticmethod
+    def rows(spike, spread):
+        out = [{"field_position": 35, "n_plays": 3, "match_code": "AF1",
+                "drive_number": i, "offensive_team": "Home Team",
+                "anchor_kind": "first_down", "n_dropped_inside": 0}
+               for i in range(spike)]
+        out += [{"field_position": 20 + i % 40, "n_plays": 4,
+                 "match_code": "AF1", "drive_number": 1000 + i,
+                 "offensive_team": "Away Team", "anchor_kind": "first_down",
+                 "n_dropped_inside": 0} for i in range(spread)]
+        return out
+
+    def capture(self, rows):
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            report._print_anchor_field_check(rows)
+        return buffer.getvalue()
+
+    def test_it_calls_out_a_spike(self):
+        # The pre-fix shape: 58% of anchors on one yard line.
+        out = self.capture(self.rows(spike=58, spread=42))
+        self.assertIn("of drives start on the 35", out)
+        self.assertIn("kick spot", out)
+
+    def test_a_healthy_spread_says_nothing(self):
+        out = self.capture(self.rows(spike=2, spread=98))
+        self.assertNotIn("kick spot", out)
+        # But it still shows the distribution, which is the point.
+        self.assertIn("FIELD", out)
+
+    def test_it_survives_rows_with_no_field_position(self):
+        out = self.capture([{"field_position": "", "n_plays": 1,
+                             "match_code": "AF1", "drive_number": 1,
+                             "offensive_team": "Home Team",
+                             "anchor_kind": "first_down",
+                             "n_dropped_inside": 0}])
+        self.assertEqual(out, "")
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

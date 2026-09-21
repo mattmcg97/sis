@@ -442,6 +442,31 @@ def _print_timeline_summary(quotes, timeline):
         print("  any tolerance or line rule is applied.")
 
 
+def _print_anchor_field_check(drive_rows):
+    """Are the anchors piling up on one yard line?
+
+    Drives start all over the field, so a spike is not a fact about
+    football -- it is the kick spot being read as a drive. Worth checking
+    automatically because it took reading a CSV by eye to notice that 58%
+    of snapshots sat on the same yard line.
+    """
+    positions = collections.Counter(
+        row["field_position"] for row in drive_rows
+        if row["field_position"] not in (None, ""))
+    if not positions:
+        return
+    total = sum(positions.values())
+    print(f"\n  {'FIELD':<8}{'DRIVES':>8}{'SHARE':>8}   anchor field position")
+    for value, n in positions.most_common(5):
+        print(f"  {str(value):<8}{n:>8,}{_pct(n / total):>8}")
+    top_value, top_n = positions.most_common(1)[0]
+    share = top_n / total
+    if share > 0.2:
+        print(f"\n  {_pct(share)} of drives start on the {top_value}. Drives")
+        print("  start all over the field, so this is the kick spot being")
+        print("  read as a drive rather than anything about the football.")
+
+
 def print_dump_summary(plays, scores, drive_rows, quotes=(), timeline=()):
     """What the dumped rows say about drive detection, before opening them."""
     print(f"\n{'=' * 78}\nDRIVE DETECTION -- what the CSVs contain\n{'=' * 78}")
@@ -477,6 +502,8 @@ def print_dump_summary(plays, scores, drive_rows, quotes=(), timeline=()):
 
     if timeline:
         _print_timeline_summary(quotes, timeline)
+
+    _print_anchor_field_check(drive_rows)
 
     longest = sorted(drive_rows, key=lambda r: -r["n_plays"])[:5]
     print(f"\n  Longest drives (a merge shows up as an implausible play count):")

@@ -565,6 +565,7 @@ judged against the last row that survived:
 | `stale_after_change` | The team label changed onto the previous row's down, distance and field, unchanged. |
 | `special_teams` | Down and distance unchanged while the ball moved. A scrimmage play always changes one or the other, so this is a PAT or a kick — the extra point taken from the 85 with the touchdown's 3rd-and-5 still on it. |
 | `kickoff` | A `1&10` that cannot be a snap: either the ball went **backwards** to reach it, which no first down does, or the very next row is the same team's `1&10` again without the ten yards that would earn it. Also any row with no readable down. |
+| `impossible_down` | The down skipped ahead by two or more while neither the distance nor the ball moved. No play does that. |
 | `drive_start` | A fresh `1&10` whose predecessor was a different team, or was dropped as a kick. |
 
 ### Why not simpler tests
@@ -583,6 +584,39 @@ yards *not* being there.
 **The stale row compares against the row immediately before it**, not the
 last surviving one. It rides the kick spot as readily as a real play, and
 at message 52 the row it mirrors had itself just been dropped.
+
+### Half time is the hard one
+
+`AF063170926`, messages 193–197:
+
+```
+ 193  P3  Away  1&10 @35   the kick spot
+ 196  P3  Away  3&10 @35   down 1 -> 3, distance and ball unmoved
+ 197  P3  Away  1&10 @25   the drive
+```
+
+Message 196 sits *between* the kick spot and the drive it produced. While
+it is in the way, 193 looks at its neighbour, sees no second `1&10`, and
+is read as a drive — and 197, arriving on a nearer yard line, is read as
+the kick. Exactly inverted.
+
+So impossible downs are dropped in a **first pass**, before anything else
+runs. The test is a jump of two or more with neither the distance nor the
+field moving: `1&10 → 2&10` on the same yard line is an incomplete pass
+and ordinary, while `1&10 → 3&10` is not a play at all. A row genuinely
+missing from the feed also shows as a down jump, but the distance moves
+with it.
+
+The kick spot is also tested **on both sides of a team change**. At the
+opening kick nothing precedes it; at half time the label has just changed.
+Testing it only where the team stayed the same missed every second-half
+kick.
+
+The scale this was at, before the fix: **58% of all snapshots sat on the
+35** — the kick spot — and the first snapshot of every one of 262 matches
+was on it. In Q3, 12.3% of snapshots were not even on a `1&10`, against
+0.7% in Q1. `dump` now checks for that spike automatically, since drives
+start all over the field and a pile-up on one yard line is not football.
 
 The rules read the play feed alone. Drive detection no longer depends on
 the score feed, and so no longer rests on the `PLAYER_1 = Home` mapping.
@@ -714,7 +748,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-285 tests covering line parsing, market resolution, bucket edges, drive
+294 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
