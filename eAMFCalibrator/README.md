@@ -399,6 +399,40 @@ of the problem is visible before any data is thrown away — the console and
 the report both say the flagged matches are still in the numbers. Pass
 `--drop-flipped` (or set `EXCLUDE_FLIPPED_MATCHES = True`) to exclude them.
 
+## Suspension
+
+`STATUS` and `IS_ACTIVE` live on both stream tables. They used to be a
+`WHERE` clause — `STATUS = 'open' AND IS_ACTIVE = 'true'` — which meant a
+market suspended at a snapshot produced no row and the snapshot simply
+vanished, indistinguishable from a feed gap.
+
+That is not a harmless omission. Suspension is **not missing at random**:
+it clusters on scoring plays and reviews, which are exactly the states
+where two models disagree most. Worse, if the two streams suspend at
+different moments, then pairing on "both had a live quote" silently drops
+the disagreements and scores the head-to-head on the calm states only.
+
+So the filter moved out of SQL and into the pair:
+
+- Every quote is fetched, with its `STATUS` and `IS_ACTIVE`.
+- `is_live()` calls `open` + `true` live and **anything else** suspended.
+  Value-agnostic on purpose — `preflight` prints what those columns
+  actually contain, so the assumption can be checked rather than trusted.
+- A pair is suspended if **either** side was: the comparison is between
+  two quotes on one event, and a suspended one is not a price anyone could
+  have taken.
+- `errors()` refuses a suspended pair, and since `comparable`, `winner`,
+  the tallies, the cells, the votes and the decisive block are all built
+  on `errors()`, that one refusal keeps it out of every metric at once —
+  while the pair stays visible in the table, marked in the `Live` column
+  and dimmed.
+
+The **Suspension** panel in the checks reports the share, the split by
+quarter and market, and — the number that matters — how lopsided it is
+between the two streams. `REQUIRE_LIVE_QUOTE = False` scores them anyway,
+which is almost certainly wrong and exists so the cost of excluding them
+can be measured.
+
 ## There is no game clock
 
 Worth stating because its absence shapes what the report can answer.
@@ -458,7 +492,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-228 tests covering line parsing, market resolution, bucket edges, drive
+237 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

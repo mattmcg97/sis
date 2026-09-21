@@ -52,6 +52,16 @@ LINE_EPSILON = 1e-6
 
 
 @dataclass(frozen=True)
+class Quote:
+    """One stream's price for one market at one message."""
+    probability: float
+    description: Optional[str]
+    decimal: Optional[float]
+    publish_time: object
+    live: bool
+
+
+@dataclass(frozen=True)
 class PairedObservation:
     match_code: str
     drive_number: int
@@ -83,6 +93,10 @@ class PairedObservation:
     field_position: Optional[int] = None
     down_number: Optional[int] = None
     distance: Optional[int] = None
+    # Was each side's market actually live at this message? A suspended
+    # quote still carries a number, but not one anyone could have taken.
+    prod_live: bool = True
+    candidate_live: bool = True
 
     @property
     def score_diff(self):
@@ -133,6 +147,16 @@ class PairedObservation:
         return abs(self.candidate_line - self.realized)
 
     @property
+    def suspended(self):
+        """True when either side's market was not live at this message.
+
+        Either side is enough: the comparison is between two quotes on the
+        same event, and a suspended one is not a quote anyone could have
+        taken, so the pair is not a fair head-to-head whichever side it is.
+        """
+        return not (self.prod_live and self.candidate_live)
+
+    @property
     def decisive_mode(self):
         """Which question this pair is actually settled on.
 
@@ -144,6 +168,12 @@ class PairedObservation:
         return PROBABILITY if self.same_line else LINE
 
     def errors(self, mode):
+        if self.suspended and config.REQUIRE_LIVE_QUOTE:
+            # Everything downstream -- comparable, winner, the tallies, the
+            # cells, the votes -- is built on errors(), so refusing here is
+            # what keeps a suspended price out of every metric at once,
+            # while the pair itself stays visible in the table.
+            return None, None
         if mode == DECISIVE:
             mode = self.decisive_mode
         if mode == LINE:
@@ -198,18 +228,26 @@ class PairedObservation:
         return abs(self.prod_probability - self.candidate_probability)
 
 
+def is_live(status, is_active):
+    """Whether a quote row was tradeable, without assuming what else exists."""
+    return (str(status).lower() == config.LIVE_STATUS
+            and str(is_active).lower() == config.LIVE_IS_ACTIVE)
+
+
 def index_by_message(quote_rows):
-    """(match, market) -> {message: (probability, description, decimal, time)}."""
+    """(match, market) -> {message: Quote}."""
     out = defaultdict(dict)
-    for match_code, market_id, publish_time, probability, decimal_odd, description, message in quote_rows:
+    for (match_code, market_id, publish_time, probability, decimal_odd,
+         description, message, status, is_active) in quote_rows:
         if message is None or probability is None:
             continue
         # A message carries one row per market; keep the first seen.
         out[(match_code, market_id)].setdefault(
             message,
-            (float(probability), description,
-             float(decimal_odd) if decimal_odd is not None else None,
-             publish_time))
+            Quote(probability=float(probability), description=description,
+                  decimal=float(decimal_odd) if decimal_odd is not None else None,
+                  publish_time=publish_time,
+                  live=is_live(status, is_active)))
     return out
 
 
@@ -315,14 +353,22 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                 message, gap = hit
                 stats["exact_message_pair" if gap == 0 else "offset_message_pair"] += 1
 
-                prod_probability, prod_description, prod_decimal, publish_time = \
-                    prod_index[(match_code, market_id)][message]
-                candidate_probability, candidate_description, candidate_decimal, _ = \
-                    candidate_index[(match_code, market_id)][message]
+                prod_quote = prod_index[(match_code, market_id)][message]
+                candidate_quote = candidate_index[(match_code, market_id)][message]
+                prod_probability = prod_quote.probability
+                candidate_probability = candidate_quote.probability
+                prod_decimal, candidate_decimal = prod_quote.decimal, candidate_quote.decimal
+                publish_time = prod_quote.publish_time
+                if not (prod_quote.live and candidate_quote.live):
+                    stats["suspended_pair"] += 1
+                    stats["suspended_prod" if not prod_quote.live
+                          else "suspended_candidate"] += 1
 
                 needs_line = markets.needs_line(market_id)
-                prod_line = markets.parse_line(prod_description) if needs_line else None
-                candidate_line = markets.parse_line(candidate_description) if needs_line else None
+                prod_line = (markets.parse_line(prod_quote.description)
+                             if needs_line else None)
+                candidate_line = (markets.parse_line(candidate_quote.description)
+                                  if needs_line else None)
                 if needs_line and (prod_line is None or candidate_line is None):
                     stats["unparsed_line"] += 1
                     continue
@@ -365,6 +411,8 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                     field_position=snap.field_position,
                     down_number=snap.down_number,
                     distance=snap.distance,
+                    prod_live=prod_quote.live,
+                    candidate_live=candidate_quote.live,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -722,6 +770,39 @@ def market_blocks(pairs, mode, n_bootstrap=2000):
             "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
         }
     return out
+
+
+def suspension_report(pairs):
+    """What suspension is costing, and whether it costs both sides equally.
+
+    The asymmetry is the part that matters. If one stream suspends more
+    readily than the other, then every pair it suspends on is a pair where
+    the comparison never happens -- and suspension lands on scoring plays
+    and reviews, which is where two models disagree most. A lopsided count
+    here means the head-to-head is being scored on the calm states only.
+    """
+    total = len(pairs)
+    suspended = [p for p in pairs if p.suspended]
+    by_quarter = defaultdict(lambda: [0, 0])
+    by_market = defaultdict(lambda: [0, 0])
+    for pair in pairs:
+        quarter = buckets.time_bucket(pair.period_number, pair.drive_number)
+        by_quarter[quarter][0] += 1
+        by_market[markets.market_group(pair.market_id)][0] += 1
+        if pair.suspended:
+            by_quarter[quarter][1] += 1
+            by_market[markets.market_group(pair.market_id)][1] += 1
+    return {
+        "pairs": total,
+        "suspended": len(suspended),
+        "share": len(suspended) / total if total else None,
+        "prod_only": sum(1 for p in suspended if not p.prod_live and p.candidate_live),
+        "candidate_only": sum(1 for p in suspended if not p.candidate_live and p.prod_live),
+        "both": sum(1 for p in suspended if not p.prod_live and not p.candidate_live),
+        "matches": len({p.match_code for p in suspended}),
+        "by_quarter": {k: tuple(v) for k, v in by_quarter.items()},
+        "by_market": {k: tuple(v) for k, v in by_market.items()},
+    }
 
 
 def selection_blocks(pairs, mode, n_bootstrap=2000):
@@ -1197,6 +1278,7 @@ def build_full_report(pairs, n_bootstrap=2000):
         "complement": complement_report(pairs),
         "spread": spread_interpretation_report(pairs),
         "both_sides": both_sides_calibration(pairs),
+        "suspension": suspension_report(pairs),
         "axes": axes,
         "full_cell": full,
         "full_cell_order": sorted({k[0] for k in full}, key=buckets.sort_key),

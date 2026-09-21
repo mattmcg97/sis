@@ -245,7 +245,7 @@ class TestFlippedMatchExclusion(unittest.TestCase):
         for match in self.MATCHES:
             for msg in (1, 2):
                 rows.append((match, 50, dt.datetime(2026, 9, 18, 12, msg),
-                             60.0, 1.67, "PLAYER 1", msg))
+                             60.0, 1.67, "PLAYER 1", msg, "open", "true"))
         return rows
 
     @contextlib.contextmanager
@@ -572,6 +572,78 @@ class TestPairStateColumns(unittest.TestCase):
     def test_they_reach_the_csv(self):
         for field in ("field_position", "down_number", "distance"):
             self.assertIn(field, report.PAIR_FIELDS)
+
+
+class TestSuspensionFlag(unittest.TestCase):
+    """A suspended quote is carried, flagged, and scored by nothing."""
+
+    def susp(self, prod_live=True, candidate_live=True, **kw):
+        return dataclasses.replace(
+            pair(0.9, 0.1, True, **kw),
+            prod_live=prod_live, candidate_live=candidate_live)
+
+    def test_live_is_read_from_the_two_columns_not_assumed(self):
+        self.assertTrue(directional.is_live("open", "true"))
+        self.assertTrue(directional.is_live("OPEN", "TRUE"))
+        for status, active in (("suspended", "true"), ("open", "false"),
+                               ("closed", "false"), ("settled", "true")):
+            self.assertFalse(directional.is_live(status, active),
+                             f"{status}/{active}")
+
+    def test_either_side_suspended_suspends_the_pair(self):
+        self.assertFalse(self.susp().suspended)
+        self.assertTrue(self.susp(prod_live=False).suspended)
+        self.assertTrue(self.susp(candidate_live=False).suspended)
+        self.assertTrue(self.susp(False, False).suspended)
+
+    def test_a_suspended_pair_is_scored_by_nothing(self):
+        p = self.susp(prod_live=False)
+        for mode in (directional.PROBABILITY, directional.LINE,
+                     directional.DECISIVE):
+            self.assertEqual(p.errors(mode), (None, None), mode)
+            self.assertFalse(p.comparable(mode), mode)
+            self.assertIsNone(p.winner(mode), mode)
+
+    def test_it_is_excluded_from_every_aggregate_at_once(self):
+        # errors() is what tally, the cells, the votes and the decisive
+        # block are all built on, which is why refusing there is enough.
+        live = [pair(0.9, 0.1, True, match=f"AF{i}") for i in range(6)]
+        dead = [self.susp(prod_live=False, match=f"AF{i}") for i in range(6)]
+        both = live + dead
+        self.assertEqual(directional.tally(both, directional.PROBABILITY)["n"], 6)
+        self.assertEqual(directional.decisive_block(both)["n"], 6)
+        cells = directional.calibration_cells(
+            both, directional.quarter_label, n_bootstrap=20)
+        self.assertEqual(sum(c["n"] for c in cells.values()), 6)
+
+    def test_turning_the_requirement_off_scores_them(self):
+        previous = config.REQUIRE_LIVE_QUOTE
+        config.REQUIRE_LIVE_QUOTE = False
+        try:
+            p = self.susp(prod_live=False)
+            self.assertTrue(p.comparable(directional.PROBABILITY))
+            self.assertIsNotNone(p.winner(directional.PROBABILITY))
+        finally:
+            config.REQUIRE_LIVE_QUOTE = previous
+
+    def test_the_report_counts_which_side_suspended(self):
+        pairs = ([pair(0.9, 0.1, True, match="AF0")]
+                 + [self.susp(prod_live=False, match="AF1")] * 3
+                 + [self.susp(candidate_live=False, match="AF2")]
+                 + [self.susp(False, False, match="AF3")])
+        r = directional.suspension_report(pairs)
+        self.assertEqual((r["pairs"], r["suspended"]), (6, 5))
+        self.assertEqual(r["prod_only"], 3)
+        self.assertEqual(r["candidate_only"], 1)
+        self.assertEqual(r["both"], 1)
+        self.assertEqual(r["matches"], 3)
+
+    def test_the_report_splits_by_quarter_so_lopsidedness_is_visible(self):
+        pairs = [self.susp(prod_live=(q != 4), match=f"AF{q}", period=q)
+                 for q in (1, 2, 3, 4)]
+        r = directional.suspension_report(pairs)
+        self.assertEqual(r["by_quarter"]["Q4"], (1, 1))
+        self.assertEqual(r["by_quarter"]["Q1"], (1, 0))
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -1110,13 +1182,17 @@ class TestNearestMessage(unittest.TestCase):
 
 class TestPairingIndexes(unittest.TestCase):
     def test_index_by_message_keeps_probability_and_description(self):
-        rows = [("AF1", 50, BASE, 85.26, 1.11, "Home team (PLAYER 1) to win", 300)]
+        rows = [("AF1", 50, BASE, 85.26, 1.11, "Home team (PLAYER 1) to win",
+                 300, "open", "true")]
         index = directional.index_by_message(rows)
-        self.assertEqual(index[("AF1", 50)][300][0], 85.26)
+        quote = index[("AF1", 50)][300]
+        self.assertEqual(quote.probability, 85.26)
+        self.assertEqual(quote.description, "Home team (PLAYER 1) to win")
+        self.assertTrue(quote.live)
 
     def test_index_by_message_skips_null_message_or_probability(self):
-        rows = [("AF1", 50, BASE, 85.0, 1.1, "d", None),
-                ("AF1", 50, BASE, None, 1.1, "d", 300)]
+        rows = [("AF1", 50, BASE, 85.0, 1.1, "d", None, "open", "true"),
+                ("AF1", 50, BASE, None, 1.1, "d", 300, "open", "true")]
         self.assertEqual(directional.index_by_message(rows), {})
 
     def test_common_messages_is_the_intersection(self):
@@ -1834,6 +1910,21 @@ class TestReportRendering(unittest.TestCase):
         p = dataclasses.replace(pair(0.5, 0.6, True, match="AF1"),
                                 publish_time=base)
         self.assertIn('class="warn"', self._row_for([p]))
+
+    def test_a_suspended_pair_shows_but_compares_nothing(self):
+        p = dataclasses.replace(pair(0.9, 0.1, True), prod_live=False)
+        cells = self._cells_for([p])
+        self.assertEqual(cells["Live"], "prod")
+        for column in ("&Delta;prob", "Prod err", "Cand err"):
+            self.assertEqual(cells[column], "&mdash;", column)
+        # The two probabilities are still facts about the row.
+        self.assertEqual(cells["Prod prob"], "0.9000")
+        self.assertIn('class="susp"', self._row_for([p]))
+
+    def test_a_live_pair_is_not_marked(self):
+        cells = self._cells_for([pair(0.9, 0.1, True)])
+        self.assertEqual(cells["Live"], "live")
+        self.assertNotIn('class="susp"', self._row_for([pair(0.9, 0.1, True)]))
 
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()

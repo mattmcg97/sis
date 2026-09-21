@@ -330,6 +330,55 @@ def _handle_block(scan):
     </section>"""
 
 
+def _suspension_block(report):
+    """What suspension costs, and whether it costs both sides equally.
+
+    Lopsided is the thing to look for: suspension lands on scoring plays
+    and reviews, so a stream that suspends more readily has its
+    disagreements dropped from the comparison rather than scored.
+    """
+    s = report.get("suspension")
+    if not s or not s["pairs"]:
+        return ""
+    if not s["suspended"]:
+        return """
+    <section class="panel">
+      <h2>Suspension <span class="tag">were both markets live?</span></h2>
+      <p class="count"><span class="good">every pair live</span></p>
+    </section>"""
+
+    rows = []
+    for label, table in (("Quarter", s["by_quarter"]), ("Market", s["by_market"])):
+        for key in sorted(table):
+            total, susp = table[key]
+            if not total:
+                continue
+            rows.append(f"""<tr>
+                <td class="dim">{label}</td><th>{html.escape(str(key))}</th>
+                <td>{total:,}</td><td>{susp:,}</td>
+                <td class="{'bad' if total and susp / total > 0.05 else ''}">{_pct(susp / total)}</td>
+            </tr>""")
+    lopsided = abs(s["prod_only"] - s["candidate_only"])
+    tone = "bad" if lopsided > max(10, 0.2 * max(1, s["suspended"])) else "dim"
+    return f"""
+    <section class="panel">
+      <h2>Suspension <span class="tag">were both markets live?</span></h2>
+      <p class="count">{s['suspended']:,} of {s['pairs']:,} pairs
+        ({_pct(s['share'])}) across {s['matches']:,} matches &middot;
+        shown in the table, scored by nothing</p>
+      <dl class="stats">
+        <div><dt>Prod only</dt><dd class="{tone}">{s['prod_only']:,}</dd></div>
+        <div><dt>Candidate only</dt><dd class="{tone}">{s['candidate_only']:,}</dd></div>
+        <div><dt>Both</dt><dd>{s['both']:,}</dd></div>
+      </dl>
+      <table>
+        <thead><tr><th>Split</th><th>Bucket</th><th>Pairs</th>
+          <th>Suspended</th><th>Share</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>"""
+
+
 def _selection_block(report):
     """The directional comparison per selection, not per market.
 
@@ -565,6 +614,15 @@ def _full_cell(report):
     </section>"""
 
 
+def _susp(pair):
+    """Which side was suspended, since either one blanks the comparison."""
+    if not pair.suspended:
+        return "live"
+    if not pair.prod_live and not pair.candidate_live:
+        return "both"
+    return "prod" if not pair.prod_live else "cand"
+
+
 def _down(pair):
     """Down and distance as "3&10", or a dash when the feed has neither."""
     if pair.down_number is None and pair.distance is None:
@@ -590,6 +648,7 @@ def _pair_rows(pairs):
     out = []
     for p in pairs:
         basis = "line" if not p.same_line else "prob"
+        susp_class = ' class="susp"' if p.suspended else ""
         end = last_quote.get(p.match_code)
         to_end = (None if end is None or p.publish_time is None
                   else (end - p.publish_time).total_seconds())
@@ -603,14 +662,19 @@ def _pair_rows(pairs):
         # one that refers to another, and a line error is in points, so on a
         # different-line row the probability columns are blanked rather than
         # filled with a number that invites the wrong comparison.
-        if p.same_line:
+        if p.suspended:
+            # Not a price anyone could have taken, so nothing here is a
+            # comparison. The two probabilities still show as facts.
+            prod_error = candidate_error = None
+            disagreement = '<td data-v="" class="dim">&mdash;</td>'
+        elif p.same_line:
             prod_error, candidate_error = p.errors("probability")
             disagreement = f'<td data-v="{p.disagreement}"><b>{p.disagreement:.4f}</b></td>'
         else:
             prod_error = candidate_error = None
             disagreement = '<td data-v="" class="dim">&mdash;</td>' 
         out.append(
-            f'<tr data-match="{html.escape(p.match_code).lower()}">'
+            f'<tr data-match="{html.escape(p.match_code).lower()}"{susp_class}>'
             f'<td>{"" if p.publish_time is None else html.escape(str(p.publish_time)[:19])}</td>'
             f'<td>{html.escape(p.match_code)}</td>'
             f'<td data-v="{p.drive_number}">{p.drive_number}</td>'
@@ -642,6 +706,7 @@ def _pair_rows(pairs):
             f'<td data-v="{"" if candidate_error is None else candidate_error}">{"&mdash;" if candidate_error is None else format(candidate_error, ".4f")}</td>'
             f'<td>{winner_cell}</td>'
             f'<td class="dim">{basis}</td>'
+            f'<td data-v="{0 if p.suspended else 1}" class="{"bad" if p.suspended else "dim"}">{_susp(p)}</td>'
             f'</tr>')
     return "".join(out)
 
@@ -671,6 +736,7 @@ def _pair_table(pairs):
           <th>Prod prob</th><th>Cand prob</th><th>&Delta;prob</th>
           <th title="realized margin or total">Result</th><th title="won at its own line">Prod</th><th title="won at its own line">Cand</th>
           <th>Prod err</th><th>Cand err</th><th>Closer</th><th title="prob where both quoted the same line, line where they did not">Basis</th>
+          <th title="whether both markets were live; a suspended pair is shown but scored by nothing">Live</th>
         </tr></thead>
         <tbody>{_pair_rows(pairs)}</tbody>
       </table>
@@ -685,6 +751,9 @@ def _checks_summary(report, scan=None):
     issues = []
     if scan and scan.get("matches_flipped"):
         issues.append(f"{scan['matches_flipped']:,} matches with flipped handles")
+    suspension = report.get("suspension") or {}
+    if suspension.get("share") and suspension["share"] > 0.05:
+        issues.append(f"{_pct(suspension['share'])} of pairs suspended")
     for market, row in (report.get("complement") or {}).items():
         both = row.get("both_sides") or 0
         if both and row.get("outcomes_partition", 0) / both < 0.999:
@@ -696,8 +765,8 @@ def _checks_summary(report, scan=None):
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
     return ('<span class="good">all pass</span> '
-            '<span class="dim">handles, selections, integrity, mirror, '
-            'spread reading, by day, single axes</span>')
+            '<span class="dim">handles, suspension, selections, integrity, '
+            'mirror, spread reading, by day, single axes</span>')
 
 
 def render(report, header, stats, pairs, handle_scan):
@@ -792,6 +861,8 @@ def render(report, header, stats, pairs, handle_scan):
   tbody tr.picked > :first-child{{box-shadow:inset 4px 0 0 var(--warn)}}
   tbody tr.picked > :last-child{{box-shadow:inset -4px 0 0 var(--warn)}}
   tbody tr.thin.picked > *{{opacity:1}}
+  tbody tr.susp > *{{color:var(--dim);font-style:italic}}
+  tbody tr.susp.picked > *{{color:var(--ink);font-style:normal}}
   tbody tr.picked .dim{{color:var(--ink)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
   details.panel{{padding:0}}
@@ -839,6 +910,7 @@ def render(report, header, stats, pairs, handle_scan):
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
     {_handle_block(handle_scan)}
+    {_suspension_block(report)}
     {_selection_block(report)}
     {_daily(report)}
     {_integrity_block(report, stats)}

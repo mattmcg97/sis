@@ -90,6 +90,18 @@ SCORE_DIFF_BUCKETS = [
 # so the size of the problem is visible before any data is thrown away.
 EXCLUDE_FLIPPED_MATCHES = False
 
+# A quote is live when STATUS is 'open' and IS_ACTIVE is 'true'; anything
+# else is treated as suspended. Deliberately value-agnostic -- `preflight`
+# prints what those columns really contain so the assumption can be checked.
+LIVE_STATUS = "open"
+LIVE_IS_ACTIVE = "true"
+
+# Suspended quotes are carried onto the pairs and flagged, but kept out of
+# every metric: a suspended price is not a price anyone could have taken.
+# Set False to score them anyway, which is almost certainly wrong and is
+# there so the cost of excluding them can be measured.
+REQUIRE_LIVE_QUOTE = True
+
 # Which time-axis to split on: "period" (quarter, available now) or
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"

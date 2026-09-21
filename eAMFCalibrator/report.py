@@ -397,6 +397,37 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
+def print_suspension(report):
+    """What suspension costs, and whether it costs both sides equally."""
+    print(f"\n{'=' * 78}\nSUSPENSION -- were both markets live?\n{'=' * 78}")
+    if not report or not report["pairs"]:
+        print("  No pairs.")
+        return
+    if not report["suspended"]:
+        print(f"  Every one of {report['pairs']:,} pairs had both markets live.")
+        return
+    print(f"  {report['suspended']:,} of {report['pairs']:,} pairs "
+          f"({_pct(report['share'])}) across {report['matches']:,} matches")
+    print(f"    prod suspended only      : {report['prod_only']:,}")
+    print(f"    candidate suspended only : {report['candidate_only']:,}")
+    print(f"    both                     : {report['both']:,}")
+    print(f"\n  {'SPLIT':<9}{'BUCKET':<14}{'PAIRS':>9}{'SUSP':>8}{'SHARE':>8}")
+    for label, table in (("quarter", report["by_quarter"]),
+                         ("market", report["by_market"])):
+        for key in sorted(table):
+            total, susp = table[key]
+            if not total:
+                continue
+            print(f"  {label:<9}{str(key):<14}{total:>9,}{susp:>8,}"
+                  f"{_pct(susp / total):>8}")
+    print("\n  These pairs are shown in the report and scored by nothing: a")
+    print("  suspended price is not one anyone could have taken. The number")
+    print("  to watch is the split between the two streams. Suspension lands")
+    print("  on scoring plays and reviews, which is where the models differ")
+    print("  most, so a stream that suspends more readily has its")
+    print("  disagreements dropped from the comparison rather than scored.")
+
+
 def print_selections(summary):
     """Every selection, both sides, with its own clustered test.
 

@@ -129,25 +129,55 @@ def fetch_final_scores(cur, match_codes):
 
 
 def fetch_quotes(cur, stream_table, match_codes):
-    """Every usable quote for these matches inside the window.
+    """Every quote for these matches inside the window, live or not.
 
-    Status filters mirror analysis/unconditional_calibration.py so the two
-    are measuring the same notion of a live price.
+    STATUS and IS_ACTIVE used to be a WHERE clause, which meant a market
+    that was suspended at a snapshot produced no row and the snapshot
+    simply vanished -- indistinguishable from a feed gap. Suspension is not
+    missing at random: it clusters on scoring plays and reviews, which are
+    exactly the states where the two models differ most. Worse, if the two
+    streams suspend at different moments then pairing on "both had a live
+    quote" silently drops the disagreements.
+
+    So the filter moved out of SQL and into the caller, which keeps the
+    same rows in the metrics (config.REQUIRE_LIVE_QUOTE, on by default) and
+    can now count and show what it is dropping.
     """
     predicate, params = window_predicate("PUBLISH_TIME")
     extra = " AND PROBABILITY > 0" if config.EXCLUDE_ZERO_PROBABILITY else ""
     _, rows = fetch_all(cur, f"""
         SELECT MATCH_CODE, MARKET_ID, PUBLISH_TIME, PROBABILITY,
-               DECIMAL_ODD, MARKET_DESCRIPTION, EVENT_MESSAGE_COUNT
+               DECIMAL_ODD, MARKET_DESCRIPTION, EVENT_MESSAGE_COUNT,
+               STATUS, IS_ACTIVE
         FROM {qualified(stream_table)}
         WHERE MATCH_CODE IN ({_in_clause(match_codes)})
           AND MARKET_ID IN ({_in_clause(MARKET_IDS)})
-          AND STATUS = 'open'
-          AND IS_ACTIVE = 'true'
           {extra}
           AND {predicate}
         ORDER BY MATCH_CODE, MARKET_ID, PUBLISH_TIME
     """, tuple(list(match_codes) + list(MARKET_IDS) + params))
+    return rows
+
+
+def status_profile(cur, stream_table):
+    """What values STATUS and IS_ACTIVE actually take, and how often.
+
+    The pipeline treats "open and true" as live and everything else as
+    suspended, which is deliberately value-agnostic. This says what is
+    really in there, so that assumption can be checked rather than trusted.
+    """
+    predicate, params = window_predicate("PUBLISH_TIME")
+    _, rows = fetch_all(cur, f"""
+        SELECT STATUS, IS_ACTIVE, COUNT(*) AS N,
+               COUNT(DISTINCT MATCH_CODE) AS MATCHES,
+               AVG(CASE WHEN PROBABILITY IS NULL THEN 1 ELSE 0 END) AS NULL_PROB,
+               AVG(CASE WHEN PROBABILITY = 0 THEN 1 ELSE 0 END) AS ZERO_PROB
+        FROM {qualified(stream_table)}
+        WHERE MARKET_ID IN ({_in_clause(MARKET_IDS)})
+          AND {predicate}
+        GROUP BY STATUS, IS_ACTIVE
+        ORDER BY N DESC
+    """, tuple(list(MARKET_IDS) + params))
     return rows
 
 
