@@ -30,11 +30,15 @@ Four views:
      `MIN_CELL_MATCHES` are dimmed rather than dropped, since knowing a
      bucket is thin is part of the information. Sortable.
 
-  The handle check, integrity checks, the mirror check, the by-day view and
-  the single-axis
+  The handle check, the per-selection breakdown, integrity checks, the
+  mirror check, the by-day view and the single-axis
   breakdowns sit behind a collapsed **Checks** disclosure whose summary line
   says whether anything failed. Console prints a compact version; `--axes`
   prints them in full.
+
+  Clicking any row in any table on the page pins it, so a row stays legible
+  while you scroll a wide table or compare it against another. Click again
+  to unpin, Escape clears them all.
 
   Then **every paired observation**, with the score at the snapshot (home,
   away and the difference), both streams' line, price, probability, outcome
@@ -125,6 +129,24 @@ rather than picking one silently.
 That combined reading is the *weaker* test: a win rate throws away how
 much closer each was, which is what the per-half paired deltas keep. Read
 it for direction and the halves for strength.
+
+## Both sides, when checking rather than reading
+
+The pooled tables read **one** selection per market (`CANONICAL_SELECTIONS`)
+because the two sides are complements — one carries the information and the
+other is its mirror, and pooling them forces realized and predicted to 0.500
+by construction.
+
+That is right for reading a result and wrong for checking one. A fault
+confined to one side — a line parsed for Over and not for Under, outcomes
+resolved the wrong way round — averages away into a flat market row. So the
+checks carry a **by selection** table: every side of every market with its
+own clustered test, under both the same-line and different-line views, with
+the side the pooled tables read marked.
+
+`TestSelectionBlocks` pins the point directly: a candidate 0.1 out on Home
+and 0.7 out on Away cancels to exactly 0.0000 pooled, and splits to +0.2400
+and -0.2400 per selection.
 
 ## One selection per market, always
 
@@ -427,7 +449,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-223 tests covering line parsing, market resolution, bucket edges, drive
+231 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

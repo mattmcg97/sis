@@ -403,6 +403,51 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
+def print_selections(summary):
+    """Every selection, both sides, with its own clustered test.
+
+    The pooled per-market tables read one side and treat the other as its
+    mirror, which is right for reading a result and wrong for checking
+    one: a fault confined to one side averages away into a flat market
+    row. This is where it would show.
+    """
+    print(f"\n{'=' * 104}\nBY SELECTION -- both sides of every market"
+          f"\n{'=' * 104}")
+    printed = False
+    for key, label, metric, spec in (("same_line", "same line", "brier", "+.4f"),
+                                     ("different_line", "diff line", "mae", "+.3f")):
+        selections = summary.get(key, {}).get("selections", {})
+        if not selections:
+            continue
+        if printed:
+            print()
+        printed = True
+        delta = "BRIER_D" if metric == "brier" else "POINTS_D"
+        print(f"  {'VIEW':<11}{'MARKET':<11}{'SEL':<7}{'USED':<6}{'ID':>4}"
+              f"{'PAIRS':>8}{'MATCH':>7}{'WIN%':>8}{delta:>10}{'P':>8}")
+        for market_id in sorted(selections, key=lambda m: (
+                MARKET_PRINT_ORDER.index(selections[m]["market"]), m)):
+            row = selections[market_id]
+            tallied = row["tally"]
+            if not tallied["n"]:
+                continue
+            clustered = row.get(metric, {})
+            used = "yes" if row["canonical"] else ""
+            print(f"  {label:<11}{row['market']:<11}{row['selection']:<7}"
+                  f"{used:<6}{market_id:>4}{tallied['n']:>8,}"
+                  f"{tallied['n_matches']:>7,}"
+                  f"{_pct(tallied['candidate_win_rate']):>8}"
+                  f"{_fmt(clustered.get('mean'), spec):>10}"
+                  f"{_p(clustered.get('p_value')):>8}")
+    if not printed:
+        print("  No pairs.")
+        return
+    print("\n  USED marks the side the pooled tables read; the other is its")
+    print("  mirror. Both are shown here because a fault on one side only --")
+    print("  a line parsed for Over and not for Under, outcomes resolved the")
+    print("  wrong way round -- averages away into a flat market row.")
+
+
 def print_decisive(decisive):
     """The combined verdict: every pair judged on its own question."""
     print(f"\n{'=' * 78}\nOVERALL -- every pair on the question it actually "

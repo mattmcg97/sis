@@ -714,6 +714,35 @@ def market_blocks(pairs, mode, n_bootstrap=2000):
     return out
 
 
+def selection_blocks(pairs, mode, n_bootstrap=2000):
+    """Per SELECTION rather than per market: both sides broken out.
+
+    market_blocks pools a market's two selections, which is the right
+    default -- they are complements, so one side carries the information
+    and the other is its mirror. But pooling also hides anything that
+    lives on one side only: a line parsed correctly for Over and not for
+    Under, or a selection whose outcomes are being resolved the wrong way
+    round, would both average away into a flat market row. This is the
+    table that would show it, which is why it sits with the checks rather
+    than with the findings.
+    """
+    out = {}
+    for market_id in markets.MARKET_IDS:
+        subset = [p for p in pairs if p.market_id == market_id]
+        if not subset:
+            continue
+        out[market_id] = {
+            "market": markets.market_group(market_id),
+            "selection": markets.selection_label(market_id),
+            "canonical": market_id in config.CANONICAL_SELECTIONS,
+            "tally": tally(subset, mode),
+            "votes": match_level_votes(subset, mode),
+            "brier": paired_delta_summary(subset, SQUARED, mode, n_bootstrap),
+            "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
+        }
+    return out
+
+
 def decisive_block(pairs):
     """The overall verdict, every pair settled on its own terms.
 
@@ -774,6 +803,7 @@ def build_summary(pairs, n_bootstrap=2000):
             "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
             "by_market": group_by(subset, market_label, mode),
             "markets": market_blocks(subset, mode, n_bootstrap),
+            "selections": selection_blocks(subset, mode, n_bootstrap),
         }
 
     return {

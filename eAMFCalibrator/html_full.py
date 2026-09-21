@@ -331,6 +331,55 @@ def _handle_block(scan):
     </section>"""
 
 
+def _selection_block(report):
+    """The directional comparison per selection, not per market.
+
+    "By market" pools each market's two sides, which is right for reading
+    a result -- they are complements. It is wrong for checking one: a
+    fault confined to one side averages away into a flat market row. Both
+    sides side by side is what would show it.
+    """
+    rows = []
+    for key, label, metric, spec in (("same_line", "Same line", "brier", "+.4f"),
+                                     ("different_line", "Different line", "mae", "+.3f")):
+        block = report["summary"][key]
+        selections = block.get("selections", {})
+        for market_id in sorted(selections, key=lambda m: (
+                MARKET_ORDER.index(selections[m]["market"]), m)):
+            row = selections[market_id]
+            tallied = row["tally"]
+            if not tallied["n"]:
+                continue
+            clustered = row.get(metric, {})
+            used = "&check;" if row["canonical"] else ""
+            rows.append(f"""<tr>
+                <td>{label}</td>
+                <th>{MARKET_TITLES[row['market']]}</th>
+                <td>{row['selection']}</td>
+                <td class="dim">{used}</td>
+                <td data-v="{market_id}" class="dim">{market_id}</td>
+                <td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>
+                <td class="{_cls((tallied['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(tallied['candidate_win_rate'])}</td>
+                <td class="{_cls(clustered.get('mean'))}">{_n(clustered.get('mean'), spec)}</td>
+                <td class="dim">{_ci(clustered, spec)}</td>
+                <td>{_p(clustered.get('p_value'))}</td>
+            </tr>""")
+    return f"""
+    <section class="panel">
+      <h2>By selection <span class="tag">both sides of every market</span></h2>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>View</th><th>Market</th><th>Sel</th>
+          <th title="the side the pooled tables read; the other is its mirror">Used</th>
+          <th>ID</th><th>Pairs</th><th>Matches</th>
+          <th title="candidate share of decisive pairs">Cand win</th>
+          <th>&Delta;</th><th>95% CI</th><th title="match-clustered">p</th></tr></thead>
+        <tbody>{''.join(rows) or '<tr><td colspan="11" class="dim">no pairs</td></tr>'}</tbody>
+      </table>
+      </div>
+    </section>"""
+
+
 def _both_sides_block(report):
     cells = report["both_sides"]
     rows = []
@@ -574,6 +623,7 @@ def _pair_table(pairs):
         <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
                placeholder="filter by match id" aria-label="Filter rows by match id">
         <span id="pairCount" class="count">{len(pairs):,} rows</span>
+        <span class="count" title="works in every table on this page; Escape clears them all">click a row to pin it</span>
       </div>
       <div class="scroll">
       <table class="sortable" id="pairTable">
@@ -611,8 +661,8 @@ def _checks_summary(report, scan=None):
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
     return ('<span class="good">all pass</span> '
-            '<span class="dim">handles, integrity, mirror, spread reading, '
-            'by day, single axes</span>')
+            '<span class="dim">handles, selections, integrity, mirror, '
+            'spread reading, by day, single axes</span>')
 
 
 def render(report, header, stats, pairs, handle_scan):
@@ -637,19 +687,19 @@ def render(report, header, stats, pairs, handle_scan):
   :root {{
     --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --dim:#6b6b66; --line:#e2e2dd;
     --good:#1c7c4a; --bad:#b3261e; --warn:#8a6d1f; --accent:#2d4a7c;
-    --head:#f0f0ec; --axis:#eaeef4;
+    --head:#f0f0ec; --axis:#eaeef4; --pick:#fdf0c8; --hover:#f2f2ef;
   }}
   @media (prefers-color-scheme: dark) {{
     :root:not([data-theme="light"]) {{
       --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
       --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
-      --head:#26262c; --axis:#232833;
+      --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
     --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
-    --head:#26262c; --axis:#232833;
+    --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
   }}
   *{{box-sizing:border-box}}
   body{{margin:0;background:var(--bg);color:var(--ink);padding:16px;
@@ -700,6 +750,14 @@ def render(report, header, stats, pairs, handle_scan):
                  border-radius:5px}}
   .filter input:focus{{outline:2px solid var(--accent);outline-offset:-1px}}
   th[title]{{cursor:help;border-bottom:1px dotted var(--dim)}}
+  tbody tr:hover > *{{background:var(--hover)}}
+  /* Click a row to pin it. Inset shadows rather than a border, so pinning
+     never reflows the table. */
+  tbody tr.picked > *{{background:var(--pick);font-weight:600}}
+  tbody tr.picked > :first-child{{box-shadow:inset 4px 0 0 var(--warn)}}
+  tbody tr.picked > :last-child{{box-shadow:inset -4px 0 0 var(--warn)}}
+  tbody tr.thin.picked > *{{opacity:1}}
+  tbody tr.picked .dim{{color:var(--ink)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
   details.panel{{padding:0}}
   details.panel > summary{{cursor:pointer;padding:12px 14px;font-size:13px;
@@ -746,6 +804,7 @@ def render(report, header, stats, pairs, handle_scan):
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
     {_handle_block(handle_scan)}
+    {_selection_block(report)}
     {_daily(report)}
     {_integrity_block(report, stats)}
     {_both_sides_block(report)}
@@ -785,6 +844,25 @@ def render(report, header, stats, pairs, handle_scan):
     }});
   }});
 }});
+
+// Click any row to pin it, click again to unpin, Escape to clear. Survives
+// sorting and filtering because the class rides on the row element itself.
+(function () {{
+  document.addEventListener('click', function (event) {{
+    var cell = event.target.closest('td, th');
+    if (!cell) return;
+    var row = cell.parentElement;
+    if (!row || row.parentElement.tagName !== 'TBODY') return;
+    // Selecting text inside a row should not also pin it.
+    if (String(window.getSelection())) return;
+    row.classList.toggle('picked');
+  }});
+  document.addEventListener('keydown', function (event) {{
+    if (event.key !== 'Escape') return;
+    var picked = document.querySelectorAll('tbody tr.picked');
+    for (var i = 0; i < picked.length; i++) picked[i].classList.remove('picked');
+  }});
+}})();
 
 (function () {{
   var input = document.getElementById('pairFilter');

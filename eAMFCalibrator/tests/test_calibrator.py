@@ -605,6 +605,66 @@ class TestDecisiveBlock(unittest.TestCase):
         self.assertIn("Every pair on its own question", text)
 
 
+class TestSelectionBlocks(unittest.TestCase):
+    """Both sides of every market, broken out rather than pooled."""
+
+    def setUp(self):
+        self.pairs = []
+        for i in range(6):
+            for market_id in (50, 51):
+                self.pairs.append(pair(0.6, 0.7, True, match=f"AF{i}",
+                                       market_id=market_id, message=100 + i))
+            self.pairs.append(line_pair(0.5, 0.52, 44.5, 44.5, 24, 21,
+                                        match=f"AF{i}", market_id=54))
+            self.pairs.append(line_pair(0.5, 0.52, 44.5, 44.5, 24, 21,
+                                        match=f"AF{i}", market_id=55))
+        self.blocks = directional.selection_blocks(
+            self.pairs, directional.PROBABILITY, n_bootstrap=50)
+
+    def test_every_selection_gets_its_own_row(self):
+        self.assertEqual(sorted(self.blocks), [50, 51, 54, 55])
+
+    def test_each_row_names_its_market_and_side(self):
+        self.assertEqual(self.blocks[50]["market"], "moneyline")
+        self.assertEqual(self.blocks[50]["selection"], "Home")
+        self.assertEqual(self.blocks[51]["selection"], "Away")
+        self.assertEqual(self.blocks[55]["selection"], "Under")
+
+    def test_it_marks_which_side_the_pooled_tables_read(self):
+        self.assertTrue(self.blocks[50]["canonical"])
+        self.assertFalse(self.blocks[51]["canonical"])
+
+    def test_each_side_carries_its_own_clustered_test(self):
+        for row in self.blocks.values():
+            self.assertIn("mean", row["brier"])
+            self.assertIn("p_value", row["brier"])
+            self.assertEqual(row["tally"]["n_matches"], 6)
+
+    def test_a_fault_on_one_side_only_survives_the_breakdown(self):
+        # Pooled by market the two sides cancel to nothing; split by
+        # selection the damage is visible on exactly one of them. This is
+        # the whole reason the table exists.
+        # Prod sits on 0.5 either side, so its Brier is 0.25 both times.
+        # The candidate is 0.1 out on Home (+0.24) and 0.7 out on Away
+        # (-0.24), which cancel exactly when the market is pooled.
+        pairs = []
+        for i in range(8):
+            pairs.append(pair(0.5, 0.9, True, match=f"AF{i}", market_id=50))
+            pairs.append(pair(0.5, 0.3, True, match=f"AF{i}", market_id=51))
+        pooled = directional.market_blocks(
+            pairs, directional.PROBABILITY, n_bootstrap=50)["moneyline"]
+        split = directional.selection_blocks(
+            pairs, directional.PROBABILITY, n_bootstrap=50)
+        self.assertAlmostEqual(pooled["brier"]["mean"], 0.0, places=9)
+        self.assertAlmostEqual(split[50]["brier"]["mean"], +0.24, places=9)
+        self.assertAlmostEqual(split[51]["brier"]["mean"], -0.24, places=9)
+
+    def test_the_summary_carries_them_for_both_views(self):
+        summary = directional.build_summary(self.pairs, n_bootstrap=50)
+        self.assertIn("selections", summary["same_line"])
+        self.assertIn("selections", summary["different_line"])
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected
@@ -1942,6 +2002,35 @@ class TestReportShape(unittest.TestCase):
             self.report, {"paired_matches": 12},
             {"snapshots": 24, "exact_message_pair": 20, "offset_message_pair": 4},
             self.pairs, self.scan)
+
+    def test_checks_carry_a_row_per_selection(self):
+        pairs = []
+        for i in range(6):
+            for market_id in (50, 51, 54, 55):
+                pairs.append(line_pair(0.5, 0.6, 44.5, 44.5, 24, 21,
+                                       match=f"AF{i}", market_id=market_id))
+        report = directional.build_full_report(pairs, n_bootstrap=50)
+        rendered = self.html_full.render(report, {"paired_matches": 6}, {},
+                                         pairs, self.scan)
+        block = rendered[rendered.index("By selection"):]
+        block = block[:block.index("</section>")]
+        for label in ("Home", "Away", "Over", "Under"):
+            self.assertIn(f">{label}</td>", block)
+        # And it says which side the pooled tables read.
+        self.assertIn("&check;", block)
+
+    def test_rows_can_be_pinned_in_any_table(self):
+        script = self.rendered.split("<script>")[1]
+        self.assertIn("classList.toggle('picked')", script)
+        self.assertIn("TBODY", script)
+        self.assertIn("Escape", script)
+        # Selecting text inside a row must not also pin it.
+        self.assertIn("window.getSelection()", script)
+        # Inset shadows, so pinning never reflows the table.
+        self.assertIn("tbody tr.picked > *{background:var(--pick)", self.rendered)
+        self.assertIn("box-shadow:inset", self.rendered)
+        self.assertIn("--pick:", self.rendered)
+        self.assertIn("click a row to pin it", self.rendered)
 
     def test_handle_check_reports_clean_when_nothing_flipped(self):
         block = self.rendered[self.rendered.index("Handle check"):]
