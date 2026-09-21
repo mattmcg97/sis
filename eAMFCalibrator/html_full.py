@@ -59,19 +59,70 @@ def _outcome(value):
 # ---------------------------------------------------------------------------
 
 def _verdict(report):
+    """The headline, over EVERY pair rather than the same-line half.
+
+    Two readings, and they can disagree. The same-line Brier is the
+    sharper instrument, but it only covers pairs where both streams quoted
+    the same line. The combined decision covers all of them under the rule
+    that actually applies to each -- the closer line where the lines
+    differ, the closer probability where they do not -- so where it
+    separates the two models it OVERRULES the same-line reading, exactly
+    as a different line overrules a probability on a single pair.
+
+    Where they point opposite ways that is stated rather than smoothed
+    over: a candidate that prices better but lines worse is a real result
+    and the reader needs both halves of it.
+    """
     same = report["summary"]["same_line"]
+    decisive = report["summary"]["decisive"]
     brier = same["brier"]
     mean, lo, hi = brier.get("mean"), brier.get("ci_low"), brier.get("ci_high")
+    votes = decisive["votes"]
+    rate, p_value = votes.get("candidate_win_rate"), votes.get("p_value")
+
+    def name(side):
+        return "the candidate" if side == "candidate" else "prod"
+
+    on_line = decisive["settled_on_line"]
+    coverage = f"{decisive['n']:,} pairs"
+    if on_line:
+        coverage += f", {on_line:,} settled on the line"
+    combined_side = None if rate is None or rate == 0.5 else (
+        "candidate" if rate > 0.5 else "prod")
+    combined = (f'Every pair on its own question ({coverage}): matches vote '
+                f'{votes["candidate"]}&ndash;{votes["prod"]} to '
+                f'{name(combined_side)}, p {_p(p_value)}.') if combined_side else (
+                f'Every pair on its own question ({coverage}): level.')
+
+    same_side = None if mean is None else ("candidate" if mean > 0 else "prod")
+    same_separates = (mean is not None and lo is not None
+                      and not (lo <= 0 <= hi))
     if mean is None or lo is None:
-        return "neutral", "Not enough paired data to separate the two models."
-    if lo <= 0 <= hi:
-        lean = "the candidate" if mean > 0 else "prod"
-        return ("neutral",
-                f"No detectable difference. The point estimate leans to {lean} "
-                f"({mean:+.4f} Brier) but the interval crosses zero.")
-    side = "candidate" if mean > 0 else "prod"
-    return (("good" if mean > 0 else "bad"),
-            f"The {side} is better on same-line pairs, and the interval excludes zero.")
+        same_line_text = "Not enough same-line data for a Brier interval."
+    else:
+        same_line_text = (
+            f'Same line: {mean:+.4f} Brier to {name(same_side)}, interval '
+            f'{"excludes" if same_separates else "crosses"} zero.')
+
+    combined_separates = p_value is not None and p_value <= 0.05 and combined_side
+
+    # The combined reading covers everything under the right rule, so it
+    # takes precedence wherever it can separate the two at all.
+    if combined_separates:
+        clash = ("" if same_side in (None, combined_side)
+                 else f' The two disagree: {name(same_side)} prices better '
+                      'where the lines match, but that does not survive the '
+                      'lines.')
+        return (("good" if combined_side == "candidate" else "bad"),
+                f"{name(combined_side).capitalize()} is better. {combined} "
+                f"{same_line_text}{clash}")
+    if same_separates:
+        return (("good" if same_side == "candidate" else "bad"),
+                f"{name(same_side).capitalize()} is better where both quoted "
+                f"the same line, and the interval excludes zero. "
+                f"{combined} The combined reading does not separate them.")
+    return ("neutral",
+            f"No detectable difference. {same_line_text} {combined}")
 
 
 def _headline(report):
@@ -79,9 +130,20 @@ def _headline(report):
     line = report["summary"]["different_line"]
     o, v, b = same["overall"], same["votes"], same["brier"]
     lo, lv, lm = line["overall"], line["votes"], line["mae"]
+    d = report["summary"]["decisive"]
+    dv = d["votes"]
     return f"""
     <section class="panel" id="directional">
       <h2>Directional calibration <span class="tag">paired per snapshot</span></h2>
+      <h3>Overall <span class="tag">every pair on its own question</span></h3>
+      <dl class="stats">
+        <div><dt>Pairs decided</dt><dd>{d['n']:,} <span class="dim">/ {d['matches']:,} matches</span></dd></div>
+        <div><dt title="both streams quoted the same line">On probability</dt><dd>{d['settled_on_probability']:,}</dd></div>
+        <div><dt title="lines differ, so the closer line decides">On the line</dt><dd>{d['settled_on_line']:,}</dd></div>
+        <div><dt>Candidate win rate</dt><dd>{_pct(d['candidate_win_rate'])}</dd></div>
+        <div><dt>Match vote</dt><dd>{dv['candidate']}&ndash;{dv['prod']} <span class="dim">({dv['tie']} level)</span></dd></div>
+        <div><dt title="match-clustered sign test">p</dt><dd>{_p(dv['p_value'])}</dd></div>
+      </dl>
       <div class="cols">
         <div>
           <h3>Same line</h3>
@@ -269,6 +331,55 @@ def _handle_block(scan):
     </section>"""
 
 
+def _selection_block(report):
+    """The directional comparison per selection, not per market.
+
+    "By market" pools each market's two sides, which is right for reading
+    a result -- they are complements. It is wrong for checking one: a
+    fault confined to one side averages away into a flat market row. Both
+    sides side by side is what would show it.
+    """
+    rows = []
+    for key, label, metric, spec in (("same_line", "Same line", "brier", "+.4f"),
+                                     ("different_line", "Different line", "mae", "+.3f")):
+        block = report["summary"][key]
+        selections = block.get("selections", {})
+        for market_id in sorted(selections, key=lambda m: (
+                MARKET_ORDER.index(selections[m]["market"]), m)):
+            row = selections[market_id]
+            tallied = row["tally"]
+            if not tallied["n"]:
+                continue
+            clustered = row.get(metric, {})
+            used = "&check;" if row["canonical"] else ""
+            rows.append(f"""<tr>
+                <td>{label}</td>
+                <th>{MARKET_TITLES[row['market']]}</th>
+                <td>{row['selection']}</td>
+                <td class="dim">{used}</td>
+                <td data-v="{market_id}" class="dim">{market_id}</td>
+                <td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>
+                <td class="{_cls((tallied['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(tallied['candidate_win_rate'])}</td>
+                <td class="{_cls(clustered.get('mean'))}">{_n(clustered.get('mean'), spec)}</td>
+                <td class="dim">{_ci(clustered, spec)}</td>
+                <td>{_p(clustered.get('p_value'))}</td>
+            </tr>""")
+    return f"""
+    <section class="panel">
+      <h2>By selection <span class="tag">both sides of every market</span></h2>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>View</th><th>Market</th><th>Sel</th>
+          <th title="the side the pooled tables read; the other is its mirror">Used</th>
+          <th>ID</th><th>Pairs</th><th>Matches</th>
+          <th title="candidate share of decisive pairs">Cand win</th>
+          <th>&Delta;</th><th>95% CI</th><th title="match-clustered">p</th></tr></thead>
+        <tbody>{''.join(rows) or '<tr><td colspan="11" class="dim">no pairs</td></tr>'}</tbody>
+      </table>
+      </div>
+    </section>"""
+
+
 def _both_sides_block(report):
     cells = report["both_sides"]
     rows = []
@@ -453,11 +564,22 @@ def _pair_rows(pairs):
     out = []
     for p in pairs:
         basis = "line" if not p.same_line else "prob"
-        winner = p.winner("line" if not p.same_line else "probability")
+        # Line first, and probability only where the lines agree -- exactly
+        # the rule the overall verdict is decided under.
+        winner = p.decisive_winner
         winner_cell = ('<span class="dim">level</span>' if winner in (None, "tie")
                        else f'<span class="{"good" if winner == "candidate" else "bad"}">'
                             f'{"cand" if winner == "candidate" else "prod"}</span>')
-        prod_error, candidate_error = p.errors("line" if not p.same_line else "probability")
+        # A probability that refers to a different line is not comparable to
+        # one that refers to another, and a line error is in points, so on a
+        # different-line row the probability columns are blanked rather than
+        # filled with a number that invites the wrong comparison.
+        if p.same_line:
+            prod_error, candidate_error = p.errors("probability")
+            disagreement = f'<td data-v="{p.disagreement}"><b>{p.disagreement:.4f}</b></td>'
+        else:
+            prod_error = candidate_error = None
+            disagreement = '<td data-v="" class="dim">&mdash;</td>' 
         out.append(
             f'<tr data-match="{html.escape(p.match_code).lower()}">'
             f'<td>{"" if p.publish_time is None else html.escape(str(p.publish_time)[:19])}</td>'
@@ -480,7 +602,7 @@ def _pair_rows(pairs):
             f'<td data-v="{"" if p.candidate_decimal is None else p.candidate_decimal}">{"&mdash;" if p.candidate_decimal is None else format(p.candidate_decimal, ".2f")}</td>'
             f'<td data-v="{p.prod_probability}">{p.prod_probability:.4f}</td>'
             f'<td data-v="{p.candidate_probability}">{p.candidate_probability:.4f}</td>'
-            f'<td data-v="{p.disagreement}"><b>{p.disagreement:.4f}</b></td>'
+            f'{disagreement}'
             f'<td data-v="{"" if p.realized is None else p.realized}">{"&mdash;" if p.realized is None else format(p.realized, ".0f")}</td>'
             f'<td>{_outcome(p.prod_outcome)}</td>'
             f'<td>{_outcome(p.candidate_outcome)}</td>'
@@ -501,6 +623,7 @@ def _pair_table(pairs):
         <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
                placeholder="filter by match id" aria-label="Filter rows by match id">
         <span id="pairCount" class="count">{len(pairs):,} rows</span>
+        <span class="count" title="works in every table on this page; Escape clears them all">click a row to pin it</span>
       </div>
       <div class="scroll">
       <table class="sortable" id="pairTable">
@@ -538,8 +661,8 @@ def _checks_summary(report, scan=None):
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
     return ('<span class="good">all pass</span> '
-            '<span class="dim">handles, integrity, mirror, spread reading, '
-            'by day, single axes</span>')
+            '<span class="dim">handles, selections, integrity, mirror, '
+            'spread reading, by day, single axes</span>')
 
 
 def render(report, header, stats, pairs, handle_scan):
@@ -564,19 +687,19 @@ def render(report, header, stats, pairs, handle_scan):
   :root {{
     --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --dim:#6b6b66; --line:#e2e2dd;
     --good:#1c7c4a; --bad:#b3261e; --warn:#8a6d1f; --accent:#2d4a7c;
-    --head:#f0f0ec; --axis:#eaeef4;
+    --head:#f0f0ec; --axis:#eaeef4; --pick:#fdf0c8; --hover:#f2f2ef;
   }}
   @media (prefers-color-scheme: dark) {{
     :root:not([data-theme="light"]) {{
       --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
       --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
-      --head:#26262c; --axis:#232833;
+      --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
     }}
   }}
   :root[data-theme="dark"] {{
     --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
     --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
-    --head:#26262c; --axis:#232833;
+    --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
   }}
   *{{box-sizing:border-box}}
   body{{margin:0;background:var(--bg);color:var(--ink);padding:16px;
@@ -627,6 +750,14 @@ def render(report, header, stats, pairs, handle_scan):
                  border-radius:5px}}
   .filter input:focus{{outline:2px solid var(--accent);outline-offset:-1px}}
   th[title]{{cursor:help;border-bottom:1px dotted var(--dim)}}
+  tbody tr:hover > *{{background:var(--hover)}}
+  /* Click a row to pin it. Inset shadows rather than a border, so pinning
+     never reflows the table. */
+  tbody tr.picked > *{{background:var(--pick);font-weight:600}}
+  tbody tr.picked > :first-child{{box-shadow:inset 4px 0 0 var(--warn)}}
+  tbody tr.picked > :last-child{{box-shadow:inset -4px 0 0 var(--warn)}}
+  tbody tr.thin.picked > *{{opacity:1}}
+  tbody tr.picked .dim{{color:var(--ink)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
   details.panel{{padding:0}}
   details.panel > summary{{cursor:pointer;padding:12px 14px;font-size:13px;
@@ -673,6 +804,7 @@ def render(report, header, stats, pairs, handle_scan):
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
     {_handle_block(handle_scan)}
+    {_selection_block(report)}
     {_daily(report)}
     {_integrity_block(report, stats)}
     {_both_sides_block(report)}
@@ -712,6 +844,25 @@ def render(report, header, stats, pairs, handle_scan):
     }});
   }});
 }});
+
+// Click any row to pin it, click again to unpin, Escape to clear. Survives
+// sorting and filtering because the class rides on the row element itself.
+(function () {{
+  document.addEventListener('click', function (event) {{
+    var cell = event.target.closest('td, th');
+    if (!cell) return;
+    var row = cell.parentElement;
+    if (!row || row.parentElement.tagName !== 'TBODY') return;
+    // Selecting text inside a row should not also pin it.
+    if (String(window.getSelection())) return;
+    row.classList.toggle('picked');
+  }});
+  document.addEventListener('keydown', function (event) {{
+    if (event.key !== 'Escape') return;
+    var picked = document.querySelectorAll('tbody tr.picked');
+    for (var i = 0; i < picked.length; i++) picked[i].classList.remove('picked');
+  }});
+}})();
 
 (function () {{
   var input = document.getElementById('pairFilter');

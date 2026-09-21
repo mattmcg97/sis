@@ -142,6 +142,8 @@ def cmd_directional(args):
     summary = directional.build_summary(pairs)
 
     report.print_line_agreement(summary["lines"])
+    report.print_decisive(summary["decisive"])
+    report.print_selections(summary)
 
     report.print_block(
         "SAME LINE -- whose probability was closer to its own 0/1",
@@ -293,6 +295,9 @@ def cmd_report(args):
     full = directional.build_full_report(pairs)
     summary = full["summary"]
 
+    # --- 0. the combined verdict, before either half of it ---
+    report.print_decisive(summary["decisive"])
+
     # --- 1. directional calibration ---
     report.print_block(
         "DIRECTIONAL -- same line, whose probability was closer to its own 0/1",
@@ -320,6 +325,7 @@ def cmd_report(args):
     report.print_daily(full["daily"])
     if args.axes:
         report.print_line_agreement(summary["lines"])
+        report.print_selections(summary)
         report.print_complement_report(full["complement"])
         report.print_spread_interpretation(full["spread"])
         report.print_both_sides(full["both_sides"])

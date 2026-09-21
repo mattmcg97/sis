@@ -9,6 +9,7 @@ Run with:  py -m unittest discover eAMFCalibrator
 
 import collections
 import contextlib
+import re
 import datetime as dt
 import io
 import unittest
@@ -490,6 +491,178 @@ class TestScanUsesPossession(unittest.TestCase):
         self.assertFalse(scan.add("X", crossed, None, plays))
         self.assertEqual(scan.flipped_matches, frozenset({"X"}))
         self.assertEqual(scan.summary()["anchors"], 4)
+
+
+class TestTheLineOverrulesTheProbability(unittest.TestCase):
+    """A different line settles the pair; the probability only breaks a tie."""
+
+    def test_a_differing_line_decides_even_when_the_probability_disagrees(self):
+        # Realized total 45. Prod's 44.5 is 0.5 away, the candidate's 60.5 is
+        # 15.5 away. The candidate called its own under at 0.01 and was
+        # right, so its probability error is tiny and prod's is 0.50 -- the
+        # candidate looks far better on probability. The line must still win.
+        p = line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)
+        self.assertFalse(p.same_line)
+        self.assertEqual(p.decisive_mode, directional.LINE)
+        self.assertEqual(p.winner(directional.PROBABILITY), "candidate")
+        self.assertEqual(p.winner(directional.LINE), "prod")
+        self.assertEqual(p.decisive_winner, "prod")
+
+    def test_a_shared_line_is_decided_on_probability(self):
+        p = line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)
+        self.assertTrue(p.same_line)
+        self.assertEqual(p.decisive_mode, directional.PROBABILITY)
+        self.assertEqual(p.decisive_winner, p.winner(directional.PROBABILITY))
+
+    def test_probability_breaks_an_exact_tie_on_the_line(self):
+        # Whole-number lines straddling a realized 45: both exactly 1.0 away,
+        # so the line settles nothing -- but each stream was still graded
+        # against its own outcome, so the probabilities are a real comparison.
+        p = line_pair(0.90, 0.90, 44.0, 46.0, 24, 21)
+        self.assertEqual(p.prod_line_error, p.candidate_line_error)
+        self.assertEqual(p.winner(directional.LINE), "tie")
+        self.assertEqual((p.prod_outcome, p.candidate_outcome), (True, False))
+        self.assertEqual(p.decisive_winner, p.winner(directional.PROBABILITY))
+
+    def test_a_tie_broken_pair_is_counted_as_settled_on_probability(self):
+        # decisive_mode says LINE -- the lines do differ -- but the line
+        # tied, so it was the probability that decided. The block counts
+        # what actually decided, not what was tried first.
+        tied = line_pair(0.90, 0.90, 44.0, 46.0, 24, 21)
+        self.assertEqual(tied.decisive_mode, directional.LINE)
+        self.assertEqual(tied.decided_by, directional.PROBABILITY)
+        block = directional.decisive_block([tied])
+        self.assertEqual(block["settled_on_line"], 0)
+        self.assertEqual(block["settled_on_probability"], 1)
+
+    def test_errors_under_decisive_follow_the_pair(self):
+        same = line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)
+        diff = line_pair(0.55, 0.62, 44.5, 60.5, 24, 21)
+        self.assertEqual(same.errors(directional.DECISIVE),
+                         same.errors(directional.PROBABILITY))
+        self.assertEqual(diff.errors(directional.DECISIVE),
+                         diff.errors(directional.LINE))
+
+    def test_tally_refuses_to_mix_units(self):
+        # A line error is in points and a probability error is not, so the
+        # sums tally keeps would be adding different units together.
+        with self.assertRaises(ValueError):
+            directional.tally([line_pair(0.5, 0.5, 44.5, 44.5, 24, 21)],
+                              directional.DECISIVE)
+
+
+class TestDecisiveBlock(unittest.TestCase):
+    def setUp(self):
+        # Ten matches. The candidate edges prod on one same-line pair each,
+        # and is beaten on three different-line pairs each.
+        self.pairs = [line_pair(0.50, 0.52, 44.5, 44.5, 24, 21, match=f"AF{i}")
+                      for i in range(10)]
+        # The candidate wins these on probability and loses them on the
+        # line, so prod carrying the combined result is the line overruling.
+        self.pairs += [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21, match=f"AF{i}")
+                       for i in range(10) for _ in range(3)]
+        self.report = directional.build_full_report(self.pairs, n_bootstrap=100)
+        self.block = self.report["summary"]["decisive"]
+
+    def test_it_covers_every_pair_not_just_the_same_line_half(self):
+        self.assertEqual(self.block["n"], len(self.pairs))
+        self.assertEqual(self.block["settled_on_probability"], 10)
+        self.assertEqual(self.block["settled_on_line"], 30)
+
+    def test_the_lines_carry_the_combined_result(self):
+        # The candidate wins on probability both in the same-line half and
+        # among the different-line pairs, and still loses overall, because
+        # the different-line pairs are decided on the line.
+        self.assertGreater(self.report["summary"]["same_line"]["brier"]["mean"], 0)
+        different = [p for p in self.pairs if not p.same_line]
+        self.assertTrue(all(p.winner(directional.PROBABILITY) == "candidate"
+                            for p in different))
+        self.assertEqual(self.block["votes"]["prod"], 10)
+        self.assertEqual(self.block["votes"]["candidate"], 0)
+
+    def test_it_reports_no_mean_error(self):
+        # There is no average of a points error and a probability error, so
+        # the block must not offer one.
+        for key in ("brier", "mae", "prod_error_sum", "candidate_error_sum"):
+            self.assertNotIn(key, self.block)
+
+    def test_the_verdict_lets_the_lines_overrule_the_same_line_brier(self):
+        from .. import html_full
+        cls, text = html_full._verdict(self.report)
+        self.assertEqual(cls, "bad")
+        self.assertTrue(text.startswith("Prod is better"))
+        # And it says so rather than hiding the disagreement.
+        self.assertIn("disagree", text)
+        self.assertIn("does not survive the lines", text)
+
+    def test_the_verdict_still_uses_the_brier_when_the_combined_read_is_flat(self):
+        from .. import html_full
+        pairs = [pair(0.80, 0.20, True, match=f"AF{i}", message=100 + j)
+                 for i in range(12) for j in range(3)]
+        report = directional.build_full_report(pairs, n_bootstrap=100)
+        cls, text = html_full._verdict(report)
+        self.assertEqual(cls, "bad")
+        self.assertIn("Every pair on its own question", text)
+
+
+class TestSelectionBlocks(unittest.TestCase):
+    """Both sides of every market, broken out rather than pooled."""
+
+    def setUp(self):
+        self.pairs = []
+        for i in range(6):
+            for market_id in (50, 51):
+                self.pairs.append(pair(0.6, 0.7, True, match=f"AF{i}",
+                                       market_id=market_id, message=100 + i))
+            self.pairs.append(line_pair(0.5, 0.52, 44.5, 44.5, 24, 21,
+                                        match=f"AF{i}", market_id=54))
+            self.pairs.append(line_pair(0.5, 0.52, 44.5, 44.5, 24, 21,
+                                        match=f"AF{i}", market_id=55))
+        self.blocks = directional.selection_blocks(
+            self.pairs, directional.PROBABILITY, n_bootstrap=50)
+
+    def test_every_selection_gets_its_own_row(self):
+        self.assertEqual(sorted(self.blocks), [50, 51, 54, 55])
+
+    def test_each_row_names_its_market_and_side(self):
+        self.assertEqual(self.blocks[50]["market"], "moneyline")
+        self.assertEqual(self.blocks[50]["selection"], "Home")
+        self.assertEqual(self.blocks[51]["selection"], "Away")
+        self.assertEqual(self.blocks[55]["selection"], "Under")
+
+    def test_it_marks_which_side_the_pooled_tables_read(self):
+        self.assertTrue(self.blocks[50]["canonical"])
+        self.assertFalse(self.blocks[51]["canonical"])
+
+    def test_each_side_carries_its_own_clustered_test(self):
+        for row in self.blocks.values():
+            self.assertIn("mean", row["brier"])
+            self.assertIn("p_value", row["brier"])
+            self.assertEqual(row["tally"]["n_matches"], 6)
+
+    def test_a_fault_on_one_side_only_survives_the_breakdown(self):
+        # Pooled by market the two sides cancel to nothing; split by
+        # selection the damage is visible on exactly one of them. This is
+        # the whole reason the table exists.
+        # Prod sits on 0.5 either side, so its Brier is 0.25 both times.
+        # The candidate is 0.1 out on Home (+0.24) and 0.7 out on Away
+        # (-0.24), which cancel exactly when the market is pooled.
+        pairs = []
+        for i in range(8):
+            pairs.append(pair(0.5, 0.9, True, match=f"AF{i}", market_id=50))
+            pairs.append(pair(0.5, 0.3, True, match=f"AF{i}", market_id=51))
+        pooled = directional.market_blocks(
+            pairs, directional.PROBABILITY, n_bootstrap=50)["moneyline"]
+        split = directional.selection_blocks(
+            pairs, directional.PROBABILITY, n_bootstrap=50)
+        self.assertAlmostEqual(pooled["brier"]["mean"], 0.0, places=9)
+        self.assertAlmostEqual(split[50]["brier"]["mean"], +0.24, places=9)
+        self.assertAlmostEqual(split[51]["brier"]["mean"], -0.24, places=9)
+
+    def test_the_summary_carries_them_for_both_views(self):
+        summary = directional.build_summary(self.pairs, n_bootstrap=50)
+        self.assertIn("selections", summary["same_line"])
+        self.assertIn("selections", summary["different_line"])
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -1661,6 +1834,61 @@ class TestReportRendering(unittest.TestCase):
         # Filtering must not touch the sort handlers or vice versa.
         self.assertIn("pairTable", script)
 
+    def _row_for(self, pairs):
+        """The pair table's tbody for one set of pairs."""
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats,
+                                         pairs, self.scan)
+        body = rendered[rendered.index('id="pairTable"'):]
+        return body[body.index("<tbody>"):body.index("</tbody>")]
+
+    def _cells_for(self, pairs):
+        """Header -> cell text for a single-row pair table."""
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats,
+                                         pairs, self.scan)
+        body = rendered[rendered.index('id="pairTable"'):]
+        heads = [re.sub(r"<[^>]+>", "", h).strip() for h in
+                 re.findall(r"<th[^>]*>(.*?)</th>",
+                            body[:body.index("</thead>")], re.S)]
+        row = body[body.index("<tbody>"):body.index("</tbody>")]
+        cells = [re.sub(r"<[^>]+>", "", c).strip() for c in
+                 re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
+        return dict(zip(heads, cells))
+
+    def test_probability_columns_are_blank_when_the_lines_differ(self):
+        # A probability that refers to a different line is not comparable to
+        # one that refers to another, and a line error is in points -- so a
+        # number here would invite exactly the wrong comparison.
+        cells = self._cells_for(
+            [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21, match="AF041170926")])
+        for column in ("&Delta;prob", "Prod err", "Cand err"):
+            self.assertEqual(cells[column], "&mdash;", column)
+        # The two lines and each stream's own probability still show -- they
+        # are facts about the row. It is only the comparisons between them
+        # that are withheld.
+        self.assertEqual(cells["Prod line"], "+44.5")
+        self.assertEqual(cells["Cand line"], "+60.5")
+        self.assertEqual(cells["Prod prob"], "0.5000")
+        self.assertEqual(cells["Cand prob"], "0.0100")
+        # And the line error in points never appears in an error column.
+        self.assertNotIn("15.5000", self._row_for(
+            [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)]))
+
+    def test_the_closer_column_uses_the_line_when_the_lines_differ(self):
+        pairs = [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)]
+        row = self._row_for(pairs)
+        # Prod's line is nearer, so prod is closer -- despite the candidate
+        # having much the better probability against its own outcome.
+        self.assertIn(">prod</span>", row)
+        self.assertNotIn(">cand</span>", row)
+
+    def test_same_line_rows_keep_their_probability_columns(self):
+        row = self._row_for([line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)])
+        self.assertIn("0.0700", row)   # delta prob
+        self.assertIn("0.4500", row)   # prod error
+        self.assertIn("0.3800", row)   # candidate error
+
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()
         self.assertNotIn('src="http', rendered)
@@ -1774,6 +2002,35 @@ class TestReportShape(unittest.TestCase):
             self.report, {"paired_matches": 12},
             {"snapshots": 24, "exact_message_pair": 20, "offset_message_pair": 4},
             self.pairs, self.scan)
+
+    def test_checks_carry_a_row_per_selection(self):
+        pairs = []
+        for i in range(6):
+            for market_id in (50, 51, 54, 55):
+                pairs.append(line_pair(0.5, 0.6, 44.5, 44.5, 24, 21,
+                                       match=f"AF{i}", market_id=market_id))
+        report = directional.build_full_report(pairs, n_bootstrap=50)
+        rendered = self.html_full.render(report, {"paired_matches": 6}, {},
+                                         pairs, self.scan)
+        block = rendered[rendered.index("By selection"):]
+        block = block[:block.index("</section>")]
+        for label in ("Home", "Away", "Over", "Under"):
+            self.assertIn(f">{label}</td>", block)
+        # And it says which side the pooled tables read.
+        self.assertIn("&check;", block)
+
+    def test_rows_can_be_pinned_in_any_table(self):
+        script = self.rendered.split("<script>")[1]
+        self.assertIn("classList.toggle('picked')", script)
+        self.assertIn("TBODY", script)
+        self.assertIn("Escape", script)
+        # Selecting text inside a row must not also pin it.
+        self.assertIn("window.getSelection()", script)
+        # Inset shadows, so pinning never reflows the table.
+        self.assertIn("tbody tr.picked > *{background:var(--pick)", self.rendered)
+        self.assertIn("box-shadow:inset", self.rendered)
+        self.assertIn("--pick:", self.rendered)
+        self.assertIn("click a row to pin it", self.rendered)
 
     def test_handle_check_reports_clean_when_nothing_flipped(self):
         block = self.rendered[self.rendered.index("Handle check"):]

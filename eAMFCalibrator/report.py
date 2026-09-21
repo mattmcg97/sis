@@ -403,6 +403,83 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
+def print_selections(summary):
+    """Every selection, both sides, with its own clustered test.
+
+    The pooled per-market tables read one side and treat the other as its
+    mirror, which is right for reading a result and wrong for checking
+    one: a fault confined to one side averages away into a flat market
+    row. This is where it would show.
+    """
+    print(f"\n{'=' * 104}\nBY SELECTION -- both sides of every market"
+          f"\n{'=' * 104}")
+    printed = False
+    for key, label, metric, spec in (("same_line", "same line", "brier", "+.4f"),
+                                     ("different_line", "diff line", "mae", "+.3f")):
+        selections = summary.get(key, {}).get("selections", {})
+        if not selections:
+            continue
+        if printed:
+            print()
+        printed = True
+        delta = "BRIER_D" if metric == "brier" else "POINTS_D"
+        print(f"  {'VIEW':<11}{'MARKET':<11}{'SEL':<7}{'USED':<6}{'ID':>4}"
+              f"{'PAIRS':>8}{'MATCH':>7}{'WIN%':>8}{delta:>10}{'P':>8}")
+        for market_id in sorted(selections, key=lambda m: (
+                MARKET_PRINT_ORDER.index(selections[m]["market"]), m)):
+            row = selections[market_id]
+            tallied = row["tally"]
+            if not tallied["n"]:
+                continue
+            clustered = row.get(metric, {})
+            used = "yes" if row["canonical"] else ""
+            print(f"  {label:<11}{row['market']:<11}{row['selection']:<7}"
+                  f"{used:<6}{market_id:>4}{tallied['n']:>8,}"
+                  f"{tallied['n_matches']:>7,}"
+                  f"{_pct(tallied['candidate_win_rate']):>8}"
+                  f"{_fmt(clustered.get('mean'), spec):>10}"
+                  f"{_p(clustered.get('p_value')):>8}")
+    if not printed:
+        print("  No pairs.")
+        return
+    print("\n  USED marks the side the pooled tables read; the other is its")
+    print("  mirror. Both are shown here because a fault on one side only --")
+    print("  a line parsed for Over and not for Under, outcomes resolved the")
+    print("  wrong way round -- averages away into a flat market row.")
+
+
+def print_decisive(decisive):
+    """The combined verdict: every pair judged on its own question."""
+    print(f"\n{'=' * 78}\nOVERALL -- every pair on the question it actually "
+          f"asked\n{'=' * 78}")
+    if not decisive["n"]:
+        print("  No pairs could be decided either way.")
+        return
+    votes = decisive["votes"]
+    print(f"  pairs decided             : {decisive['n']:,} of "
+          f"{decisive['n_offered']:,}")
+    print(f"    settled on probability  : {decisive['settled_on_probability']:,}"
+          f"   (both streams quoted the same line)")
+    print(f"    settled on the line     : {decisive['settled_on_line']:,}"
+          f"   (lines differ, so the line decides)")
+    print(f"  pair wins cand / prod     : {decisive['candidate']:,} / "
+          f"{decisive['prod']:,}   ({decisive['tie']:,} level)")
+    print(f"  candidate win rate        : {_pct(decisive['candidate_win_rate'])}")
+    print(f"  match vote cand / prod    : {votes['candidate']} / {votes['prod']}"
+          f"   ({votes['tie']} level)   [{votes['n_matches']} matches]")
+    print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
+    print("\n  A different line overrules the probability, so a pair whose")
+    print("  lines differ is decided on whose line landed nearer the result")
+    print("  and its probabilities are not compared at all. Where the lines")
+    print("  match, the probabilities answer the same question and decide.")
+    print("\n  No mean error is shown here on purpose: a line error is in")
+    print("  points and a probability error is not, so there is no average")
+    print("  of the two to take. Only the per-pair decision survives the")
+    print("  mix. That also makes this the WEAKER test -- it throws away how")
+    print("  much closer each was. The two halves below keep that, so read")
+    print("  this for direction and them for strength.")
+
+
 def print_directional_breakdown(title, grouped, order=None,
                                 label_width=SCORE_WIDTH,
                                 mode="probability"):
