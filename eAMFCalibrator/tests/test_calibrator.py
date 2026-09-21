@@ -789,11 +789,20 @@ class TestMatchClock(unittest.TestCase):
 
 
 def pair(prod, candidate, outcome, match="AF1", market_id=50, drive=1,
-         period=1, score_diff=0, team="Home Team", message=100, gap=0):
-    """A moneyline pair: no line, so both streams answer the same question."""
+         period=1, score_diff=0, team="Home Team", message=100, gap=0,
+         home=None, away=None):
+    """A moneyline pair: no line, so both streams answer the same question.
+
+    Most tests care only about the difference, so `score_diff` still works
+    and the totals are derived from it. Pass `home`/`away` where the actual
+    totals matter.
+    """
+    if home is None and away is None:
+        home, away = max(score_diff, 0), max(-score_diff, 0)
     return directional.PairedObservation(
         match_code=match, drive_number=drive, period_number=period,
-        score_diff=score_diff, offensive_team=team, market_id=market_id,
+        score_p1=home or 0, score_p2=away or 0,
+        offensive_team=team, market_id=market_id,
         message_count=message, message_gap=gap,
         prod_probability=prod, candidate_probability=candidate,
         prod_line=None, candidate_line=None,
@@ -804,7 +813,8 @@ def line_pair(prod, candidate, prod_line, candidate_line, final_p1, final_p2,
               match="AF1", market_id=54):
     """A pair on a lined market, each side graded against ITS OWN line."""
     return directional.PairedObservation(
-        match_code=match, drive_number=1, period_number=1, score_diff=0,
+        match_code=match, drive_number=1, period_number=1,
+        score_p1=0, score_p2=0,
         offensive_team="Home Team", market_id=market_id,
         message_count=100, message_gap=0,
         prod_probability=prod, candidate_probability=candidate,
@@ -1371,7 +1381,8 @@ class TestComplementReport(unittest.TestCase):
         """
         overlapping = [
             directional.PairedObservation(
-                match_code="AF1", drive_number=1, period_number=1, score_diff=0,
+                match_code="AF1", drive_number=1, period_number=1,
+                score_p1=0, score_p2=0,
                 offensive_team="Home Team", market_id=market_id,
                 message_count=100, message_gap=0,
                 prod_probability=0.6, candidate_probability=0.6,
@@ -1427,7 +1438,8 @@ def spread_sides(line_home, line_away, final_p1, final_p2, match="AF1",
     out = []
     for market_id, line in ((52, line_home), (53, line_away)):
         out.append(directional.PairedObservation(
-            match_code=match, drive_number=1, period_number=1, score_diff=0,
+            match_code=match, drive_number=1, period_number=1,
+            score_p1=0, score_p2=0,
             offensive_team="Home Team", market_id=market_id,
             message_count=message, message_gap=0,
             prod_probability=p_home if market_id == 52 else p_away,
@@ -1604,7 +1616,50 @@ class TestReportRendering(unittest.TestCase):
         rendered = self._render()
         body = rendered[rendered.index('id="pairTable"'):]
         body = body[body.index("<tbody>"):body.index("</tbody>")]
-        self.assertEqual(body.count("<tr>"), len(self.pairs))
+        self.assertEqual(body.count("<tr "), len(self.pairs))
+
+    def test_pair_rows_carry_both_totals_not_just_the_difference(self):
+        # 7-7 and 21-21 are the same difference and very different games.
+        pairs = [pair(0.6, 0.8, True, match="AF1", home=21, away=14)]
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats,
+                                         pairs, self.scan)
+        body = rendered[rendered.index('id="pairTable"'):]
+        head = body[:body.index("</thead>")]
+        for name in ("Home", "Away", "Diff"):
+            self.assertIn(f">{name}</th>", head)
+        row = body[body.index("<tbody>"):body.index("</tbody>")]
+        self.assertIn('data-v="21">21</td>', row)
+        self.assertIn('data-v="14">14</td>', row)
+        self.assertIn('data-v="7">+7</td>', row)
+
+    def test_score_diff_cannot_drift_from_the_totals(self):
+        p = pair(0.6, 0.8, True, home=24, away=10)
+        self.assertEqual(p.score_diff, 14)
+        self.assertEqual((p.score_p1, p.score_p2), (24, 10))
+
+    def test_every_row_carries_its_match_id_for_the_filter(self):
+        pairs = [pair(0.6, 0.8, True, match="AF-Upper"),
+                 pair(0.6, 0.8, True, match="af-lower")]
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats,
+                                         pairs, self.scan)
+        body = rendered[rendered.index('id="pairTable"'):]
+        body = body[body.index("<tbody>"):body.index("</tbody>")]
+        # Lower-cased on the row so the filter can compare without
+        # re-casing twenty thousand strings per keystroke.
+        self.assertIn('data-match="af-upper"', body)
+        self.assertIn('data-match="af-lower"', body)
+
+    def test_the_filter_box_is_wired_to_the_pair_table(self):
+        rendered = self._render()
+        self.assertIn('id="pairFilter"', rendered)
+        self.assertIn('id="pairCount"', rendered)
+        script = rendered.split("<script>")[1]
+        self.assertIn("pairFilter", script)
+        self.assertIn("dataset.match", script)
+        # Filtering must not touch the sort handlers or vice versa.
+        self.assertIn("pairTable", script)
 
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()

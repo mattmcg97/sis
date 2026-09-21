@@ -36,8 +36,10 @@ Four views:
   says whether anything failed. Console prints a compact version; `--axes`
   prints them in full.
 
-  Then **every paired observation**, with both streams' line, price,
-  probability, outcome and error, sorted by widest probability disagreement.
+  Then **every paired observation**, with the score at the snapshot (home,
+  away and the difference), both streams' line, price, probability, outcome
+  and error, sorted by widest probability disagreement. A search box above
+  the table filters it to one match id.
   Around 600 bytes per pair row, so a three-day window lands near 5 MB.
 
 
@@ -397,7 +399,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-205 tests covering line parsing, market resolution, bucket edges, drive
+209 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

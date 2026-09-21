@@ -459,7 +459,7 @@ def _pair_rows(pairs):
                             f'{"cand" if winner == "candidate" else "prod"}</span>')
         prod_error, candidate_error = p.errors("line" if not p.same_line else "probability")
         out.append(
-            f'<tr>'
+            f'<tr data-match="{html.escape(p.match_code).lower()}">'
             f'<td>{"" if p.publish_time is None else html.escape(str(p.publish_time)[:19])}</td>'
             f'<td>{html.escape(p.match_code)}</td>'
             f'<td data-v="{p.drive_number}">{p.drive_number}</td>'
@@ -467,6 +467,8 @@ def _pair_rows(pairs):
             f'<td data-v="{abs(p.message_gap)}" class="{"" if p.message_gap == 0 else "warn"}">'
             f'{p.message_gap:+d}</td>'
             f'<td>{"Q" + str(p.period_number) if p.period_number and p.period_number <= 4 else ("OT" if p.period_number else "?")}</td>'
+            f'<td data-v="{p.score_p1}">{p.score_p1}</td>'
+            f'<td data-v="{p.score_p2}">{p.score_p2}</td>'
             f'<td data-v="{p.score_diff}">{p.score_diff:+d}</td>'
             f'<td>{"H" if p.offensive_team == "Home Team" else ("A" if p.offensive_team == "Away Team" else "?")}</td>'
             f'<td>{MARKET_TITLES.get(markets.market_group(p.market_id), "?")}</td>'
@@ -495,11 +497,16 @@ def _pair_table(pairs):
     <section class="panel" id="pairs">
       <h2>Every pair <span class="tag">{len(pairs):,} rows, widest
           &Delta;prob first</span></h2>
+      <div class="filter">
+        <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
+               placeholder="filter by match id" aria-label="Filter rows by match id">
+        <span id="pairCount" class="count">{len(pairs):,} rows</span>
+      </div>
       <div class="scroll">
       <table class="sortable" id="pairTable">
         <thead><tr>
           <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th title="offset from the snapshot's own message; 0 is an exact hit">&plusmn;Msg</th>
-          <th>Qtr</th><th>Score</th><th>Poss</th>
+          <th>Qtr</th><th title="PLAYER_1 score at the snapshot">Home</th><th title="PLAYER_2 score at the snapshot">Away</th><th title="home minus away">Diff</th><th>Poss</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
           <th>Prod price</th><th>Cand price</th>
@@ -613,6 +620,12 @@ def render(report, header, stats, pairs, handle_scan):
   thead th.ax{{color:var(--ink)}}
   .tag{{color:var(--dim);font-weight:400;font-size:11px;letter-spacing:0}}
   .count{{color:var(--dim);font-size:11px;margin:0 0 8px}}
+  .filter{{display:flex;gap:10px;align-items:center;margin:0 0 8px}}
+  .filter .count{{margin:0}}
+  .filter input{{font:inherit;font-size:12px;padding:4px 8px;min-width:220px;
+                 color:var(--ink);background:var(--bg);border:1px solid var(--line);
+                 border-radius:5px}}
+  .filter input:focus{{outline:2px solid var(--accent);outline-offset:-1px}}
   th[title]{{cursor:help;border-bottom:1px dotted var(--dim)}}
   code{{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}}
   details.panel{{padding:0}}
@@ -699,6 +712,40 @@ def render(report, header, stats, pairs, handle_scan):
     }});
   }});
 }});
+
+(function () {{
+  var input = document.getElementById('pairFilter');
+  var table = document.getElementById('pairTable');
+  var label = document.getElementById('pairCount');
+  if (!input || !table || !label) return;
+  var rows = Array.prototype.slice.call(table.tBodies[0].rows);
+  var total = rows.length;
+  var pending = null;
+
+  function apply() {{
+    var needle = input.value.trim().toLowerCase();
+    var shown = 0;
+    // The row carries its match id, so this never touches the DOM text of
+    // twenty-odd cells per row -- on a long window that is the difference
+    // between a keystroke feeling instant and not.
+    for (var i = 0; i < total; i++) {{
+      var row = rows[i];
+      var hit = !needle || row.dataset.match.indexOf(needle) !== -1;
+      if (hit) shown++;
+      var hidden = row.style.display === 'none';
+      if (hit === hidden) row.style.display = hit ? '' : 'none';
+    }}
+    label.textContent = needle
+      ? shown.toLocaleString() + ' of ' + total.toLocaleString() + ' rows'
+      : total.toLocaleString() + ' rows';
+  }}
+
+  input.addEventListener('input', function () {{
+    if (pending) clearTimeout(pending);
+    pending = setTimeout(apply, 120);
+  }});
+  input.addEventListener('search', apply);
+}})();
 </script>
 </body>
 </html>
