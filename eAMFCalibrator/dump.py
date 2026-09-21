@@ -16,6 +16,8 @@ Five files, joinable on (match_code, event_message_count):
               which one the index chose and why
   timeline    one row per message: what the play feed, the scoreboard and
               each stream had at that point in the sequence
+  pairs       directional_pairs.csv for these matches, widened with
+              everything the other four files know about each row
 
 The three sources share one EVENT_MESSAGE_COUNT sequence -- that is what
 makes pairing possible at all -- but they do not line up one to one. A
@@ -30,7 +32,8 @@ import collections
 import csv
 import os
 
-from . import buckets, config, directional, drives, markets, snowflake_io
+from . import (buckets, config, directional, drives, markets, report,
+               snowflake_io)
 from .drives import PlayRow, ScoreRow, build_snapshots, classify_plays, score_at
 
 PLAY_FIELDS = [
@@ -275,6 +278,81 @@ def _timeline_rows(match_code, play_out, score_out, quote_out):
     return out
 
 
+# directional_pairs.csv, plus every column the rest of the dump can add.
+# Same shape, so it reads the same way, with the drive-detection and
+# market-state context that otherwise needs a four-way join.
+PAIR_DUMP_FIELDS = report.PAIR_FIELDS + [
+    "market", "selection", "prod_decimal", "candidate_decimal",
+    "decisive_winner", "decided_by", "basis",
+    "prod_state", "candidate_state", "prod_live", "candidate_live", "live",
+    "anchor_kind", "anchor_cleaning", "drive_n_plays", "drive_dropped_inside",
+    "prod_rows_at_message", "candidate_rows_at_message",
+    "score_bucket", "time_bucket", "possession_bucket",
+]
+
+
+def _pair_dump_rows(pairs, play_out, drive_out, quote_out):
+    """One row per pair, carrying the context the other files hold.
+
+    Built from report.write_pairs_csv's own row for the shared columns, so
+    the two cannot describe the same pair differently.
+    """
+    by_drive = {(r["match_code"], r["drive_number"]): r for r in drive_out}
+    cleaning = {(r["match_code"], r["event_message_count"]): r["cleaning"]
+                for r in play_out}
+    rows_at = collections.defaultdict(int)
+    for row in quote_out:
+        key = (row["match_code"], row["event_message_count"],
+               row["stream"], row["market_id"])
+        rows_at[key] = max(rows_at[key], row["rows_at_this_message"])
+
+    out = []
+    for pair in pairs:
+        row = dict(report.pair_row(pair))
+        drive = by_drive.get((pair.match_code, pair.drive_number), {})
+        row.update({
+            "market": markets.market_group(pair.market_id),
+            "selection": markets.selection_label(pair.market_id),
+            "prod_decimal": pair.prod_decimal,
+            "candidate_decimal": pair.candidate_decimal,
+            "decisive_winner": pair.decisive_winner,
+            "decided_by": pair.decided_by,
+            "basis": "line" if not pair.same_line else "prob",
+            "prod_state": pair.prod_state,
+            "candidate_state": pair.candidate_state,
+            "prod_live": int(pair.prod_live),
+            "candidate_live": int(pair.candidate_live),
+            "live": _live_label(pair),
+            "anchor_kind": pair.anchor,
+            "anchor_cleaning": cleaning.get(
+                (pair.match_code, pair.message_count), ""),
+            "drive_n_plays": drive.get("n_plays", ""),
+            "drive_dropped_inside": drive.get("n_dropped_inside", ""),
+            "prod_rows_at_message": rows_at.get(
+                (pair.match_code, pair.message_count,
+                 directional.PROD, pair.market_id), ""),
+            "candidate_rows_at_message": rows_at.get(
+                (pair.match_code, pair.message_count,
+                 directional.CANDIDATE, pair.market_id), ""),
+            "score_bucket": buckets.score_diff_bucket(pair.score_diff),
+            "time_bucket": buckets.time_bucket(pair.period_number,
+                                               pair.drive_number),
+            "possession_bucket": buckets.possession_bucket(pair.offensive_team),
+        })
+        out.append(row)
+    out.sort(key=lambda r: (r["match_code"], r["message_count"], r["market_id"]))
+    return out
+
+
+def _live_label(pair):
+    """Which side was not tradeable, in the report's own vocabulary."""
+    if not pair.not_live:
+        return "live"
+    if not pair.prod_live and not pair.candidate_live:
+        return "both"
+    return "prod" if not pair.prod_live else "cand"
+
+
 def _write(path, fields, rows):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -286,6 +364,7 @@ def _write(path, fields, rows):
 
 def run(cur, match_codes, out_dir, time_column, verbose=True):
     """Dump the working out for these matches. Returns the paths written."""
+    from . import handles
     play_rows = snowflake_io.fetch_plays(cur, match_codes, time_column)
     score_rows = snowflake_io.fetch_scores(cur, match_codes)
     quote_rows = {
@@ -326,7 +405,20 @@ def run(cur, match_codes, out_dir, time_column, verbose=True):
                   f"{len(q):,} quote rows, {len(t):,} messages "
                   f"({shared:,} with a live market in both streams)")
 
+    # The pairs the calibrator would build from these same matches, so the
+    # snapshot rows above can be read against what they became.
+    stats = collections.defaultdict(int)
+    pairs = directional.build_pairs(cur, match_codes, time_column, stats,
+                                    handles.Scan())
+    pair_rows = _pair_dump_rows(pairs, all_plays, all_drives, all_quotes)
+    if verbose and pairs:
+        live = sum(1 for r in pair_rows if r["live"] == "live")
+        print(f"  {len(pair_rows):,} pairs ({live:,} live) from "
+              f"{len({r['message_count'] for r in pair_rows}):,} snapshots")
+
     written = [
+        _write(os.path.join(out_dir, "dump_pairs.csv"), PAIR_DUMP_FIELDS,
+               pair_rows),
         _write(os.path.join(out_dir, "dump_plays.csv"), PLAY_FIELDS, all_plays),
         _write(os.path.join(out_dir, "dump_scores.csv"), SCORE_FIELDS, all_scores),
         _write(os.path.join(out_dir, "dump_drives.csv"), DRIVE_FIELDS, all_drives),
@@ -334,4 +426,5 @@ def run(cur, match_codes, out_dir, time_column, verbose=True):
         _write(os.path.join(out_dir, "dump_timeline.csv"), TIMELINE_FIELDS,
                all_timeline),
     ]
-    return written, all_plays, all_scores, all_drives, all_quotes, all_timeline
+    return (written, all_plays, all_scores, all_drives, all_quotes,
+            all_timeline, pair_rows)

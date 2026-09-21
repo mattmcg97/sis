@@ -1317,6 +1317,84 @@ class TestAnchorFieldCheck(unittest.TestCase):
         self.assertEqual(out, "")
 
 
+class TestPairDump(unittest.TestCase):
+    """directional_pairs.csv, widened with what the other files know."""
+
+    def rows(self):
+        from .. import dump
+        pairs = [line_pair(0.50, 0.62, 44.5, 44.5, 24, 21, match="AF1",
+                           market_id=54)]
+        pairs = [dataclasses.replace(
+            pairs[0], drive_number=2, period_number=3, score_p1=14,
+            score_p2=7, field_position=26, down_number=1, distance=10,
+            message_count=197, prod_state="open/true",
+            candidate_state="UNDER SETTLEMENT/false", candidate_live=False,
+            anchor=drives.FIRST_DOWN)]
+        play_out = [{"match_code": "AF1", "event_message_count": 197,
+                     "cleaning": drives.DRIVE_START}]
+        drive_out = [{"match_code": "AF1", "drive_number": 2, "n_plays": 6,
+                      "n_dropped_inside": 3}]
+        quote_out = [{"match_code": "AF1", "event_message_count": 197,
+                      "stream": "prod", "market_id": 54,
+                      "rows_at_this_message": 2},
+                     {"match_code": "AF1", "event_message_count": 197,
+                      "stream": "candidate", "market_id": 54,
+                      "rows_at_this_message": 1}]
+        return dump._pair_dump_rows(pairs, play_out, drive_out, quote_out)
+
+    def test_it_keeps_every_directional_pairs_column(self):
+        from .. import dump
+        row = self.rows()[0]
+        for field in report.PAIR_FIELDS:
+            self.assertIn(field, row, field)
+        # And in the same order, so the file reads the same way.
+        self.assertEqual(dump.PAIR_DUMP_FIELDS[:len(report.PAIR_FIELDS)],
+                         report.PAIR_FIELDS)
+
+    def test_the_shared_columns_come_from_one_place(self):
+        # The dump widens report.pair_row rather than rebuilding it, so
+        # the two files cannot describe the same pair differently.
+        from .. import dump
+        pair = line_pair(0.5, 0.6, 44.5, 44.5, 24, 21)
+        widened = dump._pair_dump_rows([pair], [], [], [])[0]
+        for key, value in report.pair_row(pair).items():
+            self.assertEqual(widened[key], value, key)
+
+    def test_it_carries_the_drive_detection_context(self):
+        row = self.rows()[0]
+        self.assertEqual(row["anchor_kind"], drives.FIRST_DOWN)
+        self.assertEqual(row["anchor_cleaning"], drives.DRIVE_START)
+        self.assertEqual(row["drive_n_plays"], 6)
+        self.assertEqual(row["drive_dropped_inside"], 3)
+
+    def test_it_carries_the_market_state(self):
+        row = self.rows()[0]
+        self.assertEqual(row["prod_state"], "open/true")
+        self.assertEqual(row["candidate_state"], "UNDER SETTLEMENT/false")
+        self.assertEqual((row["prod_live"], row["candidate_live"]), (1, 0))
+        self.assertEqual(row["live"], "cand")
+
+    def test_it_shows_how_many_rows_the_message_offered(self):
+        # The case that cost the spread and total their pairs, on the row
+        # it affected rather than in a separate file.
+        row = self.rows()[0]
+        self.assertEqual(row["prod_rows_at_message"], 2)
+        self.assertEqual(row["candidate_rows_at_message"], 1)
+
+    def test_it_carries_the_buckets_the_pair_lands_in(self):
+        row = self.rows()[0]
+        self.assertEqual(row["score_bucket"], "Home 1 score")
+        self.assertEqual(row["time_bucket"], "Q3")
+        self.assertEqual(row["possession_bucket"], "Home")
+
+    def test_it_names_the_market_and_the_decision(self):
+        row = self.rows()[0]
+        self.assertEqual((row["market"], row["selection"]), ("total", "Over"))
+        self.assertEqual(row["basis"], "prob")
+        # Not live, so nothing decided it.
+        self.assertIsNone(row["decisive_winner"])
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

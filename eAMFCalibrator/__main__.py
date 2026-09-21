@@ -139,8 +139,8 @@ def cmd_dump(args):
                     cur, config.STREAMS[directional.CANDIDATE]))
                 match_codes = sorted(prod & candidate)[-args.matches:]
             print(f"\nDumping drive detection for {len(match_codes)} matches")
-            written, plays, scores, drive_rows, quotes, timeline = dump.run(
-                cur, match_codes, out_dir, time_column)
+            (written, plays, scores, drive_rows, quotes, timeline,
+             pair_rows) = dump.run(cur, match_codes, out_dir, time_column)
     finally:
         conn.close()
 

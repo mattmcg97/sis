@@ -695,45 +695,54 @@ def print_directional_breakdown(title, grouped, order=None,
     print(f"  candidate in {unit}, so positive means the candidate is better.")
 
 
+def pair_row(p):
+    """One paired observation as a flat row.
+
+    Shared with the dump so the two files cannot describe the same pair
+    differently -- the dump widens this row rather than rebuilding it.
+    """
+    return {
+        "publish_time": p.publish_time,
+        "match_code": p.match_code,
+        "drive_number": p.drive_number,
+        "period_number": p.period_number,
+        "score_p1": p.score_p1,
+        "score_p2": p.score_p2,
+        "score_diff": p.score_diff,
+        "offensive_team": p.offensive_team,
+        "field_position": p.field_position,
+        "down_number": p.down_number,
+        "distance": p.distance,
+        "market_id": p.market_id,
+        "message_count": p.message_count,
+        "message_gap": p.message_gap,
+        "prod_line": p.prod_line,
+        "candidate_line": p.candidate_line,
+        "line_delta": p.line_delta,
+        "same_line": int(p.same_line),
+        "prod_probability": p.prod_probability,
+        "candidate_probability": p.candidate_probability,
+        "prod_outcome": "" if p.prod_outcome is None else int(p.prod_outcome),
+        "candidate_outcome": ("" if p.candidate_outcome is None
+                              else int(p.candidate_outcome)),
+        "realized": p.realized,
+        "prod_error": p.prod_error,
+        "candidate_error": p.candidate_error,
+        "prod_line_error": p.prod_line_error,
+        "candidate_line_error": p.candidate_line_error,
+        "disagreement": p.disagreement,
+        "probability_winner": p.winner("probability"),
+        "line_winner": p.winner("line"),
+    }
+
+
 def write_pairs_csv(path, pairs):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=PAIR_FIELDS)
         writer.writeheader()
         for p in pairs:
-            writer.writerow({
-                "publish_time": p.publish_time,
-                "match_code": p.match_code,
-                "drive_number": p.drive_number,
-                "period_number": p.period_number,
-                "score_p1": p.score_p1,
-                "score_p2": p.score_p2,
-                "score_diff": p.score_diff,
-                "offensive_team": p.offensive_team,
-                "field_position": p.field_position,
-                "down_number": p.down_number,
-                "distance": p.distance,
-                "market_id": p.market_id,
-                "message_count": p.message_count,
-                "message_gap": p.message_gap,
-                "prod_line": p.prod_line,
-                "candidate_line": p.candidate_line,
-                "line_delta": p.line_delta,
-                "same_line": int(p.same_line),
-                "prod_probability": p.prod_probability,
-                "candidate_probability": p.candidate_probability,
-                "prod_outcome": "" if p.prod_outcome is None else int(p.prod_outcome),
-                "candidate_outcome": ("" if p.candidate_outcome is None
-                                      else int(p.candidate_outcome)),
-                "realized": p.realized,
-                "prod_error": p.prod_error,
-                "candidate_error": p.candidate_error,
-                "prod_line_error": p.prod_line_error,
-                "candidate_line_error": p.candidate_line_error,
-                "disagreement": p.disagreement,
-                "probability_winner": p.winner("probability"),
-                "line_winner": p.winner("line"),
-            })
+            writer.writerow(pair_row(p))
     print(f"\n  paired observations -> {path}")
 
 
