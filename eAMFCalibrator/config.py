@@ -91,15 +91,17 @@ SCORE_DIFF_BUCKETS = [
 EXCLUDE_FLIPPED_MATCHES = False
 
 # A quote is live when STATUS is 'open' and IS_ACTIVE is 'true'; anything
-# else is treated as suspended. Deliberately value-agnostic -- `preflight`
-# prints what those columns really contain so the assumption can be checked.
+# else is not tradeable. This feed publishes four combinations and none of
+# them is a suspension: open/true, UNDER SETTLEMENT/false, CLOSED/false and
+# CLOSED/true. Only about 15% of rows are open. `preflight` prints the real
+# counts, so this stays a checked fact rather than an assumption.
 LIVE_STATUS = "open"
 LIVE_IS_ACTIVE = "true"
 
-# Suspended quotes are carried onto the pairs and flagged, but kept out of
-# every metric: a suspended price is not a price anyone could have taken.
-# Set False to score them anyway, which is almost certainly wrong and is
-# there so the cost of excluding them can be measured.
+# Non-live quotes are carried onto the pairs and flagged, but kept out of
+# every metric: a price nobody could have taken is not a price. Set False
+# to score them anyway, which is almost certainly wrong and is there so the
+# cost of excluding them can be measured.
 REQUIRE_LIVE_QUOTE = True
 
 # Which time-axis to split on: "period" (quarter, available now) or

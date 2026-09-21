@@ -155,7 +155,7 @@ def cmd_directional(args):
 
     report.print_line_agreement(summary["lines"])
     report.print_decisive(summary["decisive"])
-    report.print_suspension(directional.suspension_report(pairs))
+    report.print_market_state(directional.market_state_report(pairs))
     report.print_selections(summary)
 
     report.print_block(
@@ -338,7 +338,7 @@ def cmd_report(args):
     report.print_daily(full["daily"])
     if args.axes:
         report.print_line_agreement(summary["lines"])
-        report.print_suspension(full["suspension"])
+        report.print_market_state(full["market_state"])
         report.print_selections(summary)
         report.print_complement_report(full["complement"])
         report.print_spread_interpretation(full["spread"])
