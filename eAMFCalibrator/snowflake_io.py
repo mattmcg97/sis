@@ -95,6 +95,43 @@ def match_universe(cur, stream_table):
     return [r[0] for r in rows]
 
 
+def rows_per_message(cur, stream_table):
+    """How many rows a single (match, market, message) really carries.
+
+    The pipeline long assumed one. For the moneyline that holds; for the
+    spread and total, whose lines move, a message can carry the settlement
+    of the old line beside the open quote for the new one. This says which,
+    and how often a message offers both a live row and a dead one -- the
+    case where picking the wrong row silently costs a pair.
+    """
+    predicate, params = window_predicate("PUBLISH_TIME")
+    _, rows = fetch_all(cur, f"""
+        WITH per_message AS (
+            SELECT MARKET_ID, MATCH_CODE, EVENT_MESSAGE_COUNT,
+                   COUNT(*) AS N_ROWS,
+                   SUM(CASE WHEN STATUS = %s AND IS_ACTIVE = %s
+                            THEN 1 ELSE 0 END) AS N_LIVE
+            FROM {qualified(stream_table)}
+            WHERE MARKET_ID IN ({_in_clause(MARKET_IDS)})
+              AND EVENT_MESSAGE_COUNT IS NOT NULL
+              AND {predicate}
+            GROUP BY MARKET_ID, MATCH_CODE, EVENT_MESSAGE_COUNT
+        )
+        SELECT MARKET_ID,
+               COUNT(*) AS MESSAGES,
+               AVG(N_ROWS) AS MEAN_ROWS,
+               MAX(N_ROWS) AS MAX_ROWS,
+               SUM(CASE WHEN N_ROWS > 1 THEN 1 ELSE 0 END) AS MULTI,
+               SUM(CASE WHEN N_ROWS > 1 AND N_LIVE > 0 AND N_LIVE < N_ROWS
+                        THEN 1 ELSE 0 END) AS MIXED
+        FROM per_message
+        GROUP BY MARKET_ID
+        ORDER BY MARKET_ID
+    """, tuple([config.LIVE_STATUS, config.LIVE_IS_ACTIVE]
+               + list(MARKET_IDS) + params))
+    return rows
+
+
 def team_vocabulary(cur, stream_table):
     """What the three team-naming columns actually contain.
 

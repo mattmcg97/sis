@@ -820,6 +820,62 @@ class TestSnapshotAnchor(unittest.TestCase):
                              f"{down}&{distance}")
 
 
+class TestQuotePreference(unittest.TestCase):
+    """Which row wins when a message carries more than one for a market."""
+
+    @staticmethod
+    def row(message, probability, status, active, when=1):
+        return ("AF1", 52, dt.datetime(2026, 9, 18, 12, when), probability,
+                2.0, "PLAYER 1 -3.5", message, status, active)
+
+    def test_a_live_row_beats_a_dead_one_published_earlier(self):
+        # The old line settling is published before the new one opens, so
+        # keeping the first row kept the dead one -- and the pair with it.
+        index = directional.index_by_message([
+            self.row(100, 55.0, "UNDER SETTLEMENT", "false", when=1),
+            self.row(100, 48.0, "open", "true", when=2),
+        ])
+        quote = index[("AF1", 52)][100]
+        self.assertTrue(quote.live)
+        self.assertEqual(quote.probability, 48.0)
+
+    def test_a_dead_row_never_displaces_a_live_one(self):
+        index = directional.index_by_message([
+            self.row(100, 48.0, "open", "true", when=1),
+            self.row(100, 55.0, "UNDER SETTLEMENT", "false", when=2),
+        ])
+        self.assertEqual(index[("AF1", 52)][100].probability, 48.0)
+
+    def test_among_equals_the_earliest_still_wins(self):
+        # Two live rows: keep the one nearest the event, not a later
+        # correction to it.
+        index = directional.index_by_message([
+            self.row(100, 48.0, "open", "true", when=1),
+            self.row(100, 49.0, "open", "true", when=2),
+        ])
+        self.assertEqual(index[("AF1", 52)][100].probability, 48.0)
+        # And the same when both are dead, so behaviour is unchanged there.
+        index = directional.index_by_message([
+            self.row(100, 55.0, "CLOSED", "false", when=1),
+            self.row(100, 56.0, "UNDER SETTLEMENT", "false", when=2),
+        ])
+        self.assertEqual(index[("AF1", 52)][100].probability, 55.0)
+
+    def test_it_counts_what_it_saw(self):
+        stats = collections.defaultdict(int)
+        directional.index_by_message([
+            self.row(100, 55.0, "UNDER SETTLEMENT", "false", when=1),
+            self.row(100, 48.0, "open", "true", when=2),
+            self.row(101, 50.0, "open", "true", when=3),
+        ], stats)
+        self.assertEqual(stats["quote_rows_sharing_a_message"], 1)
+        self.assertEqual(stats["quote_upgraded_to_live"], 1)
+
+    def test_stats_are_optional(self):
+        index = directional.index_by_message([self.row(100, 48.0, "open", "true")])
+        self.assertEqual(index[("AF1", 52)][100].probability, 48.0)
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

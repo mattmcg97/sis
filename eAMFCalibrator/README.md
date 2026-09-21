@@ -443,6 +443,43 @@ side only are not lost at random: they cluster around scores, which is
 where two models differ most. `REQUIRE_LIVE_QUOTE = False` scores them
 anyway, so the cost of excluding them stays measurable.
 
+## One row per message was not true
+
+`index_by_message` kept the **first** row per `(match, market, message)`,
+on the stated assumption that a message carries one row per market. For
+the moneyline that holds. For the spread and total it does not: those
+lines move, so a message can carry the settlement of the old line beside
+the open quote for the new one, and rows arrive ordered by publish time
+rather than by usefulness.
+
+The cost showed up as markets that looked permanently dead:
+
+| Market | Live, drives 1–3 | Live, drives 4+ |
+|---|---:|---:|
+| Moneyline | 100% | 100% |
+| Spread | 24.7% | **2.2%** |
+| Total | 16.3% | **1.3%** |
+
+The moneyline has no line to move and never degrades. The spread and total
+collapse as a match accumulates settled lines — which is the shape you get
+when the row kept is chosen arbitrarily and the pool of dead rows grows.
+
+A live row now replaces a dead one for the same message. Among rows of
+equal liveness the earliest still wins, which keeps the quote nearest the
+event rather than a later correction to it. The run header counts both how
+many messages offered more than one row and how many pairs that rescued,
+and `preflight` reports rows per message per market — including the
+**mixed** case, where a message offered a tradeable quote *and* a dead one
+and the choice decided whether the pair could be scored at all.
+
+### It is not the drive-start anchor
+
+Anchoring mid-drive would not help, and the data already says so: the
+snapshots that landed off-anchor are *less* live than the ones on a
+drive's opening 1st and 10 (spread 1.5% against 9.3%, total 2.5% against
+5.9%). Liveness tracks the market and the match clock, not where in a
+drive the snapshot sits.
+
 ## Where the snapshot lands
 
 A snapshot is meant to be a drive's **opening 1st and 10**. It was taken
@@ -570,7 +607,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-253 tests covering line parsing, market resolution, bucket edges, drive
+258 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

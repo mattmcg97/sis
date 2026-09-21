@@ -73,6 +73,8 @@ def print_header(header, stats):
         ("null probability", "null_probability"),
         ("line could not be parsed", "unparsed_line"),
         ("push / unresolved", "pushes_or_unresolved"),
+        ("messages offering >1 row for a market", "quote_rows_sharing_a_message"),
+        ("...where a live row replaced a dead one", "quote_upgraded_to_live"),
         ("matches with no play rows", "matches_without_plays"),
         ("matches with no final score", "matches_without_final"),
     ]:
@@ -356,6 +358,8 @@ def print_directional_header(header, stats):
         print(f"  pairs on the exact message: {exact:,} ({share:.1f}%)")
         print(f"  pairs on a nearby message : {offset:,}")
     for label, key in [
+        ("messages offering >1 row for a market", "quote_rows_sharing_a_message"),
+        ("...where a live row replaced a dead one", "quote_upgraded_to_live"),
         ("market never quoted by both", "no_common_message_for_market"),
         ("nearest common message too far", "outside_message_gap"),
         ("line could not be parsed", "unparsed_line"),
@@ -364,7 +368,7 @@ def print_directional_header(header, stats):
         ("matches with no final score", "matches_without_final"),
     ]:
         if stats.get(key):
-            print(f"  {label:<31}: {stats[key]:,}")
+            print(f"  {label:<39}: {stats[key]:,}")
 
 
 def print_directional_headline(overall, votes):
