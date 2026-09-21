@@ -161,12 +161,6 @@ def print_handle_check(scan, limit=20):
     verdict = "CLEAN" if not flipped else "FLIPPED HANDLES FOUND"
     print(f"  {scan['matches']:,} matches scanned   {scan['matches_clean']:,} with "
           f"nothing to flag   {flipped:,} with flipped handles ({share:.1%})")
-    if scan["anchors"]:
-        print(f"  {scan['anchors']:,} touchdown anchors, "
-              f"{_pct(scan['anchor_agreement'])} of them agreeing with the "
-              f"play feed")
-        print(f"  Reading: "
-              f"{handles.READING_TEXT[scan['possession_reading']]}")
     print(f"  Verdict: {verdict}")
     if flipped and not config.EXCLUDE_FLIPPED_MATCHES:
         print("  These matches are STILL IN the numbers above. Their score")
@@ -202,19 +196,7 @@ def print_handle_check(scan, limit=20):
     print("  does a rescinded score. FINAL MISMATCH is the running total")
     print("  disagreeing with SCORE_ENDGAME, which a missing late score")
     print("  explains as well as a swap, so it is not counted as a flip.")
-    print("\n  The POSSESSION kinds read none of the totals. After a touchdown")
-    print("  the other team receives, and the play feed names its teams Home")
-    print("  and Away rather than PLAYER_1 and PLAYER_2, so each touchdown")
-    print("  independently tests the mapping -- including while the score is")
-    print("  level, which the checks above cannot. INVERTED is a match crossed")
-    print("  throughout; FLIP is agreement turning over at one point, which is")
-    print("  the message shown; UNSTABLE is neither, so it is not called a flip.")
-    print("\n  Read the window-wide agreement rate BEFORE any single match. One")
-    print("  match cannot tell a flipped handle from a wrong assumption or a")
-    print("  noisy play feed -- all three look like disagreement. If almost")
-    print("  every match inverts, that is one wrong assumption, not one flip")
-    print("  per match. A turnover cannot do this: it costs at most one")
-    print("  anchor, and a match needs nearly all of them to fail.")
+    print("  Blind spot: a swap while the score is level leaves no trace.")
 
 
 def print_worst(rows):

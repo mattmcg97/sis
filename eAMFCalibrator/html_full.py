@@ -268,26 +268,15 @@ def _handle_block(scan):
     share = flipped / scan["matches"]
     if not flipped:
         state = ('<span class="good">clean</span> '
-                 f'<span class="dim">{scan["matches"]:,} matches, '
-                 f'{scan["anchors"]:,} touchdown anchors</span>')
+                 f'<span class="dim">{scan["matches"]:,} matches, no side\'s '
+                 'total ever went down</span>')
     else:
         acted = ("excluded from the numbers above"
                  if config.EXCLUDE_FLIPPED_MATCHES
                  else "STILL IN the numbers above")
         state = (f'<span class="bad">{flipped:,} of {scan["matches"]:,} matches '
                  f'({share:.1%}) have flipped handles</span> '
-                 f'<span class="dim">{acted} &middot; {scan["anchors"]:,} '
-                 'touchdown anchors</span>')
-
-    anchors = ""
-    if scan["anchors"]:
-        reading = scan["possession_reading"]
-        tone = {handles.READING_OK: "good",
-                handles.READING_GLOBAL: "bad"}.get(reading, "warn")
-        anchors = (f'<p class="count">{scan["anchors"]:,} touchdown anchors, '
-                   f'{_pct(scan["anchor_agreement"])} agreeing with the play '
-                   f'feed &middot; <span class="{tone}">'
-                   f'{handles.READING_TEXT[reading]}</span></p>')
+                 f'<span class="dim">{acted}</span>')
 
     kind_rows = []
     for kind in handles.KIND_ORDER:
@@ -332,7 +321,6 @@ def _handle_block(scan):
     <section class="panel">
       <h2>Handle check <span class="tag">does PLAYER_1 stay on one team?</span></h2>
       <p class="count">{state}</p>
-      {anchors}
       <table>
         <thead><tr><th>Kind</th><th>Events</th><th>Matches</th>
           <th title="counted as a handle flip">Flip</th></tr></thead>

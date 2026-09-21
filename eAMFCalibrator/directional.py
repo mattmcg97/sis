@@ -274,7 +274,7 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
             for r in scores_by_match.get(match_code, [])
         ]
         final = finals.get(match_code)
-        if not scan.add(match_code, scores, final, plays):
+        if not scan.add(match_code, scores, final):
             stats["matches_with_flipped_handles"] += 1
             if config.EXCLUDE_FLIPPED_MATCHES:
                 stats["matches_excluded_for_flipped_handles"] += 1

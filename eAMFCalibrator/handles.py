@@ -33,25 +33,18 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-from . import config
-from .drives import AWAY_TEAM, HOME_TEAM, TOUCHDOWN_POINTS
 
 MIRROR = "mirror"
 REGRESSION = "regression"
 FINAL_MIRRORED = "final_mirrored"
 FINAL_MISMATCH = "final_mismatch"
-POSSESSION_INVERTED = "possession_inverted"
-POSSESSION_FLIP = "possession_flip"
-POSSESSION_UNSTABLE = "possession_unstable"
 
 # The kinds that mean the handles moved. FINAL_MISMATCH is deliberately not
 # one of them: the two tables disagreeing is worth knowing, but a missing
 # late score explains it just as well as a swap does.
-FLIP_KINDS = (MIRROR, REGRESSION, FINAL_MIRRORED,
-              POSSESSION_INVERTED, POSSESSION_FLIP)
+FLIP_KINDS = (MIRROR, REGRESSION, FINAL_MIRRORED)
 
-KIND_ORDER = (MIRROR, REGRESSION, FINAL_MIRRORED, FINAL_MISMATCH,
-              POSSESSION_INVERTED, POSSESSION_FLIP, POSSESSION_UNSTABLE)
+KIND_ORDER = (MIRROR, REGRESSION, FINAL_MIRRORED, FINAL_MISMATCH)
 
 # Width of the widest kind name, so the text tables can size their column
 # from the labels rather than a number that drifts when one is added.
@@ -60,9 +53,6 @@ KIND_TITLES = {
     REGRESSION: "Regression",
     FINAL_MIRRORED: "Final mirrored",
     FINAL_MISMATCH: "Final mismatch",
-    POSSESSION_INVERTED: "Possession inverted",
-    POSSESSION_FLIP: "Possession flip",
-    POSSESSION_UNSTABLE: "Possession unstable",
 }
 
 KIND_WIDTH = max(len(title) for title in KIND_TITLES.values()) + 2
@@ -156,173 +146,6 @@ def scan_match(match_code, scores, final=None):
     return anomalies
 
 
-# ---------------------------------------------------------------------------
-# The possession cross-check
-# ---------------------------------------------------------------------------
-#
-# The score checks above all read the totals, so a swap while the score is
-# level leaves them nothing to see. This one does not look at the totals at
-# all.
-#
-# Football's sequence after a touchdown is fixed: TD, then the PAT, then the
-# kickoff, then the OTHER team's offense. The play feed names its teams "Home
-# Team" and "Away Team"; the score feed names its sides PLAYER_1 and
-# PLAYER_2. Those are different vocabularies in different tables, and the
-# mapping between them (PLAYER_1 = Home) is an assumption. So each touchdown
-# is a free test of that assumption: whoever scored should NOT be the team
-# that next has the ball.
-#
-# Two things follow. A match where every touchdown fails the test is crossed
-# throughout -- which is the one case the score checks are blind to from the
-# first message. And a match where the early touchdowns pass and the later
-# ones fail flipped somewhere in between, at whatever score, level or not.
-#
-# The play feed carries vision noise -- that is what drives.clean_plays
-# exists to strip -- so this is read as a rate across a match rather than
-# trusted one touchdown at a time. It also has to read RAW plays: cleaning
-# uses the very assumption under test, so checking the cleaned feed would
-# only confirm itself.
-
-
-@dataclass(frozen=True)
-class Anchor:
-    """One touchdown, and whether possession afterwards agreed with it."""
-    event_message_count: int
-    scorer: str           # under the assumed mapping
-    next_possessor: str   # as the play feed labelled it
-    agrees: bool
-
-
-def _next_possessor(plays, after_message):
-    """Who holds the ball after `after_message`, by the play feed's labels.
-
-    The first fresh 1st-and-10 belonging to a team that then keeps the ball
-    for another play. The "keeps it" part matters: the row immediately after
-    a team-label change duplicates the previous team's down and distance, so
-    a single stale row would otherwise read as the scorer receiving its own
-    kickoff.
-    """
-    after = [p for p in plays if p.event_message_count > after_message]
-    for i, play in enumerate(after):
-        if play.down_number != 1 or play.distance != 10:
-            continue
-        if play.offensive_team not in (HOME_TEAM, AWAY_TEAM):
-            continue
-        following = after[i + 1:i + 2]
-        if following and following[0].offensive_team != play.offensive_team:
-            continue
-        return play.offensive_team
-    return None
-
-
-def possession_anchors(plays, scores):
-    """Every touchdown that the play feed can be asked about."""
-    anchors = []
-    for row in sorted(scores, key=lambda s: s.event_message_count):
-        delta = row.p1_change if row.p1_change else row.p2_change
-        if delta != TOUCHDOWN_POINTS:
-            continue
-        scorer = HOME_TEAM if row.p1_change else AWAY_TEAM
-        receiver = AWAY_TEAM if scorer == HOME_TEAM else HOME_TEAM
-        observed = _next_possessor(plays, row.event_message_count)
-        if observed is None:
-            continue
-        anchors.append(Anchor(
-            event_message_count=row.event_message_count,
-            scorer=scorer, next_possessor=observed,
-            agrees=observed == receiver))
-    return anchors
-
-
-def _changepoint(anchors):
-    """Where agreement turns over, or None if it never cleanly does.
-
-    Returns the message count of the first anchor on the far side, so the
-    flip is somewhere between that anchor and the one before it. Both
-    directions count: a match that starts crossed and corrects has just as
-    much of it read in the wrong frame as one that starts right and goes
-    wrong.
-    """
-    for split in range(config.POSSESSION_MIN_SIDE,
-                       len(anchors) - config.POSSESSION_MIN_SIDE + 1):
-        before, after = anchors[:split], anchors[split:]
-        turns_wrong = (all(a.agrees for a in before)
-                       and not any(a.agrees for a in after))
-        turns_right = (not any(a.agrees for a in before)
-                       and all(a.agrees for a in after))
-        if turns_wrong or turns_right:
-            return after[0].event_message_count
-    return None
-
-
-def possession_verdict(match_code, plays, scores):
-    """The possession cross-check for one match: an anomaly, or None."""
-    anchors = possession_anchors(plays, scores)
-    if len(anchors) < config.POSSESSION_MIN_ANCHORS:
-        return None, anchors
-
-    agreed = sum(1 for a in anchors if a.agrees)
-    rate = agreed / len(anchors)
-    detail = f"{agreed}/{len(anchors)} touchdowns agree"
-
-    def anomaly(kind, message=None):
-        return ScoreAnomaly(match_code=match_code, event_message_count=message,
-                            kind=kind, detail=detail)
-
-    if rate <= config.POSSESSION_INVERSION_RATE:
-        # Consistently wrong is not noise -- the whole match is crossed.
-        return anomaly(POSSESSION_INVERTED), anchors
-    if rate >= 1 - config.POSSESSION_INVERSION_RATE:
-        return None, anchors
-
-    turn = _changepoint(anchors)
-    if turn is not None:
-        return anomaly(POSSESSION_FLIP, turn), anchors
-    # Neither consistent nor cleanly turning over: worth surfacing, but not
-    # evidence enough to call the match crossed.
-    return anomaly(POSSESSION_UNSTABLE), anchors
-
-
-# How to read the window-wide agreement rate. This matters more than any
-# single match's verdict, because the three explanations for "possession
-# inverted" look identical one match at a time and completely different in
-# aggregate.
-READING_OK = "ok"
-READING_GLOBAL = "mapping_backwards"
-READING_NOISE = "no_signal"
-READING_THIN = "too_few"
-
-READING_TEXT = {
-    READING_OK: ("the feeds agree, so a match that inverts really is the odd "
-                 "one out"),
-    READING_GLOBAL: ("the feeds disagree almost everywhere, which is one "
-                     "wrong assumption, not one flip per match -- suspect "
-                     "PLAYER_1 = Home Team being backwards for this sport "
-                     "before suspecting the data"),
-    READING_NOISE: ("agreement is near a coin flip, so the play feed is not "
-                    "tracking possession well enough for this check to mean "
-                    "anything yet"),
-    READING_THIN: "too few touchdown anchors to read",
-}
-
-
-def possession_reading(anchors, agreed):
-    """What the window-wide agreement rate says about the check itself.
-
-    A single match cannot tell a flipped handle from a wrong assumption or
-    from a noisy play feed -- all three look like disagreement. Across the
-    window they separate cleanly, so this is the first thing to read.
-    """
-    if anchors < 20:
-        return READING_THIN
-    rate = agreed / anchors
-    if rate >= 0.85:
-        return READING_OK
-    if rate <= 0.15:
-        return READING_GLOBAL
-    return READING_NOISE
-
-
 class Scan:
     """Accumulates anomalies across match chunks.
 
@@ -333,26 +156,12 @@ class Scan:
     def __init__(self):
         self.matches = 0
         self.anomalies = []
-        self.anchors = 0
-        self.anchors_agreed = 0
         self._flipped = set()
 
-    def add(self, match_code, scores, final=None, plays=None):
-        """Scan one match. Returns True if its handles look stable.
-
-        `plays` are the RAW play rows, before drives.clean_plays touches
-        them -- cleaning uses the assumption the possession cross-check is
-        testing. Omitting them skips that check and leaves the score-based
-        ones, which is the right behaviour for a match with no play feed.
-        """
+    def add(self, match_code, scores, final=None):
+        """Scan one match. Returns True if its handles look stable."""
         self.matches += 1
         found = scan_match(match_code, scores, final)
-        if plays:
-            verdict, anchors = possession_verdict(match_code, plays, scores)
-            self.anchors += len(anchors)
-            self.anchors_agreed += sum(1 for a in anchors if a.agrees)
-            if verdict is not None:
-                found.append(verdict)
         self.anomalies.extend(found)
         if any(a.is_flip for a in found):
             self._flipped.add(match_code)
@@ -374,14 +183,6 @@ class Scan:
         }
         return {
             "matches": self.matches,
-            "anchors": self.anchors,
-            "anchors_agreed": self.anchors_agreed,
-            # The number that says WHICH explanation you are looking at.
-            # See possession_reading below.
-            "anchor_agreement": (self.anchors_agreed / self.anchors
-                                 if self.anchors else None),
-            "possession_reading": possession_reading(
-                self.anchors, self.anchors_agreed),
             "matches_flagged": len(by_match),
             "matches_flipped": len(self._flipped),
             "matches_clean": self.matches - len(by_match),

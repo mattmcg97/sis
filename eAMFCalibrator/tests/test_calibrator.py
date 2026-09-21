@@ -203,19 +203,13 @@ class TestHandleScanSummary(unittest.TestCase):
         self.assertEqual(self.scan.summary()["matches"], 5)
         self.assertEqual(self.scan.summary()["matches_flipped"], 2)
 
-    def test_where_distinguishes_the_three_cases(self):
+    def test_where_distinguishes_a_message_from_the_final_check(self):
         scores = [ScoreRow(1, 1, None, None, 14, 7),
                   ScoreRow(2, 1, None, None, 7, 14)]
         self.assertEqual(handles.scan_match("X", scores)[0].where, "2")
         late = handles.scan_match("X", [ScoreRow(1, 1, None, None, 7, 0)], (14, 0))
         self.assertEqual(late[0].where, "final")
-        plays, clean = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in clean]
-        verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(verdict.where, "match")
-        self.assertFalse(verdict.is_final_check)
+        self.assertTrue(late[0].is_final_check)
 
     def test_empty_summary_matches_the_real_shape(self):
         self.assertEqual(set(handles.empty_summary()), set(self.summary))
@@ -329,168 +323,6 @@ class TestDropFlippedFlag(unittest.TestCase):
         from .. import __main__ as cli
         cli.apply_overrides(self.parse(["report", "--drop-flipped"]))
         self.assertTrue(config.EXCLUDE_FLIPPED_MATCHES)
-
-
-class TestPossessionCrossCheck(unittest.TestCase):
-    """The signal that survives a level score.
-
-    Football's sequence after a touchdown is fixed, and the play feed names
-    its teams in a different vocabulary from the score feed, so each
-    touchdown independently tests the PLAYER_1 = Home assumption without
-    looking at the totals at all.
-    """
-
-    HOME, AWAY = "Home Team", "Away Team"
-
-    @staticmethod
-    def td(msg, home_scored):
-        return ScoreRow(msg, 1, 6 if home_scored else None,
-                        None if home_scored else 6, None, None)
-
-    @staticmethod
-    def drive(start, team, n=3):
-        return [PlayRow(start + i, 1, team,
-                        1 if i == 0 else 2, 10 if i == 0 else 7, 40)
-                for i in range(n)]
-
-    def feed(self, scorers):
-        """Plays where the right team always receives, plus `scorers`."""
-        plays, scores = [], []
-        for k, home_scored in enumerate(scorers):
-            msg = 100 * k
-            receiver = self.AWAY if home_scored else self.HOME
-            scores.append(self.td(msg, home_scored))
-            plays += self.drive(msg + 5, receiver)
-        return plays, scores
-
-    def test_a_consistent_match_says_nothing(self):
-        plays, scores = self.feed([True, False, True, False])
-        verdict, anchors = handles.possession_verdict("OK", plays, scores)
-        self.assertIsNone(verdict)
-        self.assertEqual(len(anchors), 4)
-        self.assertTrue(all(a.agrees for a in anchors))
-
-    def test_a_match_crossed_throughout_is_caught(self):
-        # The exact case the score checks cannot see: nothing ever regresses
-        # because the whole match is consistently mirrored.
-        plays, scores = self.feed([True, False, True, False])
-        crossed = [self.td(s.event_message_count, not bool(s.p1_change))
-                   for s in scores]
-        verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_INVERTED)
-        self.assertEqual(verdict.describe(), "0/4 touchdowns agree")
-        self.assertTrue(verdict.is_flip)
-
-    def test_a_mid_match_flip_is_located(self):
-        plays, scores = self.feed([True, False, True, False, True, False])
-        mixed = scores[:3] + [self.td(s.event_message_count, not bool(s.p1_change))
-                              for s in scores[3:]]
-        verdict, _ = handles.possession_verdict("X", plays, mixed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-        # The flip is between the third anchor and the fourth, which is the
-        # message reported.
-        self.assertEqual(verdict.event_message_count, 300)
-
-    def test_a_match_that_starts_crossed_and_corrects_is_also_a_flip(self):
-        # Just as much of the match is read in the wrong frame either way.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        mixed = [self.td(s.event_message_count, not bool(s.p1_change))
-                 for s in scores[:3]] + scores[3:]
-        verdict, _ = handles.possession_verdict("X", plays, mixed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-        self.assertEqual(verdict.event_message_count, 300)
-
-    def test_a_flip_is_found_with_the_score_dead_level(self):
-        # Both sides on 14 throughout the flip. The score checks have
-        # nothing to work with here; this one is unaffected.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        level = []
-        for i, row in enumerate(scores):
-            home_scored = bool(row.p1_change) if i < 3 else not bool(row.p1_change)
-            level.append(ScoreRow(row.event_message_count, 1,
-                                  6 if home_scored else None,
-                                  None if home_scored else 6, 14, 14))
-        self.assertEqual([a.kind for a in handles.scan_match("X", level)], [])
-        verdict, _ = handles.possession_verdict("X", plays, level)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-
-    def test_a_lagging_vision_row_does_not_invent_a_flip(self):
-        # The row straight after a team-label change repeats the previous
-        # team's down and distance, so a naive read has the scorer receiving
-        # its own kickoff. It must be ignored, not counted.
-        plays, scores = self.feed([True, False, True, False])
-        noisy = []
-        for k, row in enumerate(scores):
-            stale = self.HOME if row.p1_change else self.AWAY
-            noisy.append(PlayRow(row.event_message_count + 1, 1, stale, 1, 10, 40))
-            noisy += self.drive(row.event_message_count + 5,
-                                self.AWAY if row.p1_change else self.HOME)
-        verdict, anchors = handles.possession_verdict("X", noisy, scores)
-        self.assertIsNone(verdict)
-        self.assertTrue(all(a.agrees for a in anchors))
-
-    def test_too_few_touchdowns_to_say_anything(self):
-        plays, scores = self.feed([True, False])
-        verdict, anchors = handles.possession_verdict("X", plays, scores)
-        self.assertIsNone(verdict)
-        self.assertEqual(len(anchors), 2)
-
-    def test_noise_without_a_clean_turnover_is_unstable_not_a_flip(self):
-        # Alternating agreement is not a changepoint. Worth surfacing, but
-        # calling the match crossed on it would be inventing a finding.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        scrambled = list(scores)
-        for i in (1, 3):
-            row = scrambled[i]
-            scrambled[i] = self.td(row.event_message_count, not bool(row.p1_change))
-        verdict, _ = handles.possession_verdict("X", plays, scrambled)
-        self.assertEqual(verdict.kind, handles.POSSESSION_UNSTABLE)
-        self.assertNotIn(handles.POSSESSION_UNSTABLE, handles.FLIP_KINDS)
-
-    def test_only_six_point_scores_anchor(self):
-        # A field goal is not followed by the same fixed sequence in this
-        # feed's scoring codes, so it is not used as an anchor.
-        plays, _ = self.feed([True, False, True])
-        field_goals = [ScoreRow(0, 1, 3, None, None, None),
-                       ScoreRow(100, 1, None, 3, None, None)]
-        self.assertEqual(handles.possession_anchors(plays, field_goals), [])
-
-    def test_a_touchdown_with_no_readable_possession_after_it_is_skipped(self):
-        scores = [self.td(0, True), self.td(100, False), self.td(200, True)]
-        # Plays exist, but none is a sustained fresh 1st-and-10.
-        plays = [PlayRow(5, 1, self.HOME, 3, 8, 40)]
-        self.assertEqual(handles.possession_anchors(plays, scores), [])
-
-    def test_the_check_reads_raw_plays_not_cleaned_ones(self):
-        # clean_plays uses the very assumption under test, so cleaning first
-        # would make the check confirm itself. Asserted by showing the
-        # cleaned feed loses the rows the check depends on.
-        plays, scores = self.feed([True, False, True, False])
-        crossed = [self.td(s.event_message_count, not bool(s.p1_change))
-                   for s in scores]
-        cleaned, dropped = clean_plays(plays, crossed)
-        self.assertGreater(dropped, 0)
-        raw_verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(raw_verdict.kind, handles.POSSESSION_INVERTED)
-
-
-class TestScanUsesPossession(unittest.TestCase):
-    def test_plays_are_optional_and_their_absence_skips_the_check(self):
-        scan = handles.Scan()
-        self.assertTrue(scan.add("NOPLAYS", [ScoreRow(1, 1, 7, 0, 7, 0)], (7, 0)))
-        self.assertEqual(scan.summary()["anchors"], 0)
-
-    def test_a_crossed_match_is_flipped_even_with_a_clean_score_series(self):
-        plays, scores = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in scores]
-        scan = handles.Scan()
-        # Nothing regresses; only the possession check sees this one.
-        self.assertEqual(handles.scan_match("X", crossed), [])
-        self.assertFalse(scan.add("X", crossed, None, plays))
-        self.assertEqual(scan.flipped_matches, frozenset({"X"}))
-        self.assertEqual(scan.summary()["anchors"], 4)
 
 
 class TestTheLineOverrulesTheProbability(unittest.TestCase):
@@ -663,83 +495,6 @@ class TestSelectionBlocks(unittest.TestCase):
         summary = directional.build_summary(self.pairs, n_bootstrap=50)
         self.assertIn("selections", summary["same_line"])
         self.assertIn("selections", summary["different_line"])
-
-
-class TestPossessionReading(unittest.TestCase):
-    """The window-wide rate, which says which explanation you are looking at.
-
-    One match cannot tell a flipped handle from a wrong global assumption
-    from a noisy play feed -- all three look like disagreement. Across the
-    window they separate, so the reading is what to check first.
-    """
-
-    def scan_of(self, clean, crossed):
-        helper = TestPossessionCrossCheck()
-        plays, scores = helper.feed([True, False, True, False])
-        inverted = [TestPossessionCrossCheck.td(s.event_message_count,
-                                                not bool(s.p1_change))
-                    for s in scores]
-        scan = handles.Scan()
-        for i in range(clean):
-            scan.add(f"OK{i}", scores, None, plays)
-        for i in range(crossed):
-            scan.add(f"X{i}", inverted, None, plays)
-        return scan.summary()
-
-    def test_mostly_agreeing_means_a_flagged_match_really_is_odd(self):
-        summary = self.scan_of(clean=40, crossed=3)
-        self.assertEqual(summary["possession_reading"], handles.READING_OK)
-        self.assertEqual(summary["matches_flipped"], 3)
-
-    def test_almost_everything_inverting_points_at_the_assumption(self):
-        # Twenty matches do not independently flip their handles. One wrong
-        # mapping explains all of them, and the reading has to say so rather
-        # than let the report claim twenty corrupt matches.
-        summary = self.scan_of(clean=1, crossed=20)
-        self.assertEqual(summary["possession_reading"], handles.READING_GLOBAL)
-        self.assertIn("backwards", handles.READING_TEXT[
-            summary["possession_reading"]])
-
-    def test_a_thin_window_says_so_rather_than_guessing(self):
-        summary = self.scan_of(clean=2, crossed=1)
-        self.assertEqual(summary["possession_reading"], handles.READING_THIN)
-
-    def test_a_coin_flip_rate_is_called_noise_not_a_finding(self):
-        self.assertEqual(handles.possession_reading(100, 50),
-                         handles.READING_NOISE)
-        self.assertIn("coin flip",
-                      handles.READING_TEXT[handles.READING_NOISE])
-
-    def test_the_rate_counts_every_anchor_not_just_flagged_matches(self):
-        summary = self.scan_of(clean=10, crossed=0)
-        self.assertEqual(summary["anchors"], 40)
-        self.assertEqual(summary["anchors_agreed"], 40)
-        self.assertEqual(summary["anchor_agreement"], 1.0)
-
-
-class TestTurnoversDoNotInvertAMatch(unittest.TestCase):
-    """A turnover costs at most one anchor, never a whole match."""
-
-    def test_one_bad_anchor_among_many_does_not_flag_the_match(self):
-        helper = TestPossessionCrossCheck()
-        plays, scores = helper.feed([True, False, True, False, True, False])
-        # An onside kick recovered by the scoring team: after the first
-        # touchdown, the scorer keeps the ball instead of kicking away.
-        first = scores[0].event_message_count
-        plays = [p for p in plays if p.event_message_count > first + 10]
-        plays = helper.drive(first + 5, helper.HOME) + plays
-        verdict, anchors = handles.possession_verdict("AF1", plays, scores)
-        self.assertEqual(sum(1 for a in anchors if not a.agrees), 1)
-        self.assertIsNone(verdict)
-
-    def test_it_takes_nearly_every_anchor_failing_to_invert(self):
-        # The threshold is a rate, so the check cannot be tripped by the
-        # handful of legitimate exceptions football produces.
-        self.assertLessEqual(config.POSSESSION_INVERSION_RATE, 0.25)
-        helper = TestPossessionCrossCheck()
-        plays, scores = helper.feed([True, False, True, False])
-        anchors = handles.possession_anchors(plays, scores)
-        self.assertTrue(all(a.agrees for a in anchors))
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -2132,25 +1887,6 @@ class TestReportShape(unittest.TestCase):
         # The default is to report rather than drop, so the reader has to be
         # told the bad match is still in the numbers above.
         self.assertIn("STILL IN", block)
-
-    def test_handle_block_shows_the_possession_evidence(self):
-        plays, scores = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in scores]
-        scan = handles.Scan()
-        scan.add("OK", scores, None, plays)
-        scan.add("XED", crossed, None, plays)
-        rendered = self.html_full.render(
-            self.report, {"paired_matches": 12}, {}, self.pairs, scan.summary())
-        block = rendered[rendered.index("Handle check"):]
-        block = block[:block.index("</section>")]
-        self.assertIn("Possession inverted", block)
-        self.assertIn("0/4 touchdowns agree", block)
-        self.assertIn("touchdown anchors", block)
-        # A whole-match verdict is not a message count and must not be
-        # labelled as the final cross-check either.
-        self.assertIn("<td>match</td>", block)
 
     def test_a_flip_stops_the_checks_line_claiming_all_pass(self):
         scan = handles.Scan()

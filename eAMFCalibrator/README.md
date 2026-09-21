@@ -369,58 +369,24 @@ cumulative total goes **down**. That is the whole check.
 `Final mismatch` is deliberately not a flip: a missing late score explains
 it as well as a swap does.
 
-### The possession cross-check
+### What was tried and removed
 
-Every kind above reads the totals, so a swap while the score is **level**
-leaves them nothing to see. This one does not look at the totals at all.
+A possession cross-check used to cover both blind spots, reading football's
+fixed post-touchdown sequence (TD, PAT, kickoff, the *other* team's
+offence) against the play feed's Home/Away labels. On 263 matches it
+flagged **84% of them** with near-zero agreement window-wide.
 
-Football's sequence after a touchdown is fixed: TD, PAT, kickoff, then the
-**other** team's offense. The play feed names its teams `Home Team` and
-`Away Team`; the score feed names its sides `PLAYER_1` and `PLAYER_2`.
-Those are different vocabularies in different tables, and the mapping
-between them is an assumption. So every touchdown is a free test of it:
-whoever scored should *not* be the team that next has the ball.
+That is not 221 corrupt matches. Near-zero agreement *everywhere* is one
+wrong assumption or a play feed too noisy to track possession — and drive
+detection currently reconstructs about 9.5 drives per match against a
+realistic ~22, so the second is the likely one. It has been removed rather
+than left to produce false positives; it is worth rebuilding once drive
+reconciliation lands, and the implementation is in git history.
 
-| Kind | What it is | Counts as a flip |
-|---|---|---|
-| `Possession inverted` | Every touchdown fails the test — the match is crossed throughout. | yes |
-| `Possession flip` | Agreement turns over at one point, which is the message reported. | yes |
-| `Possession unstable` | Neither consistent nor cleanly turning over. | no |
-
-This closes both of the score checks' blind spots: a match crossed from its
-first message, and a swap at a level score.
-
-### Read the window-wide rate first
-
-One match cannot tell a flipped handle from a wrong global assumption from
-a noisy play feed — all three look like disagreement. Across the window
-they separate, so the check reports its own agreement rate and what that
-rate means:
-
-| Rate | Reading |
-|---|---|
-| ≥ 85% | The feeds agree, so a match that inverts really is the odd one out. |
-| ≤ 15% | The feeds disagree almost everywhere. That is **one wrong assumption, not one flip per match** — suspect `PLAYER_1 = Home Team` being backwards for this sport before suspecting the data. |
-| in between | Near a coin flip: the play feed is not tracking possession well enough for the check to mean anything yet. |
-| < 20 anchors | Too few touchdowns to read. |
-
-**A turnover cannot invert a match.** It costs at most one anchor, and a
-match needs nearly all of them to fail. The two cases that do cost an
-anchor are an onside kick recovered by the scoring team, and a turnover on
-the very first play of the receiving drive.
-
-Three details make it honest:
-
-- It reads **raw** plays. `clean_plays` uses the very assumption under
-  test, so checking the cleaned feed would only confirm itself.
-- The row straight after a team-label change repeats the previous team's
-  down and distance, so a possessor only counts when that team keeps the
-  ball for another play — otherwise a single stale row reads as the scorer
-  receiving its own kickoff.
-- The play feed carries vision noise, so a match is judged on its
-  agreement **rate** across `POSSESSION_MIN_ANCHORS` touchdowns rather than
-  one at a time, and a mid-match flip is only called when both sides of the
-  changepoint carry `POSSESSION_MIN_SIDE` anchors.
+The score-based checks below are unaffected — they read `SCORE_CHANGES`
+and `SCORE_ENDGAME` and never touch the play feed. On that same run they
+found **nothing**: no mirrored totals, no regressions, no final
+disagreements across 263 matches.
 
 What is **not** available: `EVENT.PLAYER_1_HANDLE` / `PLAYER_2_HANDLE` hold
 the gamers' names, but `EVENT` is one row per match, so they say who the
@@ -470,9 +436,9 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-238 tests covering line parsing, market resolution, bucket edges, drive
+217 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
-and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
+check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
 real schema, play feed with no clock included, and the flipped-match
 exclusion runs the real pairing code with the fetch calls patched out.
