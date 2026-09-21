@@ -12,7 +12,7 @@ outcome and error, and which one finished closer. Column headers sort.
 import html
 import os
 
-from . import buckets, config, markets
+from . import buckets, config, handles, markets
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -185,6 +185,82 @@ def _integrity_block(report, stats):
       </table>
       <h3>Spread reading</h3>
       {spread_body}
+    </section>"""
+
+
+def _handle_block(scan):
+    """Did PLAYER_1 / PLAYER_2 stay pinned to the same team?
+
+    Rendered above the other checks because it qualifies them: everything
+    the calibrator buckets on is read in the PLAYER_1 frame, so a match
+    whose handles swap lands in the wrong cells rather than in none.
+    """
+    if not scan or not scan["matches"]:
+        return """
+    <section class="panel">
+      <h2>Handle check</h2>
+      <p class="count">No matches scanned.</p>
+    </section>"""
+
+    flipped = scan["matches_flipped"]
+    share = flipped / scan["matches"]
+    if not flipped:
+        state = ('<span class="good">clean</span> '
+                 f'<span class="dim">{scan["matches"]:,} matches, no side\'s '
+                 'total ever went down</span>')
+    else:
+        acted = ("excluded from the numbers above"
+                 if config.EXCLUDE_FLIPPED_MATCHES
+                 else "STILL IN the numbers above")
+        state = (f'<span class="bad">{flipped:,} of {scan["matches"]:,} matches '
+                 f'({share:.1%}) have flipped handles</span> '
+                 f'<span class="dim">{acted}</span>')
+
+    kind_rows = []
+    for kind in handles.KIND_ORDER:
+        events = scan["counts"][kind]
+        if not events:
+            continue
+        flips = "yes" if kind in handles.FLIP_KINDS else "no"
+        kind_rows.append(f"""<tr>
+            <th>{handles.KIND_TITLES[kind]}</th>
+            <td>{events:,}</td>
+            <td>{scan['matches_by_kind'][kind]:,}</td>
+            <td class="{'bad' if kind in handles.FLIP_KINDS else 'dim'}">{flips}</td>
+        </tr>""")
+
+    event_rows = []
+    for anomaly in scan["anomalies"][:200]:
+        message = ("final" if anomaly.event_message_count is None
+                   else f"{anomaly.event_message_count:,}")
+        event_rows.append(f"""<tr>
+            <th>{html.escape(anomaly.match_code)}</th>
+            <td>{message}</td>
+            <td class="{'bad' if anomaly.is_flip else 'dim'}">{handles.KIND_TITLES[anomaly.kind]}</td>
+            <td>{anomaly.before[0]}&ndash;{anomaly.before[1]} {'vs' if anomaly.is_final_check else '&rarr;'} {anomaly.after[0]}&ndash;{anomaly.after[1]}</td>
+        </tr>""")
+    more = (f'<p class="count">{len(scan["anomalies"]) - 200:,} more not shown</p>'
+            if len(scan["anomalies"]) > 200 else "")
+    detail = "" if not event_rows else f"""
+      <h3>Flagged events</h3>
+      <div class="scroll">
+      <table>
+        <thead><tr><th>Match</th><th title="the message the totals changed on">Msg</th>
+          <th>Kind</th><th title="p1-p2 either side of the flag">Score</th></tr></thead>
+        <tbody>{''.join(event_rows)}</tbody>
+      </table>
+      </div>{more}"""
+
+    return f"""
+    <section class="panel">
+      <h2>Handle check <span class="tag">does PLAYER_1 stay on one team?</span></h2>
+      <p class="count">{state}</p>
+      <table>
+        <thead><tr><th>Kind</th><th>Events</th><th>Matches</th>
+          <th title="counted as a handle flip">Flip</th></tr></thead>
+        <tbody>{''.join(kind_rows) or '<tr><td colspan="4" class="dim">nothing flagged</td></tr>'}</tbody>
+      </table>
+      {detail}
     </section>"""
 
 
@@ -434,9 +510,11 @@ def _pair_table(pairs):
 
 # ---------------------------------------------------------------------------
 
-def _checks_summary(report):
+def _checks_summary(report, scan=None):
     """One line stating whether the diagnostics passed, for the collapsed block."""
     issues = []
+    if scan and scan.get("matches_flipped"):
+        issues.append(f"{scan['matches_flipped']:,} matches with flipped handles")
     for market, row in (report.get("complement") or {}).items():
         both = row.get("both_sides") or 0
         if both and row.get("outcomes_partition", 0) / both < 0.999:
@@ -448,12 +526,13 @@ def _checks_summary(report):
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
     return ('<span class="good">all pass</span> '
-            '<span class="dim">integrity, mirror, spread reading, by day, single axes</span>')
+            '<span class="dim">handles, integrity, mirror, spread reading, '
+            'by day, single axes</span>')
 
 
-def render(report, header, stats, pairs):
+def render(report, header, stats, pairs, handle_scan):
     verdict_class, verdict_text = _verdict(report)
-    checks_summary = _checks_summary(report)
+    checks_summary = _checks_summary(report, handle_scan)
     # The settled universe and the matches that actually produced pairs are
     # not the same number: a match can be settled, carry quotes, and still
     # pair nothing. Report both rather than implying one.
@@ -575,6 +654,7 @@ def render(report, header, stats, pairs):
   {_full_cell(report)}
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
+    {_handle_block(handle_scan)}
     {_daily(report)}
     {_integrity_block(report, stats)}
     {_both_sides_block(report)}
@@ -620,8 +700,8 @@ def render(report, header, stats, pairs):
 """
 
 
-def write(path, report, header, stats, pairs):
+def write(path, report, header, stats, pairs, handle_scan):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(render(report, header, stats, pairs))
+        fh.write(render(report, header, stats, pairs, handle_scan))
     return path

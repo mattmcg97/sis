@@ -83,6 +83,13 @@ SCORE_DIFF_BUCKETS = [
     (9, None, "Home 2 score"),
 ]
 
+# A match whose PLAYER_1 / PLAYER_2 handles swap sides part-way through has
+# its score difference, possession flag and market outcomes all inverted from
+# that point, so its snapshots land in the wrong buckets rather than in no
+# bucket. Set True to drop those matches; the default reports them instead,
+# so the size of the problem is visible before any data is thrown away.
+EXCLUDE_FLIPPED_MATCHES = False
+
 # Which time-axis to split on: "period" (quarter, available now) or
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"

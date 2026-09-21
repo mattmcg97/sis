@@ -35,7 +35,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Optional
 
-from . import buckets, config, markets, metrics, snowflake_io
+from . import buckets, config, handles, markets, metrics, snowflake_io
 from .drives import PlayRow, ScoreRow, build_snapshots
 
 CANDIDATE = "candidate"
@@ -182,8 +182,14 @@ def nearest_message(messages, target, max_gap):
     return best
 
 
-def build_pairs(cur, match_codes, time_column, stats):
-    """Every paired observation for one chunk of matches."""
+def build_pairs(cur, match_codes, time_column, stats, scan=None):
+    """Every paired observation for one chunk of matches.
+
+    `scan` is the handle check, accumulating across chunks. Every match is
+    scanned whether or not the result is acted on, so the report can say
+    how big the problem is even when nothing is being excluded.
+    """
+    scan = scan if scan is not None else handles.Scan()
     prod_table = config.STREAMS[PROD]
     candidate_table = config.STREAMS[CANDIDATE]
 
@@ -216,11 +222,17 @@ def build_pairs(cur, match_codes, time_column, stats):
                      p2_change=r[4], p1_cumulative=r[5], p2_cumulative=r[6])
             for r in scores_by_match.get(match_code, [])
         ]
+        final = finals.get(match_code)
+        if not scan.add(match_code, scores, final):
+            stats["matches_with_flipped_handles"] += 1
+            if config.EXCLUDE_FLIPPED_MATCHES:
+                stats["matches_excluded_for_flipped_handles"] += 1
+                continue
+
         if not plays:
             stats["matches_without_plays"] += 1
             continue
 
-        final = finals.get(match_code)
         if final is None or final[0] is None or final[1] is None:
             stats["matches_without_final"] += 1
             continue
@@ -306,6 +318,7 @@ def run(verbose=True):
     stats = defaultdict(int)
     pairs = []
     header = {}
+    scan = handles.Scan()
 
     conn = snowflake_io.get_connection()
     try:
@@ -336,11 +349,12 @@ def run(verbose=True):
                 batch = match_codes[start:start + chunk]
                 if verbose:
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
-                pairs.extend(build_pairs(cur, batch, time_column, stats))
+                pairs.extend(build_pairs(cur, batch, time_column, stats, scan))
     finally:
         conn.close()
 
-    return pairs, stats, header
+    return pairs, stats, header, scan.summary()
+
 
 def tally(pairs, mode=PROBABILITY):
     """Win/loss/tie counts and error means, under one decision mode.
