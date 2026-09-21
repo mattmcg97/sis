@@ -574,10 +574,10 @@ class TestPairStateColumns(unittest.TestCase):
             self.assertIn(field, report.PAIR_FIELDS)
 
 
-class TestSuspensionFlag(unittest.TestCase):
-    """A suspended quote is carried, flagged, and scored by nothing."""
+class TestMarketStateFlag(unittest.TestCase):
+    """A non-live quote is carried, flagged, and scored by nothing."""
 
-    def susp(self, prod_live=True, candidate_live=True, **kw):
+    def dead(self, prod_live=True, candidate_live=True, **kw):
         return dataclasses.replace(
             pair(0.9, 0.1, True, **kw),
             prod_live=prod_live, candidate_live=candidate_live)
@@ -590,14 +590,14 @@ class TestSuspensionFlag(unittest.TestCase):
             self.assertFalse(directional.is_live(status, active),
                              f"{status}/{active}")
 
-    def test_either_side_suspended_suspends_the_pair(self):
-        self.assertFalse(self.susp().suspended)
-        self.assertTrue(self.susp(prod_live=False).suspended)
-        self.assertTrue(self.susp(candidate_live=False).suspended)
-        self.assertTrue(self.susp(False, False).suspended)
+    def test_either_side_not_live_marks_the_pair(self):
+        self.assertFalse(self.dead().not_live)
+        self.assertTrue(self.dead(prod_live=False).not_live)
+        self.assertTrue(self.dead(candidate_live=False).not_live)
+        self.assertTrue(self.dead(False, False).not_live)
 
-    def test_a_suspended_pair_is_scored_by_nothing(self):
-        p = self.susp(prod_live=False)
+    def test_a_non_live_pair_is_scored_by_nothing(self):
+        p = self.dead(prod_live=False)
         for mode in (directional.PROBABILITY, directional.LINE,
                      directional.DECISIVE):
             self.assertEqual(p.errors(mode), (None, None), mode)
@@ -608,7 +608,7 @@ class TestSuspensionFlag(unittest.TestCase):
         # errors() is what tally, the cells, the votes and the decisive
         # block are all built on, which is why refusing there is enough.
         live = [pair(0.9, 0.1, True, match=f"AF{i}") for i in range(6)]
-        dead = [self.susp(prod_live=False, match=f"AF{i}") for i in range(6)]
+        dead = [self.dead(prod_live=False, match=f"AF{i}") for i in range(6)]
         both = live + dead
         self.assertEqual(directional.tally(both, directional.PROBABILITY)["n"], 6)
         self.assertEqual(directional.decisive_block(both)["n"], 6)
@@ -620,28 +620,54 @@ class TestSuspensionFlag(unittest.TestCase):
         previous = config.REQUIRE_LIVE_QUOTE
         config.REQUIRE_LIVE_QUOTE = False
         try:
-            p = self.susp(prod_live=False)
+            p = self.dead(prod_live=False)
             self.assertTrue(p.comparable(directional.PROBABILITY))
             self.assertIsNotNone(p.winner(directional.PROBABILITY))
         finally:
             config.REQUIRE_LIVE_QUOTE = previous
 
-    def test_the_report_counts_which_side_suspended(self):
+    def test_the_state_string_is_kept_verbatim(self):
+        # This feed has no "suspended" value -- markets run open -> UNDER
+        # SETTLEMENT -> CLOSED -- so the columns are reported as they are
+        # rather than mapped onto a vocabulary that does not exist.
+        self.assertEqual(directional.state_label("UNDER SETTLEMENT", "false"),
+                         "UNDER SETTLEMENT/false")
+        self.assertEqual(directional.state_label("open", "true"), "open/true")
+
+    def test_closed_but_active_is_not_read_as_live(self):
+        # A real combination in the feed, and an inconsistent one. It is
+        # not open, so it is not tradeable, whatever IS_ACTIVE claims.
+        self.assertFalse(directional.is_live("CLOSED", "true"))
+
+    def test_the_report_breaks_down_by_state_and_by_stream(self):
+        pairs = [
+            dataclasses.replace(pair(0.9, 0.1, True, match="AF0"),
+                                prod_live=False,
+                                prod_state="UNDER SETTLEMENT/false"),
+            dataclasses.replace(pair(0.9, 0.1, True, match="AF1"),
+                                candidate_live=False,
+                                candidate_state="CLOSED/false"),
+        ]
+        r = directional.market_state_report(pairs)
+        self.assertEqual(r["by_state"][("prod", "UNDER SETTLEMENT/false")], 1)
+        self.assertEqual(r["by_state"][("candidate", "CLOSED/false")], 1)
+
+    def test_the_report_counts_which_side_went_non_live(self):
         pairs = ([pair(0.9, 0.1, True, match="AF0")]
-                 + [self.susp(prod_live=False, match="AF1")] * 3
-                 + [self.susp(candidate_live=False, match="AF2")]
-                 + [self.susp(False, False, match="AF3")])
-        r = directional.suspension_report(pairs)
-        self.assertEqual((r["pairs"], r["suspended"]), (6, 5))
+                 + [self.dead(prod_live=False, match="AF1")] * 3
+                 + [self.dead(candidate_live=False, match="AF2")]
+                 + [self.dead(False, False, match="AF3")])
+        r = directional.market_state_report(pairs)
+        self.assertEqual((r["pairs"], r["not_live"]), (6, 5))
         self.assertEqual(r["prod_only"], 3)
         self.assertEqual(r["candidate_only"], 1)
         self.assertEqual(r["both"], 1)
         self.assertEqual(r["matches"], 3)
 
     def test_the_report_splits_by_quarter_so_lopsidedness_is_visible(self):
-        pairs = [self.susp(prod_live=(q != 4), match=f"AF{q}", period=q)
+        pairs = [self.dead(prod_live=(q != 4), match=f"AF{q}", period=q)
                  for q in (1, 2, 3, 4)]
-        r = directional.suspension_report(pairs)
+        r = directional.market_state_report(pairs)
         self.assertEqual(r["by_quarter"]["Q4"], (1, 1))
         self.assertEqual(r["by_quarter"]["Q1"], (1, 0))
 
@@ -1911,7 +1937,7 @@ class TestReportRendering(unittest.TestCase):
                                 publish_time=base)
         self.assertIn('class="warn"', self._row_for([p]))
 
-    def test_a_suspended_pair_shows_but_compares_nothing(self):
+    def test_a_non_live_pair_shows_but_compares_nothing(self):
         p = dataclasses.replace(pair(0.9, 0.1, True), prod_live=False)
         cells = self._cells_for([p])
         self.assertEqual(cells["Live"], "prod")
@@ -1919,12 +1945,12 @@ class TestReportRendering(unittest.TestCase):
             self.assertEqual(cells[column], "&mdash;", column)
         # The two probabilities are still facts about the row.
         self.assertEqual(cells["Prod prob"], "0.9000")
-        self.assertIn('class="susp"', self._row_for([p]))
+        self.assertIn('class="notlive"', self._row_for([p]))
 
     def test_a_live_pair_is_not_marked(self):
         cells = self._cells_for([pair(0.9, 0.1, True)])
         self.assertEqual(cells["Live"], "live")
-        self.assertNotIn('class="susp"', self._row_for([pair(0.9, 0.1, True)]))
+        self.assertNotIn('class="notlive"', self._row_for([pair(0.9, 0.1, True)]))
 
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()

@@ -397,35 +397,44 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
-def print_suspension(report):
-    """What suspension costs, and whether it costs both sides equally."""
-    print(f"\n{'=' * 78}\nSUSPENSION -- were both markets live?\n{'=' * 78}")
+def print_market_state(report):
+    """What non-live quotes cost, and which state they were in."""
+    print(f"\n{'=' * 78}\nMARKET STATE -- were both quotes tradeable?\n{'=' * 78}")
     if not report or not report["pairs"]:
         print("  No pairs.")
         return
-    if not report["suspended"]:
-        print(f"  Every one of {report['pairs']:,} pairs had both markets live.")
+    if not report["not_live"]:
+        print(f"  All {report['pairs']:,} pairs had both markets open and active.")
         return
-    print(f"  {report['suspended']:,} of {report['pairs']:,} pairs "
+    print(f"  {report['not_live']:,} of {report['pairs']:,} pairs "
           f"({_pct(report['share'])}) across {report['matches']:,} matches")
-    print(f"    prod suspended only      : {report['prod_only']:,}")
-    print(f"    candidate suspended only : {report['candidate_only']:,}")
-    print(f"    both                     : {report['both']:,}")
-    print(f"\n  {'SPLIT':<9}{'BUCKET':<14}{'PAIRS':>9}{'SUSP':>8}{'SHARE':>8}")
+    print(f"    prod not live only      : {report['prod_only']:,}")
+    print(f"    candidate not live only : {report['candidate_only']:,}")
+    print(f"    both                    : {report['both']:,}")
+
+    if report["by_state"]:
+        print(f"\n  {'STREAM':<11}{'STATUS/ACTIVE':<26}{'PAIRS':>8}")
+        for (stream, state), n in sorted(report["by_state"].items(),
+                                         key=lambda kv: -kv[1]):
+            print(f"  {stream:<11}{state:<26}{n:>8,}")
+
+    print(f"\n  {'SPLIT':<9}{'BUCKET':<14}{'PAIRS':>9}{'DEAD':>8}{'SHARE':>8}")
     for label, table in (("quarter", report["by_quarter"]),
                          ("market", report["by_market"])):
         for key in sorted(table):
-            total, susp = table[key]
+            total, dead = table[key]
             if not total:
                 continue
-            print(f"  {label:<9}{str(key):<14}{total:>9,}{susp:>8,}"
-                  f"{_pct(susp / total):>8}")
+            print(f"  {label:<9}{str(key):<14}{total:>9,}{dead:>8,}"
+                  f"{_pct(dead / total):>8}")
     print("\n  These pairs are shown in the report and scored by nothing: a")
-    print("  suspended price is not one anyone could have taken. The number")
-    print("  to watch is the split between the two streams. Suspension lands")
-    print("  on scoring plays and reviews, which is where the models differ")
-    print("  most, so a stream that suspends more readily has its")
-    print("  disagreements dropped from the comparison rather than scored.")
+    print("  price nobody could have taken is not a price. This feed has no")
+    print("  suspended state -- markets run open -> UNDER SETTLEMENT ->")
+    print("  CLOSED -- so most non-live rows are post-match settlement that a")
+    print("  drive-start snapshot should never land on. Anything here that is")
+    print("  NOT post-match is the interesting case, and a lopsided split")
+    print("  between the streams is the one to chase: those pairs cluster")
+    print("  around scores, which is where the two models differ most.")
 
 
 def print_selections(summary):

@@ -59,6 +59,7 @@ class Quote:
     decimal: Optional[float]
     publish_time: object
     live: bool
+    state: str
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,8 @@ class PairedObservation:
     # quote still carries a number, but not one anyone could have taken.
     prod_live: bool = True
     candidate_live: bool = True
+    prod_state: str = ""
+    candidate_state: str = ""
 
     @property
     def score_diff(self):
@@ -147,12 +150,12 @@ class PairedObservation:
         return abs(self.candidate_line - self.realized)
 
     @property
-    def suspended(self):
-        """True when either side's market was not live at this message.
+    def not_live(self):
+        """True when either side's market was not tradeable at this message.
 
         Either side is enough: the comparison is between two quotes on the
-        same event, and a suspended one is not a quote anyone could have
-        taken, so the pair is not a fair head-to-head whichever side it is.
+        same event, and a price nobody could have taken is not a quote, so
+        the pair is not a fair head-to-head whichever side it is.
         """
         return not (self.prod_live and self.candidate_live)
 
@@ -168,10 +171,10 @@ class PairedObservation:
         return PROBABILITY if self.same_line else LINE
 
     def errors(self, mode):
-        if self.suspended and config.REQUIRE_LIVE_QUOTE:
+        if self.not_live and config.REQUIRE_LIVE_QUOTE:
             # Everything downstream -- comparable, winner, the tallies, the
             # cells, the votes -- is built on errors(), so refusing here is
-            # what keeps a suspended price out of every metric at once,
+            # what keeps an untradeable price out of every metric at once,
             # while the pair itself stays visible in the table.
             return None, None
         if mode == DECISIVE:
@@ -234,6 +237,17 @@ def is_live(status, is_active):
             and str(is_active).lower() == config.LIVE_IS_ACTIVE)
 
 
+def state_label(status, is_active):
+    """The raw pair of columns, as one readable token.
+
+    Kept verbatim rather than mapped to a tidy vocabulary. This feed has no
+    'suspended' state at all -- its markets run open -> UNDER SETTLEMENT ->
+    CLOSED -- so inventing a word for what a state means would be guessing
+    where reporting the value is not.
+    """
+    return f"{status}/{is_active}"
+
+
 def index_by_message(quote_rows):
     """(match, market) -> {message: Quote}."""
     out = defaultdict(dict)
@@ -247,7 +261,8 @@ def index_by_message(quote_rows):
             Quote(probability=float(probability), description=description,
                   decimal=float(decimal_odd) if decimal_odd is not None else None,
                   publish_time=publish_time,
-                  live=is_live(status, is_active)))
+                  live=is_live(status, is_active),
+                  state=state_label(status, is_active)))
     return out
 
 
@@ -413,6 +428,8 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                     distance=snap.distance,
                     prod_live=prod_quote.live,
                     candidate_live=candidate_quote.live,
+                    prod_state=prod_quote.state,
+                    candidate_state=candidate_quote.state,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -772,34 +789,45 @@ def market_blocks(pairs, mode, n_bootstrap=2000):
     return out
 
 
-def suspension_report(pairs):
-    """What suspension is costing, and whether it costs both sides equally.
+def market_state_report(pairs):
+    """What non-live quotes cost, broken down by the state they were in.
 
-    The asymmetry is the part that matters. If one stream suspends more
-    readily than the other, then every pair it suspends on is a pair where
-    the comparison never happens -- and suspension lands on scoring plays
-    and reviews, which is where two models disagree most. A lopsided count
-    here means the head-to-head is being scored on the calm states only.
+    This feed has no suspension: its markets run open -> UNDER SETTLEMENT
+    -> CLOSED, and only about 15% of published rows are open. Most of the
+    rest is post-match settlement churn that a drive-start snapshot would
+    never land on anyway -- but "would never" is an assumption, and this is
+    what turns it into a count.
+
+    The split between the two streams is the part that matters. If one goes
+    non-live at moments the other does not, the pairs lost are not random:
+    they are the moments around scores and reviews, which is where two
+    models disagree most.
     """
     total = len(pairs)
-    suspended = [p for p in pairs if p.suspended]
+    dead = [p for p in pairs if p.not_live]
     by_quarter = defaultdict(lambda: [0, 0])
     by_market = defaultdict(lambda: [0, 0])
+    by_state = defaultdict(int)
     for pair in pairs:
         quarter = buckets.time_bucket(pair.period_number, pair.drive_number)
         by_quarter[quarter][0] += 1
         by_market[markets.market_group(pair.market_id)][0] += 1
-        if pair.suspended:
+        if pair.not_live:
             by_quarter[quarter][1] += 1
             by_market[markets.market_group(pair.market_id)][1] += 1
+            if not pair.prod_live:
+                by_state[("prod", pair.prod_state)] += 1
+            if not pair.candidate_live:
+                by_state[("candidate", pair.candidate_state)] += 1
     return {
         "pairs": total,
-        "suspended": len(suspended),
-        "share": len(suspended) / total if total else None,
-        "prod_only": sum(1 for p in suspended if not p.prod_live and p.candidate_live),
-        "candidate_only": sum(1 for p in suspended if not p.candidate_live and p.prod_live),
-        "both": sum(1 for p in suspended if not p.prod_live and not p.candidate_live),
-        "matches": len({p.match_code for p in suspended}),
+        "not_live": len(dead),
+        "share": len(dead) / total if total else None,
+        "prod_only": sum(1 for p in dead if not p.prod_live and p.candidate_live),
+        "candidate_only": sum(1 for p in dead if not p.candidate_live and p.prod_live),
+        "both": sum(1 for p in dead if not p.prod_live and not p.candidate_live),
+        "matches": len({p.match_code for p in dead}),
+        "by_state": dict(by_state),
         "by_quarter": {k: tuple(v) for k, v in by_quarter.items()},
         "by_market": {k: tuple(v) for k, v in by_market.items()},
     }
@@ -1278,7 +1306,7 @@ def build_full_report(pairs, n_bootstrap=2000):
         "complement": complement_report(pairs),
         "spread": spread_interpretation_report(pairs),
         "both_sides": both_sides_calibration(pairs),
-        "suspension": suspension_report(pairs),
+        "market_state": market_state_report(pairs),
         "axes": axes,
         "full_cell": full,
         "full_cell_order": sorted({k[0] for k in full}, key=buckets.sort_key),
