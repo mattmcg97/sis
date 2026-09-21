@@ -253,21 +253,47 @@ def state_label(status, is_active):
     return f"{status}/{is_active}"
 
 
-def index_by_message(quote_rows):
-    """(match, market) -> {message: Quote}."""
+def index_by_message(quote_rows, stats=None):
+    """(match, market) -> {message: Quote}, preferring a tradeable quote.
+
+    This used to keep the first row per (match, market, message) on the
+    stated assumption that a message carries one row per market. For the
+    moneyline that holds. For the spread and total it does not: those lines
+    move, so a message can carry the settlement of the old line alongside
+    the open quote for the new one, and rows arrive ordered by publish
+    time, not by usefulness.
+
+    Keeping the first row therefore picked arbitrarily, and increasingly
+    picked the dead one as a match accumulated settled lines -- which is
+    exactly the shape in the data: spread liveness falls from 25% on the
+    first three drives to 2% thereafter while the moneyline, which has no
+    line to move, stays at 100%.
+
+    So a live row now replaces a dead one for the same message. Among rows
+    of equal liveness the earliest still wins, which keeps the quote nearest
+    the event rather than a later correction.
+    """
     out = defaultdict(dict)
     for (match_code, market_id, publish_time, probability, decimal_odd,
          description, message, status, is_active) in quote_rows:
         if message is None or probability is None:
             continue
-        # A message carries one row per market; keep the first seen.
-        out[(match_code, market_id)].setdefault(
-            message,
-            Quote(probability=float(probability), description=description,
-                  decimal=float(decimal_odd) if decimal_odd is not None else None,
-                  publish_time=publish_time,
-                  live=is_live(status, is_active),
-                  state=state_label(status, is_active)))
+        quote = Quote(
+            probability=float(probability), description=description,
+            decimal=float(decimal_odd) if decimal_odd is not None else None,
+            publish_time=publish_time,
+            live=is_live(status, is_active),
+            state=state_label(status, is_active))
+        existing = out[(match_code, market_id)].get(message)
+        if existing is None:
+            out[(match_code, market_id)][message] = quote
+            continue
+        if stats is not None:
+            stats["quote_rows_sharing_a_message"] += 1
+        if quote.live and not existing.live:
+            out[(match_code, market_id)][message] = quote
+            if stats is not None:
+                stats["quote_upgraded_to_live"] += 1
     return out
 
 
@@ -315,8 +341,8 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
     prod_quotes = snowflake_io.fetch_quotes(cur, prod_table, match_codes)
     candidate_quotes = snowflake_io.fetch_quotes(cur, candidate_table, match_codes)
 
-    prod_index = index_by_message(prod_quotes)
-    candidate_index = index_by_message(candidate_quotes)
+    prod_index = index_by_message(prod_quotes, stats)
+    candidate_index = index_by_message(candidate_quotes, stats)
     shared = common_messages(prod_index, candidate_index)
 
     plays_by_match = defaultdict(list)

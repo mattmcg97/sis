@@ -54,6 +54,19 @@ def cmd_preflight(args):
                     cur, config.STREAMS[directional.PROD]):
                 print(f"  {src:<22}{str(value)[:25]:<26}{rows:>12,}{matches:>9,}")
 
+            print("\n  Rows per (match, market, message) -- the pipeline"
+                  " assumed one:")
+            print(f"  {'ID':>4}{'MESSAGES':>11}{'MEAN':>7}{'MAX':>5}"
+                  f"{'MULTI-ROW':>11}{'MIXED LIVE/DEAD':>17}")
+            for market_id, messages, mean_rows, max_rows, multi, mixed in \
+                    snowflake_io.rows_per_message(
+                        cur, config.STREAMS[directional.PROD]):
+                print(f"  {market_id:>4}{messages:>11,}{float(mean_rows):>7.2f}"
+                      f"{max_rows:>5}{multi:>11,}{mixed:>17,}")
+            print("  MIXED is the case that costs pairs: the message offered")
+            print("  a tradeable quote AND a dead one, so which row the index")
+            print("  kept decided whether the pair could be scored at all.")
+
             print("\n  Market descriptions, one sample per market:")
             print(f"  {'ID':>4}  {'FORMS':>6}  {'ROWS':>10}  SAMPLE")
             for market_id, forms, sample, n in snowflake_io.market_descriptions(
