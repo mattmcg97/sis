@@ -443,6 +443,41 @@ side only are not lost at random: they cluster around scores, which is
 where two models differ most. `REQUIRE_LIVE_QUOTE = False` scores them
 anyway, so the cost of excluding them stays measurable.
 
+## Who is PLAYER_1?
+
+Everything the calibrator buckets on is read in the `PLAYER_1` frame, and
+the claim that `PLAYER_1 = Home Team` came from a comment in
+`analysis/clean_possession_sequence.py` citing market-description text.
+`preflight` now puts that evidence on screen instead:
+
+- **`team_vocabulary`** — what `EVENT.PLAYER_1_TEAM`, `EVENT.PLAYER_2_TEAM`
+  and the play feed's `OFFENSIVE_TEAM` actually contain.
+- **`market_descriptions`** — one sample per market ID, with how many
+  distinct forms exist.
+- **`team_join_test`** — whether a match's play-feed team names match its
+  `EVENT` team names, i.e. whether the mapping can be *read* per match
+  rather than assumed.
+
+What the last full run already settles: `OFFENSIVE_TEAM` is purely
+positional — only `Home Team` and `Away Team`, zero unknowns across 15,028
+pairs. So if `PLAYER_n_TEAM` holds real team names, the two vocabularies
+never meet and the mapping stays positional.
+
+### The drive-count trap
+
+Possession "alternates" between consecutive drives **100% of the time**.
+That is not a clean bill of health: a drive is *defined* as a maximal run
+of the same offensive team, so it is arithmetic, and it would read 100% on
+a feed of pure noise.
+
+The number that means something is **10 drives per match against a
+realistic ~22**. The team label changes roughly half as often as
+possession actually does, so every missed change silently merges two
+possessions into one — and anything reasoning from "the next drive belongs
+to the other team" inherits that error. That is a sufficient explanation
+for the removed possession check's near-zero agreement without the
+`PLAYER_1 = Home` mapping being wrong at all.
+
 ## There is no game clock
 
 Worth stating because its absence shapes what the report can answer.
@@ -502,7 +537,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-240 tests covering line parsing, market resolution, bucket edges, drive
+244 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
