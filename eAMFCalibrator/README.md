@@ -499,6 +499,25 @@ Four CSVs in the output directory, all joinable on
 | `dump_plays.csv` | raw play row | `cleaning` (which rule fired), `dropped`, `is_snap`, `drive_number`, `is_anchor` |
 | `dump_scores.csv` | score change | `is_touchdown`, `scorer` |
 | `dump_drives.csv` | detected drive | `anchor_kind`, `n_plays`, `n_dropped_inside`, and the three buckets the snapshot lands in |
+| `dump_quotes.csv` | quote row, **both streams, undeduplicated** | `status`, `is_active`, `live`, `line`, `rows_at_this_message`, `chosen` |
+| `dump_timeline.csv` | message | what each source had: `has_play`, `has_score`, `prod_markets`, `prod_live_markets`, `candidate_*`, `markets_both_live` |
+
+### Do the quotes interleave with the plays?
+
+They share **one** `EVENT_MESSAGE_COUNT` sequence — that is what makes
+pairing possible — but they are not one to one, and `dump_timeline.csv` is
+where that shows. A message can carry six markets across two streams and
+no play at all; another can carry a play and no quote.
+
+`markets_both_live` is the one to read: a snapshot can only pair on a
+market **both** streams had live at that message, so at the anchor rows it
+is the ceiling on pairs before any tolerance or line rule applies.
+
+`dump_quotes.csv` keeps every row rather than the one the pipeline used,
+with `rows_at_this_message` and `chosen`, so the case that cost the spread
+and total their pairs is visible one row at a time: a message carrying the
+settlement of the old line *and* the open quote for the new one, with the
+settlement published first.
 
 `cleaning` names the rule rather than just the outcome — `kept`,
 `resume_after_td`, `noise_after_td`, `stale_after_change` — because
@@ -639,7 +658,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-267 tests covering line parsing, market resolution, bucket edges, drive
+274 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

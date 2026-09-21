@@ -5,23 +5,32 @@ that is not a question a summary can answer -- it needs the row-by-row
 working: every play the feed sent, which cleaning rule fired on it, which
 drive it ended up in, and which single row became the snapshot.
 
-Four files, joinable on (match_code, event_message_count):
+Five files, joinable on (match_code, event_message_count):
 
   plays       every raw play row, with the cleaning verdict and the drive
               it was assigned to
   scores      every score change, so the play rows can be read against
               what the scoreboard did
   drives      one row per detected drive, with its anchor and buckets
-  snapshots   what the calibrator actually pairs on
+  quotes      every quote row from both streams, undeduplicated, with
+              which one the index chose and why
+  timeline    one row per message: what the play feed, the scoreboard and
+              each stream had at that point in the sequence
+
+The three sources share one EVENT_MESSAGE_COUNT sequence -- that is what
+makes pairing possible at all -- but they do not line up one to one. A
+message can carry six markets times two streams of quotes and no play at
+all, or a play and no quote. The timeline is where that is visible.
 
 Deliberately the pipeline's own functions rather than a private copy, so
 what is inspected here is what the report is built from.
 """
 
+import collections
 import csv
 import os
 
-from . import buckets, config, drives, markets, snowflake_io
+from . import buckets, config, directional, drives, markets, snowflake_io
 from .drives import PlayRow, ScoreRow, build_snapshots, classify_plays, score_at
 
 PLAY_FIELDS = [
@@ -35,6 +44,20 @@ SCORE_FIELDS = [
     "player_1_change", "player_2_change",
     "player_1_cumulative", "player_2_cumulative",
     "is_touchdown", "scorer",
+]
+
+QUOTE_FIELDS = [
+    "match_code", "event_message_count", "stream", "market_id", "market",
+    "selection", "publish_time", "probability", "decimal_odd", "line",
+    "market_description", "status", "is_active", "live",
+    "rows_at_this_message", "chosen",
+]
+
+TIMELINE_FIELDS = [
+    "match_code", "event_message_count", "has_play", "cleaning",
+    "drive_number", "is_anchor", "has_score", "score_p1", "score_p2",
+    "prod_markets", "prod_live_markets", "candidate_markets",
+    "candidate_live_markets", "markets_both_live",
 ]
 
 DRIVE_FIELDS = [
@@ -151,6 +174,100 @@ def _rows_for_match(match_code, play_rows, score_rows):
     return play_out, score_out, drive_out
 
 
+def _quote_rows(match_code, quotes_by_stream):
+    """Every quote row, with which one the index kept and how many it beat.
+
+    Undeduplicated on purpose. The point is to show the case the pipeline
+    had to make a choice about: a message carrying several rows for one
+    market, some tradeable and some not.
+    """
+    out = []
+    for stream, rows in quotes_by_stream.items():
+        index = directional.index_by_message(rows)
+        seen = collections.Counter(
+            (r[1], r[6]) for r in rows if r[6] is not None)
+        for (code, market_id, publish_time, probability, decimal_odd,
+             description, message, status, is_active) in rows:
+            if message is None or probability is None:
+                continue
+            quote = directional.Quote(
+                probability=float(probability), description=description,
+                decimal=float(decimal_odd) if decimal_odd is not None else None,
+                publish_time=publish_time,
+                live=directional.is_live(status, is_active),
+                state=directional.state_label(status, is_active))
+            kept = index.get((code, market_id), {}).get(message)
+            out.append({
+                "match_code": code,
+                "event_message_count": message,
+                "stream": stream,
+                "market_id": market_id,
+                "market": markets.market_group(market_id),
+                "selection": markets.selection_label(market_id),
+                "publish_time": publish_time,
+                "probability": probability,
+                "decimal_odd": decimal_odd,
+                "line": (markets.parse_line(description)
+                         if markets.needs_line(market_id) else ""),
+                "market_description": description,
+                "status": status,
+                "is_active": is_active,
+                "live": int(quote.live),
+                "rows_at_this_message": seen[(market_id, message)],
+                "chosen": int(kept == quote),
+            })
+    out.sort(key=lambda r: (r["event_message_count"], r["stream"],
+                            r["market_id"], str(r["publish_time"])))
+    return out
+
+
+def _timeline_rows(match_code, play_out, score_out, quote_out):
+    """One row per message: what each source had at that point.
+
+    Answers the question the other files cannot: whether the play feed,
+    the scoreboard and the two streams are talking about the same moments.
+    """
+    messages = sorted({r["event_message_count"] for r in play_out}
+                      | {r["event_message_count"] for r in score_out}
+                      | {r["event_message_count"] for r in quote_out})
+    plays = {r["event_message_count"]: r for r in play_out}
+    scores = {r["event_message_count"]: r for r in score_out}
+
+    per_stream = collections.defaultdict(lambda: collections.defaultdict(set))
+    per_stream_live = collections.defaultdict(lambda: collections.defaultdict(set))
+    for row in quote_out:
+        if not row["chosen"]:
+            continue
+        per_stream[row["stream"]][row["event_message_count"]].add(row["market_id"])
+        if row["live"]:
+            per_stream_live[row["stream"]][row["event_message_count"]].add(
+                row["market_id"])
+
+    out = []
+    for message in messages:
+        play = plays.get(message)
+        score = scores.get(message)
+        prod_live = per_stream_live["prod"][message]
+        cand_live = per_stream_live["candidate"][message]
+        out.append({
+            "match_code": match_code,
+            "event_message_count": message,
+            "has_play": int(play is not None),
+            "cleaning": play["cleaning"] if play else "",
+            "drive_number": play["drive_number"] if play else "",
+            "is_anchor": play["is_anchor"] if play else 0,
+            "has_score": int(score is not None),
+            "score_p1": score["player_1_cumulative"] if score else "",
+            "score_p2": score["player_2_cumulative"] if score else "",
+            "prod_markets": len(per_stream["prod"][message]),
+            "prod_live_markets": len(prod_live),
+            "candidate_markets": len(per_stream["candidate"][message]),
+            "candidate_live_markets": len(cand_live),
+            "markets_both_live": len(prod_live & cand_live),
+        })
+    return out
+
+
 def _write(path, fields, rows):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as fh:
@@ -161,33 +278,53 @@ def _write(path, fields, rows):
 
 
 def run(cur, match_codes, out_dir, time_column, verbose=True):
-    """Dump the drive working for these matches. Returns the paths written."""
+    """Dump the working out for these matches. Returns the paths written."""
     play_rows = snowflake_io.fetch_plays(cur, match_codes, time_column)
     score_rows = snowflake_io.fetch_scores(cur, match_codes)
+    quote_rows = {
+        stream: snowflake_io.fetch_quotes(cur, config.STREAMS[stream], match_codes)
+        for stream in (directional.PROD, directional.CANDIDATE)
+    }
 
     plays_by_match, scores_by_match = {}, {}
     for row in play_rows:
         plays_by_match.setdefault(row[0], []).append(row)
     for row in score_rows:
         scores_by_match.setdefault(row[0], []).append(row)
+    quotes_by_match = collections.defaultdict(
+        lambda: {directional.PROD: [], directional.CANDIDATE: []})
+    for stream, rows in quote_rows.items():
+        for row in rows:
+            quotes_by_match[row[0]][stream].append(row)
 
     all_plays, all_scores, all_drives = [], [], []
+    all_quotes, all_timeline = [], []
     for match_code in match_codes:
         p, s, d = _rows_for_match(match_code,
                                   plays_by_match.get(match_code, []),
                                   scores_by_match.get(match_code, []))
+        q = _quote_rows(match_code, quotes_by_match[match_code])
+        t = _timeline_rows(match_code, p, s, q)
         all_plays.extend(p)
         all_scores.extend(s)
         all_drives.extend(d)
+        all_quotes.extend(q)
+        all_timeline.extend(t)
         if verbose:
             kept = sum(1 for row in p if not row["dropped"])
             off = sum(1 for row in d if row["anchor_kind"] != drives.FIRST_DOWN)
+            shared = sum(1 for row in t if row["markets_both_live"])
             print(f"  {match_code}: {len(p):,} plays ({kept:,} kept), "
-                  f"{len(d)} drives, {off} off anchor, {len(s)} score changes")
+                  f"{len(d)} drives, {off} off anchor, {len(s)} score changes, "
+                  f"{len(q):,} quote rows, {len(t):,} messages "
+                  f"({shared:,} with a live market in both streams)")
 
     written = [
         _write(os.path.join(out_dir, "dump_plays.csv"), PLAY_FIELDS, all_plays),
         _write(os.path.join(out_dir, "dump_scores.csv"), SCORE_FIELDS, all_scores),
         _write(os.path.join(out_dir, "dump_drives.csv"), DRIVE_FIELDS, all_drives),
+        _write(os.path.join(out_dir, "dump_quotes.csv"), QUOTE_FIELDS, all_quotes),
+        _write(os.path.join(out_dir, "dump_timeline.csv"), TIMELINE_FIELDS,
+               all_timeline),
     ]
-    return written, all_plays, all_scores, all_drives
+    return written, all_plays, all_scores, all_drives, all_quotes, all_timeline

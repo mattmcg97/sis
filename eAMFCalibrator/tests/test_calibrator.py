@@ -976,6 +976,96 @@ class TestDump(unittest.TestCase):
             self.assertIn((row["match_code"], row["anchor_message"]), keys)
 
 
+class TestDumpQuotesAndTimeline(unittest.TestCase):
+    """The quote rows, and how they line up with the play feed."""
+
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def quote(self, message, market_id, probability, status, active, second,
+              description="PLAYER 1 -3.5"):
+        return ("AF1", market_id, self.T + dt.timedelta(seconds=second),
+                probability, 2.0, description, message, status, active)
+
+    def rows(self):
+        from .. import dump
+        # Message 6 carries the settlement of the old spread line AND the
+        # open quote for the new one -- the case the index has to choose
+        # between, and the one this file exists to make visible.
+        quotes = {
+            "prod": [
+                self.quote(1, 50, 55.0, "open", "true", 1, "PLAYER 1 to win"),
+                self.quote(6, 52, 61.0, "UNDER SETTLEMENT", "false", 5, "PLAYER 1 -3.5"),
+                self.quote(6, 52, 48.0, "open", "true", 6, "PLAYER 1 -6.5"),
+                self.quote(7, 54, 50.0, "open", "true", 7, "Over 44.5"),
+            ],
+            "candidate": [
+                self.quote(1, 50, 56.0, "open", "true", 1, "PLAYER 1 to win"),
+                self.quote(6, 52, 47.0, "open", "true", 6, "PLAYER 1 -6.5"),
+            ],
+        }
+        return dump._quote_rows("AF1", quotes)
+
+    def test_no_quote_row_is_dropped(self):
+        rows = self.rows()
+        self.assertEqual(len(rows), 6)
+
+    def test_a_shared_message_says_how_many_rows_were_there(self):
+        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
+                  for r in self.rows()}
+        self.assertEqual(by_key[("prod", 6, 61.0)]["rows_at_this_message"], 2)
+        self.assertEqual(by_key[("prod", 6, 48.0)]["rows_at_this_message"], 2)
+        self.assertEqual(by_key[("prod", 1, 55.0)]["rows_at_this_message"], 1)
+
+    def test_chosen_marks_the_row_the_index_kept(self):
+        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
+                  for r in self.rows()}
+        # The dead settlement row loses to the live one, even though it was
+        # published first. This is the fix, visible per row.
+        self.assertEqual(by_key[("prod", 6, 61.0)]["chosen"], 0)
+        self.assertEqual(by_key[("prod", 6, 61.0)]["live"], 0)
+        self.assertEqual(by_key[("prod", 6, 48.0)]["chosen"], 1)
+        self.assertEqual(by_key[("prod", 6, 48.0)]["live"], 1)
+
+    def test_the_line_is_parsed_only_where_the_market_has_one(self):
+        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
+                  for r in self.rows()}
+        self.assertEqual(by_key[("prod", 6, 48.0)]["line"], -6.5)
+        self.assertEqual(by_key[("prod", 1, 55.0)]["line"], "")
+
+    def test_the_timeline_covers_every_message_any_source_had(self):
+        from .. import dump
+        plays = [("AF1", m, 1, "Home Team", 1, 10, 25, None) for m in (1, 2)]
+        play_out, score_out, _ = dump._rows_for_match("AF1", plays, [])
+        timeline = dump._timeline_rows("AF1", play_out, score_out, self.rows())
+        messages = [r["event_message_count"] for r in timeline]
+        self.assertEqual(messages, [1, 2, 6, 7])
+
+    def test_the_timeline_shows_where_the_sources_do_not_meet(self):
+        from .. import dump
+        plays = [("AF1", m, 1, "Home Team", 1, 10, 25, None) for m in (1, 2)]
+        play_out, score_out, _ = dump._rows_for_match("AF1", plays, [])
+        by_message = {r["event_message_count"]: r for r in
+                      dump._timeline_rows("AF1", play_out, score_out, self.rows())}
+        # A play with no quote, and a quote with no play. The three sources
+        # share one message sequence but are not one to one.
+        self.assertEqual((by_message[2]["has_play"],
+                          by_message[2]["prod_markets"]), (1, 0))
+        self.assertEqual((by_message[7]["has_play"],
+                          by_message[7]["prod_markets"]), (0, 1))
+        # And only where both streams had it live can a pair exist at all.
+        self.assertEqual(by_message[1]["markets_both_live"], 1)
+        self.assertEqual(by_message[7]["markets_both_live"], 0)
+
+    def test_only_the_chosen_row_counts_towards_the_timeline(self):
+        from .. import dump
+        by_message = {r["event_message_count"]: r for r in
+                      dump._timeline_rows("AF1", [], [], self.rows())}
+        # Message 6 had two prod rows for one market; the timeline counts
+        # markets, not rows, so it must read 1.
+        self.assertEqual(by_message[6]["prod_markets"], 1)
+        self.assertEqual(by_message[6]["markets_both_live"], 1)
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

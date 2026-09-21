@@ -139,12 +139,12 @@ def cmd_dump(args):
                     cur, config.STREAMS[directional.CANDIDATE]))
                 match_codes = sorted(prod & candidate)[-args.matches:]
             print(f"\nDumping drive detection for {len(match_codes)} matches")
-            written, plays, scores, drive_rows = dump.run(
+            written, plays, scores, drive_rows, quotes, timeline = dump.run(
                 cur, match_codes, out_dir, time_column)
     finally:
         conn.close()
 
-    report.print_dump_summary(plays, scores, drive_rows)
+    report.print_dump_summary(plays, scores, drive_rows, quotes, timeline)
     print()
     for path in written:
         size = os.path.getsize(path) / 1024
