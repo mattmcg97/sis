@@ -20,7 +20,8 @@ from dataclasses import dataclass
 from bisect import bisect_left
 from typing import Optional
 
-from . import buckets, clock, config, markets, metrics, snowflake_io
+from . import (buckets, clock, config, handles, markets, metrics,
+               snowflake_io)
 from .drives import PlayRow, ScoreRow, build_snapshots
 
 
@@ -112,8 +113,14 @@ def snapshot_time(snap, match_clock, stats):
 
 
 def observations_for_chunk(cur, stream_table, match_codes, time_column, stats,
-                           clock_table=None):
-    """Build every observation for one chunk of matches."""
+                           clock_table=None, scan=None):
+    """Build every observation for one chunk of matches.
+
+    `scan` is the handle check, accumulating across chunks. Every match is
+    scanned whether or not the result is acted on, so the report can say
+    how big the problem is even when nothing is being excluded.
+    """
+    scan = scan if scan is not None else handles.Scan()
     play_rows = snowflake_io.fetch_plays(cur, match_codes, time_column)
     score_rows = snowflake_io.fetch_scores(cur, match_codes)
     finals = snowflake_io.fetch_final_scores(cur, match_codes)
@@ -141,11 +148,17 @@ def observations_for_chunk(cur, stream_table, match_codes, time_column, stats,
                      p2_change=r[4], p1_cumulative=r[5], p2_cumulative=r[6])
             for r in scores_by_match.get(match_code, [])
         ]
+        final = finals.get(match_code)
+        if not scan.add(match_code, scores, final):
+            stats["matches_with_flipped_handles"] += 1
+            if config.EXCLUDE_FLIPPED_MATCHES:
+                stats["matches_excluded_for_flipped_handles"] += 1
+                continue
+
         if not plays:
             stats["matches_without_plays"] += 1
             continue
 
-        final = finals.get(match_code)
         if final is None or final[0] is None or final[1] is None:
             stats["matches_without_final"] += 1
             continue
@@ -235,7 +248,10 @@ def new_stats():
 
 
 def run(stream_key, verbose=True):
-    """Calibrate one stream. Returns (observations, stats, header)."""
+    """Calibrate one stream.
+
+    Returns (observations, stats, header, handle_scan).
+    """
     if stream_key not in config.STREAMS:
         raise ValueError(f"unknown stream {stream_key!r}; expected one of {sorted(config.STREAMS)}")
     stream_table = config.STREAMS[stream_key]
@@ -243,6 +259,7 @@ def run(stream_key, verbose=True):
     stats = new_stats()
     observations = []
     header = {}
+    scan = handles.Scan()
 
     conn = snowflake_io.get_connection()
     try:
@@ -276,12 +293,12 @@ def run(stream_key, verbose=True):
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
                 observations.extend(
                     observations_for_chunk(cur, stream_table, batch, time_column,
-                                           stats, clock_table)
+                                           stats, clock_table, scan)
                 )
     finally:
         conn.close()
 
-    return observations, stats, header
+    return observations, stats, header, scan.summary()
 
 
 def overall_summary(observations):

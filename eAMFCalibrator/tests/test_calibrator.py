@@ -7,13 +7,14 @@ matching, scoring -- is pinned down in full instead.
 Run with:  py -m unittest discover eAMFCalibrator
 """
 
+import collections
 import contextlib
 import datetime as dt
 import io
 import unittest
 
-from .. import (buckets, clock, config, directional, markets, metrics,
-                report)
+from .. import (buckets, clock, config, directional, handles, markets,
+                metrics, report)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -77,6 +78,242 @@ class TestResolve(unittest.TestCase):
         self.assertIsNone(markets.resolve(50, None, None, 17))
         self.assertIsNone(markets.resolve(54, None, 24, 17))  # totals need a line
         self.assertIsNone(markets.resolve(99, None, 24, 17))  # unknown market
+
+
+def clean_scan(n_matches):
+    """A handle scan over `n_matches` matches that all look stable."""
+    scan = handles.Scan()
+    for i in range(n_matches):
+        scan.add(f"AF{i}", [ScoreRow(1, 1, 7, 0, 7, 0)], (7, 0))
+    return scan.summary()
+
+
+class TestHandleCheck(unittest.TestCase):
+    """PLAYER_1 / PLAYER_2 staying pinned to one team each."""
+
+    @staticmethod
+    def rows(*cumulatives):
+        """ScoreRows from a sequence of (p1, p2) cumulative totals."""
+        return [ScoreRow(i + 1, 1, None, None, p1, p2)
+                for i, (p1, p2) in enumerate(cumulatives)]
+
+    def kinds(self, *cumulatives, final=None):
+        return [a.kind for a in
+                handles.scan_match("AF1", self.rows(*cumulatives), final)]
+
+    def test_a_normal_match_flags_nothing(self):
+        self.assertEqual(self.kinds((7, 0), (7, 7), (14, 7), (14, 14)), [])
+
+    def test_an_exact_swap_is_a_mirror(self):
+        self.assertEqual(self.kinds((14, 7), (7, 14)), [handles.MIRROR])
+
+    def test_a_swap_landing_on_a_score_is_a_regression(self):
+        # 21-7 crossing over while the other side scores a touchdown: the
+        # totals do not trade places exactly, but one still went down.
+        self.assertEqual(self.kinds((21, 7), (7, 28)), [handles.REGRESSION])
+
+    def test_a_rescinded_score_is_a_regression_not_a_mirror(self):
+        # A touchdown overturned on review. Worth flagging, but it is not a
+        # swap, and the kind has to say so.
+        self.assertEqual(self.kinds((14, 7), (7, 7)), [handles.REGRESSION])
+
+    def test_a_level_score_cannot_reveal_a_swap(self):
+        # Both sides on 7: a swap here leaves the totals identical. This is
+        # the documented blind spot, asserted so it stays documented.
+        self.assertEqual(self.kinds((7, 7), (7, 7), (7, 14)), [])
+
+    def test_sparse_cumulatives_carry_forward(self):
+        # Only the scoring side reports a cumulative; the other arrives as
+        # NULL and must hold its value rather than reading as a drop to 0.
+        rows = [ScoreRow(1, 1, 7, None, 7, None),
+                ScoreRow(2, 1, None, 7, None, 7),
+                ScoreRow(3, 1, 7, None, 14, None)]
+        self.assertEqual([a.kind for a in handles.scan_match("AF1", rows)], [])
+
+    def test_rows_are_scanned_in_message_order(self):
+        rows = list(reversed(self.rows((7, 0), (14, 0), (21, 0))))
+        self.assertEqual([a.kind for a in handles.scan_match("AF1", rows)], [])
+
+    def test_a_match_crossed_from_the_first_message_is_caught_at_the_final(self):
+        # Nothing regresses -- the whole match is simply mirrored -- so the
+        # only evidence is SCORE_ENDGAME disagreeing in mirror image.
+        self.assertEqual(self.kinds((0, 7), (0, 14), final=(14, 0)),
+                         [handles.FINAL_MIRRORED])
+
+    def test_a_plain_final_disagreement_is_not_called_a_flip(self):
+        # A missing late score explains this as well as a swap does.
+        kinds = self.kinds((7, 0), final=(14, 0))
+        self.assertEqual(kinds, [handles.FINAL_MISMATCH])
+        self.assertNotIn(handles.FINAL_MISMATCH, handles.FLIP_KINDS)
+
+    def test_a_level_final_is_never_read_as_mirrored(self):
+        # 14-14 mirrored is still 14-14, so a disagreement at a level score
+        # carries no directional evidence.
+        self.assertEqual(self.kinds((14, 14), final=(21, 21)),
+                         [handles.FINAL_MISMATCH])
+
+    def test_an_unsettled_match_skips_the_final_check(self):
+        self.assertEqual(self.kinds((7, 0), final=None), [])
+        self.assertEqual(self.kinds((7, 0), final=(None, None)), [])
+
+    def test_the_anomaly_names_the_message_and_both_scores(self):
+        found = handles.scan_match("AF9", self.rows((14, 7), (7, 14)))
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].match_code, "AF9")
+        self.assertEqual(found[0].event_message_count, 2)
+        self.assertEqual(found[0].describe(), "14-7 -> 7-14")
+        self.assertTrue(found[0].is_flip)
+
+
+class TestHandleScanSummary(unittest.TestCase):
+    def setUp(self):
+        self.scan = handles.Scan()
+        self.scan.add("CLEAN1", TestHandleCheck.rows((7, 0), (7, 7)), (7, 7))
+        self.scan.add("CLEAN2", TestHandleCheck.rows((3, 0)), (3, 0))
+        self.scan.add("SWAP", TestHandleCheck.rows((14, 7), (7, 14)), (7, 14))
+        self.scan.add("LATE", TestHandleCheck.rows((7, 0)), (10, 0))
+        self.summary = self.scan.summary()
+
+    def test_add_reports_whether_the_match_is_usable(self):
+        scan = handles.Scan()
+        self.assertTrue(scan.add("OK", TestHandleCheck.rows((7, 0))))
+        self.assertFalse(scan.add("BAD", TestHandleCheck.rows((14, 7), (7, 14))))
+
+    def test_counts_separate_flagged_from_flipped(self):
+        # LATE is flagged (its final disagrees) but not flipped.
+        self.assertEqual(self.summary["matches"], 4)
+        self.assertEqual(self.summary["matches_flagged"], 2)
+        self.assertEqual(self.summary["matches_flipped"], 1)
+        self.assertEqual(self.summary["matches_clean"], 2)
+
+    def test_only_flipped_matches_are_offered_for_exclusion(self):
+        self.assertEqual(self.summary["flipped_matches"], ["SWAP"])
+        self.assertEqual(self.scan.flipped_matches, frozenset({"SWAP"}))
+
+    def test_counts_are_broken_out_by_kind(self):
+        self.assertEqual(self.summary["counts"][handles.MIRROR], 1)
+        self.assertEqual(self.summary["counts"][handles.FINAL_MISMATCH], 1)
+        self.assertEqual(self.summary["counts"][handles.REGRESSION], 0)
+
+    def test_the_scan_accumulates_across_chunks(self):
+        # build_pairs is called once per chunk with one shared Scan, so a
+        # second chunk must add to the first rather than replace it.
+        self.scan.add("SWAP2", TestHandleCheck.rows((21, 0), (0, 21)))
+        self.assertEqual(self.scan.summary()["matches"], 5)
+        self.assertEqual(self.scan.summary()["matches_flipped"], 2)
+
+    def test_empty_summary_matches_the_real_shape(self):
+        self.assertEqual(set(handles.empty_summary()), set(self.summary))
+
+
+class TestFlippedMatchExclusion(unittest.TestCase):
+    """build_pairs consulting the scan before it trusts a match.
+
+    Patched at the fetch boundary rather than mocked at the cursor, so the
+    real pairing code runs -- the exclusion branch is the point of the
+    check and wants exercising, not stubbing.
+    """
+
+    MATCHES = ["CLEAN", "SWAP"]
+
+    def feed(self):
+        plays = []
+        scores = []
+        for match in self.MATCHES:
+            for msg, team in ((1, "Home Team"), (2, "Away Team")):
+                plays.append((match, msg, 1, team, 1, 10, 25, None))
+        # CLEAN climbs; SWAP trades its totals on the second message. Both
+        # finish decided, so the moneyline resolves rather than pushing.
+        scores.extend([("CLEAN", 1, 1, 7, None, 7, 0),
+                       ("CLEAN", 2, 1, 7, 7, 14, 7)])
+        scores.extend([("SWAP", 1, 1, 14, None, 14, 7),
+                       ("SWAP", 2, 1, None, None, 7, 14)])
+        return plays, scores
+
+    def quotes(self):
+        rows = []
+        for match in self.MATCHES:
+            for msg in (1, 2):
+                rows.append((match, 50, dt.datetime(2026, 9, 18, 12, msg),
+                             60.0, 1.67, "PLAYER 1", msg))
+        return rows
+
+    @contextlib.contextmanager
+    def patched(self):
+        plays, scores = self.feed()
+        quotes = self.quotes()
+        io = directional.snowflake_io
+        originals = {name: getattr(io, name) for name in
+                     ("fetch_plays", "fetch_scores", "fetch_final_scores",
+                      "fetch_quotes")}
+        io.fetch_plays = lambda cur, m, t: plays
+        io.fetch_scores = lambda cur, m: scores
+        io.fetch_final_scores = lambda cur, m: {"CLEAN": (14, 7), "SWAP": (7, 14)}
+        io.fetch_quotes = lambda cur, table, m: quotes
+        try:
+            yield
+        finally:
+            for name, function in originals.items():
+                setattr(io, name, function)
+
+    def build(self, exclude):
+        scan = handles.Scan()
+        stats = collections.defaultdict(int)
+        previous = config.EXCLUDE_FLIPPED_MATCHES
+        config.EXCLUDE_FLIPPED_MATCHES = exclude
+        try:
+            with self.patched():
+                pairs = directional.build_pairs(
+                    None, self.MATCHES, "PLAY_TIME", stats, scan)
+        finally:
+            config.EXCLUDE_FLIPPED_MATCHES = previous
+        return pairs, stats, scan
+
+    def test_the_flip_is_found_and_counted_either_way(self):
+        for exclude in (False, True):
+            _, stats, scan = self.build(exclude)
+            self.assertEqual(scan.flipped_matches, frozenset({"SWAP"}),
+                             f"exclude={exclude}")
+            self.assertEqual(stats["matches_with_flipped_handles"], 1)
+            # Both matches are scanned whichever way the flag is set, so the
+            # report can state the size of the problem.
+            self.assertEqual(scan.summary()["matches"], 2)
+
+    def test_off_by_default_the_flipped_match_still_contributes(self):
+        pairs, stats, _ = self.build(exclude=False)
+        self.assertIn("SWAP", {p.match_code for p in pairs})
+        self.assertEqual(stats["matches_excluded_for_flipped_handles"], 0)
+
+    def test_on_the_flipped_match_is_dropped_and_the_clean_one_is_not(self):
+        pairs, stats, _ = self.build(exclude=True)
+        contributing = {p.match_code for p in pairs}
+        self.assertNotIn("SWAP", contributing)
+        self.assertIn("CLEAN", contributing)
+        self.assertEqual(stats["matches_excluded_for_flipped_handles"], 1)
+
+
+class TestDropFlippedFlag(unittest.TestCase):
+    def setUp(self):
+        self.previous = config.EXCLUDE_FLIPPED_MATCHES
+
+    def tearDown(self):
+        config.EXCLUDE_FLIPPED_MATCHES = self.previous
+
+    def parse(self, argv):
+        from .. import __main__ as cli
+        return cli.build_parser().parse_args(argv)
+
+    def test_reporting_is_the_default(self):
+        config.EXCLUDE_FLIPPED_MATCHES = False
+        from .. import __main__ as cli
+        cli.apply_overrides(self.parse(["report"]))
+        self.assertFalse(config.EXCLUDE_FLIPPED_MATCHES)
+
+    def test_the_flag_turns_exclusion_on(self):
+        config.EXCLUDE_FLIPPED_MATCHES = False
+        from .. import __main__ as cli
+        cli.apply_overrides(self.parse(["report", "--drop-flipped"]))
+        self.assertTrue(config.EXCLUDE_FLIPPED_MATCHES)
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -1162,9 +1399,11 @@ class TestReportRendering(unittest.TestCase):
         self.header = {"paired_matches": 9}
         self.stats = {"snapshots": 12, "exact_message_pair": 4,
                       "offset_message_pair": 1}
+        self.scan = clean_scan(5)
 
     def _render(self):
-        return self.html_full.render(self.report, self.header, self.stats, self.pairs)
+        return self.html_full.render(self.report, self.header, self.stats,
+                                     self.pairs, self.scan)
 
     def test_header_separates_contributing_matches_from_the_universe(self):
         # 5 matches produced pairs; 9 were settled. Reporting only one
@@ -1181,7 +1420,8 @@ class TestReportRendering(unittest.TestCase):
     def test_message_gap_is_flagged_when_not_exact(self):
         offset = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=2)]
         report = directional.build_full_report(offset, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats, offset)
+        rendered = self.html_full.render(report, self.header, self.stats, offset,
+                                         self.scan)
         self.assertIn('class="warn"', rendered)
 
     def test_every_pair_reaches_the_table(self):
@@ -1298,10 +1538,44 @@ class TestReportShape(unittest.TestCase):
             self.pairs.append(line_pair(0.5, 0.5, 44.5, 44.5, 24, 21,
                                         match=f"AF{i}", market_id=54))
         self.report = directional.build_full_report(self.pairs, n_bootstrap=50)
+        self.scan = clean_scan(12)
         self.rendered = self.html_full.render(
             self.report, {"paired_matches": 12},
             {"snapshots": 24, "exact_message_pair": 20, "offset_message_pair": 4},
-            self.pairs)
+            self.pairs, self.scan)
+
+    def test_handle_check_reports_clean_when_nothing_flipped(self):
+        block = self.rendered[self.rendered.index("Handle check"):]
+        block = block[:block.index("</section>")]
+        self.assertIn("clean", block)
+        self.assertIn("12 matches", block)
+        self.assertNotIn('class="bad"', block)
+
+    def test_handle_check_shouts_when_a_match_flipped(self):
+        scan = handles.Scan()
+        scan.add("OK", [ScoreRow(1, 1, 7, 0, 7, 0)], (7, 0))
+        scan.add("SWAP", [ScoreRow(1, 1, 14, 0, 14, 7),
+                          ScoreRow(2, 1, None, None, 7, 14)], (7, 14))
+        rendered = self.html_full.render(
+            self.report, {"paired_matches": 12}, {}, self.pairs, scan.summary())
+        block = rendered[rendered.index("Handle check"):]
+        block = block[:block.index("</section>")]
+        self.assertIn("1 of 2 matches", block)
+        self.assertIn('class="bad"', block)
+        self.assertIn("SWAP", block)
+        self.assertIn("14&ndash;7 &rarr; 7&ndash;14", block)
+        # The default is to report rather than drop, so the reader has to be
+        # told the bad match is still in the numbers above.
+        self.assertIn("STILL IN", block)
+
+    def test_a_flip_stops_the_checks_line_claiming_all_pass(self):
+        scan = handles.Scan()
+        scan.add("SWAP", [ScoreRow(1, 1, 14, 0, 14, 7),
+                          ScoreRow(2, 1, None, None, 7, 14)], (7, 14))
+        summary = self.html_full._checks_summary(self.report, scan.summary())
+        self.assertIn("flipped handles", summary)
+        self.assertIn("bad", summary)
+        self.assertNotIn("all pass", summary)
 
     def test_cross_section_is_the_three_axes_together(self):
         self.assertIn("Cross-section calibration", self.rendered)

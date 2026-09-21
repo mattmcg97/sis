@@ -70,9 +70,10 @@ def cmd_preflight(args):
 
 def run_one(stream_key, out_dir):
     print(f"\nRunning calibration for stream: {stream_key}")
-    observations, stats, header = pipeline.run(stream_key)
+    observations, stats, header, handle_scan = pipeline.run(stream_key)
 
     report.print_header(header, stats)
+    report.print_handle_check(handle_scan)
     if not observations:
         print("\n  No observations produced. Nothing matched inside the tolerance.")
         return None
@@ -128,9 +129,12 @@ def cmd_directional(args):
     """Paired head-to-head, which is what a single day of data can answer."""
     out_dir = args.out or DEFAULT_OUT
     print("\nPairing prod against candidate at each drive-start snapshot")
-    pairs, stats, header = directional.run()
+    pairs, stats, header, handle_scan = directional.run()
 
     report.print_directional_header(header, stats)
+    # Before any comparison: is the PLAYER_1 frame the buckets are read in
+    # the same frame all the way through each match?
+    report.print_handle_check(handle_scan)
     if not pairs:
         print("\n  No paired observations. Nothing to compare.")
         return 1
@@ -216,9 +220,12 @@ def cmd_cross(args):
     """
     out_dir = args.out or DEFAULT_OUT
     print("\nPairing prod against candidate at each drive-start snapshot")
-    pairs, stats, header = directional.run()
+    pairs, stats, header, handle_scan = directional.run()
 
     report.print_directional_header(header, stats)
+    # Before any comparison: is the PLAYER_1 frame the buckets are read in
+    # the same frame all the way through each match?
+    report.print_handle_check(handle_scan)
     if not pairs:
         print("\n  No paired observations. Nothing to compare.")
         return 1
@@ -273,9 +280,12 @@ def cmd_report(args):
     """
     out_dir = args.out or DEFAULT_OUT
     print("\nPairing prod against candidate at each drive-start snapshot")
-    pairs, stats, header = directional.run()
+    pairs, stats, header, handle_scan = directional.run()
 
     report.print_directional_header(header, stats)
+    # Before any comparison: is the PLAYER_1 frame the buckets are read in
+    # the same frame all the way through each match?
+    report.print_handle_check(handle_scan)
     if not pairs:
         print("\n  No paired observations. Nothing to compare.")
         return 1
@@ -327,7 +337,7 @@ def cmd_report(args):
 
     ordered = directional.sorted_pairs_by_disagreement(pairs)
     html_path = args.html or os.path.join(out_dir, "eamf_report.html")
-    html_full.write(html_path, full, header, stats, ordered)
+    html_full.write(html_path, full, header, stats, ordered, handle_scan)
     size = os.path.getsize(html_path) / 1024 ** 2
     print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
           f"{len(ordered):,} pair rows)")
@@ -370,6 +380,9 @@ def common_options():
                              f"tight on a long window (default {config.MATCH_CHUNK_SIZE})")
     tuning.add_argument("--time-axis", choices=["period", "drive"],
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
+    tuning.add_argument("--drop-flipped", action="store_true",
+                        help="drop matches whose PLAYER_1 / PLAYER_2 handles "
+                             "swap sides; the default reports them instead")
     return parent
 
 
@@ -392,6 +405,9 @@ def apply_overrides(args):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
+
+    if getattr(args, "drop_flipped", False):
+        config.EXCLUDE_FLIPPED_MATCHES = True
 
     clock = getattr(args, "clock", None)
     if clock is not None:

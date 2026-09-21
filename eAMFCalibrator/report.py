@@ -8,7 +8,7 @@ candidate, or the same stream a week apart) diff cleanly with `compare`.
 import csv
 import os
 
-from . import buckets, config, metrics
+from . import buckets, config, handles, metrics
 
 CELL_FIELDS = [
     "stream", "score_diff", "time_bucket", "possession", "market", "selection",
@@ -146,6 +146,57 @@ def print_cells(rows):
               f"{r['market']:<11}{r['selection']:<7}{r['n']:>8,}{r['matches']:>7,}"
               f"{_fmt(r['mean_predicted'], '.3f'):>8}{_fmt(r['realized'], '.3f'):>8}"
               f"{_fmt(r['gap'], '+.3f'):>8}{_fmt(r['brier'], '.4f'):>9}")
+
+
+def print_handle_check(scan, limit=20):
+    """Whether PLAYER_1 / PLAYER_2 stayed pinned to the same team."""
+    print(f"\n{'=' * 104}\nHANDLE CHECK -- do PLAYER_1 / PLAYER_2 stay on the "
+          f"same team?\n{'=' * 104}")
+    if not scan["matches"]:
+        print("  No matches scanned.")
+        return
+
+    flipped = scan["matches_flipped"]
+    share = flipped / scan["matches"]
+    verdict = "CLEAN" if not flipped else "FLIPPED HANDLES FOUND"
+    print(f"  {scan['matches']:,} matches scanned   {scan['matches_clean']:,} with "
+          f"nothing to flag   {flipped:,} with flipped handles ({share:.1%})")
+    print(f"  Verdict: {verdict}")
+    if flipped and not config.EXCLUDE_FLIPPED_MATCHES:
+        print("  These matches are STILL IN the numbers above. Their score")
+        print("  difference, possession flag and outcomes invert at the flip,")
+        print("  so their snapshots sit in the wrong buckets. Set")
+        print("  config.EXCLUDE_FLIPPED_MATCHES = True to drop them.")
+    elif flipped:
+        print("  Excluded from the calibration (EXCLUDE_FLIPPED_MATCHES is on).")
+
+    print(f"\n  {'KIND':<16}{'EVENTS':>8}{'MATCHES':>9}")
+    for kind in handles.KIND_ORDER:
+        events = scan["counts"][kind]
+        if not events:
+            continue
+        print(f"  {handles.KIND_TITLES[kind]:<16}{events:>8,}"
+              f"{scan['matches_by_kind'][kind]:>9,}")
+    if not scan["anomalies"]:
+        print("  (nothing flagged)")
+        return
+
+    print(f"\n  {'MATCH':<16}{'MSG':>9}  {'KIND':<16}{'SCORE':<16}")
+    for anomaly in scan["anomalies"][:limit]:
+        message = "final" if anomaly.event_message_count is None \
+            else f"{anomaly.event_message_count:,}"
+        print(f"  {anomaly.match_code:<16}{message:>9}  "
+              f"{handles.KIND_TITLES[anomaly.kind]:<16}{anomaly.describe():<16}")
+    if len(scan["anomalies"]) > limit:
+        print(f"  ... {len(scan['anomalies']) - limit:,} more")
+
+    print("\n  MIRRORED is a swap and nothing else: the two totals traded")
+    print("  places exactly. REGRESSION is a total going down some other way,")
+    print("  which a swap landing on a scoring message also looks like, as")
+    print("  does a rescinded score. FINAL MISMATCH is the running total")
+    print("  disagreeing with SCORE_ENDGAME, which a missing late score")
+    print("  explains as well as a swap, so it is not counted as a flip.")
+    print("  Blind spot: a swap while the score is level leaves no trace.")
 
 
 def print_worst(rows):

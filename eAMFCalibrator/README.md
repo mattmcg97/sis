@@ -30,7 +30,8 @@ Four views:
      `MIN_CELL_MATCHES` are dimmed rather than dropped, since knowing a
      bucket is thin is part of the information. Sortable.
 
-  Integrity checks, the mirror check, the by-day view and the single-axis
+  The handle check, integrity checks, the mirror check, the by-day view and
+  the single-axis
   breakdowns sit behind a collapsed **Checks** disclosure whose summary line
   says whether anything failed. Console prints a compact version; `--axes`
   prints them in full.
@@ -250,7 +251,7 @@ game states against one outcome.
 
 | Axis | Buckets |
 | --- | --- |
-| Score difference | `<= -9`, `-8..-3`, `-2..+2`, `+3..+8`, `>= +9` |
+| Score difference | `Away 2 score`, `Away 1 score`, `Tight`, `Home 1 score`, `Home 2 score` |
 | Time | `Q1`–`Q4`, `OT` (switchable to drive number) |
 | Possession | `Home`, `Away` |
 
@@ -272,10 +273,11 @@ population.
 feed is stamped UTC elsewhere (`PRICE_ISSUE_TIME_UTC`). 2026-09-17 was BST,
 so if "10am" meant UK local time, set it to `09:00:00`.
 
-**Score difference is `PLAYER_1 − PLAYER_2`** (home minus away), so `>= +9`
-means the home side leads by 9+ regardless of who has the ball. Possession
-is a separate axis, so the home-leading-while-defending case is still
-visible as its own cell.
+**Score difference is `PLAYER_1 − PLAYER_2`** (home minus away), so
+`Home 2 score` means the home side leads by 9 or more regardless of who has
+the ball — a score here is 6–8 points, so 9+ is two of them. Possession is a
+separate axis, so the home-leading-while-defending case is still visible as
+its own cell.
 
 **Market IDs** are `50`/`51` moneyline, `52`/`53` spread, `54`/`55` totals.
 50/51/54/55 are carried over from `analysis/unconditional_calibration.py`;
@@ -291,6 +293,43 @@ snapshot, as asked. Set it to `"forward"` to take only quotes at or after
 the snapshot — stricter about a price predating its own game state, at the
 cost of dropped snapshots. The signed gap is on every observation row, so
 the bias is measurable either way.
+
+## The handle check
+
+Everything the calibrator buckets on is read in the `PLAYER_1` frame: the
+score difference is p1 minus p2, the possession flag is Home or Away, and
+each market resolves by asking which of the two won. If the handles swap
+sides part-way through a match, all three invert from that point and the
+match still looks perfectly well-formed — every row parses, every bucket
+fills, and the numbers land in the **wrong** cells. That is worse than
+missing data, because nothing downstream can tell.
+
+Scoring only goes up in this sport, so a swap leaves a mark: one side's
+cumulative total goes **down**. That is the whole check.
+
+| Kind | What it is | Counts as a flip |
+|---|---|---|
+| `Mirrored` | `(p1, p2)` became exactly `(p2, p1)`. Nothing but a swap does that. | yes |
+| `Regression` | A total went down some other way — a swap landing on the same message as a score, a rescinded score after review, or a feed glitch. | yes |
+| `Final mirrored` | The last running total is the mirror of `SCORE_ENDGAME`. | yes |
+| `Final mismatch` | The two tables disagree, but not in mirror image. | no |
+
+`Final mismatch` is deliberately not a flip: a missing late score explains
+it as well as a swap does.
+
+Two blind spots, stated rather than discovered later:
+
+- **A match crossed from its very first message never regresses**, because
+  there is nothing to regress from — it is simply mirrored throughout, and
+  `SCORE_CHANGES` alone cannot see it. That is why the last running total is
+  also checked against `SCORE_ENDGAME`, a different table.
+- **A swap while the score is level is invisible**, and stays invisible
+  until the next score. Nothing in the score feed can date it.
+
+The default **reports** flipped matches without dropping them, so the size
+of the problem is visible before any data is thrown away — the console and
+the report both say the flagged matches are still in the numbers. Pass
+`--drop-flipped` (or set `EXCLUDE_FLIPPED_MATCHES = True`) to exclude them.
 
 ## The snapshot clock
 
@@ -330,11 +369,12 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-157 tests covering line parsing, market resolution, bucket edges, drive
-cleaning, clock reconstruction, quote matching, message pairing, the sign
-test and the paired-delta machinery. No Snowflake needed — the database
-half is exercised separately against a mock shaped like the real schema,
-play feed with no clock included.
+190 tests covering line parsing, market resolution, bucket edges, drive
+cleaning, clock reconstruction, quote matching, message pairing, the handle
+check, the sign test and the paired-delta machinery. No Snowflake needed —
+the database half is exercised separately against a mock shaped like the
+real schema, play feed with no clock included, and the flipped-match
+exclusion runs the real pairing code with the fetch calls patched out.
 
 Two tests pin known traps directly: a candidate much closer on half the
 pairs and barely further on the rest sits at a 50% win rate while the paired
