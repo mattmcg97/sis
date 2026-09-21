@@ -36,8 +36,10 @@ Four views:
   says whether anything failed. Console prints a compact version; `--axes`
   prints them in full.
 
-  Then **every paired observation**, with both streams' line, price,
-  probability, outcome and error, sorted by widest probability disagreement.
+  Then **every paired observation**, with the score at the snapshot (home,
+  away and the difference), both streams' line, price, probability, outcome
+  and error, sorted by widest probability disagreement. A search box above
+  the table filters it to one match id.
   Around 600 bytes per pair row, so a three-day window lands near 5 MB.
 
 
@@ -317,14 +319,42 @@ cumulative total goes **down**. That is the whole check.
 `Final mismatch` is deliberately not a flip: a missing late score explains
 it as well as a swap does.
 
-Two blind spots, stated rather than discovered later:
+### The possession cross-check
 
-- **A match crossed from its very first message never regresses**, because
-  there is nothing to regress from — it is simply mirrored throughout, and
-  `SCORE_CHANGES` alone cannot see it. That is why the last running total is
-  also checked against `SCORE_ENDGAME`, a different table.
-- **A swap while the score is level is invisible**, and stays invisible
-  until the next score. Nothing in the score feed can date it.
+Every kind above reads the totals, so a swap while the score is **level**
+leaves them nothing to see. This one does not look at the totals at all.
+
+Football's sequence after a touchdown is fixed: TD, PAT, kickoff, then the
+**other** team's offense. The play feed names its teams `Home Team` and
+`Away Team`; the score feed names its sides `PLAYER_1` and `PLAYER_2`.
+Those are different vocabularies in different tables, and the mapping
+between them is an assumption. So every touchdown is a free test of it:
+whoever scored should *not* be the team that next has the ball.
+
+| Kind | What it is | Counts as a flip |
+|---|---|---|
+| `Possession inverted` | Every touchdown fails the test — the match is crossed throughout. | yes |
+| `Possession flip` | Agreement turns over at one point, which is the message reported. | yes |
+| `Possession unstable` | Neither consistent nor cleanly turning over. | no |
+
+This closes both of the score checks' blind spots: a match crossed from its
+first message, and a swap at a level score. Three details make it honest:
+
+- It reads **raw** plays. `clean_plays` uses the very assumption under
+  test, so checking the cleaned feed would only confirm itself.
+- The row straight after a team-label change repeats the previous team's
+  down and distance, so a possessor only counts when that team keeps the
+  ball for another play — otherwise a single stale row reads as the scorer
+  receiving its own kickoff.
+- The play feed carries vision noise, so a match is judged on its
+  agreement **rate** across `POSSESSION_MIN_ANCHORS` touchdowns rather than
+  one at a time, and a mid-match flip is only called when both sides of the
+  changepoint carry `POSSESSION_MIN_SIDE` anchors.
+
+What is **not** available: `EVENT.PLAYER_1_HANDLE` / `PLAYER_2_HANDLE` hold
+the gamers' names, but `EVENT` is one row per match, so they say who the
+slots are meant to be and nothing about whether the per-message feed
+honoured that. No table carries a per-message identity.
 
 The default **reports** flipped matches without dropping them, so the size
 of the problem is visible before any data is thrown away — the console and
@@ -369,9 +399,9 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-190 tests covering line parsing, market resolution, bucket edges, drive
+209 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
-check, the sign test and the paired-delta machinery. No Snowflake needed —
+and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
 real schema, play feed with no clock included, and the flipped-match
 exclusion runs the real pairing code with the fetch calls patched out.

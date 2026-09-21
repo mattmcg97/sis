@@ -55,7 +55,10 @@ class PairedObservation:
     match_code: str
     drive_number: int
     period_number: Optional[int]
-    score_diff: int
+    # The totals at the snapshot, not just their difference: 7-7 and 21-21
+    # are the same difference and very different games.
+    score_p1: int
+    score_p2: int
     offensive_team: Optional[str]
     market_id: int
     message_count: int
@@ -72,6 +75,11 @@ class PairedObservation:
     prod_decimal: Optional[float] = None
     candidate_decimal: Optional[float] = None
     publish_time: object = None
+
+    @property
+    def score_diff(self):
+        """Home minus away, the frame every score bucket is read in."""
+        return self.score_p1 - self.score_p2
 
     @property
     def day(self):
@@ -223,7 +231,7 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
             for r in scores_by_match.get(match_code, [])
         ]
         final = finals.get(match_code)
-        if not scan.add(match_code, scores, final):
+        if not scan.add(match_code, scores, final, plays):
             stats["matches_with_flipped_handles"] += 1
             if config.EXCLUDE_FLIPPED_MATCHES:
                 stats["matches_excluded_for_flipped_handles"] += 1
@@ -288,7 +296,8 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                     match_code=match_code,
                     drive_number=snap.drive_number,
                     period_number=snap.period_number,
-                    score_diff=snap.score_diff,
+                    score_p1=snap.score_p1,
+                    score_p2=snap.score_p2,
                     offensive_team=snap.offensive_team,
                     market_id=market_id,
                     message_count=message,

@@ -161,6 +161,7 @@ def print_handle_check(scan, limit=20):
     verdict = "CLEAN" if not flipped else "FLIPPED HANDLES FOUND"
     print(f"  {scan['matches']:,} matches scanned   {scan['matches_clean']:,} with "
           f"nothing to flag   {flipped:,} with flipped handles ({share:.1%})")
+    print(f"  {scan['anchors']:,} touchdowns used as possession anchors")
     print(f"  Verdict: {verdict}")
     if flipped and not config.EXCLUDE_FLIPPED_MATCHES:
         print("  These matches are STILL IN the numbers above. Their score")
@@ -170,23 +171,23 @@ def print_handle_check(scan, limit=20):
     elif flipped:
         print("  Excluded from the calibration (EXCLUDE_FLIPPED_MATCHES is on).")
 
-    print(f"\n  {'KIND':<16}{'EVENTS':>8}{'MATCHES':>9}")
+    width = handles.KIND_WIDTH
+    print(f"\n  {'KIND':<{width}}{'EVENTS':>8}{'MATCHES':>9}{'FLIP':>6}")
     for kind in handles.KIND_ORDER:
         events = scan["counts"][kind]
         if not events:
             continue
-        print(f"  {handles.KIND_TITLES[kind]:<16}{events:>8,}"
-              f"{scan['matches_by_kind'][kind]:>9,}")
+        flips = "yes" if kind in handles.FLIP_KINDS else "no"
+        print(f"  {handles.KIND_TITLES[kind]:<{width}}{events:>8,}"
+              f"{scan['matches_by_kind'][kind]:>9,}{flips:>6}")
     if not scan["anomalies"]:
         print("  (nothing flagged)")
         return
 
-    print(f"\n  {'MATCH':<16}{'MSG':>9}  {'KIND':<16}{'SCORE':<16}")
+    print(f"\n  {'MATCH':<16}{'WHERE':>9}  {'KIND':<{width}}EVIDENCE")
     for anomaly in scan["anomalies"][:limit]:
-        message = "final" if anomaly.event_message_count is None \
-            else f"{anomaly.event_message_count:,}"
-        print(f"  {anomaly.match_code:<16}{message:>9}  "
-              f"{handles.KIND_TITLES[anomaly.kind]:<16}{anomaly.describe():<16}")
+        print(f"  {anomaly.match_code:<16}{anomaly.where:>9}  "
+              f"{handles.KIND_TITLES[anomaly.kind]:<{width}}{anomaly.describe()}")
     if len(scan["anomalies"]) > limit:
         print(f"  ... {len(scan['anomalies']) - limit:,} more")
 
@@ -196,7 +197,13 @@ def print_handle_check(scan, limit=20):
     print("  does a rescinded score. FINAL MISMATCH is the running total")
     print("  disagreeing with SCORE_ENDGAME, which a missing late score")
     print("  explains as well as a swap, so it is not counted as a flip.")
-    print("  Blind spot: a swap while the score is level leaves no trace.")
+    print("\n  The POSSESSION kinds read none of the totals. After a touchdown")
+    print("  the other team receives, and the play feed names its teams Home")
+    print("  and Away rather than PLAYER_1 and PLAYER_2, so each touchdown")
+    print("  independently tests the mapping -- including while the score is")
+    print("  level, which the checks above cannot. INVERTED is a match crossed")
+    print("  throughout; FLIP is agreement turning over at one point, which is")
+    print("  the message shown; UNSTABLE is neither, so it is not called a flip.")
 
 
 def print_worst(rows):
@@ -309,7 +316,8 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
 # ---------------------------------------------------------------------------
 
 PAIR_FIELDS = [
-    "publish_time", "match_code", "drive_number", "period_number", "score_diff", "offensive_team",
+    "publish_time", "match_code", "drive_number", "period_number",
+    "score_p1", "score_p2", "score_diff", "offensive_team",
     "market_id", "message_count", "message_gap",
     "prod_line", "candidate_line", "line_delta", "same_line",
     "prod_probability", "candidate_probability",
@@ -434,6 +442,8 @@ def write_pairs_csv(path, pairs):
                 "match_code": p.match_code,
                 "drive_number": p.drive_number,
                 "period_number": p.period_number,
+                "score_p1": p.score_p1,
+                "score_p2": p.score_p2,
                 "score_diff": p.score_diff,
                 "offensive_team": p.offensive_team,
                 "market_id": p.market_id,

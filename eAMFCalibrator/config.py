@@ -90,6 +90,19 @@ SCORE_DIFF_BUCKETS = [
 # so the size of the problem is visible before any data is thrown away.
 EXCLUDE_FLIPPED_MATCHES = False
 
+# The possession cross-check reads football's fixed sequence -- after a score
+# the OTHER team receives -- against the play feed, which names teams Home and
+# Away rather than PLAYER_1 and PLAYER_2. It needs a few touchdowns to say
+# anything, and the play feed carries vision noise, so it is read as a rate
+# across a match rather than trusted one touchdown at a time.
+POSSESSION_MIN_ANCHORS = 3
+# Below this agreement rate a match reads as crossed; above its complement it
+# reads as clean. In between is unstable and reported as such.
+POSSESSION_INVERSION_RATE = 0.25
+# A mid-match flip is only called when both sides of the changepoint carry at
+# least this many anchors, which keeps one noisy touchdown from inventing one.
+POSSESSION_MIN_SIDE = 2
+
 # Which time-axis to split on: "period" (quarter, available now) or
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"
