@@ -397,6 +397,42 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
+def print_anchor(report):
+    """Where in its drive each snapshot landed."""
+    print(f"\n{'=' * 78}\nSNAPSHOT ANCHOR -- did it land on the drive's "
+          f"start?\n{'=' * 78}")
+    if not report or not report["pairs"]:
+        print("  No pairs.")
+        return
+    from . import drives
+    titles = {drives.FIRST_DOWN: "opening 1st and 10",
+              drives.MID_DRIVE: "mid-drive snap",
+              drives.NO_SNAP: "no real snap"}
+    print(f"  {_pct(report['share_clean'])} of {report['pairs']:,} pairs sat "
+          f"on a drive's opening 1st and 10")
+    print(f"  {report['off_anchor']:,} elsewhere, across "
+          f"{report['matches']:,} matches")
+    print(f"\n  {'ANCHOR':<22}{'PAIRS':>9}{'SHARE':>8}")
+    for kind in (drives.FIRST_DOWN, drives.MID_DRIVE, drives.NO_SNAP):
+        n = report["counts"].get(kind, 0)
+        if not n:
+            continue
+        print(f"  {titles[kind]:<22}{n:>9,}{_pct(n / report['pairs']):>8}")
+    print(f"\n  {'QUARTER':<10}{'PAIRS':>9}{'OFF ANCHOR':>12}{'SHARE':>8}")
+    for key in sorted(report["by_quarter"]):
+        total, off = report["by_quarter"][key]
+        if not total:
+            continue
+        print(f"  {str(key):<10}{total:>9,}{off:>12,}{_pct(off / total):>8}")
+    print("\n  A snapshot is meant to be a drive's opening 1st and 10. The")
+    print("  general cleaning rule drops only ONE row per team change, so a")
+    print("  transition carrying several kick rows leaves the rest behind.")
+    print("  Anything off anchor means the drive's start was never found,")
+    print("  and the score, possession and field position on that row")
+    print("  describe a different moment -- on a row that still looks")
+    print("  perfectly well-formed, which is why it is counted here.")
+
+
 def print_market_state(report):
     """What non-live quotes cost, and which state they were in."""
     print(f"\n{'=' * 78}\nMARKET STATE -- were both quotes tradeable?\n{'=' * 78}")

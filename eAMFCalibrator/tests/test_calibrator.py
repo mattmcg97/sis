@@ -15,8 +15,8 @@ import datetime as dt
 import io
 import unittest
 
-from .. import (buckets, clock, config, directional, handles, markets,
-                metrics, report)
+from .. import (buckets, clock, config, directional, drives, handles,
+                markets, metrics, report)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -754,6 +754,70 @@ class TestGeneratedQueries(unittest.TestCase):
                 self.assertNotIn("STATUS = ", sql)
                 self.assertIn("STATUS", sql)      # still selected
                 self.assertIn("IS_ACTIVE", sql)
+
+
+class TestSnapshotAnchor(unittest.TestCase):
+    """Where in a drive the snapshot is taken from."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def snaps(self, plays, scores=()):
+        return build_snapshots("AF1", plays, list(scores))
+
+    def test_a_clean_drive_anchors_on_its_first_down(self):
+        s = self.snaps([PlayRow(1, 1, self.HOME, 1, 10, 25),
+                        PlayRow(2, 1, self.HOME, 2, 4, 31)])
+        self.assertEqual(s[0].anchor, drives.FIRST_DOWN)
+        self.assertEqual((s[0].down_number, s[0].distance), (1, 10))
+
+    def test_it_walks_past_kick_mechanics_to_the_real_start(self):
+        # The general cleaning rule drops only ONE row per team change, so
+        # a transition carrying several kick rows leaves the rest behind.
+        # Without the walk the snapshot sits on 4th-and-99 at field 35,
+        # with a team label belonging to the kick.
+        s = self.snaps([
+            PlayRow(1, 1, self.HOME, 1, 10, 25), PlayRow(2, 1, self.HOME, 2, 4, 31),
+            PlayRow(3, 1, self.AWAY, 2, 4, 31),     # stale duplicate, dropped
+            PlayRow(4, 1, self.AWAY, 4, 99, 35),    # kick mechanic, survives
+            PlayRow(5, 1, self.AWAY, 1, 10, 22),    # the real drive start
+            PlayRow(6, 1, self.AWAY, 2, 6, 26)])
+        self.assertEqual(s[1].event_message_count, 5)
+        self.assertEqual((s[1].down_number, s[1].distance), (1, 10))
+        self.assertEqual(s[1].field_position, 22)
+        self.assertEqual(s[1].anchor, drives.FIRST_DOWN)
+
+    def test_it_does_not_jump_to_a_first_down_conversion(self):
+        # This run opens 2nd and 7: the drive's start was already lost.
+        # The next 1st-and-10 in it is a CONVERSION -- a real state, but
+        # not a drive start -- so the anchor stops at the first real snap
+        # and says so rather than quietly relabelling a mid-drive play.
+        s = self.snaps([
+            PlayRow(1, 1, self.HOME, 1, 10, 25),
+            PlayRow(2, 1, self.AWAY, 1, 10, 25),    # stale duplicate, dropped
+            PlayRow(3, 1, self.AWAY, 2, 7, 28), PlayRow(4, 1, self.AWAY, 3, 2, 33),
+            PlayRow(5, 1, self.AWAY, 4, 1, 34),
+            PlayRow(6, 1, self.AWAY, 1, 10, 41)])   # the conversion
+        self.assertEqual(s[1].event_message_count, 3)
+        self.assertEqual(s[1].anchor, drives.MID_DRIVE)
+
+    def test_a_run_with_no_real_snap_says_so(self):
+        s = self.snaps([
+            PlayRow(1, 1, self.HOME, 1, 10, 25),
+            PlayRow(2, 1, self.AWAY, 1, 10, 25),
+            PlayRow(3, 1, self.AWAY, None, None, None),
+            PlayRow(4, 1, self.AWAY, 5, 99, 35)])
+        self.assertEqual(s[1].anchor, drives.NO_SNAP)
+
+    def test_what_counts_as_a_snap(self):
+        def play(down, distance):
+            return PlayRow(1, 1, self.HOME, down, distance, 25)
+        for down, distance in ((1, 10), (4, 1), (1, 30), (2, 0)):
+            self.assertTrue(drives.is_snap(play(down, distance)),
+                            f"{down}&{distance}")
+        for down, distance in ((5, 10), (0, 10), (None, 10), (1, None),
+                               (1, 99), (1, -1)):
+            self.assertFalse(drives.is_snap(play(down, distance)),
+                             f"{down}&{distance}")
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -2035,6 +2099,40 @@ class TestReportRendering(unittest.TestCase):
         cells = self._cells_for([pair(0.9, 0.1, True)])
         self.assertEqual(cells["Live"], "live")
         self.assertNotIn('class="notlive"', self._row_for([pair(0.9, 0.1, True)]))
+
+    def test_off_anchor_rows_flag_their_down_and_distance(self):
+        p = dataclasses.replace(
+            pair(0.5, 0.6, True), down_number=2, distance=7,
+            anchor=drives.MID_DRIVE)
+        row = self._row_for([p])
+        self.assertIn('class="warn">2&amp;7</td>', row)
+
+    def test_clean_anchor_rows_are_not_flagged(self):
+        p = dataclasses.replace(pair(0.5, 0.6, True), down_number=1,
+                                distance=10, anchor=drives.FIRST_DOWN)
+        self.assertIn('class="">1&amp;10</td>', self._row_for([p]))
+
+    def test_the_anchor_panel_reports_the_split(self):
+        pairs = [dataclasses.replace(pair(0.5, 0.6, True, match=f"AF{i}"),
+                                     anchor=(drives.MID_DRIVE if i < 3
+                                             else drives.FIRST_DOWN))
+                 for i in range(10)]
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats,
+                                         pairs, self.scan)
+        block = rendered[rendered.index("Snapshot anchor"):]
+        block = block[:block.index("</section>")]
+        self.assertIn("Mid-drive snap", block)
+        self.assertIn("70.0%", block)
+
+    def test_a_low_clean_share_stops_the_checks_line_passing(self):
+        pairs = [dataclasses.replace(pair(0.5, 0.6, True, match=f"AF{i}"),
+                                     anchor=drives.MID_DRIVE)
+                 for i in range(10)]
+        report = directional.build_full_report(pairs, n_bootstrap=20)
+        summary = self.html_full._checks_summary(report)
+        self.assertIn("opening 1st", summary)
+        self.assertNotIn("all pass", summary)
 
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()

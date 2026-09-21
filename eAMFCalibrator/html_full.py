@@ -12,7 +12,7 @@ outcome and error, and which one finished closer. Column headers sort.
 import html
 import os
 
-from . import buckets, config, handles, markets
+from . import buckets, config, drives, handles, markets
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -327,6 +327,72 @@ def _handle_block(scan):
         <tbody>{''.join(kind_rows) or '<tr><td colspan="4" class="dim">nothing flagged</td></tr>'}</tbody>
       </table>
       {detail}
+    </section>"""
+
+
+ANCHOR_TITLES = {
+    drives.FIRST_DOWN: "Opening 1st &amp; 10",
+    drives.MID_DRIVE: "Mid-drive snap",
+    drives.NO_SNAP: "No real snap",
+}
+
+
+def _anchor_block(report):
+    """Where in its drive each snapshot landed.
+
+    A snapshot is meant to be a drive's opening 1st-and-10. Anything else
+    means the start was never found, so the score, possession and field
+    position describe a different moment -- on a row that still looks
+    perfectly well-formed.
+    """
+    a = report.get("anchor")
+    if not a or not a["pairs"]:
+        return ""
+    rows = []
+    for kind in (drives.FIRST_DOWN, drives.MID_DRIVE, drives.NO_SNAP):
+        n = a["counts"].get(kind, 0)
+        if not n:
+            continue
+        share = n / a["pairs"]
+        good = kind == drives.FIRST_DOWN
+        rows.append(f"""<tr>
+            <th>{ANCHOR_TITLES[kind]}</th>
+            <td>{n:,}</td>
+            <td class="{'good' if good else 'bad'}">{_pct(share)}</td>
+        </tr>""")
+    quarter_rows = []
+    for key in sorted(a["by_quarter"]):
+        total, off = a["by_quarter"][key]
+        if not total:
+            continue
+        quarter_rows.append(f"""<tr>
+            <th>{html.escape(str(key))}</th><td>{total:,}</td><td>{off:,}</td>
+            <td class="{'bad' if off / total > 0.1 else ''}">{_pct(off / total)}</td>
+        </tr>""")
+    tone = "good" if a["share_clean"] > 0.9 else "bad"
+    return f"""
+    <section class="panel">
+      <h2>Snapshot anchor <span class="tag">did the snapshot land on the drive's start?</span></h2>
+      <p class="count"><span class="{tone}">{_pct(a['share_clean'])} on the
+        opening 1st &amp; 10</span> &middot; {a['off_anchor']:,} of
+        {a['pairs']:,} pairs elsewhere, across {a['matches']:,} matches</p>
+      <div class="cols">
+        <div>
+          <h3>Where it landed</h3>
+          <table>
+            <thead><tr><th>Anchor</th><th>Pairs</th><th>Share</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+        </div>
+        <div>
+          <h3>By quarter</h3>
+          <table>
+            <thead><tr><th>Quarter</th><th>Pairs</th><th>Off anchor</th>
+              <th>Share</th></tr></thead>
+            <tbody>{''.join(quarter_rows)}</tbody>
+          </table>
+        </div>
+      </div>
     </section>"""
 
 
@@ -674,6 +740,7 @@ def _pair_rows(pairs):
     for p in pairs:
         basis = "line" if not p.same_line else "prob"
         state_class = ' class="notlive"' if p.not_live else ""
+        anchor_class = "" if p.anchor == drives.FIRST_DOWN else "warn"
         end = last_quote.get(p.match_code)
         to_end = (None if end is None or p.publish_time is None
                   else (end - p.publish_time).total_seconds())
@@ -712,7 +779,7 @@ def _pair_rows(pairs):
             f'<td data-v="{p.score_diff}">{p.score_diff:+d}</td>'
             f'<td>{"H" if p.offensive_team == "Home Team" else ("A" if p.offensive_team == "Away Team" else "?")}</td>'
             f'<td data-v="{"" if p.field_position is None else p.field_position}">{"&mdash;" if p.field_position is None else p.field_position}</td>'
-            f'<td data-v="{"" if p.down_number is None else p.down_number}">{_down(p)}</td>'
+            f'<td data-v="{"" if p.down_number is None else p.down_number}" class="{anchor_class}">{_down(p)}</td>'
             f'<td data-v="{"" if to_end is None else to_end}" class="{"warn" if to_end is not None and to_end <= 120 else ""}">{"&mdash;" if to_end is None else f"{to_end:,.0f}"}</td>'
             f'<td>{MARKET_TITLES.get(markets.market_group(p.market_id), "?")}</td>'
             f'<td>{markets.selection_label(p.market_id) or ""}</td>'
@@ -753,7 +820,7 @@ def _pair_table(pairs):
           <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th title="offset from the snapshot's own message; 0 is an exact hit">&plusmn;Msg</th>
           <th>Qtr</th><th title="PLAYER_1 score at the snapshot">Home</th><th title="PLAYER_2 score at the snapshot">Away</th><th title="home minus away">Diff</th><th>Poss</th>
           <th title="FIELD_POSITION at the snapshot">Field</th>
-          <th title="down and distance">D&amp;D</th>
+          <th title="down and distance at the snapshot; flagged when it is not the drive's opening 1st-and-10">D&amp;D</th>
           <th title="seconds from here to the match's last quote; the feed has no game clock, so this is a wall-clock proxy">To end</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
@@ -779,6 +846,10 @@ def _checks_summary(report, scan=None):
     state = report.get("market_state") or {}
     if state.get("share") and state["share"] > 0.05:
         issues.append(f"{_pct(state['share'])} of pairs not live")
+    anchor = report.get("anchor") or {}
+    if anchor.get("share_clean") is not None and anchor["share_clean"] < 0.9:
+        issues.append(f"only {_pct(anchor['share_clean'])} of snapshots on "
+                      "a drive's opening 1st &amp; 10")
     for market, row in (report.get("complement") or {}).items():
         both = row.get("both_sides") or 0
         if both and row.get("outcomes_partition", 0) / both < 0.999:
@@ -790,8 +861,8 @@ def _checks_summary(report, scan=None):
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
     return ('<span class="good">all pass</span> '
-            '<span class="dim">handles, market state, selections, integrity, '
-            'mirror, spread reading, by day, single axes</span>')
+            '<span class="dim">handles, anchor, market state, selections, '
+            'integrity, mirror, spread reading, by day, single axes</span>')
 
 
 def render(report, header, stats, pairs, handle_scan):
@@ -935,6 +1006,7 @@ def render(report, header, stats, pairs, handle_scan):
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
     {_handle_block(handle_scan)}
+    {_anchor_block(report)}
     {_market_state_block(report)}
     {_selection_block(report)}
     {_daily(report)}

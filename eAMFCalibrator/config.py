@@ -104,6 +104,12 @@ LIVE_IS_ACTIVE = "true"
 # cost of excluding them can be measured.
 REQUIRE_LIVE_QUOTE = True
 
+# The longest distance-to-go a real snap ever shows. Kick mechanics and
+# stale duplicates carry garbage here, which is what lets the snapshot walk
+# past them to the drive's actual first play. A first-and-30 after stacked
+# penalties is real; the values above this are not.
+MAX_PLAUSIBLE_DISTANCE = 40
+
 # Which time-axis to split on: "period" (quarter, available now) or
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"
