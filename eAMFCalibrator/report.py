@@ -403,6 +403,38 @@ def print_directional_headline(overall, votes):
     print("\n  If the two levels disagree, the match level is the one to trust.")
 
 
+def print_decisive(decisive):
+    """The combined verdict: every pair judged on its own question."""
+    print(f"\n{'=' * 78}\nOVERALL -- every pair on the question it actually "
+          f"asked\n{'=' * 78}")
+    if not decisive["n"]:
+        print("  No pairs could be decided either way.")
+        return
+    votes = decisive["votes"]
+    print(f"  pairs decided             : {decisive['n']:,} of "
+          f"{decisive['n_offered']:,}")
+    print(f"    settled on probability  : {decisive['settled_on_probability']:,}"
+          f"   (both streams quoted the same line)")
+    print(f"    settled on the line     : {decisive['settled_on_line']:,}"
+          f"   (lines differ, so the line decides)")
+    print(f"  pair wins cand / prod     : {decisive['candidate']:,} / "
+          f"{decisive['prod']:,}   ({decisive['tie']:,} level)")
+    print(f"  candidate win rate        : {_pct(decisive['candidate_win_rate'])}")
+    print(f"  match vote cand / prod    : {votes['candidate']} / {votes['prod']}"
+          f"   ({votes['tie']} level)   [{votes['n_matches']} matches]")
+    print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
+    print("\n  A different line overrules the probability, so a pair whose")
+    print("  lines differ is decided on whose line landed nearer the result")
+    print("  and its probabilities are not compared at all. Where the lines")
+    print("  match, the probabilities answer the same question and decide.")
+    print("\n  No mean error is shown here on purpose: a line error is in")
+    print("  points and a probability error is not, so there is no average")
+    print("  of the two to take. Only the per-pair decision survives the")
+    print("  mix. That also makes this the WEAKER test -- it throws away how")
+    print("  much closer each was. The two halves below keep that, so read")
+    print("  this for direction and them for strength.")
+
+
 def print_directional_breakdown(title, grouped, order=None,
                                 label_width=SCORE_WIDTH,
                                 mode="probability"):

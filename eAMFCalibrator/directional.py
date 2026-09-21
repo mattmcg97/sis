@@ -46,6 +46,7 @@ TIE = "tie"
 # same line.
 PROBABILITY = "probability"   # whose stated probability was closer to its own 0/1
 LINE = "line"                 # whose line was closer to what actually happened
+DECISIVE = "decisive"         # each pair settled on whichever of the two applies
 
 LINE_EPSILON = 1e-6
 
@@ -124,7 +125,20 @@ class PairedObservation:
             return None
         return abs(self.candidate_line - self.realized)
 
+    @property
+    def decisive_mode(self):
+        """Which question this pair is actually settled on.
+
+        A different line overrules the probability entirely: the two
+        streams answered different questions, so whose line landed nearer
+        the result is the comparison. Only where the line is shared do the
+        probabilities answer the same question and become comparable.
+        """
+        return PROBABILITY if self.same_line else LINE
+
     def errors(self, mode):
+        if mode == DECISIVE:
+            mode = self.decisive_mode
         if mode == LINE:
             return self.prod_line_error, self.candidate_line_error
         return self.prod_error, self.candidate_error
@@ -134,6 +148,8 @@ class PairedObservation:
         return prod_error is not None and candidate_error is not None
 
     def winner(self, mode=PROBABILITY):
+        if mode == DECISIVE:
+            return self.decisive_winner
         prod_error, candidate_error = self.errors(mode)
         if prod_error is None or candidate_error is None:
             return None
@@ -142,6 +158,33 @@ class PairedObservation:
         if prod_error < candidate_error:
             return PROD
         return TIE
+
+    @property
+    def decisive_winner(self):
+        """Line first; probability only breaks an exact tie on the line.
+
+        Two different lines equidistant from the result (44.5 and 46.5
+        against a 45.5) settle nothing between them, but each stream was
+        still graded against its OWN outcome -- one over, one under -- so
+        the probabilities do decide, and dropping the pair would throw
+        away a real comparison.
+        """
+        if self.same_line:
+            return self.winner(PROBABILITY)
+        won = self.winner(LINE)
+        return self.winner(PROBABILITY) if won == TIE else won
+
+    @property
+    def decided_by(self):
+        """Which reading actually produced the winner.
+
+        Usually decisive_mode, but a pair whose two lines are equidistant
+        falls through to the probability, and counting that as settled on
+        the line would misreport what decided it.
+        """
+        if self.same_line:
+            return PROBABILITY
+        return PROBABILITY if self.winner(LINE) == TIE else LINE
 
     @property
     def disagreement(self):
@@ -372,6 +415,12 @@ def tally(pairs, mode=PROBABILITY):
     mode that only applies to part of the data says so rather than quietly
     shrinking the sample.
     """
+    if mode == DECISIVE:
+        # Under DECISIVE some pairs carry a line error in points and others
+        # a probability error, so every sum below would be adding different
+        # units together. Only the per-pair decision survives the mix, and
+        # decisive_block is what reports it.
+        raise ValueError("tally cannot mix units; use decisive_block for DECISIVE")
     usable = [p for p in pairs if p.comparable(mode)]
     result = {"mode": mode, "n": len(usable), "n_offered": len(pairs),
               CANDIDATE: 0, PROD: 0, TIE: 0,
@@ -665,6 +714,43 @@ def market_blocks(pairs, mode, n_bootstrap=2000):
     return out
 
 
+def decisive_block(pairs):
+    """The overall verdict, every pair settled on its own terms.
+
+    The two halves of the report answer different questions in different
+    units -- a Brier difference in probability, a line difference in
+    points -- so there is no average of them to take. What does combine is
+    the per-pair DECISION, which is unit-free: for each pair, the closer
+    line where the lines differ, the closer probability where they do not.
+
+    So this reports counts and the match-clustered vote, and deliberately
+    reports no mean error. It is also the weaker instrument: a win rate
+    throws away how MUCH closer each was, which is exactly what the
+    per-half paired deltas keep. Read this for direction and the halves
+    for strength.
+    """
+    decided = [p for p in pairs if p.winner(DECISIVE) is not None]
+    counts = {CANDIDATE: 0, PROD: 0, TIE: 0}
+    by_mode = {PROBABILITY: 0, LINE: 0}
+    for pair in decided:
+        counts[pair.winner(DECISIVE)] += 1
+        by_mode[pair.decided_by] += 1
+    decisive = counts[CANDIDATE] + counts[PROD]
+    return {
+        "n": len(decided),
+        "n_offered": len(pairs),
+        "settled_on_probability": by_mode[PROBABILITY],
+        "settled_on_line": by_mode[LINE],
+        CANDIDATE: counts[CANDIDATE],
+        PROD: counts[PROD],
+        TIE: counts[TIE],
+        "decisive": decisive,
+        "candidate_win_rate": (counts[CANDIDATE] / decisive) if decisive else None,
+        "matches": len({p.match_code for p in decided}),
+        "votes": match_level_votes(decided, DECISIVE),
+    }
+
+
 def build_summary(pairs, n_bootstrap=2000):
     """Everything both the console and the HTML report need.
 
@@ -693,6 +779,9 @@ def build_summary(pairs, n_bootstrap=2000):
     return {
         "pairs": len(pairs),
         "lines": line_agreement(pairs),
+        # Both halves under one roof, each pair judged on the question it
+        # actually asked. This is the only figure that covers everything.
+        "decisive": decisive_block(pairs),
         "same_line": block(same, PROBABILITY),
         "different_line": block(different, LINE),
         # Secondary view: on different-line pairs, each stream scored against

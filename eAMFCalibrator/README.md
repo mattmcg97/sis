@@ -98,6 +98,34 @@ only the predictions differ, which reduces each cell to "whose number was
 nearer the truth". `TestCrossSectionalLineRule` pins that invariant, along
 with the two views partitioning the pairs exactly.
 
+### Where the rule bites
+
+**Per pair.** `decisive_winner` settles each pair on the question it
+actually asked: the closer line where the lines differ, the closer
+probability where they match. Probability breaks a tie only when the two
+lines are exactly equidistant from the result — which is reachable with
+whole-number lines straddling it, and where each stream was still graded
+against its own outcome, so the probabilities are a real comparison.
+
+**In the pair table.** A different-line row shows a dash for &Delta;prob
+and for both error columns. Each stream's own line and probability still
+show — those are facts about the row — but the *comparisons* between them
+are withheld, because a probability quoted against 44.5 is not comparable
+to one quoted against 60.5, and a line error is in points.
+
+**In the overall verdict.** The two halves answer different questions in
+different units, so there is no average of them to take. What combines is
+the per-pair *decision*, which is unit-free, so `decisive_block` reports
+counts and the match-clustered vote and deliberately reports no mean
+error. Where that separates the two models it **overrules** the same-line
+Brier, exactly as a different line overrules a probability on one pair —
+and where the two readings point opposite ways, the headline says so
+rather than picking one silently.
+
+That combined reading is the *weaker* test: a win rate throws away how
+much closer each was, which is what the per-half paired deltas keep. Read
+it for direction and the halves for strength.
+
 ## One selection per market, always
 
 A market's two sides are complements, so every `(p, y)` arrives with a mirror
@@ -399,7 +427,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-209 tests covering line parsing, market resolution, bucket edges, drive
+223 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
