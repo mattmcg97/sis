@@ -110,6 +110,16 @@ REQUIRE_LIVE_QUOTE = True
 # penalties is real; the values above this are not.
 MAX_PLAUSIBLE_DISTANCE = 40
 
+# Periods that begin with a kickoff. Q1 and Q3 do; Q2 and Q4 continue from
+# the period before. Overtime starts with one too.
+KICKOFF_PERIODS = (1, 3, 5, 6, 7)
+
+# How far past a kickoff to look for the drive it produced before giving up
+# and leaving the rows alone. A kick, its return and the vision noise around
+# them run to a handful of rows; beyond that the feed has lost the thread
+# and dropping rows on a guess would be worse than keeping them.
+KICKOFF_SEARCH_LIMIT = 20
+
 # Which time-axis to split on: "period" (quarter, available now) or
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"

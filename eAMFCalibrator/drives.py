@@ -104,11 +104,90 @@ def _touchdown_scorers(scores):
 # as the decision: reconciling drive detection by eye means seeing which
 # rule fired on which row, not just which rows survived.
 KEPT = "kept"
-RESUME = "resume_after_td"          # kept, and the TD rule vouched for it
-NOISE_AFTER_TD = "noise_after_td"   # between a TD and the receiving team's
-                                    # first fresh 1st-and-10
+DRIVE_START = "drive_start"    # kept, and the kickoff rule vouched for it
+KICKOFF = "kickoff"            # a kick row: between a kickoff and the
+                               # receiving team's first fresh 1st-and-10
 STALE_AFTER_CHANGE = "stale_after_change"   # repeats the previous team's
                                             # down, distance and field
+
+
+def _kickoff_triggers(plays, scores):
+    """Message counts at or after which a kickoff happens.
+
+    Three of them, and only the last was handled before:
+
+      the opening kickoff, which is simply the start of the match
+      the second-half kickoff, and any other period that starts with one
+      every score -- not only the 6-point touchdowns
+
+    Field goals and safeties are followed by a kick too, so restricting
+    this to touchdowns left most kicks in the feed.
+    """
+    triggers = set()
+    if plays:
+        triggers.add(plays[0].event_message_count - 1)
+
+    previous_period = None
+    for play in plays:
+        period = play.period_number
+        if (period != previous_period and period in config.KICKOFF_PERIODS):
+            triggers.add(play.event_message_count - 1)
+        previous_period = period
+
+    for row in scores:
+        if row.p1_change or row.p2_change:
+            triggers.add(row.event_message_count)
+    return sorted(triggers)
+
+
+def _is_stale_duplicate(play, previous):
+    """The documented noise row: a new team label on the old team's state.
+
+    It repeats the previous row's down, distance and field position
+    exactly, which is what distinguishes it from a genuine snap -- and it
+    has to be told apart, because it looks like a legitimate play and
+    would otherwise stop a kickoff walk dead.
+    """
+    if previous is None or play.offensive_team == previous.offensive_team:
+        return False
+    return (play.down_number == previous.down_number
+            and play.distance == previous.distance
+            and play.field_position == previous.field_position)
+
+
+def _drive_start_after(plays, trigger):
+    """The first real 1st-and-10 after the kick that follows `trigger`.
+
+    A kickoff shows the KICKING team first and the receiving team second,
+    both sitting at the kick spot, so neither the team label changing nor
+    the ball being on a particular yard line marks the drive. The kick spot
+    is a fixed line but a return can legitimately finish on it, so field
+    position both misses real drives and invents others.
+
+    Down and distance are what separate a kick from a snap. The walk skips
+    rows that are not snaps, skips the stale duplicate that rides every
+    team change, and stops at the first fresh 1st-and-10. That works
+    whether or not the feed shows the kick rows at all, which matters:
+    keying on the team change would lose the drive entirely on a
+    transition where they are absent.
+
+    Hitting a real snap that is neither stale nor a fresh 1st-and-10 means
+    play was already under way and there is no kick here to strip, so the
+    walk gives up rather than delete a genuine drive.
+    """
+    indexed = list(enumerate(plays))
+    window = [(i, p) for i, p in indexed
+              if p.event_message_count > trigger][:config.KICKOFF_SEARCH_LIMIT]
+    for i, play in window:
+        previous = plays[i - 1] if i else None
+        if _is_stale_duplicate(play, previous):
+            continue
+        if not is_snap(play):
+            continue
+        if play.down_number == 1 and play.distance == 10:
+            return play.event_message_count
+        return None
+    return None
 
 
 def classify_plays(plays, scores):
@@ -117,39 +196,41 @@ def classify_plays(plays, scores):
     The single source of truth for the cleaning, so the dump and the
     pipeline can never disagree about what happened to a row.
     """
+    plays = sorted(plays, key=lambda p: p.event_message_count)
+    scores = sorted(scores, key=lambda s: s.event_message_count)
     reasons = {p.event_message_count: KEPT for p in plays}
-    td_scorer_team = _touchdown_scorers(scores)
-    resume_msgs = set()
+    starts = set()
 
-    for td_msg, scoring_team in sorted(td_scorer_team.items()):
-        receiving_team = AWAY_TEAM if scoring_team == HOME_TEAM else HOME_TEAM
-        resume_msg = None
-        for p in plays:
-            if p.event_message_count <= td_msg:
-                continue
-            if p.offensive_team == receiving_team and p.down_number == 1 and p.distance == 10:
-                resume_msg = p.event_message_count
-                break
-        if resume_msg is None:
+    for trigger in _kickoff_triggers(plays, scores):
+        start = _drive_start_after(plays, trigger)
+        if start is None:
             continue
-        resume_msgs.add(resume_msg)
-        reasons[resume_msg] = RESUME
-        for p in plays:
-            if td_msg < p.event_message_count < resume_msg:
-                reasons[p.event_message_count] = NOISE_AFTER_TD
+        starts.add(start)
+        reasons[start] = DRIVE_START
+        for play in plays:
+            if trigger < play.event_message_count < start:
+                reasons[play.event_message_count] = KICKOFF
 
-    prev_team = None
-    for p in plays:
-        if (prev_team is not None
-                and p.offensive_team != prev_team
-                and p.event_message_count not in resume_msgs):
-            reasons[p.event_message_count] = STALE_AFTER_CHANGE
-        prev_team = p.offensive_team
+    # What is left are real possession changes -- a punt, a turnover, a
+    # turnover on downs -- where the first row after the change repeats the
+    # previous team's down, distance and field position.
+    previous_team = None
+    for play in plays:
+        already = reasons[play.event_message_count]
+        if (previous_team is not None
+                and play.offensive_team != previous_team
+                and already == KEPT):
+            # Only a row the kickoff rule had no opinion about. Inside a
+            # kickoff the team label changes from the kicking side to the
+            # receiving side, and calling that row stale would both hide
+            # what it is and claim a possession change that never happened.
+            reasons[play.event_message_count] = STALE_AFTER_CHANGE
+        previous_team = play.offensive_team
     return reasons
 
 
 def was_dropped(reason):
-    return reason in (NOISE_AFTER_TD, STALE_AFTER_CHANGE)
+    return reason in (KICKOFF, STALE_AFTER_CHANGE)
 
 
 def clean_plays(plays, scores):
@@ -192,7 +273,9 @@ def build_snapshots(match_code, plays, scores):
     plays = sorted(plays, key=lambda p: p.event_message_count)
     scores = sorted(scores, key=lambda s: s.event_message_count)
 
-    cleaned, _ = clean_plays(plays, scores)
+    reasons = classify_plays(plays, scores)
+    cleaned = [p for p in plays
+               if not was_dropped(reasons[p.event_message_count])]
     if not cleaned:
         return []
 
@@ -242,7 +325,15 @@ def build_snapshots(match_code, plays, scores):
         ))
 
     for p in cleaned:
-        if not current_run or p.offensive_team != current_run[0].offensive_team:
+        # A team change ends a drive, and so does a row the kickoff rule
+        # positively identified as a drive start -- otherwise the side that
+        # had the ball before half time and receives after it would have
+        # both possessions merged into one, the boundary invisible because
+        # the label never changed.
+        starts_drive = (not current_run
+                        or p.offensive_team != current_run[0].offensive_team
+                        or reasons[p.event_message_count] == DRIVE_START)
+        if starts_drive:
             flush()
             drive_number += 1
             current_run = []
