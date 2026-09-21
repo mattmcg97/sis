@@ -924,7 +924,137 @@ class TestCleaningExplainsItself(unittest.TestCase):
 
 
 class TestDump(unittest.TestCase):
-    """The CSVs, built from the pipeline's own functions."""
+    """The play-by-play CSV, built from the pipeline's own functions."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def quote(self, message, market_id, probability, status, active,
+              description):
+        return ("AF1", market_id, self.T + dt.timedelta(seconds=message),
+                probability, 2.0, description, message, status, active)
+
+    def indexes(self):
+        from .. import directional
+        return {
+            directional.PROD: directional.index_by_message([
+                self.quote(1, 50, 55.0, "open", "true", "PLAYER 1 to win"),
+                self.quote(1, 52, 61.0, "open", "true", "PLAYER 1 -3.5"),
+                self.quote(6, 52, 48.0, "UNDER SETTLEMENT", "false",
+                           "PLAYER 1 -6.5"),
+            ]),
+            directional.CANDIDATE: directional.index_by_message([
+                self.quote(1, 50, 56.0, "open", "true", "PLAYER 1 to win"),
+                self.quote(1, 52, 59.0, "open", "true", "PLAYER 1 -6.5"),
+            ]),
+        }
+
+    def rows(self, indexes=None):
+        from .. import dump
+        plays = [("AF1", 1, 1, self.HOME, 1, 10, 25, None),
+                 ("AF1", 2, 1, self.HOME, 2, 4, 31, None),
+                 ("AF1", 3, 1, self.HOME, 3, 1, 34, None),
+                 ("AF1", 4, 1, self.AWAY, 3, 1, 34, None),
+                 ("AF1", 5, 1, self.AWAY, 4, 99, 35, None),
+                 ("AF1", 6, 1, self.AWAY, 1, 10, 22, None),
+                 ("AF1", 7, 1, self.AWAY, 2, 6, 26, None)]
+        scores = [("AF1", 3, 1, 6, None, 6, 0)]
+        return dump._rows_for_match("AF1", plays, scores, indexes)
+
+    def test_every_play_row_survives_into_the_dump(self):
+        plays, _ = self.rows()
+        self.assertEqual(len(plays), 7)
+        # Messages 4 and 5 are the kick between the touchdown and the
+        # receiving team's first snap.
+        self.assertEqual(sum(r["dropped"] for r in plays), 2)
+        self.assertEqual({r["event_message_count"] for r in plays if r["dropped"]},
+                         {4, 5})
+
+    def test_dropped_rows_carry_the_rule_that_dropped_them(self):
+        plays, _ = self.rows()
+        by_message = {r["event_message_count"]: r for r in plays}
+        self.assertEqual(by_message[4]["cleaning"], drives.STALE_AFTER_CHANGE)
+        self.assertEqual(by_message[5]["cleaning"], drives.KICKOFF)
+        # And a dropped row belongs to no drive, so the join stays honest.
+        self.assertEqual(by_message[4]["drive_number"], "")
+
+    def test_exactly_one_play_per_drive_is_the_anchor(self):
+        plays, snapshots = self.rows()
+        anchors = [r for r in plays if r["is_anchor"]]
+        self.assertEqual(len(anchors), len(snapshots))
+        self.assertEqual({r["event_message_count"] for r in anchors},
+                         {s.event_message_count for s in snapshots})
+
+    def test_the_score_travels_on_every_row(self):
+        # The whole point of one table: no join to find out what the
+        # scoreboard said at the row you are looking at.
+        plays, _ = self.rows()
+        by_message = {r["event_message_count"]: r for r in plays}
+        self.assertEqual((by_message[2]["score_p1"], by_message[2]["score_p2"]),
+                         (0, 0))
+        self.assertEqual((by_message[6]["score_p1"], by_message[6]["score_p2"]),
+                         (6, 0))
+        self.assertEqual(by_message[6]["score_diff"], 6)
+        # And the change itself is marked where it landed.
+        self.assertEqual(by_message[3]["p1_change"], 6)
+        self.assertEqual(by_message[2]["p1_change"], "")
+
+    def test_a_score_with_no_play_row_still_gets_a_row(self):
+        from .. import dump
+        plays = [("AF1", 1, 1, self.HOME, 1, 10, 25, None),
+                 ("AF1", 9, 1, self.AWAY, 1, 10, 25, None)]
+        rows, _ = dump._rows_for_match("AF1", plays, [("AF1", 5, 1, 7, None, 7, 0)])
+        by_message = {r["event_message_count"]: r for r in rows}
+        self.assertIn(5, by_message)
+        self.assertEqual(by_message[5]["cleaning"], "score")
+        self.assertEqual(by_message[5]["p1_change"], 7)
+        # It is not a play, so it belongs to no drive and anchors nothing.
+        self.assertEqual(by_message[5]["drive_number"], "")
+        self.assertEqual(by_message[5]["is_anchor"], 0)
+
+    def test_the_rows_are_in_message_order(self):
+        plays, _ = self.rows()
+        messages = [r["event_message_count"] for r in plays]
+        self.assertEqual(messages, sorted(messages))
+
+    def test_both_streams_prices_sit_on_the_row(self):
+        plays, _ = self.rows(self.indexes())
+        by_message = {r["event_message_count"]: r for r in plays}
+        self.assertEqual(by_message[1]["ml_home_prod"], 55.0)
+        self.assertEqual(by_message[1]["ml_home_cand"], 56.0)
+        # Lined markets carry each side's line, which is what the line rule
+        # is decided on -- here the two streams disagree.
+        self.assertEqual(by_message[1]["sp_home_line_prod"], -3.5)
+        self.assertEqual(by_message[1]["sp_home_line_cand"], -6.5)
+
+    def test_the_live_cell_names_which_side_was_dead(self):
+        plays, _ = self.rows(self.indexes())
+        by_message = {r["event_message_count"]: r for r in plays}
+        self.assertEqual(by_message[1]["ml_home_live"], "live")
+        # Prod settled the spread at 6, candidate never quoted it there.
+        self.assertEqual(by_message[6]["sp_home_live"], "missing")
+        # And a selection neither stream quoted stays blank rather than
+        # claiming anything about it.
+        self.assertEqual(by_message[1]["tot_over_live"], "")
+        self.assertEqual(by_message[1]["tot_over_prod"], "")
+
+    def test_the_market_columns_cover_all_six_selections(self):
+        from .. import dump
+        for name, _, lined in dump.MARKET_COLUMNS:
+            self.assertIn(f"{name}_prod", dump.PLAY_FIELDS)
+            self.assertIn(f"{name}_cand", dump.PLAY_FIELDS)
+            self.assertIn(f"{name}_live", dump.PLAY_FIELDS)
+            self.assertEqual(f"{name}_line_prod" in dump.PLAY_FIELDS, lined)
+
+    def test_the_row_keys_are_exactly_the_csv_columns(self):
+        from .. import dump
+        plays, _ = self.rows(self.indexes())
+        for row in plays:
+            self.assertEqual(sorted(row), sorted(dump.PLAY_FIELDS))
+
+
+class TestDumpDriveRows(unittest.TestCase):
+    """The per-drive summary the console prints, built from the CSV rows."""
 
     HOME, AWAY = "Home Team", "Away Team"
 
@@ -938,143 +1068,95 @@ class TestDump(unittest.TestCase):
                  ("AF1", 6, 1, self.AWAY, 1, 10, 22, None),
                  ("AF1", 7, 1, self.AWAY, 2, 6, 26, None)]
         scores = [("AF1", 3, 1, 6, None, 6, 0)]
-        return dump._rows_for_match("AF1", plays, scores)
+        play_out, snapshots = dump._rows_for_match("AF1", plays, scores)
+        return play_out, dump._drive_rows("AF1", play_out, snapshots)
 
-    def test_every_play_row_survives_into_the_dump(self):
-        plays, _, _ = self.rows()
-        self.assertEqual(len(plays), 7)
-        # Messages 4 and 5 are the kick between the touchdown and the
-        # receiving team's first snap.
-        self.assertEqual(sum(r["dropped"] for r in plays), 2)
-        self.assertEqual({r["event_message_count"] for r in plays if r["dropped"]},
-                         {4, 5})
+    def test_one_row_per_drive(self):
+        play_out, drive_out = self.rows()
+        self.assertEqual(len(drive_out),
+                         len({r["drive_number"] for r in play_out
+                              if r["drive_number"] != ""}))
 
-    def test_dropped_rows_carry_the_rule_that_dropped_them(self):
-        plays, _, _ = self.rows()
-        by_message = {r["event_message_count"]: r for r in plays}
-        self.assertEqual(by_message[4]["cleaning"], drives.STALE_AFTER_CHANGE)
-        self.assertEqual(by_message[5]["cleaning"], drives.KICKOFF)
-        # And a dropped row belongs to no drive, so the join stays honest.
-        self.assertEqual(by_message[4]["drive_number"], "")
+    def test_a_drive_counts_the_noise_inside_it(self):
+        _, drive_out = self.rows()
+        second = drive_out[1]
+        self.assertEqual(second["offensive_team"], self.AWAY)
+        self.assertEqual(second["first_message"], 6)
+        self.assertEqual(second["n_plays"], 2)
+        # Messages 4 and 5 were dropped before the drive opened, so they
+        # are noise between drives rather than inside one.
+        self.assertEqual(second["n_dropped_inside"], 0)
 
-    def test_exactly_one_play_per_drive_is_the_anchor(self):
-        plays, _, drive_rows = self.rows()
-        anchors = [r for r in plays if r["is_anchor"]]
-        self.assertEqual(len(anchors), len(drive_rows))
-        self.assertEqual({r["event_message_count"] for r in anchors},
-                         {r["anchor_message"] for r in drive_rows})
+    def test_the_drive_carries_the_score_at_its_anchor(self):
+        _, drive_out = self.rows()
+        self.assertEqual((drive_out[0]["score_p1"], drive_out[0]["score_p2"]),
+                         (0, 0))
+        self.assertEqual((drive_out[1]["score_p1"], drive_out[1]["score_p2"]),
+                         (6, 0))
+        self.assertEqual(drive_out[1]["score_diff"], 6)
 
-    def test_drives_carry_the_buckets_the_snapshot_lands_in(self):
-        _, _, drive_rows = self.rows()
-        second = drive_rows[1]
-        self.assertEqual(second["possession_bucket"], "Away")
-        self.assertEqual(second["time_bucket"], "Q1")
-        self.assertEqual(second["score_bucket"], "Home 1 score")
-        self.assertEqual(second["score_diff"], 6)
-
-    def test_scores_mark_which_changes_were_touchdowns(self):
-        _, scores, _ = self.rows()
-        self.assertEqual(len(scores), 1)
-        self.assertEqual(scores[0]["is_touchdown"], 1)
-        self.assertEqual(scores[0]["scorer"], self.HOME)
-
-    def test_the_files_join_on_match_and_message(self):
-        plays, scores, drive_rows = self.rows()
-        keys = {(r["match_code"], r["event_message_count"]) for r in plays}
-        for row in scores:
-            self.assertIn((row["match_code"], row["event_message_count"]), keys)
-        for row in drive_rows:
+    def test_the_drive_rows_join_back_to_the_play_rows(self):
+        play_out, drive_out = self.rows()
+        keys = {(r["match_code"], r["event_message_count"]) for r in play_out}
+        for row in drive_out:
             self.assertIn((row["match_code"], row["anchor_message"]), keys)
 
 
-class TestDumpQuotesAndTimeline(unittest.TestCase):
-    """The quote rows, and how they line up with the play feed."""
+class TestPointsEndADrive(unittest.TestCase):
+    """AF063170926 drive 10: one drive, 13 plays, a 15-point swing inside.
 
-    T = dt.datetime(2026, 9, 18, 12, 0)
+    The team label stayed on Away from message 310 to 407, across two Away
+    scores. Team change alone therefore saw one possession where there
+    were three, and the snapshot it anchored carried 21-7 while the drive
+    after it opened at 21-22. Points cannot be argued with: nobody is on
+    the same drive either side of one.
+    """
 
-    def quote(self, message, market_id, probability, status, active, second,
-              description="PLAYER 1 -3.5"):
-        return ("AF1", market_id, self.T + dt.timedelta(seconds=second),
-                probability, 2.0, description, message, status, active)
+    AWAY = "Away Team"
 
-    def rows(self):
-        from .. import dump
-        # Message 6 carries the settlement of the old spread line AND the
-        # open quote for the new one -- the case the index has to choose
-        # between, and the one this file exists to make visible.
-        quotes = {
-            "prod": [
-                self.quote(1, 50, 55.0, "open", "true", 1, "PLAYER 1 to win"),
-                self.quote(6, 52, 61.0, "UNDER SETTLEMENT", "false", 5, "PLAYER 1 -3.5"),
-                self.quote(6, 52, 48.0, "open", "true", 6, "PLAYER 1 -6.5"),
-                self.quote(7, 54, 50.0, "open", "true", 7, "Over 44.5"),
-            ],
-            "candidate": [
-                self.quote(1, 50, 56.0, "open", "true", 1, "PLAYER 1 to win"),
-                self.quote(6, 52, 47.0, "open", "true", 6, "PLAYER 1 -6.5"),
-            ],
-        }
-        return dump._quote_rows("AF1", quotes)
+    def snapshots(self):
+        plays = [drives.PlayRow(m, 4, self.AWAY, d, dist, f, None)
+                 for m, d, dist, f in [
+                     (310, 1, 10, 24), (315, 2, 6, 28), (320, 3, 2, 32),
+                     (350, 2, 5, 30), (360, 1, 10, 45), (370, 3, 8, 47),
+                     (407, 2, 3, 32)]]
+        scores = [drives.ScoreRow(335, 4, 0, 7, 21, 14),
+                  drives.ScoreRow(404, 4, 0, 8, 21, 22)]
+        return drives.build_snapshots("AF1", plays, scores)
 
-    def test_no_quote_row_is_dropped(self):
-        rows = self.rows()
-        self.assertEqual(len(rows), 6)
+    def test_each_score_ends_the_drive_it_landed_in(self):
+        snaps = self.snapshots()
+        self.assertEqual(len(snaps), 3)
+        self.assertEqual([s.event_message_count for s in snaps], [310, 350, 407])
 
-    def test_a_shared_message_says_how_many_rows_were_there(self):
-        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
-                  for r in self.rows()}
-        self.assertEqual(by_key[("prod", 6, 61.0)]["rows_at_this_message"], 2)
-        self.assertEqual(by_key[("prod", 6, 48.0)]["rows_at_this_message"], 2)
-        self.assertEqual(by_key[("prod", 1, 55.0)]["rows_at_this_message"], 1)
+    def test_no_drive_spans_a_score(self):
+        # The bug read as a snapshot bucketed on a score that had already
+        # changed by the time the drive ended, so this is the check that
+        # matters: the score at the anchor is the score for the whole run.
+        snaps = self.snapshots()
+        self.assertEqual([(s.score_p1, s.score_p2) for s in snaps],
+                         [(0, 0), (21, 14), (21, 22)])
 
-    def test_chosen_marks_the_row_the_index_kept(self):
-        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
-                  for r in self.rows()}
-        # The dead settlement row loses to the live one, even though it was
-        # published first. This is the fix, visible per row.
-        self.assertEqual(by_key[("prod", 6, 61.0)]["chosen"], 0)
-        self.assertEqual(by_key[("prod", 6, 61.0)]["live"], 0)
-        self.assertEqual(by_key[("prod", 6, 48.0)]["chosen"], 1)
-        self.assertEqual(by_key[("prod", 6, 48.0)]["live"], 1)
+    def test_a_score_on_a_kept_play_breaks_after_it_not_before(self):
+        # The scoring play is the end of the old drive. Breaking at it
+        # would strand the play that scored in the next possession.
+        plays = [drives.PlayRow(m, 1, "Home Team", d, dist, f, None)
+                 for m, d, dist, f in [
+                     (1, 1, 10, 25), (2, 2, 4, 31), (3, 3, 1, 34),
+                     (8, 2, 7, 28)]]
+        scores = [drives.ScoreRow(3, 1, 6, None, 6, 0)]
+        snaps = drives.build_snapshots("AF1", plays, scores)
+        self.assertEqual([s.event_message_count for s in snaps], [1, 8])
+        self.assertEqual(snaps[0].n_plays, 3)
+        self.assertEqual((snaps[0].score_p1, snaps[0].score_p2), (0, 0))
 
-    def test_the_line_is_parsed_only_where_the_market_has_one(self):
-        by_key = {(r["stream"], r["event_message_count"], r["probability"]): r
-                  for r in self.rows()}
-        self.assertEqual(by_key[("prod", 6, 48.0)]["line"], -6.5)
-        self.assertEqual(by_key[("prod", 1, 55.0)]["line"], "")
-
-    def test_the_timeline_covers_every_message_any_source_had(self):
-        from .. import dump
-        plays = [("AF1", m, 1, "Home Team", 1, 10, 25, None) for m in (1, 2)]
-        play_out, score_out, _ = dump._rows_for_match("AF1", plays, [])
-        timeline = dump._timeline_rows("AF1", play_out, score_out, self.rows())
-        messages = [r["event_message_count"] for r in timeline]
-        self.assertEqual(messages, [1, 2, 6, 7])
-
-    def test_the_timeline_shows_where_the_sources_do_not_meet(self):
-        from .. import dump
-        plays = [("AF1", m, 1, "Home Team", 1, 10, 25, None) for m in (1, 2)]
-        play_out, score_out, _ = dump._rows_for_match("AF1", plays, [])
-        by_message = {r["event_message_count"]: r for r in
-                      dump._timeline_rows("AF1", play_out, score_out, self.rows())}
-        # A play with no quote, and a quote with no play. The three sources
-        # share one message sequence but are not one to one.
-        self.assertEqual((by_message[2]["has_play"],
-                          by_message[2]["prod_markets"]), (1, 0))
-        self.assertEqual((by_message[7]["has_play"],
-                          by_message[7]["prod_markets"]), (0, 1))
-        # And only where both streams had it live can a pair exist at all.
-        self.assertEqual(by_message[1]["markets_both_live"], 1)
-        self.assertEqual(by_message[7]["markets_both_live"], 0)
-
-    def test_only_the_chosen_row_counts_towards_the_timeline(self):
-        from .. import dump
-        by_message = {r["event_message_count"]: r for r in
-                      dump._timeline_rows("AF1", [], [], self.rows())}
-        # Message 6 had two prod rows for one market; the timeline counts
-        # markets, not rows, so it must read 1.
-        self.assertEqual(by_message[6]["prod_markets"], 1)
-        self.assertEqual(by_message[6]["markets_both_live"], 1)
+    def test_a_scoreless_run_is_still_one_drive(self):
+        plays = [drives.PlayRow(m, 1, "Home Team", d, dist, f, None)
+                 for m, d, dist, f in [
+                     (1, 1, 10, 25), (2, 2, 4, 31), (3, 3, 1, 34)]]
+        snaps = drives.build_snapshots("AF1", plays, [])
+        self.assertEqual(len(snaps), 1)
+        self.assertEqual(snaps[0].n_plays, 3)
 
 
 class TestKickoffRows(unittest.TestCase):
@@ -1334,13 +1416,9 @@ class TestPairDump(unittest.TestCase):
                      "cleaning": drives.DRIVE_START}]
         drive_out = [{"match_code": "AF1", "drive_number": 2, "n_plays": 6,
                       "n_dropped_inside": 3}]
-        quote_out = [{"match_code": "AF1", "event_message_count": 197,
-                      "stream": "prod", "market_id": 54,
-                      "rows_at_this_message": 2},
-                     {"match_code": "AF1", "event_message_count": 197,
-                      "stream": "candidate", "market_id": 54,
-                      "rows_at_this_message": 1}]
-        return dump._pair_dump_rows(pairs, play_out, drive_out, quote_out)
+        rows_at = {("AF1", 197, "prod", 54): 2,
+                   ("AF1", 197, "candidate", 54): 1}
+        return dump._pair_dump_rows(pairs, play_out, drive_out, rows_at)
 
     def test_it_keeps_every_directional_pairs_column(self):
         from .. import dump
@@ -1356,7 +1434,7 @@ class TestPairDump(unittest.TestCase):
         # the two files cannot describe the same pair differently.
         from .. import dump
         pair = line_pair(0.5, 0.6, 44.5, 44.5, 24, 21)
-        widened = dump._pair_dump_rows([pair], [], [], [])[0]
+        widened = dump._pair_dump_rows([pair], [], [])[0]
         for key, value in report.pair_row(pair).items():
             self.assertEqual(widened[key], value, key)
 

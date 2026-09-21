@@ -123,8 +123,10 @@ def cmd_dump(args):
     """Write the drive-detection working out to CSV for inspection.
 
     Reconciling drives is a row-by-row job, so this writes the rows rather
-    than a summary: every play the feed sent, which cleaning rule fired on
-    it, the drive it landed in, and which one row became the snapshot.
+    than a summary, in two files. One play-by-play carrying every play the
+    feed sent, the cleaning rule that fired on it, the drive it landed in,
+    the score at that message and what both streams were quoting on all
+    six selections; and the pairs those snapshots became.
     """
     out_dir = args.out or DEFAULT_OUT
     conn = snowflake_io.get_connection()
@@ -139,12 +141,12 @@ def cmd_dump(args):
                     cur, config.STREAMS[directional.CANDIDATE]))
                 match_codes = sorted(prod & candidate)[-args.matches:]
             print(f"\nDumping drive detection for {len(match_codes)} matches")
-            (written, plays, scores, drive_rows, quotes, timeline,
-             pair_rows) = dump.run(cur, match_codes, out_dir, time_column)
+            written, plays, drive_rows, pair_rows = dump.run(
+                cur, match_codes, out_dir, time_column)
     finally:
         conn.close()
 
-    report.print_dump_summary(plays, scores, drive_rows, quotes, timeline)
+    report.print_dump_summary(plays, drive_rows, pair_rows)
     print()
     for path in written:
         size = os.path.getsize(path) / 1024

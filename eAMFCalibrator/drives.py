@@ -392,15 +392,36 @@ def build_snapshots(match_code, plays, scores):
             anchor=kind,
         ))
 
+    # Points are the one boundary the play feed cannot argue with: nobody
+    # is on the same drive before and after a score. Where the team label
+    # never changed -- the feed staying on one side through a score, a
+    # kickoff and the next possession -- this is what separates them.
+    scoring_msgs = sorted(row.event_message_count for row in scores
+                          if row.p1_change or row.p2_change)
+
+    def scored_before(previous_play, play):
+        """Did anyone score between the last play and this one?
+
+        The scoring play itself is the end of the old drive, not the start
+        of the new one, so a score landing ON the previous row still
+        counts -- it is the row after it that belongs to the next
+        possession.
+        """
+        low = previous_play.event_message_count if previous_play else -1
+        return any(low <= m < play.event_message_count for m in scoring_msgs)
+
+    previous_play = None
     for p in cleaned:
         # A team change ends a drive, and so does a row the kickoff rule
         # positively identified as a drive start -- otherwise the side that
         # had the ball before half time and receives after it would have
         # both possessions merged into one, the boundary invisible because
-        # the label never changed.
+        # the label never changed. Points end one too.
         starts_drive = (not current_run
                         or p.offensive_team != current_run[0].offensive_team
-                        or reasons[p.event_message_count] == DRIVE_START)
+                        or reasons[p.event_message_count] == DRIVE_START
+                        or scored_before(previous_play, p))
+        previous_play = p
         if starts_drive:
             flush()
             drive_number += 1
