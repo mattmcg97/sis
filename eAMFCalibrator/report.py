@@ -161,7 +161,6 @@ def print_handle_check(scan, limit=20):
     verdict = "CLEAN" if not flipped else "FLIPPED HANDLES FOUND"
     print(f"  {scan['matches']:,} matches scanned   {scan['matches_clean']:,} with "
           f"nothing to flag   {flipped:,} with flipped handles ({share:.1%})")
-    print(f"  {scan['anchors']:,} touchdowns used as possession anchors")
     print(f"  Verdict: {verdict}")
     if flipped and not config.EXCLUDE_FLIPPED_MATCHES:
         print("  These matches are STILL IN the numbers above. Their score")
@@ -197,13 +196,7 @@ def print_handle_check(scan, limit=20):
     print("  does a rescinded score. FINAL MISMATCH is the running total")
     print("  disagreeing with SCORE_ENDGAME, which a missing late score")
     print("  explains as well as a swap, so it is not counted as a flip.")
-    print("\n  The POSSESSION kinds read none of the totals. After a touchdown")
-    print("  the other team receives, and the play feed names its teams Home")
-    print("  and Away rather than PLAYER_1 and PLAYER_2, so each touchdown")
-    print("  independently tests the mapping -- including while the score is")
-    print("  level, which the checks above cannot. INVERTED is a match crossed")
-    print("  throughout; FLIP is agreement turning over at one point, which is")
-    print("  the message shown; UNSTABLE is neither, so it is not called a flip.")
+    print("  Blind spot: a swap while the score is level leaves no trace.")
 
 
 def print_worst(rows):
@@ -318,6 +311,7 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
 PAIR_FIELDS = [
     "publish_time", "match_code", "drive_number", "period_number",
     "score_p1", "score_p2", "score_diff", "offensive_team",
+    "field_position", "down_number", "distance",
     "market_id", "message_count", "message_gap",
     "prod_line", "candidate_line", "line_delta", "same_line",
     "prod_probability", "candidate_probability",
@@ -401,6 +395,37 @@ def print_directional_headline(overall, votes):
     print(f"  candidate win rate        : {_pct(votes['candidate_win_rate'])}")
     print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
     print("\n  If the two levels disagree, the match level is the one to trust.")
+
+
+def print_suspension(report):
+    """What suspension costs, and whether it costs both sides equally."""
+    print(f"\n{'=' * 78}\nSUSPENSION -- were both markets live?\n{'=' * 78}")
+    if not report or not report["pairs"]:
+        print("  No pairs.")
+        return
+    if not report["suspended"]:
+        print(f"  Every one of {report['pairs']:,} pairs had both markets live.")
+        return
+    print(f"  {report['suspended']:,} of {report['pairs']:,} pairs "
+          f"({_pct(report['share'])}) across {report['matches']:,} matches")
+    print(f"    prod suspended only      : {report['prod_only']:,}")
+    print(f"    candidate suspended only : {report['candidate_only']:,}")
+    print(f"    both                     : {report['both']:,}")
+    print(f"\n  {'SPLIT':<9}{'BUCKET':<14}{'PAIRS':>9}{'SUSP':>8}{'SHARE':>8}")
+    for label, table in (("quarter", report["by_quarter"]),
+                         ("market", report["by_market"])):
+        for key in sorted(table):
+            total, susp = table[key]
+            if not total:
+                continue
+            print(f"  {label:<9}{str(key):<14}{total:>9,}{susp:>8,}"
+                  f"{_pct(susp / total):>8}")
+    print("\n  These pairs are shown in the report and scored by nothing: a")
+    print("  suspended price is not one anyone could have taken. The number")
+    print("  to watch is the split between the two streams. Suspension lands")
+    print("  on scoring plays and reviews, which is where the models differ")
+    print("  most, so a stream that suspends more readily has its")
+    print("  disagreements dropped from the comparison rather than scored.")
 
 
 def print_selections(summary):
@@ -523,6 +548,9 @@ def write_pairs_csv(path, pairs):
                 "score_p2": p.score_p2,
                 "score_diff": p.score_diff,
                 "offensive_team": p.offensive_team,
+                "field_position": p.field_position,
+                "down_number": p.down_number,
+                "distance": p.distance,
                 "market_id": p.market_id,
                 "message_count": p.message_count,
                 "message_gap": p.message_gap,

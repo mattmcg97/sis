@@ -9,6 +9,7 @@ Run with:  py -m unittest discover eAMFCalibrator
 
 import collections
 import contextlib
+import dataclasses
 import re
 import datetime as dt
 import io
@@ -203,19 +204,13 @@ class TestHandleScanSummary(unittest.TestCase):
         self.assertEqual(self.scan.summary()["matches"], 5)
         self.assertEqual(self.scan.summary()["matches_flipped"], 2)
 
-    def test_where_distinguishes_the_three_cases(self):
+    def test_where_distinguishes_a_message_from_the_final_check(self):
         scores = [ScoreRow(1, 1, None, None, 14, 7),
                   ScoreRow(2, 1, None, None, 7, 14)]
         self.assertEqual(handles.scan_match("X", scores)[0].where, "2")
         late = handles.scan_match("X", [ScoreRow(1, 1, None, None, 7, 0)], (14, 0))
         self.assertEqual(late[0].where, "final")
-        plays, clean = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in clean]
-        verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(verdict.where, "match")
-        self.assertFalse(verdict.is_final_check)
+        self.assertTrue(late[0].is_final_check)
 
     def test_empty_summary_matches_the_real_shape(self):
         self.assertEqual(set(handles.empty_summary()), set(self.summary))
@@ -250,7 +245,7 @@ class TestFlippedMatchExclusion(unittest.TestCase):
         for match in self.MATCHES:
             for msg in (1, 2):
                 rows.append((match, 50, dt.datetime(2026, 9, 18, 12, msg),
-                             60.0, 1.67, "PLAYER 1", msg))
+                             60.0, 1.67, "PLAYER 1", msg, "open", "true"))
         return rows
 
     @contextlib.contextmanager
@@ -329,168 +324,6 @@ class TestDropFlippedFlag(unittest.TestCase):
         from .. import __main__ as cli
         cli.apply_overrides(self.parse(["report", "--drop-flipped"]))
         self.assertTrue(config.EXCLUDE_FLIPPED_MATCHES)
-
-
-class TestPossessionCrossCheck(unittest.TestCase):
-    """The signal that survives a level score.
-
-    Football's sequence after a touchdown is fixed, and the play feed names
-    its teams in a different vocabulary from the score feed, so each
-    touchdown independently tests the PLAYER_1 = Home assumption without
-    looking at the totals at all.
-    """
-
-    HOME, AWAY = "Home Team", "Away Team"
-
-    @staticmethod
-    def td(msg, home_scored):
-        return ScoreRow(msg, 1, 6 if home_scored else None,
-                        None if home_scored else 6, None, None)
-
-    @staticmethod
-    def drive(start, team, n=3):
-        return [PlayRow(start + i, 1, team,
-                        1 if i == 0 else 2, 10 if i == 0 else 7, 40)
-                for i in range(n)]
-
-    def feed(self, scorers):
-        """Plays where the right team always receives, plus `scorers`."""
-        plays, scores = [], []
-        for k, home_scored in enumerate(scorers):
-            msg = 100 * k
-            receiver = self.AWAY if home_scored else self.HOME
-            scores.append(self.td(msg, home_scored))
-            plays += self.drive(msg + 5, receiver)
-        return plays, scores
-
-    def test_a_consistent_match_says_nothing(self):
-        plays, scores = self.feed([True, False, True, False])
-        verdict, anchors = handles.possession_verdict("OK", plays, scores)
-        self.assertIsNone(verdict)
-        self.assertEqual(len(anchors), 4)
-        self.assertTrue(all(a.agrees for a in anchors))
-
-    def test_a_match_crossed_throughout_is_caught(self):
-        # The exact case the score checks cannot see: nothing ever regresses
-        # because the whole match is consistently mirrored.
-        plays, scores = self.feed([True, False, True, False])
-        crossed = [self.td(s.event_message_count, not bool(s.p1_change))
-                   for s in scores]
-        verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_INVERTED)
-        self.assertEqual(verdict.describe(), "0/4 touchdowns agree")
-        self.assertTrue(verdict.is_flip)
-
-    def test_a_mid_match_flip_is_located(self):
-        plays, scores = self.feed([True, False, True, False, True, False])
-        mixed = scores[:3] + [self.td(s.event_message_count, not bool(s.p1_change))
-                              for s in scores[3:]]
-        verdict, _ = handles.possession_verdict("X", plays, mixed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-        # The flip is between the third anchor and the fourth, which is the
-        # message reported.
-        self.assertEqual(verdict.event_message_count, 300)
-
-    def test_a_match_that_starts_crossed_and_corrects_is_also_a_flip(self):
-        # Just as much of the match is read in the wrong frame either way.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        mixed = [self.td(s.event_message_count, not bool(s.p1_change))
-                 for s in scores[:3]] + scores[3:]
-        verdict, _ = handles.possession_verdict("X", plays, mixed)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-        self.assertEqual(verdict.event_message_count, 300)
-
-    def test_a_flip_is_found_with_the_score_dead_level(self):
-        # Both sides on 14 throughout the flip. The score checks have
-        # nothing to work with here; this one is unaffected.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        level = []
-        for i, row in enumerate(scores):
-            home_scored = bool(row.p1_change) if i < 3 else not bool(row.p1_change)
-            level.append(ScoreRow(row.event_message_count, 1,
-                                  6 if home_scored else None,
-                                  None if home_scored else 6, 14, 14))
-        self.assertEqual([a.kind for a in handles.scan_match("X", level)], [])
-        verdict, _ = handles.possession_verdict("X", plays, level)
-        self.assertEqual(verdict.kind, handles.POSSESSION_FLIP)
-
-    def test_a_lagging_vision_row_does_not_invent_a_flip(self):
-        # The row straight after a team-label change repeats the previous
-        # team's down and distance, so a naive read has the scorer receiving
-        # its own kickoff. It must be ignored, not counted.
-        plays, scores = self.feed([True, False, True, False])
-        noisy = []
-        for k, row in enumerate(scores):
-            stale = self.HOME if row.p1_change else self.AWAY
-            noisy.append(PlayRow(row.event_message_count + 1, 1, stale, 1, 10, 40))
-            noisy += self.drive(row.event_message_count + 5,
-                                self.AWAY if row.p1_change else self.HOME)
-        verdict, anchors = handles.possession_verdict("X", noisy, scores)
-        self.assertIsNone(verdict)
-        self.assertTrue(all(a.agrees for a in anchors))
-
-    def test_too_few_touchdowns_to_say_anything(self):
-        plays, scores = self.feed([True, False])
-        verdict, anchors = handles.possession_verdict("X", plays, scores)
-        self.assertIsNone(verdict)
-        self.assertEqual(len(anchors), 2)
-
-    def test_noise_without_a_clean_turnover_is_unstable_not_a_flip(self):
-        # Alternating agreement is not a changepoint. Worth surfacing, but
-        # calling the match crossed on it would be inventing a finding.
-        plays, scores = self.feed([True, False, True, False, True, False])
-        scrambled = list(scores)
-        for i in (1, 3):
-            row = scrambled[i]
-            scrambled[i] = self.td(row.event_message_count, not bool(row.p1_change))
-        verdict, _ = handles.possession_verdict("X", plays, scrambled)
-        self.assertEqual(verdict.kind, handles.POSSESSION_UNSTABLE)
-        self.assertNotIn(handles.POSSESSION_UNSTABLE, handles.FLIP_KINDS)
-
-    def test_only_six_point_scores_anchor(self):
-        # A field goal is not followed by the same fixed sequence in this
-        # feed's scoring codes, so it is not used as an anchor.
-        plays, _ = self.feed([True, False, True])
-        field_goals = [ScoreRow(0, 1, 3, None, None, None),
-                       ScoreRow(100, 1, None, 3, None, None)]
-        self.assertEqual(handles.possession_anchors(plays, field_goals), [])
-
-    def test_a_touchdown_with_no_readable_possession_after_it_is_skipped(self):
-        scores = [self.td(0, True), self.td(100, False), self.td(200, True)]
-        # Plays exist, but none is a sustained fresh 1st-and-10.
-        plays = [PlayRow(5, 1, self.HOME, 3, 8, 40)]
-        self.assertEqual(handles.possession_anchors(plays, scores), [])
-
-    def test_the_check_reads_raw_plays_not_cleaned_ones(self):
-        # clean_plays uses the very assumption under test, so cleaning first
-        # would make the check confirm itself. Asserted by showing the
-        # cleaned feed loses the rows the check depends on.
-        plays, scores = self.feed([True, False, True, False])
-        crossed = [self.td(s.event_message_count, not bool(s.p1_change))
-                   for s in scores]
-        cleaned, dropped = clean_plays(plays, crossed)
-        self.assertGreater(dropped, 0)
-        raw_verdict, _ = handles.possession_verdict("X", plays, crossed)
-        self.assertEqual(raw_verdict.kind, handles.POSSESSION_INVERTED)
-
-
-class TestScanUsesPossession(unittest.TestCase):
-    def test_plays_are_optional_and_their_absence_skips_the_check(self):
-        scan = handles.Scan()
-        self.assertTrue(scan.add("NOPLAYS", [ScoreRow(1, 1, 7, 0, 7, 0)], (7, 0)))
-        self.assertEqual(scan.summary()["anchors"], 0)
-
-    def test_a_crossed_match_is_flipped_even_with_a_clean_score_series(self):
-        plays, scores = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in scores]
-        scan = handles.Scan()
-        # Nothing regresses; only the possession check sees this one.
-        self.assertEqual(handles.scan_match("X", crossed), [])
-        self.assertFalse(scan.add("X", crossed, None, plays))
-        self.assertEqual(scan.flipped_matches, frozenset({"X"}))
-        self.assertEqual(scan.summary()["anchors"], 4)
 
 
 class TestTheLineOverrulesTheProbability(unittest.TestCase):
@@ -663,6 +496,154 @@ class TestSelectionBlocks(unittest.TestCase):
         summary = directional.build_summary(self.pairs, n_bootstrap=50)
         self.assertIn("selections", summary["same_line"])
         self.assertIn("selections", summary["different_line"])
+
+
+class TestAxisBreakdownsShowEverySelection(unittest.TestCase):
+    """The single-axis tables in the checks carry both sides."""
+
+    def setUp(self):
+        self.pairs = []
+        for i in range(8):
+            # Home wins six of the eight, so the two sides have genuinely
+            # different realized rates and cancellation would be visible.
+            home_won = i < 6
+            for market_id in (50, 51):
+                outcome = home_won if market_id == 50 else not home_won
+                self.pairs.append(pair(0.5, 0.6, outcome, match=f"AF{i}",
+                                       market_id=market_id, period=1 + i % 4))
+        self.cells = directional.calibration_cells(
+            self.pairs, directional.quarter_label, n_bootstrap=50,
+            by_selection=True)
+
+    def test_both_sides_of_a_market_get_their_own_cell(self):
+        ids = {key[1] for key in self.cells}
+        self.assertEqual(ids, {50, 51})
+
+    def test_keying_by_selection_does_not_cancel_the_measurement(self):
+        # Pooling the two sides forces EVERY cell's realized rate to exactly
+        # 0.500 by construction. Keyed separately they are complements of
+        # each other, and at least one cell escapes 0.500 -- which is the
+        # whole property. (A cell can legitimately land on 0.500 when the
+        # outcomes in it really did split evenly, so the test is that not
+        # all of them do, not that none of them does.)
+        realized = []
+        for cell in {key[0] for key in self.cells}:
+            home = self.cells.get((cell, 50))
+            away = self.cells.get((cell, 51))
+            if not home or not away:
+                continue
+            self.assertAlmostEqual(home["realized"] + away["realized"], 1.0,
+                                   places=9, msg=cell)
+            realized.append(home["realized"])
+        self.assertTrue(any(abs(r - 0.5) > 1e-9 for r in realized), realized)
+
+    def test_pooling_both_sides_would_cancel_it_which_is_why_it_is_keyed(self):
+        # The counterfactual, asserted rather than asserted-about: feed the
+        # same pairs through one shared bucket and everything collapses.
+        pooled = directional.calibration_cells(
+            self.pairs, lambda p: "all", n_bootstrap=20,
+            market_ids=[50, 51])
+        for row in pooled.values():
+            self.assertAlmostEqual(row["realized"], 0.5, places=9)
+
+    def test_each_cell_names_its_market_and_side(self):
+        row = self.cells[("Q1", 51)]
+        self.assertEqual(row["market"], "moneyline")
+        self.assertEqual(row["selection"], "Away")
+        self.assertFalse(row["canonical"])
+        self.assertTrue(self.cells[("Q1", 50)]["canonical"])
+
+    def test_the_pooled_cross_section_still_reads_one_side(self):
+        # The headline view is unchanged: only the checks were widened.
+        pooled = directional.calibration_cells(
+            self.pairs, directional.quarter_label, n_bootstrap=50)
+        self.assertEqual({key[1] for key in pooled}, {"moneyline"})
+
+
+class TestPairStateColumns(unittest.TestCase):
+    """Field position and down/distance ride on the pair."""
+
+    def test_they_default_to_none_when_the_feed_has_none(self):
+        p = pair(0.5, 0.6, True)
+        self.assertIsNone(p.field_position)
+        self.assertIsNone(p.down_number)
+        self.assertIsNone(p.distance)
+
+    def test_they_reach_the_csv(self):
+        for field in ("field_position", "down_number", "distance"):
+            self.assertIn(field, report.PAIR_FIELDS)
+
+
+class TestSuspensionFlag(unittest.TestCase):
+    """A suspended quote is carried, flagged, and scored by nothing."""
+
+    def susp(self, prod_live=True, candidate_live=True, **kw):
+        return dataclasses.replace(
+            pair(0.9, 0.1, True, **kw),
+            prod_live=prod_live, candidate_live=candidate_live)
+
+    def test_live_is_read_from_the_two_columns_not_assumed(self):
+        self.assertTrue(directional.is_live("open", "true"))
+        self.assertTrue(directional.is_live("OPEN", "TRUE"))
+        for status, active in (("suspended", "true"), ("open", "false"),
+                               ("closed", "false"), ("settled", "true")):
+            self.assertFalse(directional.is_live(status, active),
+                             f"{status}/{active}")
+
+    def test_either_side_suspended_suspends_the_pair(self):
+        self.assertFalse(self.susp().suspended)
+        self.assertTrue(self.susp(prod_live=False).suspended)
+        self.assertTrue(self.susp(candidate_live=False).suspended)
+        self.assertTrue(self.susp(False, False).suspended)
+
+    def test_a_suspended_pair_is_scored_by_nothing(self):
+        p = self.susp(prod_live=False)
+        for mode in (directional.PROBABILITY, directional.LINE,
+                     directional.DECISIVE):
+            self.assertEqual(p.errors(mode), (None, None), mode)
+            self.assertFalse(p.comparable(mode), mode)
+            self.assertIsNone(p.winner(mode), mode)
+
+    def test_it_is_excluded_from_every_aggregate_at_once(self):
+        # errors() is what tally, the cells, the votes and the decisive
+        # block are all built on, which is why refusing there is enough.
+        live = [pair(0.9, 0.1, True, match=f"AF{i}") for i in range(6)]
+        dead = [self.susp(prod_live=False, match=f"AF{i}") for i in range(6)]
+        both = live + dead
+        self.assertEqual(directional.tally(both, directional.PROBABILITY)["n"], 6)
+        self.assertEqual(directional.decisive_block(both)["n"], 6)
+        cells = directional.calibration_cells(
+            both, directional.quarter_label, n_bootstrap=20)
+        self.assertEqual(sum(c["n"] for c in cells.values()), 6)
+
+    def test_turning_the_requirement_off_scores_them(self):
+        previous = config.REQUIRE_LIVE_QUOTE
+        config.REQUIRE_LIVE_QUOTE = False
+        try:
+            p = self.susp(prod_live=False)
+            self.assertTrue(p.comparable(directional.PROBABILITY))
+            self.assertIsNotNone(p.winner(directional.PROBABILITY))
+        finally:
+            config.REQUIRE_LIVE_QUOTE = previous
+
+    def test_the_report_counts_which_side_suspended(self):
+        pairs = ([pair(0.9, 0.1, True, match="AF0")]
+                 + [self.susp(prod_live=False, match="AF1")] * 3
+                 + [self.susp(candidate_live=False, match="AF2")]
+                 + [self.susp(False, False, match="AF3")])
+        r = directional.suspension_report(pairs)
+        self.assertEqual((r["pairs"], r["suspended"]), (6, 5))
+        self.assertEqual(r["prod_only"], 3)
+        self.assertEqual(r["candidate_only"], 1)
+        self.assertEqual(r["both"], 1)
+        self.assertEqual(r["matches"], 3)
+
+    def test_the_report_splits_by_quarter_so_lopsidedness_is_visible(self):
+        pairs = [self.susp(prod_live=(q != 4), match=f"AF{q}", period=q)
+                 for q in (1, 2, 3, 4)]
+        r = directional.suspension_report(pairs)
+        self.assertEqual(r["by_quarter"]["Q4"], (1, 1))
+        self.assertEqual(r["by_quarter"]["Q1"], (1, 0))
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -1201,13 +1182,17 @@ class TestNearestMessage(unittest.TestCase):
 
 class TestPairingIndexes(unittest.TestCase):
     def test_index_by_message_keeps_probability_and_description(self):
-        rows = [("AF1", 50, BASE, 85.26, 1.11, "Home team (PLAYER 1) to win", 300)]
+        rows = [("AF1", 50, BASE, 85.26, 1.11, "Home team (PLAYER 1) to win",
+                 300, "open", "true")]
         index = directional.index_by_message(rows)
-        self.assertEqual(index[("AF1", 50)][300][0], 85.26)
+        quote = index[("AF1", 50)][300]
+        self.assertEqual(quote.probability, 85.26)
+        self.assertEqual(quote.description, "Home team (PLAYER 1) to win")
+        self.assertTrue(quote.live)
 
     def test_index_by_message_skips_null_message_or_probability(self):
-        rows = [("AF1", 50, BASE, 85.0, 1.1, "d", None),
-                ("AF1", 50, BASE, None, 1.1, "d", 300)]
+        rows = [("AF1", 50, BASE, 85.0, 1.1, "d", None, "open", "true"),
+                ("AF1", 50, BASE, None, 1.1, "d", 300, "open", "true")]
         self.assertEqual(directional.index_by_message(rows), {})
 
     def test_common_messages_is_the_intersection(self):
@@ -1889,6 +1874,58 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn("0.4500", row)   # prod error
         self.assertIn("0.3800", row)   # candidate error
 
+    def test_pair_rows_carry_the_game_state(self):
+        p = directional.PairedObservation(
+            match_code="AF1", drive_number=1, period_number=4,
+            score_p1=21, score_p2=22, offensive_team="Away Team",
+            market_id=50, message_count=428, message_gap=0,
+            prod_probability=0.08, candidate_probability=0.664,
+            prod_line=None, candidate_line=None, prod_outcome=False,
+            candidate_outcome=False, realized=None,
+            publish_time=dt.datetime(2026, 9, 17, 20, 5),
+            field_position=55, down_number=3, distance=2)
+        cells = self._cells_for([p])
+        self.assertEqual(cells["Field"], "55")
+        self.assertEqual(cells["D&amp;D"], "3&amp;2")
+
+    def test_missing_state_shows_a_dash_not_a_zero(self):
+        cells = self._cells_for([pair(0.5, 0.6, True)])
+        self.assertEqual(cells["Field"], "&mdash;")
+        self.assertEqual(cells["D&amp;D"], "&mdash;")
+
+    def test_to_end_counts_down_to_the_match_last_quote(self):
+        # No game clock exists in the feed, so this is the wall-clock proxy:
+        # seconds from each snapshot to the last quote of its own match.
+        base = dt.datetime(2026, 9, 17, 20, 0)
+        early = pair(0.5, 0.6, True, match="AF1", message=100)
+        late = pair(0.5, 0.6, True, match="AF1", message=428)
+        early = dataclasses.replace(early, publish_time=base)
+        late = dataclasses.replace(late, publish_time=base + dt.timedelta(seconds=300))
+        row = self._row_for([early, late])
+        self.assertIn(">300</td>", row)   # the early one is 300s from the end
+        self.assertIn(">0</td>", row)     # the last one is the end
+
+    def test_the_final_snapshot_of_a_match_is_flagged_as_near_the_end(self):
+        base = dt.datetime(2026, 9, 17, 20, 0)
+        p = dataclasses.replace(pair(0.5, 0.6, True, match="AF1"),
+                                publish_time=base)
+        self.assertIn('class="warn"', self._row_for([p]))
+
+    def test_a_suspended_pair_shows_but_compares_nothing(self):
+        p = dataclasses.replace(pair(0.9, 0.1, True), prod_live=False)
+        cells = self._cells_for([p])
+        self.assertEqual(cells["Live"], "prod")
+        for column in ("&Delta;prob", "Prod err", "Cand err"):
+            self.assertEqual(cells[column], "&mdash;", column)
+        # The two probabilities are still facts about the row.
+        self.assertEqual(cells["Prod prob"], "0.9000")
+        self.assertIn('class="susp"', self._row_for([p]))
+
+    def test_a_live_pair_is_not_marked(self):
+        cells = self._cells_for([pair(0.9, 0.1, True)])
+        self.assertEqual(cells["Live"], "live")
+        self.assertNotIn('class="susp"', self._row_for([pair(0.9, 0.1, True)]))
+
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()
         self.assertNotIn('src="http', rendered)
@@ -2055,25 +2092,6 @@ class TestReportShape(unittest.TestCase):
         # The default is to report rather than drop, so the reader has to be
         # told the bad match is still in the numbers above.
         self.assertIn("STILL IN", block)
-
-    def test_handle_block_shows_the_possession_evidence(self):
-        plays, scores = TestPossessionCrossCheck().feed([True, False, True, False])
-        crossed = [TestPossessionCrossCheck.td(s.event_message_count,
-                                               not bool(s.p1_change))
-                   for s in scores]
-        scan = handles.Scan()
-        scan.add("OK", scores, None, plays)
-        scan.add("XED", crossed, None, plays)
-        rendered = self.html_full.render(
-            self.report, {"paired_matches": 12}, {}, self.pairs, scan.summary())
-        block = rendered[rendered.index("Handle check"):]
-        block = block[:block.index("</section>")]
-        self.assertIn("Possession inverted", block)
-        self.assertIn("0/4 touchdowns agree", block)
-        self.assertIn("touchdown anchors", block)
-        # A whole-match verdict is not a message count and must not be
-        # labelled as the final cross-check either.
-        self.assertIn("<td>match</td>", block)
 
     def test_a_flip_stops_the_checks_line_claiming_all_pass(self):
         scan = handles.Scan()

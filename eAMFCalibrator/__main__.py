@@ -63,6 +63,18 @@ def cmd_preflight(args):
                 print(f"\n{key:<10} {table}")
                 print(f"  in window from {config.CUTOFF_START}: {n_rows:,} rows, {n_matches:,} matches")
                 print(f"  span: {first}  ->  {last}")
+
+                # What STATUS and IS_ACTIVE really contain. The pipeline
+                # calls 'open' + 'true' live and everything else suspended,
+                # which is a guess until this says otherwise.
+                profile = snowflake_io.status_profile(cur, table)
+                print(f"  {'STATUS':<14}{'ACTIVE':<9}{'ROWS':>12}{'MATCHES':>9}"
+                      f"{'NULL P':>8}{'ZERO P':>8}  live?")
+                for status, active, rows, matches, null_p, zero_p in profile:
+                    live = ("live" if directional.is_live(status, active)
+                            else "SUSPENDED")
+                    print(f"  {str(status):<14}{str(active):<9}{rows:>12,}"
+                          f"{matches:>9,}{null_p or 0:>8.1%}{zero_p or 0:>8.1%}  {live}")
     finally:
         conn.close()
     return 0
@@ -143,6 +155,7 @@ def cmd_directional(args):
 
     report.print_line_agreement(summary["lines"])
     report.print_decisive(summary["decisive"])
+    report.print_suspension(directional.suspension_report(pairs))
     report.print_selections(summary)
 
     report.print_block(
@@ -325,6 +338,7 @@ def cmd_report(args):
     report.print_daily(full["daily"])
     if args.axes:
         report.print_line_agreement(summary["lines"])
+        report.print_suspension(full["suspension"])
         report.print_selections(summary)
         report.print_complement_report(full["complement"])
         report.print_spread_interpretation(full["spread"])
