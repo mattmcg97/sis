@@ -585,6 +585,34 @@ message, with the break falling **after** the scoring play rather than on
 it — the play that scored is the end of the old drive, not the start of
 the new one.
 
+### Field position does not carry across a kick
+
+The backward test — a fresh 1st-and-10 the ball moved *back* to reach is
+not a first down — compares against the last row that survived. Across a
+kick there is no such row to compare against. From `AF063170926`:
+
+```
+ msg  team   d&d   field   verdict
+ 352  Away   3&5     91    kept           the drive that scored
+ 359                       score, 21-15
+ 360  Away   1&10    35    kickoff        the kick spot
+ 362  Away   3&5     35    special_teams  the scoring play's d&d, restated
+ 364  Away   1&10    35    kickoff        the kick spot again
+ 366  Away   1&10    45    was kickoff <- the drive
+ 372  Away   1&10    63    was kickoff
+ 377  Away   1&10    80    was kickoff
+ 384  Away   2&4     87    kept           the snapshot landed here
+```
+
+45, 63 and 80 were each read against the **91** on the far side of the
+kick, so all three "went backward" and the whole drive went with them.
+The snapshot fell on 2nd-and-4 at the 87, six plays late.
+
+A kick resets field position, so once a row has been dropped as one the
+backward test stops applying. What tells the kick spot from the drive
+after that is the **yard line**: 364 has not left the spot the kick was
+taken from, 366 has.
+
 ## Cleaning the play feed
 
 From `AF063170926`, twenty-five raw rows covering one drive, a touchdown

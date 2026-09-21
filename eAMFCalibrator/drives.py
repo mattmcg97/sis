@@ -30,6 +30,8 @@ reasons from "the next drive belongs to the other team" inherits that
 error, which is what sank the possession cross-check.
 """
 
+import collections
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -119,6 +121,12 @@ FIRST_DOWN_YARDS = 10
 _DROPPED = (DUPLICATE, KICKOFF, SPECIAL_TEAMS, STALE_AFTER_CHANGE,
             IMPOSSIBLE_DOWN)
 
+# Whether a kick stands between the last surviving row and this one, and
+# the yard line it was taken from. Field position does not carry across a
+# kick, so the rules that read it have to know one happened.
+_Kick = collections.namedtuple("_Kick", "seen field")
+_NO_KICK = _Kick(False, None)
+
 
 def _state(play):
     return (play.offensive_team, play.down_number, play.distance,
@@ -192,6 +200,7 @@ def classify_plays(plays, scores=()):
         kept_rows.append(play)
 
     previous = None          # the last row that survived
+    kick = _NO_KICK          # whether a kick stands between it and here
     for i, play in enumerate(kept_rows):
         # Two predecessors matter and they are not the same row. The stale
         # duplicate mirrors whatever came immediately before it, kept or
@@ -199,10 +208,13 @@ def classify_plays(plays, scores=()):
         # every other rule compares against the last row that survived.
         before = kept_rows[i - 1] if i else None
         following = kept_rows[i + 1] if i + 1 < len(kept_rows) else None
-        reasons[play.event_message_count] = _judge(play, previous, before,
-                                                   following)
-        if reasons[play.event_message_count] not in _DROPPED:
+        reason = _judge(play, previous, before, following, kick)
+        reasons[play.event_message_count] = reason
+        if reason == KICKOFF:
+            kick = _Kick(True, play.field_position)
+        elif reason not in _DROPPED:
             previous = play
+            kick = _NO_KICK
     return reasons
 
 
@@ -229,7 +241,7 @@ def _is_impossible_down(play, previous):
             and play.field_position == previous.field_position)
 
 
-def _judge(play, previous, before, following):
+def _judge(play, previous, before, following, kick=_NO_KICK):
     """Which rule this row falls under, given its neighbours."""
     fresh = _is_fresh_first_down(play)
 
@@ -252,11 +264,23 @@ def _judge(play, previous, before, following):
     if fresh and _looks_like_a_kick_spot(play, following):
         return KICKOFF
 
+    # The kick spot arrives more than once. Having dropped one row as the
+    # kick, a fresh 1st-and-10 still sitting on that same yard line is the
+    # same spot republished, not the drive that came off it.
+    if fresh and kick.field is not None and play.field_position == kick.field:
+        return KICKOFF
+
     if previous is None:
         return DRIVE_START if fresh else KEPT
 
     if play.offensive_team != previous.offensive_team:
         return DRIVE_START if fresh else KEPT
+
+    # A fresh 1st-and-10 on a new yard line, with a kick between it and
+    # the last surviving row, is the drive that kick produced -- whatever
+    # the team label says, since a kick is a change of possession.
+    if fresh and kick.seen:
+        return DRIVE_START
 
     known = (play.field_position is not None
              and previous.field_position is not None)
