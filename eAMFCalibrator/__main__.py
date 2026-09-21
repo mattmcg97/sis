@@ -151,6 +151,9 @@ def cmd_dump(args):
     for path in written:
         size = os.path.getsize(path) / 1024
         print(f"  wrote {path}  ({size:,.0f} KB)")
+    if len(written) < dump.FILES:
+        print(f"  {dump.FILES - len(written)} file(s) could not be written")
+        return 1
     return 0
 
 

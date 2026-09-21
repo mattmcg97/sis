@@ -7,13 +7,16 @@ matching, scoring -- is pinned down in full instead.
 Run with:  py -m unittest discover eAMFCalibrator
 """
 
+import builtins
 import collections
 import contextlib
 import dataclasses
 import re
 import datetime as dt
 import io
+import os
 import unittest
+from unittest import mock
 
 from .. import (buckets, clock, config, directional, drives, handles,
                 markets, metrics, report)
@@ -1159,6 +1162,56 @@ class TestPointsEndADrive(unittest.TestCase):
         self.assertEqual(snaps[0].n_plays, 3)
 
 
+class TestALockedFileDoesNotLoseTheRun(unittest.TestCase):
+    """Excel holds a CSV open; Windows refuses the write.
+
+    The queries, the cleaning and the pairing are already paid for by
+    then, so the other file still gets written and the command says which
+    one it could not.
+    """
+
+    def test_a_refused_write_returns_none_rather_than_raising(self):
+        from .. import dump
+        import tempfile
+        with tempfile.TemporaryDirectory() as out:
+            path = os.path.join(out, "locked.csv")
+            real_open = builtins.open
+
+            def refuse(target, *args, **kwargs):
+                if target == path:
+                    raise PermissionError(13, "Permission denied")
+                return real_open(target, *args, **kwargs)
+
+            with mock.patch.object(builtins, "open", refuse):
+                with contextlib.redirect_stdout(io.StringIO()) as out_text:
+                    self.assertIsNone(dump._write(path, ["a"], [{"a": 1}]))
+        self.assertIn("could NOT write", out_text.getvalue())
+        self.assertIn("Excel", out_text.getvalue())
+
+    def test_the_other_file_is_still_written(self):
+        from .. import dump
+        import tempfile
+        with tempfile.TemporaryDirectory() as out:
+            good = os.path.join(out, "good.csv")
+            bad = os.path.join(out, "bad.csv")
+            real_open = builtins.open
+
+            def refuse(target, *args, **kwargs):
+                if target == bad:
+                    raise PermissionError(13, "Permission denied")
+                return real_open(target, *args, **kwargs)
+
+            with mock.patch.object(builtins, "open", refuse):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    written = [p for p in (
+                        dump._write(good, ["a"], [{"a": 1}]),
+                        dump._write(bad, ["a"], [{"a": 1}])) if p]
+            self.assertEqual(written, [good])
+            self.assertTrue(os.path.exists(good))
+        # And the caller can tell, because it knows how many it wanted.
+        self.assertEqual(dump.FILES, 2)
+
+
 class TestKickoffRows(unittest.TestCase):
     """Kickoffs as the feed really sends them.
 
@@ -1255,6 +1308,75 @@ class TestKickoffRows(unittest.TestCase):
         self.assertEqual(reasons[2], drives.DRIVE_START)
         snaps = drives.build_snapshots("AF1", plays, [])
         self.assertEqual(snaps[1].field_position, 35)
+
+
+class TestFieldPositionDoesNotCarryAcrossAKick(unittest.TestCase):
+    """AF063170926 messages 352-384: three real snaps called kickoffs.
+
+    After the score at 359 the last surviving row was message 352, Away
+    3rd-and-5 on the 91. The kick spot arrived three times (360, 362, 364,
+    all on the 35) and the drive it produced ran 45 -> 63 -> 80. Every one
+    of those was compared against the 91 and read as going backward, so
+    the whole drive was dropped as kick rows and the snapshot fell on
+    2nd-and-4 at the 87, six plays late.
+
+    A kick resets field position. Nothing either side of it can be read
+    against the other.
+    """
+
+    AWAY = "Away Team"
+
+    def feed(self):
+        plays = [drives.PlayRow(m, 4, self.AWAY, d, dist, f, None)
+                 for m, d, dist, f in [
+                     (352, 3, 5, 91),    # the drive that scored
+                     (360, 1, 10, 35),   # the kick spot
+                     (362, 3, 5, 35),    # the scoring play's d&d, restated
+                     (364, 1, 10, 35),   # the kick spot again
+                     (366, 1, 10, 45),   # the drive
+                     (372, 1, 10, 63),
+                     (377, 1, 10, 80),
+                     (384, 2, 4, 87)]]
+        scores = [drives.ScoreRow(359, 4, 0, 8, 21, 15)]
+        return plays, scores
+
+    def test_the_kick_spot_still_goes(self):
+        reasons = drives.classify_plays(*self.feed())
+        self.assertEqual(reasons[360], drives.KICKOFF)
+        self.assertEqual(reasons[364], drives.KICKOFF)
+
+    def test_the_drive_the_kick_produced_survives(self):
+        reasons = drives.classify_plays(*self.feed())
+        self.assertEqual(reasons[366], drives.DRIVE_START)
+        self.assertEqual(reasons[372], drives.KEPT)
+        self.assertEqual(reasons[377], drives.KEPT)
+        self.assertEqual(reasons[384], drives.KEPT)
+
+    def test_a_repeat_of_the_kick_spot_is_told_apart_by_its_yard_line(self):
+        # 364 and 366 are both fresh 1st-and-10s after a dropped kick. The
+        # only thing separating them is that 364 has not left the spot the
+        # kick was taken from.
+        reasons = drives.classify_plays(*self.feed())
+        self.assertEqual((reasons[364], reasons[366]),
+                         (drives.KICKOFF, drives.DRIVE_START))
+
+    def test_the_snapshot_lands_on_the_drives_opening_first_down(self):
+        plays, scores = self.feed()
+        snaps = drives.build_snapshots("AF063170926", plays, scores)
+        drive = [s for s in snaps if s.event_message_count >= 360][0]
+        self.assertEqual(drive.event_message_count, 366)
+        self.assertEqual(drive.anchor, drives.FIRST_DOWN)
+        self.assertEqual(drive.field_position, 45)
+        self.assertEqual(drive.n_plays, 4)
+
+    def test_going_backward_is_still_evidence_inside_one_possession(self):
+        # The rule it relaxes has to keep working where it applies: no
+        # kick in between, so the ball cannot have gone back ten yards
+        # and earned a fresh 1st-and-10.
+        plays = [drives.PlayRow(m, 1, self.AWAY, d, dist, f, None)
+                 for m, d, dist, f in [
+                     (1, 1, 10, 40), (2, 2, 6, 44), (3, 1, 10, 30)]]
+        self.assertEqual(drives.classify_plays(plays, [])[3], drives.KICKOFF)
 
 
 class TestDuplicateRows(unittest.TestCase):

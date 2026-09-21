@@ -23,6 +23,8 @@ from . import (buckets, config, directional, drives, markets, report,
                snowflake_io)
 from .drives import PlayRow, ScoreRow, build_snapshots, classify_plays, score_at
 
+FILES = 2   # play_by_play and pairs
+
 # Market columns, three groups of two selections. Named for what they are
 # rather than by ID, since the point of one wide table is to be read.
 MARKET_COLUMNS = [
@@ -305,11 +307,23 @@ def _live_label(pair):
 
 
 def _write(path, fields, rows):
+    """Write one CSV, or say why not and carry on.
+
+    Windows locks a file Excel has open, so leaving last run's dump on
+    screen used to take down the whole command -- after the queries, the
+    cleaning and the pairing had already been paid for. A locked file is
+    worth a line, not a traceback, and the other file still gets written.
+    """
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+    try:
+        with open(path, "w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fields)
+            writer.writeheader()
+            writer.writerows(rows)
+    except OSError as error:
+        print(f"  could NOT write {path}: {error.strerror or error}")
+        print("  (a CSV open in Excel is locked -- close it and run again)")
+        return None
     return path
 
 
@@ -367,10 +381,10 @@ def run(cur, match_codes, out_dir, time_column, verbose=True):
         print(f"  {len(pair_rows):,} pairs ({live:,} live) from "
               f"{len({r['message_count'] for r in pair_rows}):,} snapshots")
 
-    written = [
+    written = [path for path in (
         _write(os.path.join(out_dir, "dump_play_by_play.csv"), PLAY_FIELDS,
                all_plays),
         _write(os.path.join(out_dir, "dump_pairs.csv"), PAIR_DUMP_FIELDS,
                pair_rows),
-    ]
+    ) if path]
     return written, all_plays, all_drives, pair_rows
