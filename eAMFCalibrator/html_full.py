@@ -206,15 +206,16 @@ def _handle_block(scan):
     share = flipped / scan["matches"]
     if not flipped:
         state = ('<span class="good">clean</span> '
-                 f'<span class="dim">{scan["matches"]:,} matches, no side\'s '
-                 'total ever went down</span>')
+                 f'<span class="dim">{scan["matches"]:,} matches, '
+                 f'{scan["anchors"]:,} touchdown anchors</span>')
     else:
         acted = ("excluded from the numbers above"
                  if config.EXCLUDE_FLIPPED_MATCHES
                  else "STILL IN the numbers above")
         state = (f'<span class="bad">{flipped:,} of {scan["matches"]:,} matches '
                  f'({share:.1%}) have flipped handles</span> '
-                 f'<span class="dim">{acted}</span>')
+                 f'<span class="dim">{acted} &middot; {scan["anchors"]:,} '
+                 'touchdown anchors</span>')
 
     kind_rows = []
     for kind in handles.KIND_ORDER:
@@ -231,13 +232,17 @@ def _handle_block(scan):
 
     event_rows = []
     for anomaly in scan["anomalies"][:200]:
-        message = ("final" if anomaly.event_message_count is None
-                   else f"{anomaly.event_message_count:,}")
+        if anomaly.detail is not None:
+            evidence = html.escape(anomaly.detail)
+        else:
+            joiner = "vs" if anomaly.is_final_check else "&rarr;"
+            evidence = (f"{anomaly.before[0]}&ndash;{anomaly.before[1]} {joiner} "
+                        f"{anomaly.after[0]}&ndash;{anomaly.after[1]}")
         event_rows.append(f"""<tr>
             <th>{html.escape(anomaly.match_code)}</th>
-            <td>{message}</td>
+            <td>{anomaly.where}</td>
             <td class="{'bad' if anomaly.is_flip else 'dim'}">{handles.KIND_TITLES[anomaly.kind]}</td>
-            <td>{anomaly.before[0]}&ndash;{anomaly.before[1]} {'vs' if anomaly.is_final_check else '&rarr;'} {anomaly.after[0]}&ndash;{anomaly.after[1]}</td>
+            <td>{evidence}</td>
         </tr>""")
     more = (f'<p class="count">{len(scan["anomalies"]) - 200:,} more not shown</p>'
             if len(scan["anomalies"]) > 200 else "")
@@ -245,8 +250,8 @@ def _handle_block(scan):
       <h3>Flagged events</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Match</th><th title="the message the totals changed on">Msg</th>
-          <th>Kind</th><th title="p1-p2 either side of the flag">Score</th></tr></thead>
+        <thead><tr><th>Match</th><th title="a message count, the final cross-check, or a verdict on the whole match">Where</th>
+          <th>Kind</th><th title="p1-p2 either side of the flag, or how many touchdowns agreed">Evidence</th></tr></thead>
         <tbody>{''.join(event_rows)}</tbody>
       </table>
       </div>{more}"""
