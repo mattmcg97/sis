@@ -111,10 +111,13 @@ SPECIAL_TEAMS = "special_teams"  # same down and distance, ball moved: a PAT
                                  # or a kick, not a scrimmage play
 STALE_AFTER_CHANGE = "stale_after_change"   # a new team label on the old
                                             # team's down, distance and field
+IMPOSSIBLE_DOWN = "impossible_down"   # the down skipped ahead with nothing
+                                      # else moving: no play happened
 
 FIRST_DOWN_YARDS = 10
 
-_DROPPED = (DUPLICATE, KICKOFF, SPECIAL_TEAMS, STALE_AFTER_CHANGE)
+_DROPPED = (DUPLICATE, KICKOFF, SPECIAL_TEAMS, STALE_AFTER_CHANGE,
+            IMPOSSIBLE_DOWN)
 
 
 def _state(play):
@@ -170,12 +173,23 @@ def classify_plays(plays, scores=()):
     rather than resting on it.
     """
     ordered = sorted(plays, key=lambda p: p.event_message_count)
-    kept_rows = dedupe(ordered)
-    keep_msgs = {p.event_message_count for p in kept_rows}
+    deduped = dedupe(ordered)
+    keep_msgs = {p.event_message_count for p in deduped}
 
     reasons = {p.event_message_count:
                (KEPT if p.event_message_count in keep_msgs else DUPLICATE)
                for p in ordered}
+
+    # Rows where the down skipped ahead while nothing else moved have to go
+    # FIRST. They sit between the kick spot and the drive it produced, and
+    # while they are in the way the kick spot cannot see the drive -- so it
+    # is taken for one, and the real drive start is taken for the kick.
+    kept_rows = []
+    for play in deduped:
+        if _is_impossible_down(play, kept_rows[-1] if kept_rows else None):
+            reasons[play.event_message_count] = IMPOSSIBLE_DOWN
+            continue
+        kept_rows.append(play)
 
     previous = None          # the last row that survived
     for i, play in enumerate(kept_rows):
@@ -190,6 +204,29 @@ def classify_plays(plays, scores=()):
         if reasons[play.event_message_count] not in _DROPPED:
             previous = play
     return reasons
+
+
+def _is_impossible_down(play, previous):
+    """Did the down skip ahead with neither the distance nor the ball moving?
+
+    A scrimmage play advances the down by one at most, and any play that
+    does so either gains ground or does not: 1st-and-10 to 2nd-and-10 on
+    the same yard line is an incomplete pass, which is ordinary. Jumping
+    1st-and-10 to 3rd-and-10 with the ball untouched is not a play at all.
+
+    Where it bites is the kickoff. The kick spot and this row sit on the
+    same yard line, so the kick spot looks at its neighbour, sees no
+    second 1st-and-10, and is read as a drive -- while the real drive,
+    arriving on a nearer yard line, is read as the kick.
+    """
+    if previous is None or play.offensive_team != previous.offensive_team:
+        return False
+    if None in (play.down_number, previous.down_number):
+        return False
+    if play.down_number - previous.down_number < 2:
+        return False
+    return (play.distance == previous.distance
+            and play.field_position == previous.field_position)
 
 
 def _judge(play, previous, before, following):
@@ -207,11 +244,15 @@ def _judge(play, previous, before, following):
             and _state(play)[1:] == _state(before)[1:]):
         return STALE_AFTER_CHANGE
 
+    # The kick spot is a fresh 1st-and-10 whichever side of a team change
+    # it falls on. At the opening kick there is nothing before it; at half
+    # time the label has just changed. Testing it only on the same-team
+    # branch let the second-half kick through as a drive, and pushed the
+    # real drive into being read as the kick.
+    if fresh and _looks_like_a_kick_spot(play, following):
+        return KICKOFF
+
     if previous is None:
-        # The first row of a match is the opening kick whenever the row
-        # after it is the same team's real 1st-and-10.
-        if fresh and _looks_like_a_kick_spot(play, following):
-            return KICKOFF
         return DRIVE_START if fresh else KEPT
 
     if play.offensive_team != previous.offensive_team:
