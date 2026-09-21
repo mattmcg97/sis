@@ -17,6 +17,17 @@ Drive numbering is 1-based within the match and counts cleaned drives
 only, so it stays stable against the noise rows. Reconciling that number
 against the real drive count is still outstanding, which is why
 config.TIME_AXIS defaults to quarter rather than drive.
+
+One trap worth naming, because it looks like a clean bill of health. A
+drive here is DEFINED as a maximal run of the same offensive team, so
+consecutive drives always belong to opposite teams and possession
+"alternates" 100% of the time. That is arithmetic, not a measurement --
+it would read 100% on a feed of pure noise. The real number is the count:
+about 10 drives per match against a realistic 22ish, so the team label
+changes roughly half as often as possession actually does, and every
+missed change silently merges two possessions into one. Anything that
+reasons from "the next drive belongs to the other team" inherits that
+error, which is what sank the possession cross-check.
 """
 
 from dataclasses import dataclass

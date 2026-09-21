@@ -46,6 +46,31 @@ def cmd_preflight(args):
                 for name, dtype, nullable, pos in columns:
                     print(f"  {pos:>3}  {name:<38} {dtype:<18} nullable={nullable}")
 
+            # Who is PLAYER_1? Three columns claim to name the two sides,
+            # in what may or may not be the same vocabulary.
+            print(f"\n{'=' * 70}\nWho is PLAYER_1?\n{'=' * 70}")
+            print(f"  {'SOURCE':<22}{'VALUE':<26}{'ROWS':>12}{'MATCHES':>9}")
+            for src, value, rows, matches in snowflake_io.team_vocabulary(
+                    cur, config.STREAMS[directional.PROD]):
+                print(f"  {src:<22}{str(value)[:25]:<26}{rows:>12,}{matches:>9,}")
+
+            print("\n  Market descriptions, one sample per market:")
+            print(f"  {'ID':>4}  {'FORMS':>6}  {'ROWS':>10}  SAMPLE")
+            for market_id, forms, sample, n in snowflake_io.market_descriptions(
+                    cur, config.STREAMS[directional.PROD]):
+                print(f"  {market_id:>4}  {forms:>6,}  {n:>10,}  {str(sample)[:60]}")
+
+            print("\n  Do a match's play-feed teams match its EVENT teams?")
+            print(f"  {'PLAY TEAMS':<28}{'P1_TEAM':<18}{'P2_TEAM':<18}{'MATCHES':>8}")
+            for play_teams, p1, p2, matches in snowflake_io.team_join_test(
+                    cur, config.STREAMS[directional.PROD]):
+                print(f"  {str(play_teams)[:27]:<28}{str(p1)[:17]:<18}"
+                      f"{str(p2)[:17]:<18}{matches:>8,}")
+            print("\n  If the play feed's vocabulary and EVENT's overlap, the")
+            print("  PLAYER_1 = Home Team mapping can be read per match instead")
+            print("  of assumed. If they do not, it stays positional and the")
+            print("  market descriptions above are the evidence for it.")
+
             time_column, _ = snowflake_io.detect_play_time_column(cur)
             print(f"\n{'=' * 70}\nPlay clock\n{'=' * 70}")
             if time_column:

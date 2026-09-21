@@ -672,6 +672,90 @@ class TestMarketStateFlag(unittest.TestCase):
         self.assertEqual(r["by_quarter"]["Q1"], (1, 0))
 
 
+class RecordingCursor:
+    """A cursor that records what was asked and answers with nothing.
+
+    Enough to exercise every query the pipeline builds without a database:
+    the shape of the SQL and its bind parameters are what break, and both
+    are visible here.
+    """
+
+    def __init__(self, rows=()):
+        self.calls = []
+        self._rows = list(rows)
+        self.description = [("A",), ("B",), ("C",), ("D",), ("E",), ("F",),
+                            ("G",), ("H",), ("I",)]
+
+    def execute(self, sql, params=()):
+        self.calls.append((sql, params))
+
+    def fetchall(self):
+        return self._rows
+
+
+class TestGeneratedQueries(unittest.TestCase):
+    """Every query binds as many parameters as it has placeholders.
+
+    A mismatch is the failure mode that a dialect parse cannot catch and
+    that only shows up against a live warehouse, which this suite has no
+    access to.
+    """
+
+    def each_query(self):
+        """(name, sql, params) for every query the io layer builds."""
+        from .. import snowflake_io as io
+        cases = [
+            ("describe_columns", lambda c: io.describe_columns(c, "T")),
+            ("match_universe", lambda c: io.match_universe(c, "S")),
+            ("team_vocabulary", lambda c: io.team_vocabulary(c, "S")),
+            ("market_descriptions", lambda c: io.market_descriptions(c, "S")),
+            ("team_join_test", lambda c: io.team_join_test(c, "S")),
+            ("fetch_plays", lambda c: io.fetch_plays(c, ["A", "B"], "FILE_TIME")),
+            ("fetch_scores", lambda c: io.fetch_scores(c, ["A", "B"])),
+            ("fetch_final_scores", lambda c: io.fetch_final_scores(c, ["A"])),
+            ("fetch_quotes", lambda c: io.fetch_quotes(c, "S", ["A", "B"])),
+            ("fetch_message_times", lambda c: io.fetch_message_times(c, "S", ["A"])),
+            ("stream_window_summary", lambda c: io.stream_window_summary(c, "S")),
+            ("status_profile", lambda c: io.status_profile(c, "S")),
+        ]
+        for name, call in cases:
+            cursor = RecordingCursor()
+            try:
+                call(cursor)
+            except (IndexError, TypeError, ValueError):
+                pass    # unpacking an empty result is not what is under test
+            for sql, params in cursor.calls:
+                yield name, sql, params
+
+    def test_placeholders_match_the_bound_parameters(self):
+        seen = 0
+        for name, sql, params in self.each_query():
+            seen += 1
+            self.assertEqual(sql.count("%s"), len(params or ()), name)
+        self.assertGreaterEqual(seen, 12)
+
+    def test_every_query_is_fully_interpolated(self):
+        # An unresolved brace means an f-string placeholder was left behind,
+        # which a warehouse would reject and a dialect parse might not.
+        for name, sql, _ in self.each_query():
+            self.assertNotIn("{", sql, name)
+
+    def test_the_new_team_queries_are_scoped_to_the_sport(self):
+        from .. import snowflake_io as io
+        for name, sql, params in self.each_query():
+            if name in ("team_vocabulary", "team_join_test"):
+                self.assertIn("SPORT_CODE", sql, name)
+                self.assertEqual(list(params), [config.SPORT_CODE] * sql.count("%s"))
+
+    def test_quotes_are_no_longer_filtered_on_status_in_sql(self):
+        # The filter moved onto the pair so what it drops can be counted.
+        for name, sql, _ in self.each_query():
+            if name == "fetch_quotes":
+                self.assertNotIn("STATUS = ", sql)
+                self.assertIn("STATUS", sql)      # still selected
+                self.assertIn("IS_ACTIVE", sql)
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

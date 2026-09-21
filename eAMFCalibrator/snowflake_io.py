@@ -95,6 +95,86 @@ def match_universe(cur, stream_table):
     return [r[0] for r in rows]
 
 
+def team_vocabulary(cur, stream_table):
+    """What the three team-naming columns actually contain.
+
+    EVENT names the two sides one way, the play feed names them another,
+    and the market descriptions name them a third. Whether those
+    vocabularies meet decides whether PLAYER_1 = Home Team is a fact we can
+    read per match or an assumption we are carrying.
+    """
+    _, rows = fetch_all(cur, f"""
+        SELECT 'EVENT.PLAYER_1_TEAM' AS SRC, PLAYER_1_TEAM AS VALUE,
+               COUNT(*) AS N, COUNT(DISTINCT MATCH_CODE) AS MATCHES
+        FROM {qualified(EVENT_TABLE)}
+        WHERE SPORT_CODE = %s AND INPLAY_EVENT_STATUS = 'SETTLED'
+        GROUP BY 1, 2
+        UNION ALL
+        SELECT 'EVENT.PLAYER_2_TEAM', PLAYER_2_TEAM,
+               COUNT(*), COUNT(DISTINCT MATCH_CODE)
+        FROM {qualified(EVENT_TABLE)}
+        WHERE SPORT_CODE = %s AND INPLAY_EVENT_STATUS = 'SETTLED'
+        GROUP BY 1, 2
+        UNION ALL
+        SELECT 'PLAY.OFFENSIVE_TEAM', fp.OFFENSIVE_TEAM,
+               COUNT(*), COUNT(DISTINCT fp.MATCH_CODE)
+        FROM {qualified(PLAY_TABLE)} fp
+        JOIN {qualified(EVENT_TABLE)} e ON e.MATCH_CODE = fp.MATCH_CODE
+        WHERE e.SPORT_CODE = %s
+        GROUP BY 1, 2
+        ORDER BY 1, 3 DESC
+    """, (config.SPORT_CODE, config.SPORT_CODE, config.SPORT_CODE))
+    return rows
+
+
+def market_descriptions(cur, stream_table):
+    """One sample description per market ID, with how many forms exist.
+
+    The mapping PLAYER_1 = Home Team was originally taken from this text.
+    Printing it puts the evidence in front of the reader rather than in a
+    comment in another file.
+    """
+    predicate, params = window_predicate("PUBLISH_TIME")
+    _, rows = fetch_all(cur, f"""
+        SELECT MARKET_ID, COUNT(DISTINCT MARKET_DESCRIPTION) AS FORMS,
+               MIN(MARKET_DESCRIPTION) AS SAMPLE, COUNT(*) AS N
+        FROM {qualified(stream_table)}
+        WHERE MARKET_ID IN ({_in_clause(MARKET_IDS)})
+          AND {predicate}
+        GROUP BY MARKET_ID
+        ORDER BY MARKET_ID
+    """, tuple(list(MARKET_IDS) + params))
+    return rows
+
+
+def team_join_test(cur, stream_table):
+    """Do a match's OFFENSIVE_TEAM values match its EVENT team names?
+
+    If they do, EVENT gives a per-match mapping and nothing has to be
+    assumed. If they do not, the two feeds are naming the same two sides in
+    different vocabularies and the mapping stays positional.
+    """
+    _, rows = fetch_all(cur, f"""
+        WITH per_match AS (
+            SELECT fp.MATCH_CODE,
+                   ARRAY_TO_STRING(ARRAY_SORT(ARRAY_AGG(
+                       DISTINCT fp.OFFENSIVE_TEAM)), ' | ') AS PLAY_TEAMS,
+                   ANY_VALUE(e.PLAYER_1_TEAM) AS P1_TEAM,
+                   ANY_VALUE(e.PLAYER_2_TEAM) AS P2_TEAM
+            FROM {qualified(PLAY_TABLE)} fp
+            JOIN {qualified(EVENT_TABLE)} e ON e.MATCH_CODE = fp.MATCH_CODE
+            WHERE e.SPORT_CODE = %s AND e.INPLAY_EVENT_STATUS = 'SETTLED'
+            GROUP BY fp.MATCH_CODE
+        )
+        SELECT PLAY_TEAMS, P1_TEAM, P2_TEAM, COUNT(*) AS MATCHES
+        FROM per_match
+        GROUP BY PLAY_TEAMS, P1_TEAM, P2_TEAM
+        ORDER BY MATCHES DESC
+        LIMIT 20
+    """, (config.SPORT_CODE,))
+    return rows
+
+
 def fetch_plays(cur, match_codes, time_column):
     time_select = time_column if time_column else "NULL"
     _, rows = fetch_all(cur, f"""
