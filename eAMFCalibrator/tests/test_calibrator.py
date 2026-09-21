@@ -894,10 +894,13 @@ class TestCleaningExplainsItself(unittest.TestCase):
     def test_every_row_gets_a_verdict(self):
         plays, scores = self.feed()
         reasons = drives.classify_plays(plays, scores)
-        self.assertEqual(reasons[1], drives.KEPT)
-        self.assertEqual(reasons[4], drives.STALE_AFTER_CHANGE)
-        self.assertEqual(reasons[5], drives.NOISE_AFTER_TD)
-        self.assertEqual(reasons[6], drives.RESUME)
+        # msg 1 opens the match at a fresh 1st-and-10, so the opening
+        # kickoff rule finds its drive immediately and strips nothing.
+        self.assertEqual(reasons[1], drives.DRIVE_START)
+        self.assertEqual(reasons[4], drives.KICKOFF)
+        self.assertEqual(reasons[5], drives.KICKOFF)
+        self.assertEqual(reasons[6], drives.DRIVE_START)
+        self.assertEqual(reasons[7], drives.KEPT)
 
     def test_clean_plays_agrees_with_the_verdicts(self):
         # The two must not be able to drift: one is built from the other.
@@ -909,11 +912,11 @@ class TestCleaningExplainsItself(unittest.TestCase):
             kept, {m for m, r in reasons.items() if not drives.was_dropped(r)})
         self.assertEqual(dropped, len(plays) - len(cleaned))
 
-    def test_a_resume_row_counts_as_kept(self):
-        self.assertFalse(drives.was_dropped(drives.RESUME))
+    def test_a_drive_start_counts_as_kept(self):
+        self.assertFalse(drives.was_dropped(drives.DRIVE_START))
         self.assertFalse(drives.was_dropped(drives.KEPT))
         self.assertTrue(drives.was_dropped(drives.STALE_AFTER_CHANGE))
-        self.assertTrue(drives.was_dropped(drives.NOISE_AFTER_TD))
+        self.assertTrue(drives.was_dropped(drives.KICKOFF))
 
 
 class TestDump(unittest.TestCase):
@@ -936,13 +939,17 @@ class TestDump(unittest.TestCase):
     def test_every_play_row_survives_into_the_dump(self):
         plays, _, _ = self.rows()
         self.assertEqual(len(plays), 7)
+        # Messages 4 and 5 are the kick between the touchdown and the
+        # receiving team's first snap.
         self.assertEqual(sum(r["dropped"] for r in plays), 2)
+        self.assertEqual({r["event_message_count"] for r in plays if r["dropped"]},
+                         {4, 5})
 
     def test_dropped_rows_carry_the_rule_that_dropped_them(self):
         plays, _, _ = self.rows()
         by_message = {r["event_message_count"]: r for r in plays}
-        self.assertEqual(by_message[4]["cleaning"], drives.STALE_AFTER_CHANGE)
-        self.assertEqual(by_message[5]["cleaning"], drives.NOISE_AFTER_TD)
+        self.assertEqual(by_message[4]["cleaning"], drives.KICKOFF)
+        self.assertEqual(by_message[5]["cleaning"], drives.KICKOFF)
         # And a dropped row belongs to no drive, so the join stays honest.
         self.assertEqual(by_message[4]["drive_number"], "")
 
@@ -1064,6 +1071,130 @@ class TestDumpQuotesAndTimeline(unittest.TestCase):
         # markets, not rows, so it must read 1.
         self.assertEqual(by_message[6]["prod_markets"], 1)
         self.assertEqual(by_message[6]["markets_both_live"], 1)
+
+
+class TestKickoffRows(unittest.TestCase):
+    """Kickoffs, wherever they happen, and whatever the feed shows of them.
+
+    The shape reported from the feed: the KICKING team appears first at
+    the kick spot, then the receiving team still at the kick spot, and only
+    then the real 1st-and-10. None of those first rows is a drive.
+    """
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def reasons(self, plays, scores=()):
+        return drives.classify_plays(plays, list(scores))
+
+    def test_the_opening_kickoff_is_stripped_and_is_not_a_drive(self):
+        plays = [PlayRow(1, 1, self.HOME, None, None, 35),
+                 PlayRow(2, 1, self.HOME, None, None, 35),
+                 PlayRow(3, 1, self.AWAY, None, None, 35),
+                 PlayRow(4, 1, self.AWAY, 1, 10, 24),
+                 PlayRow(5, 1, self.AWAY, 2, 6, 28)]
+        reasons = self.reasons(plays)
+        self.assertEqual([reasons[m] for m in (1, 2, 3)],
+                         [drives.KICKOFF] * 3)
+        self.assertEqual(reasons[4], drives.DRIVE_START)
+        snaps = drives.build_snapshots("AF1", plays, [])
+        self.assertEqual(len(snaps), 1)
+        self.assertEqual(snaps[0].event_message_count, 4)
+        self.assertEqual(snaps[0].offensive_team, self.AWAY)
+        self.assertEqual(snaps[0].field_position, 24)
+
+    def test_the_second_half_kickoff_is_stripped_too(self):
+        plays = [PlayRow(1, 2, self.HOME, 1, 10, 30),
+                 PlayRow(2, 2, self.HOME, 2, 5, 35),
+                 PlayRow(3, 3, self.AWAY, None, None, 35),
+                 PlayRow(4, 3, self.AWAY, None, None, 35),
+                 PlayRow(5, 3, self.HOME, None, None, 35),
+                 PlayRow(6, 3, self.HOME, 1, 10, 22)]
+        reasons = self.reasons(plays)
+        self.assertEqual([reasons[m] for m in (3, 4, 5)],
+                         [drives.KICKOFF] * 3)
+        # And the Q2 play before it survives: a trigger must not eat rows
+        # that were already real play.
+        self.assertNotEqual(reasons[1], drives.KICKOFF)
+        self.assertNotEqual(reasons[2], drives.KICKOFF)
+
+    def test_the_same_team_either_side_of_half_time_is_two_drives(self):
+        # The team label never changes across the break, so without the
+        # kickoff rule the two possessions merge into one.
+        plays = [PlayRow(1, 2, self.HOME, 1, 10, 30),
+                 PlayRow(2, 2, self.HOME, 2, 5, 35),
+                 PlayRow(3, 3, self.AWAY, None, None, 35),
+                 PlayRow(4, 3, self.HOME, None, None, 35),
+                 PlayRow(5, 3, self.HOME, 1, 10, 22)]
+        snaps = drives.build_snapshots("AF1", plays, [])
+        self.assertEqual(len(snaps), 2)
+        self.assertEqual([s.event_message_count for s in snaps], [1, 5])
+
+    def test_a_field_goal_triggers_a_kickoff_not_just_a_touchdown(self):
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 30),
+                 PlayRow(2, 1, self.HOME, 2, 5, 35),
+                 PlayRow(3, 1, self.HOME, None, None, 35),
+                 PlayRow(4, 1, self.AWAY, None, None, 35),
+                 PlayRow(5, 1, self.AWAY, 1, 10, 26)]
+        reasons = self.reasons(plays, [ScoreRow(2, 1, 3, None, 3, 0)])
+        self.assertEqual(reasons[3], drives.KICKOFF)
+        self.assertEqual(reasons[4], drives.KICKOFF)
+        self.assertEqual(reasons[5], drives.DRIVE_START)
+
+    def test_the_stale_duplicate_does_not_stop_the_walk(self):
+        # The row riding a team change repeats the previous team's down,
+        # distance and field, so it LOOKS like a legitimate snap. Treating
+        # it as one leaves the kick mechanic behind it in the feed.
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 25),
+                 PlayRow(2, 1, self.HOME, 3, 1, 34),
+                 PlayRow(3, 1, self.AWAY, 3, 1, 34),    # stale duplicate
+                 PlayRow(4, 1, self.AWAY, 4, 99, 35),   # kick mechanic
+                 PlayRow(5, 1, self.AWAY, 1, 10, 22)]
+        reasons = self.reasons(plays, [ScoreRow(2, 1, 6, None, 6, 0)])
+        self.assertEqual(reasons[3], drives.KICKOFF)
+        self.assertEqual(reasons[4], drives.KICKOFF)
+        self.assertEqual(reasons[5], drives.DRIVE_START)
+
+    def test_a_kickoff_row_is_never_relabelled_stale(self):
+        # Inside a kickoff the team label changes from the kicking side to
+        # the receiving side. Calling that row stale both hides what it is
+        # and claims a possession change that never happened.
+        plays = [PlayRow(1, 1, self.HOME, None, None, 35),
+                 PlayRow(2, 1, self.AWAY, None, None, 35),
+                 PlayRow(3, 1, self.AWAY, 1, 10, 24)]
+        self.assertEqual(self.reasons(plays)[2], drives.KICKOFF)
+
+    def test_a_punt_still_drops_only_its_stale_row(self):
+        # No kick rows here, so the kickoff rule must not fire and the
+        # ordinary stale rule has to do its job.
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 25),
+                 PlayRow(2, 1, self.HOME, 2, 8, 27),
+                 PlayRow(3, 1, self.AWAY, 2, 8, 27),
+                 PlayRow(4, 1, self.AWAY, 1, 10, 40),
+                 PlayRow(5, 1, self.AWAY, 2, 3, 47)]
+        reasons = self.reasons(plays)
+        self.assertEqual(reasons[3], drives.STALE_AFTER_CHANGE)
+        self.assertEqual(reasons[4], drives.KEPT)
+        snaps = drives.build_snapshots("AF1", plays, [])
+        self.assertEqual([s.event_message_count for s in snaps], [1, 4])
+
+    def test_a_trigger_gives_up_rather_than_eat_a_real_drive(self):
+        # Play already under way at a fresh trigger: no kick to strip, so
+        # nothing may be dropped.
+        plays = [PlayRow(1, 1, self.HOME, 2, 5, 30),
+                 PlayRow(2, 1, self.HOME, 3, 2, 33)]
+        self.assertEqual(set(self.reasons(plays).values()), {drives.KEPT})
+
+    def test_field_position_is_never_the_test(self):
+        # A return that finishes on the kick spot still starts a drive.
+        plays = [PlayRow(1, 1, self.HOME, None, None, 35),
+                 PlayRow(2, 1, self.AWAY, None, None, 35),
+                 PlayRow(3, 1, self.AWAY, 1, 10, 35),   # drive starts ON 35
+                 PlayRow(4, 1, self.AWAY, 2, 6, 39)]
+        reasons = self.reasons(plays)
+        self.assertEqual(reasons[3], drives.DRIVE_START)
+        snaps = drives.build_snapshots("AF1", plays, [])
+        self.assertEqual(len(snaps), 1)
+        self.assertEqual(snaps[0].field_position, 35)
 
 
 class TestScoreDiffBuckets(unittest.TestCase):

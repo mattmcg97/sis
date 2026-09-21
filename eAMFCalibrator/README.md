@@ -520,8 +520,8 @@ settlement of the old line *and* the open quote for the new one, with the
 settlement published first.
 
 `cleaning` names the rule rather than just the outcome — `kept`,
-`resume_after_td`, `noise_after_td`, `stale_after_change` — because
-reconciling by eye means seeing *why* a row went, not just that it did.
+`drive_start`, `kickoff`, `stale_after_change` — because reconciling by
+eye means seeing *why* a row went, not just that it did.
 `classify_plays` is the single source of truth for it, and `clean_plays`
 is built from it, so the dump and the pipeline cannot disagree.
 
@@ -530,6 +530,51 @@ drive is a maximal run of one offensive team, so a possession change the
 feed never labelled is invisible — except as cleaning noise sitting inside
 a drive that should have been two. An implausible `n_plays` is the same
 signal from the other end.
+
+## Kickoffs
+
+A kickoff reaches the feed as rows showing the **kicking** team at the kick
+spot, then the receiving team still at the kick spot, and only then the
+real snap:
+
+```
+team 1 @ 35      kick
+team 1 @ 35      kick
+team 2 @ 35      kick   <- the label changes here, but the drive has not
+team 2 @ 24  1&10       <- this is the drive
+```
+
+Only kickoffs after a **touchdown** used to be stripped, so the opening
+kickoff and the second-half kickoff each became a drive of their own, for
+the wrong team, at the kick spot. Worse, the row where the label changed
+was being filed as a *stale duplicate* — which both hid what it was and
+claimed a possession change that never happened.
+
+The rule now fires at every kickoff: the start of the match, the start of
+a period that begins with one (`KICKOFF_PERIODS`), and **every score** —
+field goals and safeties are followed by a kick too, which the
+touchdown-only version missed entirely.
+
+### What identifies the drive
+
+Not the team change: the label flips mid-kick, and on a transition where
+the feed omits the kick rows there is no flip to key on at all.
+
+Not field position: the kick spot is a fixed yard line, but a return can
+legitimately finish on it, so `field == 35` both misses real drives and
+invents others. There is a test for exactly that case.
+
+**Down and distance.** The walk skips rows that are not plausible snaps,
+skips the stale duplicate that rides every team change — it repeats the
+previous row's down, distance and field exactly, which is what tells it
+apart from a genuine play — and stops at the first fresh 1st-and-10. If it
+meets a real snap that is neither, play was already under way, there is no
+kick to strip, and it gives up rather than delete a genuine drive.
+
+A row the rule positively identifies as a drive start also **ends the
+previous drive**, even when the team label did not change. Otherwise the
+side that has the ball before half time and receives after it has both
+possessions merged into one, with the boundary invisible.
 
 ## Where the snapshot lands
 
@@ -658,7 +703,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-274 tests covering line parsing, market resolution, bucket edges, drive
+283 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
