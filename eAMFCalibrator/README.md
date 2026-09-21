@@ -501,6 +501,27 @@ Four CSVs in the output directory, all joinable on
 | `dump_drives.csv` | detected drive | `anchor_kind`, `n_plays`, `n_dropped_inside`, and the three buckets the snapshot lands in |
 | `dump_quotes.csv` | quote row, **both streams, undeduplicated** | `status`, `is_active`, `live`, `line`, `rows_at_this_message`, `chosen` |
 | `dump_timeline.csv` | message | what each source had: `has_play`, `has_score`, `prod_markets`, `prod_live_markets`, `candidate_*`, `markets_both_live` |
+| `dump_pairs.csv` | **pair** | `directional_pairs.csv` for these matches, widened with everything above |
+
+### `dump_pairs.csv`
+
+Every column `directional_pairs.csv` has, in the same order, plus the
+context that otherwise needs a four-way join:
+
+| Added | What it tells you |
+|---|---|
+| `market`, `selection` | the market by name, not just its ID |
+| `prod_decimal`, `candidate_decimal` | the prices |
+| `decisive_winner`, `decided_by`, `basis` | which reading settled the pair |
+| `prod_state`, `candidate_state`, `live` | `STATUS`/`IS_ACTIVE` verbatim, and which side was untradeable |
+| `anchor_kind`, `anchor_cleaning` | where in its drive the snapshot landed, and which cleaning rule vouched for that row |
+| `drive_n_plays`, `drive_dropped_inside` | the drive it came from, and how much noise sat inside it |
+| `prod_rows_at_message`, `candidate_rows_at_message` | how many rows that message offered for this market — above 1 is the case that cost the spread and total their pairs |
+| `score_bucket`, `time_bucket`, `possession_bucket` | the cells it lands in |
+
+The shared columns come from `report.pair_row`, which
+`write_pairs_csv` also uses, so the two files cannot describe the same
+pair differently.
 
 ### Do the quotes interleave with the plays?
 
@@ -748,7 +769,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-294 tests covering line parsing, market resolution, bucket edges, drive
+301 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the
