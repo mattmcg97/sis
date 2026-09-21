@@ -480,6 +480,38 @@ drive's opening 1st and 10 (spread 1.5% against 9.3%, total 2.5% against
 5.9%). Liveness tracks the market and the match clock, not where in a
 drive the snapshot sits.
 
+## Inspecting drive detection: `dump`
+
+There is no separate reconciliation script — `analysis/` has three
+possession scripts that print to stdout, and none of them runs the code
+the snapshots actually come from. `dump` does:
+
+```
+py -m eAMFCalibrator dump --match AF063170926
+py -m eAMFCalibrator dump --matches 5
+```
+
+Four CSVs in the output directory, all joinable on
+`(match_code, event_message_count)`:
+
+| File | One row per | The columns that matter |
+|---|---|---|
+| `dump_plays.csv` | raw play row | `cleaning` (which rule fired), `dropped`, `is_snap`, `drive_number`, `is_anchor` |
+| `dump_scores.csv` | score change | `is_touchdown`, `scorer` |
+| `dump_drives.csv` | detected drive | `anchor_kind`, `n_plays`, `n_dropped_inside`, and the three buckets the snapshot lands in |
+
+`cleaning` names the rule rather than just the outcome — `kept`,
+`resume_after_td`, `noise_after_td`, `stale_after_change` — because
+reconciling by eye means seeing *why* a row went, not just that it did.
+`classify_plays` is the single source of truth for it, and `clean_plays`
+is built from it, so the dump and the pipeline cannot disagree.
+
+**Where to look first:** `n_dropped_inside > 1` on `dump_drives.csv`. A
+drive is a maximal run of one offensive team, so a possession change the
+feed never labelled is invisible — except as cleaning noise sitting inside
+a drive that should have been two. An implausible `n_plays` is the same
+signal from the other end.
+
 ## Where the snapshot lands
 
 A snapshot is meant to be a drive's **opening 1st and 10**. It was taken
@@ -607,7 +639,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-258 tests covering line parsing, market resolution, bucket edges, drive
+267 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

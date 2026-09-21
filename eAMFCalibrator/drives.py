@@ -100,11 +100,25 @@ def _touchdown_scorers(scores):
     return out
 
 
-def clean_plays(plays, scores):
-    """Drop vision-recognition noise. Returns (cleaned_plays, n_dropped)."""
-    td_scorer_team = _touchdown_scorers(scores)
+# Why a play row was kept or dropped. The reason is as much of the output
+# as the decision: reconciling drive detection by eye means seeing which
+# rule fired on which row, not just which rows survived.
+KEPT = "kept"
+RESUME = "resume_after_td"          # kept, and the TD rule vouched for it
+NOISE_AFTER_TD = "noise_after_td"   # between a TD and the receiving team's
+                                    # first fresh 1st-and-10
+STALE_AFTER_CHANGE = "stale_after_change"   # repeats the previous team's
+                                            # down, distance and field
 
-    noise_msgs = set()
+
+def classify_plays(plays, scores):
+    """message -> why that row was kept or dropped.
+
+    The single source of truth for the cleaning, so the dump and the
+    pipeline can never disagree about what happened to a row.
+    """
+    reasons = {p.event_message_count: KEPT for p in plays}
+    td_scorer_team = _touchdown_scorers(scores)
     resume_msgs = set()
 
     for td_msg, scoring_team in sorted(td_scorer_team.items()):
@@ -119,20 +133,31 @@ def clean_plays(plays, scores):
         if resume_msg is None:
             continue
         resume_msgs.add(resume_msg)
+        reasons[resume_msg] = RESUME
         for p in plays:
             if td_msg < p.event_message_count < resume_msg:
-                noise_msgs.add(p.event_message_count)
+                reasons[p.event_message_count] = NOISE_AFTER_TD
 
     prev_team = None
     for p in plays:
         if (prev_team is not None
                 and p.offensive_team != prev_team
                 and p.event_message_count not in resume_msgs):
-            noise_msgs.add(p.event_message_count)
+            reasons[p.event_message_count] = STALE_AFTER_CHANGE
         prev_team = p.offensive_team
+    return reasons
 
-    cleaned = [p for p in plays if p.event_message_count not in noise_msgs]
-    return cleaned, len(noise_msgs)
+
+def was_dropped(reason):
+    return reason in (NOISE_AFTER_TD, STALE_AFTER_CHANGE)
+
+
+def clean_plays(plays, scores):
+    """Drop vision-recognition noise. Returns (cleaned_plays, n_dropped)."""
+    reasons = classify_plays(plays, scores)
+    cleaned = [p for p in plays
+               if not was_dropped(reasons[p.event_message_count])]
+    return cleaned, len(plays) - len(cleaned)
 
 
 def is_snap(play):

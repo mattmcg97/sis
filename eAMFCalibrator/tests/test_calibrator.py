@@ -876,6 +876,106 @@ class TestQuotePreference(unittest.TestCase):
         self.assertEqual(index[("AF1", 52)][100].probability, 48.0)
 
 
+class TestCleaningExplainsItself(unittest.TestCase):
+    """classify_plays is the single source of truth for the cleaning."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def feed(self):
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 25),
+                 PlayRow(2, 1, self.HOME, 2, 4, 31),
+                 PlayRow(3, 1, self.HOME, 3, 1, 34),
+                 PlayRow(4, 1, self.AWAY, 3, 1, 34),    # stale duplicate
+                 PlayRow(5, 1, self.AWAY, 4, 99, 35),   # kick mechanic
+                 PlayRow(6, 1, self.AWAY, 1, 10, 22),   # resume after the TD
+                 PlayRow(7, 1, self.AWAY, 2, 6, 26)]
+        return plays, [ScoreRow(3, 1, 6, None, 6, 0)]
+
+    def test_every_row_gets_a_verdict(self):
+        plays, scores = self.feed()
+        reasons = drives.classify_plays(plays, scores)
+        self.assertEqual(reasons[1], drives.KEPT)
+        self.assertEqual(reasons[4], drives.STALE_AFTER_CHANGE)
+        self.assertEqual(reasons[5], drives.NOISE_AFTER_TD)
+        self.assertEqual(reasons[6], drives.RESUME)
+
+    def test_clean_plays_agrees_with_the_verdicts(self):
+        # The two must not be able to drift: one is built from the other.
+        plays, scores = self.feed()
+        reasons = drives.classify_plays(plays, scores)
+        cleaned, dropped = drives.clean_plays(plays, scores)
+        kept = {p.event_message_count for p in cleaned}
+        self.assertEqual(
+            kept, {m for m, r in reasons.items() if not drives.was_dropped(r)})
+        self.assertEqual(dropped, len(plays) - len(cleaned))
+
+    def test_a_resume_row_counts_as_kept(self):
+        self.assertFalse(drives.was_dropped(drives.RESUME))
+        self.assertFalse(drives.was_dropped(drives.KEPT))
+        self.assertTrue(drives.was_dropped(drives.STALE_AFTER_CHANGE))
+        self.assertTrue(drives.was_dropped(drives.NOISE_AFTER_TD))
+
+
+class TestDump(unittest.TestCase):
+    """The CSVs, built from the pipeline's own functions."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def rows(self):
+        from .. import dump
+        plays = [("AF1", 1, 1, self.HOME, 1, 10, 25, None),
+                 ("AF1", 2, 1, self.HOME, 2, 4, 31, None),
+                 ("AF1", 3, 1, self.HOME, 3, 1, 34, None),
+                 ("AF1", 4, 1, self.AWAY, 3, 1, 34, None),
+                 ("AF1", 5, 1, self.AWAY, 4, 99, 35, None),
+                 ("AF1", 6, 1, self.AWAY, 1, 10, 22, None),
+                 ("AF1", 7, 1, self.AWAY, 2, 6, 26, None)]
+        scores = [("AF1", 3, 1, 6, None, 6, 0)]
+        return dump._rows_for_match("AF1", plays, scores)
+
+    def test_every_play_row_survives_into_the_dump(self):
+        plays, _, _ = self.rows()
+        self.assertEqual(len(plays), 7)
+        self.assertEqual(sum(r["dropped"] for r in plays), 2)
+
+    def test_dropped_rows_carry_the_rule_that_dropped_them(self):
+        plays, _, _ = self.rows()
+        by_message = {r["event_message_count"]: r for r in plays}
+        self.assertEqual(by_message[4]["cleaning"], drives.STALE_AFTER_CHANGE)
+        self.assertEqual(by_message[5]["cleaning"], drives.NOISE_AFTER_TD)
+        # And a dropped row belongs to no drive, so the join stays honest.
+        self.assertEqual(by_message[4]["drive_number"], "")
+
+    def test_exactly_one_play_per_drive_is_the_anchor(self):
+        plays, _, drive_rows = self.rows()
+        anchors = [r for r in plays if r["is_anchor"]]
+        self.assertEqual(len(anchors), len(drive_rows))
+        self.assertEqual({r["event_message_count"] for r in anchors},
+                         {r["anchor_message"] for r in drive_rows})
+
+    def test_drives_carry_the_buckets_the_snapshot_lands_in(self):
+        _, _, drive_rows = self.rows()
+        second = drive_rows[1]
+        self.assertEqual(second["possession_bucket"], "Away")
+        self.assertEqual(second["time_bucket"], "Q1")
+        self.assertEqual(second["score_bucket"], "Home 1 score")
+        self.assertEqual(second["score_diff"], 6)
+
+    def test_scores_mark_which_changes_were_touchdowns(self):
+        _, scores, _ = self.rows()
+        self.assertEqual(len(scores), 1)
+        self.assertEqual(scores[0]["is_touchdown"], 1)
+        self.assertEqual(scores[0]["scorer"], self.HOME)
+
+    def test_the_files_join_on_match_and_message(self):
+        plays, scores, drive_rows = self.rows()
+        keys = {(r["match_code"], r["event_message_count"]) for r in plays}
+        for row in scores:
+            self.assertIn((row["match_code"], row["event_message_count"]), keys)
+        for row in drive_rows:
+            self.assertIn((row["match_code"], row["anchor_message"]), keys)
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

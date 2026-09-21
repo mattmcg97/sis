@@ -5,6 +5,7 @@ cell-level summary keyed identically every time, so two runs (prod vs
 candidate, or the same stream a week apart) diff cleanly with `compare`.
 """
 
+import collections
 import csv
 import os
 
@@ -399,6 +400,48 @@ def print_directional_headline(overall, votes):
     print(f"  candidate win rate        : {_pct(votes['candidate_win_rate'])}")
     print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
     print("\n  If the two levels disagree, the match level is the one to trust.")
+
+
+def print_dump_summary(plays, scores, drive_rows):
+    """What the dumped rows say about drive detection, before opening them."""
+    print(f"\n{'=' * 78}\nDRIVE DETECTION -- what the CSVs contain\n{'=' * 78}")
+    if not plays:
+        print("  No play rows.")
+        return
+    from . import drives
+    matches = len({row["match_code"] for row in plays})
+    dropped = sum(row["dropped"] for row in plays)
+    print(f"  {len(plays):,} play rows across {matches} matches, "
+          f"{dropped:,} dropped by cleaning ({100 * dropped / len(plays):.1f}%)")
+    print(f"  {len(drive_rows):,} drives detected "
+          f"({len(drive_rows) / matches:.1f} per match, against a realistic 22ish)")
+
+    by_reason = collections.Counter(row["cleaning"] for row in plays)
+    print(f"\n  {'CLEANING VERDICT':<24}{'ROWS':>8}{'SHARE':>8}")
+    for reason, n in by_reason.most_common():
+        print(f"  {reason:<24}{n:>8,}{_pct(n / len(plays)):>8}")
+
+    by_anchor = collections.Counter(row["anchor_kind"] for row in drive_rows)
+    print(f"\n  {'ANCHOR':<24}{'DRIVES':>8}{'SHARE':>8}")
+    for kind, n in by_anchor.most_common():
+        print(f"  {kind:<24}{n:>8,}{_pct(n / len(drive_rows)):>8}")
+
+    # A drive carrying dropped rows inside it is where two possessions were
+    # most likely merged into one.
+    merged = [row for row in drive_rows if row["n_dropped_inside"] > 1]
+    print(f"\n  drives with >1 dropped row inside them: {len(merged):,}"
+          f"  ({_pct(len(merged) / len(drive_rows))})")
+    print("  Those are the ones to open first: a drive is a maximal run of")
+    print("  one offensive team, so a possession change the feed never")
+    print("  labelled is invisible except as cleaning noise inside a drive.")
+
+    longest = sorted(drive_rows, key=lambda r: -r["n_plays"])[:5]
+    print(f"\n  Longest drives (a merge shows up as an implausible play count):")
+    print(f"  {'MATCH':<16}{'DRIVE':>6}{'PLAYS':>7}  {'TEAM':<12}{'ANCHOR':<12}")
+    for row in longest:
+        print(f"  {row['match_code']:<16}{row['drive_number']:>6}"
+              f"{row['n_plays']:>7}  {str(row['offensive_team']):<12}"
+              f"{row['anchor_kind']:<12}")
 
 
 def print_anchor(report):

@@ -18,7 +18,8 @@ import datetime as dt
 import os
 import sys
 
-from . import (buckets, config, directional, html_full, html_report, pipeline,
+from . import (buckets, config, directional, dump, html_full, html_report,
+               pipeline,
                report, snowflake_io)
 
 
@@ -115,6 +116,39 @@ def cmd_preflight(args):
                           f"{matches:>9,}{null_p or 0:>8.1%}{zero_p or 0:>8.1%}  {live}")
     finally:
         conn.close()
+    return 0
+
+
+def cmd_dump(args):
+    """Write the drive-detection working out to CSV for inspection.
+
+    Reconciling drives is a row-by-row job, so this writes the rows rather
+    than a summary: every play the feed sent, which cleaning rule fired on
+    it, the drive it landed in, and which one row became the snapshot.
+    """
+    out_dir = args.out or DEFAULT_OUT
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            time_column, _ = snowflake_io.detect_play_time_column(cur)
+            if args.match:
+                match_codes = list(args.match)
+            else:
+                prod = set(snowflake_io.match_universe(cur, config.STREAMS[directional.PROD]))
+                candidate = set(snowflake_io.match_universe(
+                    cur, config.STREAMS[directional.CANDIDATE]))
+                match_codes = sorted(prod & candidate)[-args.matches:]
+            print(f"\nDumping drive detection for {len(match_codes)} matches")
+            written, plays, scores, drive_rows = dump.run(
+                cur, match_codes, out_dir, time_column)
+    finally:
+        conn.close()
+
+    report.print_dump_summary(plays, scores, drive_rows)
+    print()
+    for path in written:
+        size = os.path.getsize(path) / 1024
+        print(f"  wrote {path}  ({size:,.0f} KB)")
     return 0
 
 
@@ -515,6 +549,16 @@ def build_parser():
              "under the line rule")
     cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    dump_parser = sub.add_parser(
+        "dump", parents=[shared],
+        help="write the drive-detection working out to CSV for inspection")
+    dump_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    dump_parser.add_argument("--match", action="append", metavar="CODE",
+                             help="dump this match; repeatable. Without it, "
+                                  "the most recent --matches are used")
+    dump_parser.add_argument("--matches", type=int, default=3, metavar="N",
+                             help="how many recent matches to dump (default 3)")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -533,6 +577,8 @@ def main(argv=None):
         return cmd_directional(args)
     if args.command == "cross":
         return cmd_cross(args)
+    if args.command == "dump":
+        return cmd_dump(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "compare":
