@@ -388,7 +388,28 @@ whoever scored should *not* be the team that next has the ball.
 | `Possession unstable` | Neither consistent nor cleanly turning over. | no |
 
 This closes both of the score checks' blind spots: a match crossed from its
-first message, and a swap at a level score. Three details make it honest:
+first message, and a swap at a level score.
+
+### Read the window-wide rate first
+
+One match cannot tell a flipped handle from a wrong global assumption from
+a noisy play feed — all three look like disagreement. Across the window
+they separate, so the check reports its own agreement rate and what that
+rate means:
+
+| Rate | Reading |
+|---|---|
+| ≥ 85% | The feeds agree, so a match that inverts really is the odd one out. |
+| ≤ 15% | The feeds disagree almost everywhere. That is **one wrong assumption, not one flip per match** — suspect `PLAYER_1 = Home Team` being backwards for this sport before suspecting the data. |
+| in between | Near a coin flip: the play feed is not tracking possession well enough for the check to mean anything yet. |
+| < 20 anchors | Too few touchdowns to read. |
+
+**A turnover cannot invert a match.** It costs at most one anchor, and a
+match needs nearly all of them to fail. The two cases that do cost an
+anchor are an onside kick recovered by the scoring team, and a turnover on
+the very first play of the receiving drive.
+
+Three details make it honest:
 
 - It reads **raw** plays. `clean_plays` uses the very assumption under
   test, so checking the cleaned feed would only confirm itself.
@@ -449,7 +470,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-231 tests covering line parsing, market resolution, bucket edges, drive
+238 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 and possession checks, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

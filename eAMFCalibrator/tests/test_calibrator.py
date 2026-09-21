@@ -665,6 +665,83 @@ class TestSelectionBlocks(unittest.TestCase):
         self.assertIn("selections", summary["different_line"])
 
 
+class TestPossessionReading(unittest.TestCase):
+    """The window-wide rate, which says which explanation you are looking at.
+
+    One match cannot tell a flipped handle from a wrong global assumption
+    from a noisy play feed -- all three look like disagreement. Across the
+    window they separate, so the reading is what to check first.
+    """
+
+    def scan_of(self, clean, crossed):
+        helper = TestPossessionCrossCheck()
+        plays, scores = helper.feed([True, False, True, False])
+        inverted = [TestPossessionCrossCheck.td(s.event_message_count,
+                                                not bool(s.p1_change))
+                    for s in scores]
+        scan = handles.Scan()
+        for i in range(clean):
+            scan.add(f"OK{i}", scores, None, plays)
+        for i in range(crossed):
+            scan.add(f"X{i}", inverted, None, plays)
+        return scan.summary()
+
+    def test_mostly_agreeing_means_a_flagged_match_really_is_odd(self):
+        summary = self.scan_of(clean=40, crossed=3)
+        self.assertEqual(summary["possession_reading"], handles.READING_OK)
+        self.assertEqual(summary["matches_flipped"], 3)
+
+    def test_almost_everything_inverting_points_at_the_assumption(self):
+        # Twenty matches do not independently flip their handles. One wrong
+        # mapping explains all of them, and the reading has to say so rather
+        # than let the report claim twenty corrupt matches.
+        summary = self.scan_of(clean=1, crossed=20)
+        self.assertEqual(summary["possession_reading"], handles.READING_GLOBAL)
+        self.assertIn("backwards", handles.READING_TEXT[
+            summary["possession_reading"]])
+
+    def test_a_thin_window_says_so_rather_than_guessing(self):
+        summary = self.scan_of(clean=2, crossed=1)
+        self.assertEqual(summary["possession_reading"], handles.READING_THIN)
+
+    def test_a_coin_flip_rate_is_called_noise_not_a_finding(self):
+        self.assertEqual(handles.possession_reading(100, 50),
+                         handles.READING_NOISE)
+        self.assertIn("coin flip",
+                      handles.READING_TEXT[handles.READING_NOISE])
+
+    def test_the_rate_counts_every_anchor_not_just_flagged_matches(self):
+        summary = self.scan_of(clean=10, crossed=0)
+        self.assertEqual(summary["anchors"], 40)
+        self.assertEqual(summary["anchors_agreed"], 40)
+        self.assertEqual(summary["anchor_agreement"], 1.0)
+
+
+class TestTurnoversDoNotInvertAMatch(unittest.TestCase):
+    """A turnover costs at most one anchor, never a whole match."""
+
+    def test_one_bad_anchor_among_many_does_not_flag_the_match(self):
+        helper = TestPossessionCrossCheck()
+        plays, scores = helper.feed([True, False, True, False, True, False])
+        # An onside kick recovered by the scoring team: after the first
+        # touchdown, the scorer keeps the ball instead of kicking away.
+        first = scores[0].event_message_count
+        plays = [p for p in plays if p.event_message_count > first + 10]
+        plays = helper.drive(first + 5, helper.HOME) + plays
+        verdict, anchors = handles.possession_verdict("AF1", plays, scores)
+        self.assertEqual(sum(1 for a in anchors if not a.agrees), 1)
+        self.assertIsNone(verdict)
+
+    def test_it_takes_nearly_every_anchor_failing_to_invert(self):
+        # The threshold is a rate, so the check cannot be tripped by the
+        # handful of legitimate exceptions football produces.
+        self.assertLessEqual(config.POSSESSION_INVERSION_RATE, 0.25)
+        helper = TestPossessionCrossCheck()
+        plays, scores = helper.feed([True, False, True, False])
+        anchors = handles.possession_anchors(plays, scores)
+        self.assertTrue(all(a.agrees for a in anchors))
+
+
 class TestScoreDiffBuckets(unittest.TestCase):
     def test_edges(self):
         # Boundaries are what matters here, not the wording, so the expected

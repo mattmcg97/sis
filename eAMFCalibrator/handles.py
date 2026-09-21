@@ -283,6 +283,46 @@ def possession_verdict(match_code, plays, scores):
     return anomaly(POSSESSION_UNSTABLE), anchors
 
 
+# How to read the window-wide agreement rate. This matters more than any
+# single match's verdict, because the three explanations for "possession
+# inverted" look identical one match at a time and completely different in
+# aggregate.
+READING_OK = "ok"
+READING_GLOBAL = "mapping_backwards"
+READING_NOISE = "no_signal"
+READING_THIN = "too_few"
+
+READING_TEXT = {
+    READING_OK: ("the feeds agree, so a match that inverts really is the odd "
+                 "one out"),
+    READING_GLOBAL: ("the feeds disagree almost everywhere, which is one "
+                     "wrong assumption, not one flip per match -- suspect "
+                     "PLAYER_1 = Home Team being backwards for this sport "
+                     "before suspecting the data"),
+    READING_NOISE: ("agreement is near a coin flip, so the play feed is not "
+                    "tracking possession well enough for this check to mean "
+                    "anything yet"),
+    READING_THIN: "too few touchdown anchors to read",
+}
+
+
+def possession_reading(anchors, agreed):
+    """What the window-wide agreement rate says about the check itself.
+
+    A single match cannot tell a flipped handle from a wrong assumption or
+    from a noisy play feed -- all three look like disagreement. Across the
+    window they separate cleanly, so this is the first thing to read.
+    """
+    if anchors < 20:
+        return READING_THIN
+    rate = agreed / anchors
+    if rate >= 0.85:
+        return READING_OK
+    if rate <= 0.15:
+        return READING_GLOBAL
+    return READING_NOISE
+
+
 class Scan:
     """Accumulates anomalies across match chunks.
 
@@ -294,6 +334,7 @@ class Scan:
         self.matches = 0
         self.anomalies = []
         self.anchors = 0
+        self.anchors_agreed = 0
         self._flipped = set()
 
     def add(self, match_code, scores, final=None, plays=None):
@@ -309,6 +350,7 @@ class Scan:
         if plays:
             verdict, anchors = possession_verdict(match_code, plays, scores)
             self.anchors += len(anchors)
+            self.anchors_agreed += sum(1 for a in anchors if a.agrees)
             if verdict is not None:
                 found.append(verdict)
         self.anomalies.extend(found)
@@ -333,6 +375,13 @@ class Scan:
         return {
             "matches": self.matches,
             "anchors": self.anchors,
+            "anchors_agreed": self.anchors_agreed,
+            # The number that says WHICH explanation you are looking at.
+            # See possession_reading below.
+            "anchor_agreement": (self.anchors_agreed / self.anchors
+                                 if self.anchors else None),
+            "possession_reading": possession_reading(
+                self.anchors, self.anchors_agreed),
             "matches_flagged": len(by_match),
             "matches_flipped": len(self._flipped),
             "matches_clean": self.matches - len(by_match),
