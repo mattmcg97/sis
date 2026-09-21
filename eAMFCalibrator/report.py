@@ -5,6 +5,7 @@ cell-level summary keyed identically every time, so two runs (prod vs
 candidate, or the same stream a week apart) diff cleanly with `compare`.
 """
 
+import collections
 import csv
 import os
 
@@ -399,6 +400,91 @@ def print_directional_headline(overall, votes):
     print(f"  candidate win rate        : {_pct(votes['candidate_win_rate'])}")
     print(f"  sign test p               : {_p(votes['p_value'])}   [match level]")
     print("\n  If the two levels disagree, the match level is the one to trust.")
+
+
+def _print_timeline_summary(quotes, timeline):
+    """Do the play feed and the two streams talk about the same messages?"""
+    print(f"\n  {len(timeline):,} distinct messages across the three sources")
+    with_play = sum(1 for r in timeline if r["has_play"])
+    with_quote = sum(1 for r in timeline if r["prod_markets"] or r["candidate_markets"])
+    both = sum(1 for r in timeline if r["has_play"]
+               and (r["prod_markets"] or r["candidate_markets"]))
+    print(f"    with a play row      : {with_play:,}")
+    print(f"    with any quote       : {with_quote:,}")
+    print(f"    with both            : {both:,}")
+    print(f"    play but no quote    : {with_play - both:,}")
+    print(f"    quote but no play    : {with_quote - both:,}")
+
+    if quotes:
+        multi = sum(1 for r in quotes if r["rows_at_this_message"] > 1)
+        chosen_dead = sum(1 for r in quotes if r["chosen"] and not r["live"])
+        print(f"\n  {len(quotes):,} quote rows, {multi:,} of them sharing a "
+              f"(market, message) with another")
+        print(f"    rows the index kept that were NOT live: {chosen_dead:,}")
+        by_market = collections.defaultdict(lambda: [0, 0])
+        for row in quotes:
+            by_market[row["market"]][0] += 1
+            by_market[row["market"]][1] += row["live"]
+        print(f"\n  {'MARKET':<12}{'ROWS':>9}{'LIVE':>9}{'LIVE %':>9}")
+        for market in sorted(by_market):
+            total, live = by_market[market]
+            print(f"  {market:<12}{total:>9,}{live:>9,}{_pct(live / total):>9}")
+
+    anchors = [r for r in timeline if r["is_anchor"]]
+    if anchors:
+        full = sum(1 for r in anchors if r["markets_both_live"] >= 6)
+        none = sum(1 for r in anchors if not r["markets_both_live"])
+        print(f"\n  At the {len(anchors):,} messages a snapshot anchors on:")
+        print(f"    all six markets live in both streams : {full:,}")
+        print(f"    no market live in both               : {none:,}")
+        print("  A snapshot can only be paired on a market both streams had")
+        print("  live at that message, so this is the ceiling on pairs before")
+        print("  any tolerance or line rule is applied.")
+
+
+def print_dump_summary(plays, scores, drive_rows, quotes=(), timeline=()):
+    """What the dumped rows say about drive detection, before opening them."""
+    print(f"\n{'=' * 78}\nDRIVE DETECTION -- what the CSVs contain\n{'=' * 78}")
+    if not plays:
+        print("  No play rows.")
+        return
+    from . import drives
+    matches = len({row["match_code"] for row in plays})
+    dropped = sum(row["dropped"] for row in plays)
+    print(f"  {len(plays):,} play rows across {matches} matches, "
+          f"{dropped:,} dropped by cleaning ({100 * dropped / len(plays):.1f}%)")
+    print(f"  {len(drive_rows):,} drives detected "
+          f"({len(drive_rows) / matches:.1f} per match, against a realistic 22ish)")
+
+    by_reason = collections.Counter(row["cleaning"] for row in plays)
+    print(f"\n  {'CLEANING VERDICT':<24}{'ROWS':>8}{'SHARE':>8}")
+    for reason, n in by_reason.most_common():
+        print(f"  {reason:<24}{n:>8,}{_pct(n / len(plays)):>8}")
+
+    by_anchor = collections.Counter(row["anchor_kind"] for row in drive_rows)
+    print(f"\n  {'ANCHOR':<24}{'DRIVES':>8}{'SHARE':>8}")
+    for kind, n in by_anchor.most_common():
+        print(f"  {kind:<24}{n:>8,}{_pct(n / len(drive_rows)):>8}")
+
+    # A drive carrying dropped rows inside it is where two possessions were
+    # most likely merged into one.
+    merged = [row for row in drive_rows if row["n_dropped_inside"] > 1]
+    print(f"\n  drives with >1 dropped row inside them: {len(merged):,}"
+          f"  ({_pct(len(merged) / len(drive_rows))})")
+    print("  Those are the ones to open first: a drive is a maximal run of")
+    print("  one offensive team, so a possession change the feed never")
+    print("  labelled is invisible except as cleaning noise inside a drive.")
+
+    if timeline:
+        _print_timeline_summary(quotes, timeline)
+
+    longest = sorted(drive_rows, key=lambda r: -r["n_plays"])[:5]
+    print(f"\n  Longest drives (a merge shows up as an implausible play count):")
+    print(f"  {'MATCH':<16}{'DRIVE':>6}{'PLAYS':>7}  {'TEAM':<12}{'ANCHOR':<12}")
+    for row in longest:
+        print(f"  {row['match_code']:<16}{row['drive_number']:>6}"
+              f"{row['n_plays']:>7}  {str(row['offensive_team']):<12}"
+              f"{row['anchor_kind']:<12}")
 
 
 def print_anchor(report):
