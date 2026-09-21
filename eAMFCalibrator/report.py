@@ -311,6 +311,7 @@ def print_comparison(rows_a, rows_b, label_a, label_b, limit=40):
 PAIR_FIELDS = [
     "publish_time", "match_code", "drive_number", "period_number",
     "score_p1", "score_p2", "score_diff", "offensive_team",
+    "field_position", "down_number", "distance",
     "market_id", "message_count", "message_gap",
     "prod_line", "candidate_line", "line_delta", "same_line",
     "prod_probability", "candidate_probability",
@@ -516,6 +517,9 @@ def write_pairs_csv(path, pairs):
                 "score_p2": p.score_p2,
                 "score_diff": p.score_diff,
                 "offensive_team": p.offensive_team,
+                "field_position": p.field_position,
+                "down_number": p.down_number,
+                "distance": p.distance,
                 "market_id": p.market_id,
                 "message_count": p.message_count,
                 "message_gap": p.message_gap,

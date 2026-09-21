@@ -9,6 +9,7 @@ Run with:  py -m unittest discover eAMFCalibrator
 
 import collections
 import contextlib
+import dataclasses
 import re
 import datetime as dt
 import io
@@ -495,6 +496,82 @@ class TestSelectionBlocks(unittest.TestCase):
         summary = directional.build_summary(self.pairs, n_bootstrap=50)
         self.assertIn("selections", summary["same_line"])
         self.assertIn("selections", summary["different_line"])
+
+
+class TestAxisBreakdownsShowEverySelection(unittest.TestCase):
+    """The single-axis tables in the checks carry both sides."""
+
+    def setUp(self):
+        self.pairs = []
+        for i in range(8):
+            # Home wins six of the eight, so the two sides have genuinely
+            # different realized rates and cancellation would be visible.
+            home_won = i < 6
+            for market_id in (50, 51):
+                outcome = home_won if market_id == 50 else not home_won
+                self.pairs.append(pair(0.5, 0.6, outcome, match=f"AF{i}",
+                                       market_id=market_id, period=1 + i % 4))
+        self.cells = directional.calibration_cells(
+            self.pairs, directional.quarter_label, n_bootstrap=50,
+            by_selection=True)
+
+    def test_both_sides_of_a_market_get_their_own_cell(self):
+        ids = {key[1] for key in self.cells}
+        self.assertEqual(ids, {50, 51})
+
+    def test_keying_by_selection_does_not_cancel_the_measurement(self):
+        # Pooling the two sides forces EVERY cell's realized rate to exactly
+        # 0.500 by construction. Keyed separately they are complements of
+        # each other, and at least one cell escapes 0.500 -- which is the
+        # whole property. (A cell can legitimately land on 0.500 when the
+        # outcomes in it really did split evenly, so the test is that not
+        # all of them do, not that none of them does.)
+        realized = []
+        for cell in {key[0] for key in self.cells}:
+            home = self.cells.get((cell, 50))
+            away = self.cells.get((cell, 51))
+            if not home or not away:
+                continue
+            self.assertAlmostEqual(home["realized"] + away["realized"], 1.0,
+                                   places=9, msg=cell)
+            realized.append(home["realized"])
+        self.assertTrue(any(abs(r - 0.5) > 1e-9 for r in realized), realized)
+
+    def test_pooling_both_sides_would_cancel_it_which_is_why_it_is_keyed(self):
+        # The counterfactual, asserted rather than asserted-about: feed the
+        # same pairs through one shared bucket and everything collapses.
+        pooled = directional.calibration_cells(
+            self.pairs, lambda p: "all", n_bootstrap=20,
+            market_ids=[50, 51])
+        for row in pooled.values():
+            self.assertAlmostEqual(row["realized"], 0.5, places=9)
+
+    def test_each_cell_names_its_market_and_side(self):
+        row = self.cells[("Q1", 51)]
+        self.assertEqual(row["market"], "moneyline")
+        self.assertEqual(row["selection"], "Away")
+        self.assertFalse(row["canonical"])
+        self.assertTrue(self.cells[("Q1", 50)]["canonical"])
+
+    def test_the_pooled_cross_section_still_reads_one_side(self):
+        # The headline view is unchanged: only the checks were widened.
+        pooled = directional.calibration_cells(
+            self.pairs, directional.quarter_label, n_bootstrap=50)
+        self.assertEqual({key[1] for key in pooled}, {"moneyline"})
+
+
+class TestPairStateColumns(unittest.TestCase):
+    """Field position and down/distance ride on the pair."""
+
+    def test_they_default_to_none_when_the_feed_has_none(self):
+        p = pair(0.5, 0.6, True)
+        self.assertIsNone(p.field_position)
+        self.assertIsNone(p.down_number)
+        self.assertIsNone(p.distance)
+
+    def test_they_reach_the_csv(self):
+        for field in ("field_position", "down_number", "distance"):
+            self.assertIn(field, report.PAIR_FIELDS)
 
 
 class TestScoreDiffBuckets(unittest.TestCase):
@@ -1720,6 +1797,43 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn("0.0700", row)   # delta prob
         self.assertIn("0.4500", row)   # prod error
         self.assertIn("0.3800", row)   # candidate error
+
+    def test_pair_rows_carry_the_game_state(self):
+        p = directional.PairedObservation(
+            match_code="AF1", drive_number=1, period_number=4,
+            score_p1=21, score_p2=22, offensive_team="Away Team",
+            market_id=50, message_count=428, message_gap=0,
+            prod_probability=0.08, candidate_probability=0.664,
+            prod_line=None, candidate_line=None, prod_outcome=False,
+            candidate_outcome=False, realized=None,
+            publish_time=dt.datetime(2026, 9, 17, 20, 5),
+            field_position=55, down_number=3, distance=2)
+        cells = self._cells_for([p])
+        self.assertEqual(cells["Field"], "55")
+        self.assertEqual(cells["D&amp;D"], "3&amp;2")
+
+    def test_missing_state_shows_a_dash_not_a_zero(self):
+        cells = self._cells_for([pair(0.5, 0.6, True)])
+        self.assertEqual(cells["Field"], "&mdash;")
+        self.assertEqual(cells["D&amp;D"], "&mdash;")
+
+    def test_to_end_counts_down_to_the_match_last_quote(self):
+        # No game clock exists in the feed, so this is the wall-clock proxy:
+        # seconds from each snapshot to the last quote of its own match.
+        base = dt.datetime(2026, 9, 17, 20, 0)
+        early = pair(0.5, 0.6, True, match="AF1", message=100)
+        late = pair(0.5, 0.6, True, match="AF1", message=428)
+        early = dataclasses.replace(early, publish_time=base)
+        late = dataclasses.replace(late, publish_time=base + dt.timedelta(seconds=300))
+        row = self._row_for([early, late])
+        self.assertIn(">300</td>", row)   # the early one is 300s from the end
+        self.assertIn(">0</td>", row)     # the last one is the end
+
+    def test_the_final_snapshot_of_a_match_is_flagged_as_near_the_end(self):
+        base = dt.datetime(2026, 9, 17, 20, 0)
+        p = dataclasses.replace(pair(0.5, 0.6, True, match="AF1"),
+                                publish_time=base)
+        self.assertIn('class="warn"', self._row_for([p]))
 
     def test_rendered_page_has_no_external_fetches(self):
         rendered = self._render()

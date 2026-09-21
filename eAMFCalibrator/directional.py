@@ -76,6 +76,13 @@ class PairedObservation:
     prod_decimal: Optional[float] = None
     candidate_decimal: Optional[float] = None
     publish_time: object = None
+    # Where the ball is and what it needs. There is no game clock anywhere
+    # in this feed -- INPLAY_FIELD_POSITION_PERIOD carries seven columns and
+    # none of them is one -- so these are the state variables that separate
+    # a live one-score game from a dead one.
+    field_position: Optional[int] = None
+    down_number: Optional[int] = None
+    distance: Optional[int] = None
 
     @property
     def score_diff(self):
@@ -355,6 +362,9 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                     prod_decimal=prod_decimal,
                     candidate_decimal=candidate_decimal,
                     publish_time=publish_time,
+                    field_position=snap.field_position,
+                    down_number=snap.down_number,
+                    distance=snap.distance,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -836,7 +846,8 @@ def build_summary(pairs, n_bootstrap=2000):
 # common to both and only the predicted values differ, which turns each
 # cell into a direct "whose number was nearer the truth".
 
-def calibration_cells(pairs, key_function, n_bootstrap=500, market_ids=None):
+def calibration_cells(pairs, key_function, n_bootstrap=500, market_ids=None,
+                      by_selection=False):
     """Per (cell, market), both streams' calibration on an identical population.
 
     Two restrictions, both load-bearing:
@@ -853,14 +864,26 @@ def calibration_cells(pairs, key_function, n_bootstrap=500, market_ids=None):
     different base rates, and averaging them gives a rate that describes none
     of them.
 
-    Keyed by (cell, market group).
+    With by_selection, every side is kept instead, keyed by market ID
+    rather than market group. That does NOT reintroduce the cancellation
+    above: cancellation comes from POOLING the two sides into one cell, and
+    keying by ID keeps them in separate cells where each realized rate is
+    its own number. What it costs is halved cell sizes, so the thin-cell
+    caveat applies twice over.
+
+    Keyed by (cell, market group), or (cell, market ID) by selection.
     """
-    allowed = set(config.CANONICAL_SELECTIONS if market_ids is None else market_ids)
+    if by_selection:
+        allowed = set(markets.MARKET_IDS if market_ids is None else market_ids)
+    else:
+        allowed = set(config.CANONICAL_SELECTIONS if market_ids is None else market_ids)
     same, _ = split_by_line(pairs)
     grouped = defaultdict(list)
     for pair in same:
         if pair.market_id in allowed and pair.comparable(PROBABILITY):
-            grouped[(key_function(pair), markets.market_group(pair.market_id))].append(pair)
+            bucket = (pair.market_id if by_selection
+                      else markets.market_group(pair.market_id))
+            grouped[(key_function(pair), bucket)].append(pair)
 
     cells = {}
     for key, subset in grouped.items():
@@ -872,7 +895,12 @@ def calibration_cells(pairs, key_function, n_bootstrap=500, market_ids=None):
         cells[key] = {
             "n": len(subset),
             "matches": len({p.match_code for p in subset}),
-            "selection": config.CANONICAL_SELECTIONS.get(subset[0].market_id, ""),
+            "market": markets.market_group(subset[0].market_id),
+            "selection": (markets.selection_label(subset[0].market_id)
+                          if by_selection
+                          else config.CANONICAL_SELECTIONS.get(
+                              subset[0].market_id, "")),
+            "canonical": subset[0].market_id in config.CANONICAL_SELECTIONS,
             # Same line means same question, so both streams resolve to the
             # same outcome; realized is one number, not two.
             "realized": prod_stats["realized"],
@@ -1158,7 +1186,8 @@ def build_full_report(pairs, n_bootstrap=2000):
         axes.append({
             "name": axis_name,
             "order": order_factory(),
-            "probability": calibration_cells(pairs, key_function),
+            "probability": calibration_cells(pairs, key_function,
+                                             by_selection=True),
             "line": line_cells(pairs, key_function),
         })
 

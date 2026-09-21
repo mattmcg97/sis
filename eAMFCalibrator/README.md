@@ -41,9 +41,10 @@ Four views:
   to unpin, Escape clears them all.
 
   Then **every paired observation**, with the score at the snapshot (home,
-  away and the difference), both streams' line, price, probability, outcome
-  and error, sorted by widest probability disagreement. A search box above
-  the table filters it to one match id.
+  away and the difference), the game state (field position, down and
+  distance, and seconds to the match's last quote), both streams' line,
+  price, probability, outcome and error, sorted by widest probability
+  disagreement. A search box above the table filters it to one match id.
   Around 600 bytes per pair row, so a three-day window lands near 5 MB.
 
 
@@ -398,6 +399,27 @@ of the problem is visible before any data is thrown away — the console and
 the report both say the flagged matches are still in the numbers. Pass
 `--drop-flipped` (or set `EXCLUDE_FLIPPED_MATCHES = True`) to exclude them.
 
+## There is no game clock
+
+Worth stating because its absence shapes what the report can answer.
+`INPLAY_FIELD_POSITION_PERIOD` has seven columns — `MATCH_CODE`,
+`EVENT_MESSAGE_COUNT`, `PERIOD_NUMBER`, `OFFENSIVE_TEAM`, `DOWN_NUMBER`,
+`DISTANCE`, `FIELD_POSITION` — and none of them is a clock. Every
+timestamp the pipeline can reach (`FILE_TIME`, `PUBLISH_TIME`,
+`EVENT_TIME`, `FILE_LOADED`) is an ingest or publish time, not time
+remaining.
+
+So "how close to the end was this?" is answered two ways, both proxies and
+both labelled as such in the pair table:
+
+- **To end** — seconds from the snapshot to the last quote of its own
+  match, off the wall clock. Highlighted under two minutes.
+- **Field / D&D** — where the ball is and what it needs. In a one-score
+  game these separate a live drive from a dead one far better than the
+  quarter does, which is why they are on the row.
+
+Both are on every pair and in `directional_pairs.csv`.
+
 ## The snapshot clock
 
 `INPLAY_FIELD_POSITION_PERIOD` carries no timestamp — it has seven columns
@@ -436,7 +458,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-217 tests covering line parsing, market resolution, bucket edges, drive
+228 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

@@ -455,14 +455,20 @@ def _daily(report):
 
 def _cross_axis(axis):
     prob_rows = []
+    # Keyed by market ID, so both sides of every market are here rather
+    # than the canonical one. Ordered by market, then ID, so a market's two
+    # sides sit together and can be read as the mirror pair they are.
+    market_of = {key[1]: row["market"] for key, row in axis["probability"].items()}
+    ids = sorted(market_of, key=lambda i: (MARKET_ORDER.index(market_of[i]), i))
     for cell_label in axis["order"]:
-        for market in MARKET_ORDER:
-            row = axis["probability"].get((cell_label, market))
+        for market_id in ids:
+            row = axis["probability"].get((cell_label, market_id))
             if not row or not row["n"]:
                 continue
             prob_rows.append(f"""<tr>
                 <th>{html.escape(str(cell_label))}</th>
-                <td>{MARKET_TITLES[market]}</td><td class="dim">{row['selection']}</td>
+                <td>{MARKET_TITLES[row['market']]}</td>
+                <td class="dim">{row['selection']}</td>
                 <td>{row['n']:,}</td><td>{row['matches']:,}</td>
                 <td><b>{_n(row['realized'], '.3f')}</b></td>
                 <td>{_n(row['prod_predicted'], '.3f')}</td>
@@ -559,10 +565,34 @@ def _full_cell(report):
     </section>"""
 
 
+def _down(pair):
+    """Down and distance as "3&10", or a dash when the feed has neither."""
+    if pair.down_number is None and pair.distance is None:
+        return "&mdash;"
+    down = "?" if pair.down_number is None else pair.down_number
+    distance = "?" if pair.distance is None else pair.distance
+    return f"{down}&amp;{distance}"
+
+
 def _pair_rows(pairs):
+    # There is no game clock in the feed, so "how close to the end" has to
+    # come from the wall clock: seconds from this snapshot to the last quote
+    # of its own match. A proxy, and labelled as one, but it is the only
+    # answer available to "was this the dying seconds or the third quarter".
+    last_quote = {}
+    for p in pairs:
+        if p.publish_time is None:
+            continue
+        seen = last_quote.get(p.match_code)
+        if seen is None or p.publish_time > seen:
+            last_quote[p.match_code] = p.publish_time
+
     out = []
     for p in pairs:
         basis = "line" if not p.same_line else "prob"
+        end = last_quote.get(p.match_code)
+        to_end = (None if end is None or p.publish_time is None
+                  else (end - p.publish_time).total_seconds())
         # Line first, and probability only where the lines agree -- exactly
         # the rule the overall verdict is decided under.
         winner = p.decisive_winner
@@ -592,6 +622,9 @@ def _pair_rows(pairs):
             f'<td data-v="{p.score_p2}">{p.score_p2}</td>'
             f'<td data-v="{p.score_diff}">{p.score_diff:+d}</td>'
             f'<td>{"H" if p.offensive_team == "Home Team" else ("A" if p.offensive_team == "Away Team" else "?")}</td>'
+            f'<td data-v="{"" if p.field_position is None else p.field_position}">{"&mdash;" if p.field_position is None else p.field_position}</td>'
+            f'<td data-v="{"" if p.down_number is None else p.down_number}">{_down(p)}</td>'
+            f'<td data-v="{"" if to_end is None else to_end}" class="{"warn" if to_end is not None and to_end <= 120 else ""}">{"&mdash;" if to_end is None else f"{to_end:,.0f}"}</td>'
             f'<td>{MARKET_TITLES.get(markets.market_group(p.market_id), "?")}</td>'
             f'<td>{markets.selection_label(p.market_id) or ""}</td>'
             f'<td data-v="{"" if p.prod_line is None else p.prod_line}">{"&mdash;" if p.prod_line is None else format(p.prod_line, "+.1f")}</td>'
@@ -629,6 +662,9 @@ def _pair_table(pairs):
         <thead><tr>
           <th>Time</th><th>Match</th><th>Drive</th><th>Msg</th><th title="offset from the snapshot's own message; 0 is an exact hit">&plusmn;Msg</th>
           <th>Qtr</th><th title="PLAYER_1 score at the snapshot">Home</th><th title="PLAYER_2 score at the snapshot">Away</th><th title="home minus away">Diff</th><th>Poss</th>
+          <th title="FIELD_POSITION at the snapshot">Field</th>
+          <th title="down and distance">D&amp;D</th>
+          <th title="seconds from here to the match's last quote; the feed has no game clock, so this is a wall-clock proxy">To end</th>
           <th>Market</th><th>Sel</th>
           <th>Prod line</th><th>Cand line</th><th>&Delta;line</th>
           <th>Prod price</th><th>Cand price</th>
