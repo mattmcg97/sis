@@ -33,9 +33,16 @@ error, which is what sank the possession cross-check.
 from dataclasses import dataclass
 from typing import Optional
 
+from . import config
+
 TOUCHDOWN_POINTS = 6
 HOME_TEAM = "Home Team"
 AWAY_TEAM = "Away Team"
+
+# Which play in a drive the snapshot was taken from.
+FIRST_DOWN = "first_down"   # the drive's opening 1st-and-10, as intended
+MID_DRIVE = "mid_drive"     # a real snap, but not 1st-and-10: start lost
+NO_SNAP = "no_snap"         # no plausible snap in the run at all
 
 
 @dataclass(frozen=True)
@@ -73,6 +80,9 @@ class Snapshot:
     score_p1: int
     score_p2: int
     n_plays: int
+    # How the snapshot's play was chosen. FIRST_DOWN means the drive's
+    # opening 1st-and-10, which is what a drive start actually is.
+    anchor: str = FIRST_DOWN
 
     @property
     def score_diff(self):
@@ -125,6 +135,19 @@ def clean_plays(plays, scores):
     return cleaned, len(noise_msgs)
 
 
+def is_snap(play):
+    """Whether a row is a real scrimmage play.
+
+    Kick mechanics and stale duplicates carry a down outside 1-4 or a
+    distance no offence ever faces, which is what separates them from a
+    snap without having to know what the feed calls them.
+    """
+    if play.down_number not in (1, 2, 3, 4):
+        return False
+    return (play.distance is not None
+            and 0 <= play.distance <= config.MAX_PLAUSIBLE_DISTANCE)
+
+
 def score_at(scores, event_message_count):
     """Cumulative score as of a message count: the last score change at or
     before it, or 0-0 if the match has not scored yet."""
@@ -150,35 +173,55 @@ def build_snapshots(match_code, plays, scores):
 
     snapshots = []
     drive_number = 0
-    current_first = None
-    current_count = 0
+    current_run = []
 
     def flush():
-        if current_first is None:
+        if not current_run:
             return
-        p1, p2 = score_at(scores, current_first.event_message_count)
+        # A drive starts at 1st and 10. Taking the run's first ROW instead
+        # lands on whatever survived cleaning: the general rule drops only
+        # ONE row per team change, so a transition carrying several
+        # kickoff-mechanic rows leaves the rest behind, and the snapshot
+        # sits on a row whose down, distance and team label all belong to
+        # the kick rather than the drive.
+        #
+        # So the anchor walks forward to the first row that is a plausible
+        # SNAP, and then asks whether that snap is 1st and 10. Walking to
+        # the first 1st-and-10 instead would be wrong: a drive whose run
+        # opens 2nd and 7 has already lost its start, and the next
+        # 1st-and-10 in it is a first-down CONVERSION -- a real game state,
+        # but not this drive's. Stopping at the first real snap keeps that
+        # case visible as MID_DRIVE rather than silently relabelling it.
+        anchor = next((p for p in current_run if is_snap(p)), None)
+        if anchor is None:
+            anchor, kind = current_run[0], NO_SNAP
+        elif anchor.down_number == 1 and anchor.distance == 10:
+            kind = FIRST_DOWN
+        else:
+            kind = MID_DRIVE
+        p1, p2 = score_at(scores, anchor.event_message_count)
         snapshots.append(Snapshot(
             match_code=match_code,
             drive_number=drive_number,
-            event_message_count=current_first.event_message_count,
-            period_number=current_first.period_number,
-            offensive_team=current_first.offensive_team,
-            field_position=current_first.field_position,
-            down_number=current_first.down_number,
-            distance=current_first.distance,
-            play_time=current_first.play_time,
+            event_message_count=anchor.event_message_count,
+            period_number=anchor.period_number,
+            offensive_team=anchor.offensive_team,
+            field_position=anchor.field_position,
+            down_number=anchor.down_number,
+            distance=anchor.distance,
+            play_time=anchor.play_time,
             score_p1=p1,
             score_p2=p2,
-            n_plays=current_count,
+            n_plays=len(current_run),
+            anchor=kind,
         ))
 
     for p in cleaned:
-        if current_first is None or p.offensive_team != current_first.offensive_team:
+        if not current_run or p.offensive_team != current_run[0].offensive_team:
             flush()
             drive_number += 1
-            current_first = p
-            current_count = 0
-        current_count += 1
+            current_run = []
+        current_run.append(p)
     flush()
 
     return snapshots

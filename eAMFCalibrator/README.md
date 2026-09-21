@@ -443,6 +443,39 @@ side only are not lost at random: they cluster around scores, which is
 where two models differ most. `REQUIRE_LIVE_QUOTE = False` scores them
 anyway, so the cost of excluding them stays measurable.
 
+## Where the snapshot lands
+
+A snapshot is meant to be a drive's **opening 1st and 10**. It was taken
+from the drive's first surviving row instead, which is not the same thing.
+
+`clean_plays` drops exactly **one** row per team change — the stale
+duplicate. Only a TD-anchored transition gets the full walk-forward
+cleanup. So a punt, turnover or turnover-on-downs carrying several
+kickoff-mechanic rows leaves the rest behind, and the snapshot sat on a
+row whose down, distance, field position **and team label** all belong to
+the kick rather than to the drive.
+
+The anchor now walks forward to the first row that is a plausible **snap**
+(`down_number` in 1–4, `distance` within `MAX_PLAUSIBLE_DISTANCE`), and
+then asks whether that snap is 1st and 10:
+
+| Anchor | Meaning |
+|---|---|
+| `first_down` | The drive's opening 1st and 10, as intended. |
+| `mid_drive` | A real snap, but not 1st and 10 — the drive's start was never found. |
+| `no_snap` | No plausible snap in the run at all. |
+
+Walking to the first *1st-and-10* instead would be wrong, and a test pins
+why: a run that opens 2nd and 7 has already lost its start, and the next
+1st and 10 in it is a first-down **conversion** — a real game state, but
+not this drive's. Stopping at the first real snap keeps that case visible
+as `mid_drive` rather than silently relabelling a mid-drive play as a
+drive start.
+
+The **Snapshot anchor** panel reports the split and the share by quarter,
+off-anchor rows have their `D&D` cell flagged in the pair table, and a
+clean share under 90% stops the Checks line reading "all pass".
+
 ## Who is PLAYER_1?
 
 Everything the calibrator buckets on is read in the `PLAYER_1` frame, and
@@ -537,7 +570,7 @@ cells" summary for the same reason.
 py -m unittest discover eAMFCalibrator
 ```
 
-244 tests covering line parsing, market resolution, bucket edges, drive
+253 tests covering line parsing, market resolution, bucket edges, drive
 cleaning, clock reconstruction, quote matching, message pairing, the handle
 check, the sign test and the paired-delta machinery. No Snowflake needed —
 the database half is exercised separately against a mock shaped like the

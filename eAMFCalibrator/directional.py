@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from . import buckets, config, handles, markets, metrics, snowflake_io
+from . import drives
 from .drives import PlayRow, ScoreRow, build_snapshots
 
 CANDIDATE = "candidate"
@@ -100,6 +101,10 @@ class PairedObservation:
     candidate_live: bool = True
     prod_state: str = ""
     candidate_state: str = ""
+    # Which play in its drive this snapshot came from. A MID_DRIVE or
+    # NO_SNAP anchor means the drive's real start was never found, so the
+    # game state on the row describes a different moment than intended.
+    anchor: str = drives.FIRST_DOWN
 
     @property
     def score_diff(self):
@@ -430,6 +435,7 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
                     candidate_live=candidate_quote.live,
                     prod_state=prod_quote.state,
                     candidate_state=candidate_quote.state,
+                    anchor=snap.anchor,
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True
@@ -787,6 +793,37 @@ def market_blocks(pairs, mode, n_bootstrap=2000):
             "mae": paired_delta_summary(subset, ABSOLUTE, mode, n_bootstrap),
         }
     return out
+
+
+def anchor_report(pairs):
+    """Where in its drive each snapshot actually landed.
+
+    A snapshot is meant to be a drive's opening 1st-and-10. Anything else
+    means the drive's start was never found, so the score, possession and
+    field position on that row describe a different moment -- and the row
+    still looks perfectly well-formed, which is why this needs counting
+    rather than eyeballing.
+    """
+    total = len(pairs)
+    counts = defaultdict(int)
+    by_quarter = defaultdict(lambda: [0, 0])
+    for pair in pairs:
+        counts[pair.anchor] += 1
+        quarter = buckets.time_bucket(pair.period_number, pair.drive_number)
+        by_quarter[quarter][0] += 1
+        if pair.anchor != drives.FIRST_DOWN:
+            by_quarter[quarter][1] += 1
+    clean = counts.get(drives.FIRST_DOWN, 0)
+    return {
+        "pairs": total,
+        "counts": dict(counts),
+        "clean": clean,
+        "off_anchor": total - clean,
+        "share_clean": clean / total if total else None,
+        "matches": len({p.match_code for p in pairs
+                        if p.anchor != drives.FIRST_DOWN}),
+        "by_quarter": {k: tuple(v) for k, v in by_quarter.items()},
+    }
 
 
 def market_state_report(pairs):
@@ -1307,6 +1344,7 @@ def build_full_report(pairs, n_bootstrap=2000):
         "spread": spread_interpretation_report(pairs),
         "both_sides": both_sides_calibration(pairs),
         "market_state": market_state_report(pairs),
+        "anchor": anchor_report(pairs),
         "axes": axes,
         "full_cell": full,
         "full_cell_order": sorted({k[0] for k in full}, key=buckets.sort_key),
