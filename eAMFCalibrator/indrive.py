@@ -765,6 +765,51 @@ def outcome_census(transitions):
     return census
 
 
+class Sink:
+    """Collects the in-drive analysis off another pass's fetched rows.
+
+    directional.build_pairs already holds the plays, the scores and both
+    quote indexes for a chunk of matches, which is everything this
+    analysis reads. Riding along costs one function call per match; a
+    second pass would cost a second set of queries.
+    """
+
+    def __init__(self):
+        self.transitions = []
+        self.moves = []
+        self.outcomes = []
+
+    def add(self, match_code, plays, scores, indexes, stats=None):
+        stats = stats if stats is not None else collections.defaultdict(int)
+        transitions = transitions_for_match(match_code, plays, scores)
+        self.transitions.extend(transitions)
+        self.moves.extend(moves_for_transitions(transitions, indexes, stats))
+        outcomes = drive_outcomes(match_code, plays, scores)
+        self.outcomes.extend(outcomes)
+        if not reconcile(outcomes, scores)["ok"]:
+            stats["match_points_do_not_reconcile"] += 1
+
+    def summary(self, n_bootstrap=300):
+        """The high-level reading, for a report that is not about this."""
+        if not self.moves:
+            return None
+        result = report(self.moves, n_bootstrap=n_bootstrap)
+        outcomes = self.outcomes
+        matches = len({o.match_code for o in outcomes}) or 1
+        points = sum(o.points_for + o.points_against for o in outcomes)
+        scored = sum(1 for o in outcomes if o.points_for or o.points_against)
+        return {
+            "result": result,
+            "drives": len(outcomes),
+            "drives_per_match": len(outcomes) / matches,
+            "points": points,
+            "points_per_drive": (points / len(outcomes)) if outcomes else None,
+            "scoring_share": (scored / len(outcomes)) if outcomes else None,
+            "census": drive_census(outcomes),
+            "transitions": len(self.transitions),
+        }
+
+
 def run(cur, match_codes, time_column, stats=None, n_bootstrap=1000,
         verbose=True):
     """Build every transition and every move across these matches."""

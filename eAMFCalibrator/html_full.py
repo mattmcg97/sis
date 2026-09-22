@@ -828,6 +828,90 @@ def _pair_rows(pairs):
     return "".join(out)
 
 
+def _indrive_block(summary):
+    """The in-drive reading, at the altitude this report wants it.
+
+    One question -- does the price move the way the play says it should --
+    and the drives behind it. Everything else lives in its own report,
+    which the row count here is a pointer to rather than a substitute for.
+    """
+    if not summary:
+        return ""
+    from . import directional, html_indrive
+    result = summary["result"]
+    rows = []
+    for stream in (directional.PROD, directional.CANDIDATE):
+        s = result["streams"].get(stream)
+        if not s or not s["overall"]["n"]:
+            continue
+        for label, key in (("Overall", "overall"),
+                           ("Inside a drive", "in_drive"),
+                           ("At a drive's end", "ending")):
+            block = s[key]
+            if not block["n"]:
+                continue
+            rows.append(f"""<tr>
+                <th>{stream.capitalize()}</th>
+                <td>{label}</td>
+                <td>{block['n']:,}</td><td>{block['decided']:,}</td>
+                <td class="{html_indrive._rate_class(block['rate'])}"><b>{_pct(block['rate'])}</b></td>
+                <td class="dim">{_ci(block, '.1%')}</td>
+                <td>{_pct(block['flat_share'])}</td>
+                <td>{_p(block['p_value'])}</td>
+            </tr>""")
+    h2h = result["head_to_head"].get("all") or {}
+    drive_rows = []
+    for outcome, row in summary["census"].items():
+        if not row["n"]:
+            continue
+        drive_rows.append(f"""<tr>
+            <th>{outcome}</th><td>{row['n']:,}</td>
+            <td>{_pct(row['n'] / summary['drives'])}</td>
+            <td>{row['points']:,}</td>
+        </tr>""")
+    return f"""
+    <section class="panel" id="indrive">
+      <h2>In-drive reaction <span class="tag">py -m eAMFCalibrator indrive</span></h2>
+      <p class="count">{result['moves']:,} moves from
+        {summary['transitions']:,} transitions &middot; {summary['drives']:,}
+        drives &middot; {summary['drives_per_match']:.1f} per match &middot;
+        {summary['points_per_drive']:.2f} points per drive</p>
+      <div class="cols">
+        <div>
+          <table>
+            <thead><tr><th>Stream</th><th>Scope</th><th>Moves</th>
+              <th title="moves that moved at all">Decided</th>
+              <th title="share of decided moves that went the expected way">Right</th>
+              <th>95% CI</th><th>Flat</th><th>p</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+        </div>
+        <div>
+          <table>
+            <thead><tr><th>Drive outcome</th><th>Drives</th><th>Share</th>
+              <th>Points</th></tr></thead>
+            <tbody>{''.join(drive_rows)}</tbody>
+          </table>
+        </div>
+      </div>
+      {html_indrive._rate_key()}
+      <h3>Head to head</h3>
+      <table>
+        <thead><tr><th>Pairs</th>
+          <th title="pairs where exactly one stream got the direction right">Decided</th>
+          <th title="candidate share of the decided pairs">Cand</th>
+          <th>95% CI</th><th>Ties</th><th>Both flat</th><th>p</th></tr></thead>
+        <tbody><tr>
+          <td>{h2h.get('pairs', 0):,}</td><td>{h2h.get('decided', 0):,}</td>
+          <td class="{html_indrive._rate_class(h2h.get('rate'))}"><b>{_pct(h2h.get('rate'))}</b></td>
+          <td class="dim">{_ci(h2h, '.1%')}</td>
+          <td>{h2h.get('ties', 0):,}</td><td>{h2h.get('both_flat', 0):,}</td>
+          <td>{_p(h2h.get('p_value'))}</td>
+        </tr></tbody>
+      </table>
+    </section>"""
+
+
 def _pair_table(pairs):
     return f"""
     <section class="panel" id="pairs">
@@ -864,6 +948,33 @@ def _pair_table(pairs):
 
 # ---------------------------------------------------------------------------
 
+def _run_block(header, stats, report, pairs):
+    """The facts about the run itself, which used to crowd the title."""
+    exact = stats.get("exact_message_pair", 0)
+    offset = stats.get("offset_message_pair", 0)
+    lines = report["summary"]["lines"]
+    rows = [
+        ("Window from", html.escape(str(config.CUTOFF_START))),
+        ("Matches with pairs", f"{len({p.match_code for p in pairs}):,}"),
+        ("Of settled matches", f"{header.get('paired_matches', 0):,}"),
+        ("Pairs", f"{report['summary']['pairs']:,}"),
+        ("Drive snapshots", f"{stats.get('snapshots', 0):,}"),
+        ("Exact-message pairing",
+         _pct(exact / (exact + offset)) if exact + offset else "&mdash;"),
+        ("Same line", _pct(lines["same_rate"])),
+    ]
+    body = "".join(f"<tr><th>{label}</th><td>{value}</td></tr>"
+                   for label, value in rows)
+    return f"""
+    <section class="panel">
+      <h2>Run</h2>
+      <table>
+        <thead><tr><th>What</th><th>Value</th></tr></thead>
+        <tbody>{body}</tbody>
+      </table>
+    </section>"""
+
+
 def _checks_summary(report, scan=None):
     """One line stating whether the diagnostics passed, for the collapsed block."""
     issues = []
@@ -889,18 +1000,11 @@ def _checks_summary(report, scan=None):
     return '<span class="good">all pass</span>'
 
 
-def render(report, header, stats, pairs, handle_scan):
+def render(report, header, stats, pairs, handle_scan,
+           indrive_summary=None):
     css = html_style.CSS
     verdict_class, verdict_text = _verdict(report)
     checks_summary = _checks_summary(report, handle_scan)
-    # The settled universe and the matches that actually produced pairs are
-    # not the same number: a match can be settled, carry quotes, and still
-    # pair nothing. Report both rather than implying one.
-    contributing = len({p.match_code for p in pairs})
-    exact = stats.get("exact_message_pair", 0)
-    offset = stats.get("offset_message_pair", 0)
-    exact_rate = _pct(exact / (exact + offset)) if exact + offset else "&mdash;"
-    lines = report["summary"]["lines"]
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -914,28 +1018,25 @@ def render(report, header, stats, pairs, handle_scan):
 <div class="wrap">
   <header>
     <h1>eAMF &mdash; candidate vs prod</h1>
-    <span class="meta">from <b>{html.escape(str(config.CUTOFF_START))}</b></span>
-    <span class="meta"><b>{contributing}</b> matches with pairs</span>
-    <span class="meta">of <b>{header.get('paired_matches', 0)}</b> settled</span>
-    <span class="meta"><b>{report['summary']['pairs']:,}</b> pairs</span>
-    <span class="meta"><b>{stats.get('snapshots', 0):,}</b> drive snapshots</span>
-    <span class="meta">exact-message pairing <b>{exact_rate}</b></span>
-    <span class="meta">same line <b>{_pct(lines['same_rate'])}</b></span>
   </header>
 
   <nav>
     <a href="#headline">Directional calibration</a>
     <a href="#cross">Cross-section calibration</a>
+    <a href="#indrive">In-drive reaction</a>
     <a href="#checks">Checks</a>
     <a href="#pairs">Every pair</a>
+    <button type="button" id="foldAll" class="fold">collapse all</button>
   </nav>
 
   <div class="verdict {verdict_class}">{verdict_text}</div>
 
   <div id="headline">{_headline(report)}{_market_block(report)}</div>
   {_full_cell(report)}
+  {_indrive_block(indrive_summary)}
   <details class="panel" id="checks">
     <summary>Checks &mdash; {checks_summary}</summary>
+    {_run_block(header, stats, report, pairs)}
     {_handle_block(handle_scan)}
     {_anchor_block(report)}
     {_market_state_block(report)}
@@ -948,6 +1049,44 @@ def render(report, header, stats, pairs, handle_scan):
   {_pair_table(pairs)}
 </div>
 <script>
+// Every panel folds. Done here rather than in the markup so a panel does
+// not have to know it is foldable -- the heading becomes the handle and
+// everything after it becomes the body.
+(function () {{
+  var panels = document.querySelectorAll('section.panel');
+  Array.prototype.forEach.call(panels, function (panel) {{
+    var heading = panel.querySelector(':scope > h2');
+    if (!heading) return;
+    var body = document.createElement('div');
+    body.className = 'fold-body';
+    while (heading.nextSibling) body.appendChild(heading.nextSibling);
+    panel.appendChild(body);
+    panel.classList.add('foldable');
+    heading.setAttribute('role', 'button');
+    heading.setAttribute('tabindex', '0');
+    heading.addEventListener('click', function () {{
+      panel.classList.toggle('folded');
+    }});
+    heading.addEventListener('keydown', function (event) {{
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      panel.classList.toggle('folded');
+    }});
+  }});
+  var button = document.getElementById('foldAll');
+  if (!button) return;
+  button.addEventListener('click', function () {{
+    var foldable = document.querySelectorAll('section.panel.foldable');
+    var collapsing = button.textContent.indexOf('collapse') === 0;
+    Array.prototype.forEach.call(foldable, function (panel) {{
+      panel.classList.toggle('folded', collapsing);
+    }});
+    Array.prototype.forEach.call(document.querySelectorAll('details.panel'),
+      function (node) {{ node.open = !collapsing; }});
+    button.textContent = collapsing ? 'expand all' : 'collapse all';
+  }});
+}})();
+
 ['pairTable', 'crossTable'].forEach(function (id) {{
   var table = document.getElementById(id);
   if (!table) return;
@@ -1038,8 +1177,10 @@ def render(report, header, stats, pairs, handle_scan):
 """
 
 
-def write(path, report, header, stats, pairs, handle_scan):
+def write(path, report, header, stats, pairs, handle_scan,
+          indrive_summary=None):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(render(report, header, stats, pairs, handle_scan))
+        fh.write(render(report, header, stats, pairs, handle_scan,
+                        indrive_summary))
     return path

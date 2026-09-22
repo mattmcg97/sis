@@ -8,21 +8,21 @@ are defined once and embedded verbatim by both.
 CSS = r'''<style>
   :root {
     --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --dim:#6b6b66; --line:#e2e2dd;
-    --g0:#268631; --g1:#775800; --g2:#763900; --g3:#750100; --g4:#580003;
+    --g0:#007743; --g1:#726400; --g2:#8f5300; --g3:#a73c00; --g4:#b3261e;
     --good:#1c7c4a; --bad:#b3261e; --warn:#8a6d1f; --accent:#2d4a7c;
     --head:#f0f0ec; --axis:#eaeef4; --pick:#fdf0c8; --hover:#f2f2ef;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
-      --g0:#44a04b; --g1:#c69500; --g2:#f99549; --g3:#ffafa2; --g4:#ffcfc8;
+      --g0:#22b970; --g1:#b29d00; --g2:#dd8400; --g3:#ec7544; --g4:#ef6f66;
       --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
       --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
     }
   }
   :root[data-theme="dark"] {
     --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
-    --g0:#44a04b; --g1:#c69500; --g2:#f99549; --g3:#ffafa2; --g4:#ffcfc8;
+    --g0:#22b970; --g1:#b29d00; --g2:#dd8400; --g3:#ec7544; --g4:#ef6f66;
     --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
     --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
   }
@@ -46,6 +46,28 @@ CSS = r'''<style>
   .verdict.bad{border-left-color:var(--bad)}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:7px;
           padding:12px 14px;margin-bottom:12px}
+  /* Foldable panels. The heading is the handle, so it gets a caret and a
+     pointer; the caret turns rather than the heading moving, which keeps
+     the row from jumping as sections open and shut. */
+  .panel.foldable > h2{cursor:pointer;user-select:none}
+  .panel.foldable > h2::before{content:"\25BE";display:inline-block;
+        width:1em;color:var(--dim);transition:transform .12s ease}
+  .panel.folded > h2::before{transform:rotate(-90deg)}
+  .panel.folded > h2{margin-bottom:0}
+  .panel.folded > .fold-body{display:none}
+  .panel.foldable > h2:focus-visible{outline:2px solid var(--accent);
+        outline-offset:2px;border-radius:3px}
+  button.fold{font:inherit;font-size:11.5px;color:var(--accent);background:none;
+        border:0;padding:0;cursor:pointer;text-decoration:underline}
+  /* A native <details> gets the same handle as a folded section, so the
+     two kinds of panel do not look like two kinds of thing. */
+  details.panel > summary{cursor:pointer;user-select:none;font-size:14px;
+        font-weight:600;letter-spacing:-0.005em;list-style:none}
+  details.panel > summary::-webkit-details-marker{display:none}
+  details.panel > summary::before{content:"\25BE";display:inline-block;
+        width:1em;color:var(--dim);transform:rotate(-90deg);
+        transition:transform .12s ease}
+  details.panel[open] > summary::before{transform:none}
   .cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media (max-width:820px){.cols{grid-template-columns:1fr}}
   table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
@@ -64,15 +86,19 @@ CSS = r'''<style>
   /* Gap columns: green near zero, red far from it, on the NUMBER rather
      than behind it -- a wash of filled cells reads as a heat map when
      what is wanted is a table.
-     Green and red are the one pair red-green colour blindness cannot
-     separate, so the steps are NOT just five hues. Their OKLCH lightness
-     moves monotonically with severity, every adjacent gap over the 0.06
-     floor, and it moves so that PROMINENCE rises either way: darkest on
-     the light theme, brightest on the dark one. A reader who sees no hue
-     still sees the worst numbers shout loudest.
-     As type rather than fill every step has to clear 4.5:1 against the
-     panel it sits on, which the light ramp does from 4.6 and the dark
-     from 5.0 -- so the number is readable first and coloured second. */
+     HUE ONLY. Every step sits at the same OKLCH lightness as --bad in
+     its own theme (0.501 light, 0.693 dark) and differs from its
+     neighbours by hue alone, so the ramp sweeps green -> amber -> orange
+     -> red without ever getting brighter, and its last step IS --bad:
+     #b3261e and #ef6f66, the same red the Brier columns already use.
+     The cost is named rather than hidden: green and red at equal
+     lightness are the one pair red-green colour blindness cannot
+     separate, and a constant-lightness ramp gives up the second channel
+     that used to carry the ordering. What carries it instead is the
+     number, which is in the cell and is the real answer, and the key
+     above each table, which names every band. Every step still clears
+     4.5:1 against its panel -- 5.6 at worst -- so it is readable type
+     first and coloured second. */
   td.g0{color:var(--g0);font-weight:600}
   td.g1{color:var(--g1);font-weight:600}
   td.g2{color:var(--g2);font-weight:600}
