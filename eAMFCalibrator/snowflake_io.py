@@ -109,8 +109,7 @@ def rows_per_message(cur, stream_table):
         WITH per_message AS (
             SELECT MARKET_ID, MATCH_CODE, EVENT_MESSAGE_COUNT,
                    COUNT(*) AS N_ROWS,
-                   SUM(CASE WHEN STATUS = %s AND IS_ACTIVE = %s
-                            THEN 1 ELSE 0 END) AS N_LIVE
+                   SUM(CASE WHEN IS_ACTIVE = %s THEN 1 ELSE 0 END) AS N_LIVE
             FROM {qualified(stream_table)}
             WHERE MARKET_ID IN ({_in_clause(MARKET_IDS)})
               AND EVENT_MESSAGE_COUNT IS NOT NULL
@@ -127,7 +126,7 @@ def rows_per_message(cur, stream_table):
         FROM per_message
         GROUP BY MARKET_ID
         ORDER BY MARKET_ID
-    """, tuple([config.LIVE_STATUS, config.LIVE_IS_ACTIVE]
+    """, tuple([config.LIVE_IS_ACTIVE]
                + list(MARKET_IDS) + params))
     return rows
 
@@ -248,13 +247,13 @@ def fetch_final_scores(cur, match_codes):
 def fetch_quotes(cur, stream_table, match_codes):
     """Every quote for these matches inside the window, live or not.
 
-    STATUS and IS_ACTIVE used to be a WHERE clause, which meant a market
-    that was suspended at a snapshot produced no row and the snapshot
-    simply vanished -- indistinguishable from a feed gap. Suspension is not
+    Liveness used to be a WHERE clause, which meant a market that was
+    inactive at a snapshot produced no row and the snapshot simply
+    vanished -- indistinguishable from a feed gap. Going inactive is not
     missing at random: it clusters on scoring plays and reviews, which are
     exactly the states where the two models differ most. Worse, if the two
-    streams suspend at different moments then pairing on "both had a live
-    quote" silently drops the disagreements.
+    streams go inactive at different moments then pairing on "both had a
+    live quote" silently drops the disagreements.
 
     So the filter moved out of SQL and into the caller, which keeps the
     same rows in the metrics (config.REQUIRE_LIVE_QUOTE, on by default) and
@@ -279,9 +278,9 @@ def fetch_quotes(cur, stream_table, match_codes):
 def status_profile(cur, stream_table):
     """What values STATUS and IS_ACTIVE actually take, and how often.
 
-    The pipeline treats "open and true" as live and everything else as
-    suspended, which is deliberately value-agnostic. This says what is
-    really in there, so that assumption can be checked rather than trusted.
+    The pipeline reads liveness from IS_ACTIVE alone. This profile is what
+    keeps STATUS honest: it shows how the two columns line up, which is
+    the evidence for the claim that STATUS cannot be trusted.
     """
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""

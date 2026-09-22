@@ -95,7 +95,7 @@ class PairedObservation:
     field_position: Optional[int] = None
     down_number: Optional[int] = None
     distance: Optional[int] = None
-    # Was each side's market actually live at this message? A suspended
+    # Was each side's market actually live at this message? An inactive
     # quote still carries a number, but not one anyone could have taken.
     prod_live: bool = True
     candidate_live: bool = True
@@ -236,19 +236,32 @@ class PairedObservation:
         return abs(self.prod_probability - self.candidate_probability)
 
 
-def is_live(status, is_active):
-    """Whether a quote row was tradeable, without assuming what else exists."""
-    return (str(status).lower() == config.LIVE_STATUS
-            and str(is_active).lower() == config.LIVE_IS_ACTIVE)
+def is_live(is_active):
+    """Whether a quote row was tradeable. IS_ACTIVE alone decides.
+
+    STATUS used to be half of this: a row counted as tradeable only if it
+    read 'open' AND IS_ACTIVE was true. GAMEPLAI say the status column is
+    not to be trusted, so it no longer votes. The consequence is worth
+    being explicit about, because it is not a no-op: a row that reads
+    CLOSED while IS_ACTIVE is true is now LIVE. That combination is real
+    -- about 0.1% of rows in the window -- and under the old rule those
+    prices were thrown away on the strength of a column we now know to be
+    wrong. Nothing moves the other way: UNDER SETTLEMENT / false is still
+    dead, because IS_ACTIVE says so.
+
+    STATUS is still carried onto every pair and still broken out in the
+    report, so the two columns can be read against each other. It just
+    does not decide anything.
+    """
+    return str(is_active).lower() == config.LIVE_IS_ACTIVE
 
 
 def state_label(status, is_active):
     """The raw pair of columns, as one readable token.
 
-    Kept verbatim rather than mapped to a tidy vocabulary. This feed has no
-    'suspended' state at all -- its markets run open -> UNDER SETTLEMENT ->
-    CLOSED -- so inventing a word for what a state means would be guessing
-    where reporting the value is not.
+    Kept verbatim rather than mapped to a tidy vocabulary, and kept even
+    though STATUS no longer decides liveness: side by side is how the
+    disagreement between the two columns stays visible.
     """
     return f"{status}/{is_active}"
 
@@ -282,7 +295,7 @@ def index_by_message(quote_rows, stats=None):
             probability=float(probability), description=description,
             decimal=float(decimal_odd) if decimal_odd is not None else None,
             publish_time=publish_time,
-            live=is_live(status, is_active),
+            live=is_live(is_active),
             state=state_label(status, is_active))
         existing = out[(match_code, market_id)].get(message)
         if existing is None:
@@ -855,11 +868,15 @@ def anchor_report(pairs):
 def market_state_report(pairs):
     """What non-live quotes cost, broken down by the state they were in.
 
-    This feed has no suspension: its markets run open -> UNDER SETTLEMENT
-    -> CLOSED, and only about 15% of published rows are open. Most of the
-    rest is post-match settlement churn that a drive-start snapshot would
-    never land on anyway -- but "would never" is an assumption, and this is
-    what turns it into a count.
+    Liveness is IS_ACTIVE alone; STATUS is reported beside it but does
+    not decide. Roughly 85% of published rows are inactive, nearly all of
+    it post-match settlement churn that a drive-start snapshot would never
+    land on anyway -- but "would never" is an assumption, and this is what
+    turns it into a count.
+
+    Breaking it down by the raw STATUS/IS_ACTIVE pair is now doing double
+    duty: it says what the non-live pairs were, and it is the evidence for
+    how far the two columns disagree.
 
     The split between the two streams is the part that matters. If one goes
     non-live at moments the other does not, the pairs lost are not random:
