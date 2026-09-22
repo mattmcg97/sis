@@ -240,6 +240,27 @@ py -m eAMFCalibrator directional --html report.html
 Pairs prod against candidate at each drive-start snapshot and reports both
 halves of the comparison, because they do not always agree.
 
+The HTML panel is **two tables**: the combined reading over every pair,
+then the two halves it is made of.
+
+| Reading | Pairs | Matches | On prob | On line | Cand win | Match vote | Level | p |
+|---|---|---|---|---|---|---|---|---|
+| Overall | every decided pair, under the rule that applies to each |
+
+| Reading | Pairs | Matches | Cand win | Match vote | Level | Δ | 95% CI | p |
+|---|---|---|---|---|---|---|---|---|
+| Same line | Δ is ΔBrier per match |
+| Different line | Δ is Δpoints per match |
+
+### The report is a dashboard, not a write-up
+
+Headings, tables and numbers. No paragraph explains what a table is for,
+no heading asks itself a question, and the verdict is a line of figures
+rather than a sentence — where the two readings disagree, both are on
+the page and the reader can see it without being told. Column meanings
+live in header tooltips, which cost nothing until hovered. A test keeps
+it that way: nothing rendered outside a tooltip may run to twelve words.
+
 ### Each stream is graded against its own line
 
 The streams do not always quote the same line, so the run splits on that
@@ -299,6 +320,48 @@ time: both streams carry the same feed sequence, so the same message is the
 same event for both. Matching independently on time would let one stream
 land 0.1s from the snapshot and the other 2.5s away, scoring two different
 game states against one outcome.
+
+## Reading the gap columns
+
+Every column headed a **gap** — the calibration gap (realized minus
+predicted), the line gap, `±Msg`, `ΔLine`, `Δprob` — asks the same
+question: how far apart are two things that were meant to agree. They
+share one green-to-red ramp and differ only in where its steps fall.
+
+| Column | ≤ | ≤ | ≤ | ≤ | above |
+|---|---|---|---|---|---|
+| calibration gap, `Δprob` between streams | 0.02 | 0.05 / 0.04 | 0.10 / 0.06 | 0.20 / 0.10 | — |
+| line gap, `ΔLine` (points) | 0.5 | 1.0 | 3.0 | 6.0 | — |
+| `±Msg` (feed messages) | 0 | 1 | 2 | 3 | — |
+
+The steps are **fixed**, not quantiles of each run, so two reports can be
+read against each other. They come from the observed distributions:
+calibration gaps run p25 0.02, p50 0.07, p75 0.23; line gaps p75 1, p90
+3, p95 6; `Δprob` p50 0.018, p90 0.061, p95 0.080.
+
+**It is magnitude, not sign.** A gap is a distance from agreement, so
++0.40 is no better than −0.40. This replaced a sign-based colouring that
+painted a badly over-predicted `+0.40` *green* and a near-perfect
+`−0.001` *red*. The columns where the sign genuinely is the point —
+ΔBrier, Δpoints, candidate win rate — still read by sign.
+
+A cell with nothing to compare (a dashed `Δprob` on a different-line
+pair) gets no colour at all. "Not comparable" is not a small gap.
+
+### Why the ramp darkens as well as reddening
+
+Green and red are the one pair red-green colour blindness cannot
+separate, so hue alone cannot carry the ordering. The five steps also
+fall monotonically in OKLCH lightness — 0.93 → 0.67 on the light theme,
+0.27 → 0.53 on the dark one — with every adjacent gap clearing the 0.06
+floor. A reader who sees no hue at all still sees the cell darken as the
+gap grows.
+
+Each theme's steps are picked against its own surface rather than
+flipped from the other's, and every step clears 4.7:1 against the ink
+sitting on it. The number is the real answer; the colour only says which
+band it is in, and a key above each table names every band, so nothing
+is ever read by colour alone.
 
 ## The split axes
 
