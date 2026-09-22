@@ -2681,6 +2681,115 @@ class TestFullReport(unittest.TestCase):
         self.assertEqual(built["full_cell"], {})
 
 
+def _srgb_to_linear(channel):
+    channel /= 255
+    return (channel / 12.92 if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4)
+
+
+def _channels(hex_colour):
+    return tuple(int(hex_colour[i:i + 2], 16) for i in (1, 3, 5))
+
+
+def _oklab_l(hex_colour):
+    """The perceptual lightness of a colour, 0-1."""
+    r, g, b = (_srgb_to_linear(c) for c in _channels(hex_colour))
+    long = (0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b) ** (1 / 3)
+    medium = (0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b) ** (1 / 3)
+    short = (0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b) ** (1 / 3)
+    return 0.2104542553 * long + 0.7936177850 * medium - 0.0040720468 * short
+
+
+def _contrast(one, other):
+    """WCAG contrast ratio between two hex colours."""
+    def luminance(hex_colour):
+        r, g, b = (_srgb_to_linear(c) for c in _channels(hex_colour))
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    high, low = sorted((luminance(one), luminance(other)), reverse=True)
+    return (high + 0.05) / (low + 0.05)
+
+
+class TestGapRamp(unittest.TestCase):
+    """Green near zero, red far from it -- on magnitude, not sign."""
+
+    def setUp(self):
+        from .. import html_full
+        self.h = html_full
+
+    def test_the_steps_run_green_to_red_in_order(self):
+        cuts = (0.02, 0.05, 0.10, 0.20)
+        self.assertEqual(self.h._gap(0.000, cuts), "g0")
+        self.assertEqual(self.h._gap(0.020, cuts), "g0")   # the cut is inclusive
+        self.assertEqual(self.h._gap(0.021, cuts), "g1")
+        self.assertEqual(self.h._gap(0.050, cuts), "g1")
+        self.assertEqual(self.h._gap(0.099, cuts), "g2")
+        self.assertEqual(self.h._gap(0.150, cuts), "g3")
+        self.assertEqual(self.h._gap(0.900, cuts), "g4")
+
+    def test_a_gap_is_a_distance_so_sign_does_not_matter(self):
+        # This is the bug it replaces. _cls read the sign, so a calibration
+        # gap of +0.40 -- badly over-predicted -- came out GREEN, while
+        # -0.001, near perfect, came out red.
+        cuts = self.h.PROB_GAP
+        self.assertEqual(self.h._gap(+0.40, cuts), self.h._gap(-0.40, cuts))
+        self.assertEqual(self.h._gap(-0.001, cuts), "g0")
+        self.assertEqual(self.h._gap(+0.400, cuts), "g4")
+        self.assertEqual(self.h._cls(+0.40), "good")   # the old reading
+        self.assertEqual(self.h._cls(-0.001), "bad")
+
+    def test_a_missing_value_gets_no_colour_at_all(self):
+        # A dashed cell is "not comparable", which is not a small gap.
+        self.assertEqual(self.h._gap(None, self.h.PROB_GAP), "")
+        self.assertEqual(self.h._gap("", self.h.PROB_GAP), "")
+        self.assertEqual(self.h._gap(None, self.h.PROB_GAP, "dim"), "dim")
+
+    def test_it_rides_on_top_of_the_class_the_cell_already_had(self):
+        self.assertEqual(self.h._gap(0.0, self.h.PROB_GAP, "dim"), "dim g0")
+
+    def test_every_scale_has_four_rising_cut_points(self):
+        for name in ("PROB_GAP", "PROB_DELTA", "LINE_GAP", "MESSAGE_GAP"):
+            cuts = getattr(self.h, name)
+            self.assertEqual(len(cuts), 4, name)
+            self.assertEqual(list(cuts), sorted(cuts), name)
+
+    def test_the_key_names_every_step_so_colour_is_never_the_only_cue(self):
+        key = self.h._gap_key(self.h.PROB_GAP, "Gap", ".2f")
+        for step in range(5):
+            self.assertIn(f'class="key g{step}"', key)
+        self.assertIn("&le;0.02", key)
+        self.assertIn("&gt;0.20", key)
+
+    def test_the_ramp_darkens_as_well_as_reddening(self):
+        # Green and red are the one pair red-green colour blindness cannot
+        # separate, so hue alone cannot carry the ordering. Lightness has
+        # to fall monotonically, by more than the 0.06 step floor, in BOTH
+        # themes -- a reader who sees no hue still sees the cell darken.
+        import re
+        source = open(self.h.__file__).read()
+        found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
+                           r" --g3:(#\w{6}); --g4:(#\w{6});", source)
+        self.assertEqual(len(found), 3)   # light, media-query dark, forced dark
+        self.assertEqual(len(set(found[1:])), 1, "both dark rules must agree")
+        for ramp in (found[0], found[1]):
+            lightness = [_oklab_l(step) for step in ramp]
+            ordered = (lightness == sorted(lightness)
+                       or lightness == sorted(lightness, reverse=True))
+            self.assertTrue(ordered, f"{ramp} is not monotone: {lightness}")
+            gaps = [abs(lightness[i + 1] - lightness[i]) for i in range(4)]
+            self.assertTrue(all(g >= 0.06 for g in gaps), f"{ramp}: {gaps}")
+
+    def test_the_number_stays_readable_on_every_step(self):
+        # The colour says which band; the number IS the answer. It has to
+        # clear AA against every background it can land on.
+        import re
+        source = open(self.h.__file__).read()
+        found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
+                           r" --g3:(#\w{6}); --g4:(#\w{6});", source)
+        for ramp, ink in ((found[0], "#1a1a18"), (found[1], "#ededea")):
+            for step in ramp:
+                self.assertGreaterEqual(_contrast(step, ink), 4.5, f"{ink} on {step}")
+
+
 class TestReportRendering(unittest.TestCase):
     """Guards two things a full audit of a real report turned up."""
 
@@ -2712,12 +2821,24 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn("<th>Msg</th>", rendered)
         self.assertIn("&plusmn;Msg</th>", rendered)
 
-    def test_message_gap_is_flagged_when_not_exact(self):
+    def test_message_gap_is_shaded_by_how_far_off_it_is(self):
         offset = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=2)]
         report = directional.build_full_report(offset, n_bootstrap=20)
         rendered = self.html_full.render(report, self.header, self.stats, offset,
                                          self.scan)
-        self.assertIn('class="warn"', rendered)
+        self.assertIn('data-v="2" class="g2"', rendered)
+
+    def test_an_exact_message_match_sits_on_the_green_end(self):
+        exact = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=0)]
+        report = directional.build_full_report(exact, n_bootstrap=20)
+        rendered = self.html_full.render(report, self.header, self.stats, exact,
+                                         self.scan)
+        self.assertIn('data-v="0" class="g0"', rendered)
+
+    def test_the_ramp_is_spelled_out_rather_than_left_to_colour(self):
+        rendered = self._render()
+        self.assertIn("gapkey", rendered)
+        self.assertIn("further from agreement", rendered)
 
     def test_every_pair_reaches_the_table(self):
         rendered = self._render()
