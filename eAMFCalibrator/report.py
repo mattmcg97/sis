@@ -1361,36 +1361,71 @@ def directional_candidate():
 # Pre-match calibration
 # ---------------------------------------------------------------------------
 
+def _prematch_cell_header(label, width=26):
+    print(f"\n  {label:<{width}}{'N':>7}{'MATCH':>7}{'REAL':>8}{'PROD':>8}"
+          f"{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}{'DBRIER':>9}"
+          f"{'P':>8}{'CLOSER':>8}")
+
+
+def _prematch_cell_row(label, c, width=26):
+    print(f"  {str(label):<{width}}{c['n']:>7,}{c['matches']:>7,}"
+          f"{_fmt(c['realized'], '.3f'):>8}{_fmt(c['prod_predicted'], '.3f'):>8}"
+          f"{_fmt(c['prod_gap'], '+.3f'):>8}"
+          f"{_fmt(c['candidate_predicted'], '.3f'):>8}"
+          f"{_fmt(c['candidate_gap'], '+.3f'):>8}"
+          f"{_fmt(c['brier_delta'], '+.4f'):>9}{_p(c['p_value']):>8}"
+          f"{str(c['closer'] or ''):>8}")
+
+
 def print_prematch(summary, stats=None):
     """Were the closing prices calibrated against what happened?"""
-    from . import directional
-    print(f"\n{'=' * 78}\nPRE-MATCH CALIBRATION -- the closing price"
-          f"\n{'=' * 78}")
+    print(f"\n{'=' * 104}\nPRE-MATCH CALIBRATION -- the closing price"
+          f"\n{'=' * 104}")
     if not summary:
         print("  No pre-match quotes resolved.")
         return
     print(f"  {summary['n']:,} closing prices across {summary['matches']:,} "
-          f"matches")
-    print("  One per (match, selection, stream): the LAST quote published")
-    print("  before the first play row, resolved against the final score.")
+          f"matches -> {summary['pairs']:,} pairs both streams closed on "
+          f"the same line")
+    if summary["line_differs"]:
+        print(f"  {summary['line_differs']:,} dropped: the two streams closed "
+              f"on DIFFERENT lines, so they resolved against different "
+              f"outcomes")
+    if summary["one_stream_only"]:
+        print(f"  {summary['one_stream_only']:,} dropped: only one stream "
+              f"closed on them")
 
-    for stream in (directional.PROD, directional.CANDIDATE):
-        s = summary["streams"].get(stream)
-        if not s:
-            continue
-        print(f"\n  {stream.upper():<12}{'N':>8}{'MATCHES':>9}{'PRED':>8}"
-              f"{'REAL':>8}{'GAP':>9}{'BRIER':>9}{'LOGLOSS':>9}{'ECE':>9}")
-        rows = [("all", s["overall"])]
-        rows += sorted(s["by_market"].items(), key=lambda kv: str(kv[0]))
-        for label, b in rows:
-            print(f"  {str(label):<12}{b['n']:>8,}{b['matches']:>9,}"
-                  f"{_fmt(b['mean_predicted'], '.3f'):>8}"
-                  f"{_fmt(b['realized'], '.3f'):>8}"
-                  f"{_fmt(b['gap'], '+.3f'):>9}{_fmt(b['brier'], '.4f'):>9}"
-                  f"{_fmt(b['log_loss'], '.4f'):>9}{_fmt(b['ece'], '.4f'):>9}")
+    # Before any calibration number: is there a price here at all?
+    spread = summary["spread"]
+    print(f"\n  HOW FAR FROM EVEN MONEY THE CLOSING PRICES SIT")
+    print(f"  {'|p - 0.500|':<16}{'N':>9}{'SHARE':>8}")
+    for band in spread["bands"]:
+        label = f"{band['low']:.2f} to {band['high']:.2f}"
+        print(f"  {label:<16}{band['n']:>9,}{_pct(band['share']):>8}")
+    print(f"  {'mean':<16}{'':>9}{spread['mean_distance']:>8.3f}")
+    print(f"  {'max':<16}{'':>9}{spread['max_distance']:>8.3f}")
+
+    print(f"\n  {'MARKET':<12}{'N':>9}{'MEAN |p-.5|':>13}{'MAX':>8}"
+          f"{'WITHIN .02':>12}")
+    for group, s in summary["spread_by_market"].items():
+        within = s["bands"][0]["share"] if s["bands"] else None
+        print(f"  {str(group):<12}{s['n']:>9,}{s['mean_distance']:>13.3f}"
+              f"{s['max_distance']:>8.3f}{_pct(within):>12}")
+
+    _prematch_cell_header("SELECTION")
+    for key in sorted(summary["by_selection"], key=lambda k: (str(k[0]), str(k[1]))):
+        _prematch_cell_row(f"{key[0]} {key[1]}", summary["by_selection"][key])
+
+    if summary["by_line"]:
+        _prematch_cell_header("SELECTION x LINE")
+        for key in sorted(summary["by_line"],
+                          key=lambda k: (str(k[0]), str(k[1]),
+                                         k[2] if k[2] is not None else 0)):
+            label = f"{key[0]} {key[1]} {key[2]:+g}"
+            _prematch_cell_row(label, summary["by_line"][key])
 
     h = summary["head_to_head"]
-    print(f"\n  {'HEAD TO HEAD':<18}{'PRICES':>8}{'MATCHES':>9}{'DBRIER':>10}"
+    print(f"\n  {'HEAD TO HEAD':<18}{'PAIRS':>8}{'MATCHES':>9}{'DBRIER':>10}"
           f"{'95% CI':>22}{'CAND':>7}{'PROD':>7}{'P':>9}")
     ci = ("" if h["ci_low"] is None
           else f"[{h['ci_low']:+.4f}, {h['ci_high']:+.4f}]")
@@ -1398,13 +1433,16 @@ def print_prematch(summary, stats=None):
           f"{_fmt(h['mean'], '+.4f'):>10}{ci:>22}"
           f"{h['matches_favouring_candidate']:>7,}"
           f"{h['matches_favouring_prod']:>7,}{_p(h['p_value']):>9}")
-    print("\n  Positive DBRIER favours the candidate. Paired on (match,")
-    print("  selection) and clustered on matches, so six selections inside")
-    print("  one match are not read as six independent draws.")
+    print("\n  P_GAP / C_GAP are realized minus predicted: positive means that")
+    print("  stream underpriced the selection. DBRIER is prod minus candidate,")
+    print("  match-clustered; positive favours the candidate. Read the bands")
+    print("  above the tables first: a book that never leaves 50/50 has no")
+    print("  view to be calibrated, and its Brier sits at 0.25 regardless.")
 
     if stats:
         print(f"\n  {'DROPPED':<26}{'N':>10}")
         for key in ("prematch_no_final", "prematch_no_quotes",
-                    "prematch_push", "prematch_not_live"):
+                    "prematch_push", "prematch_not_live",
+                    "prematch_line_differs", "prematch_one_stream_only"):
             if stats.get(key):
                 print(f"  {key:<26}{stats[key]:>10,}")

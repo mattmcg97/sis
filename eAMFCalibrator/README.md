@@ -360,10 +360,40 @@ A selection the final score cannot settle — a push, or a match with no
 final — is counted and dropped. It has no realized 0/1 to compare a
 probability against.
 
-The section reports predicted against realized, the gap, Brier, log loss
-and ECE per stream and per market, then a head-to-head paired on (match,
-selection) and clustered on matches, so six selections inside one match
-are not read as six independent draws.
+### Read the price spread before the calibration
+
+The panel opens with how far the closing prices sit from even money,
+because everything under it depends on the answer. **A book that never
+leaves 50/50 has no view to be calibrated, and its Brier sits at 0.25
+whatever else is true.** Bands rather than a standard deviation, since
+the question is whether any price is ever confident, not what the
+average one looks like.
+
+For scale: a realistic NFL moneyline book has a standard deviation of
+about 0.24 and a Brier near 0.19.
+
+### Per selection, and per line, against ONE realized rate
+
+Laid out the way the cross-section is, and for the same reason. **Pooling
+the two sides of a market forces the realized rate and both predictions
+to exactly 0.500 whatever the model does** — Home and Away are
+complements, so the mean of a price and one minus it is 0.5 by
+arithmetic. The Brier survives that pooling; the gap does not, and a
+table of `0.500 / 0.500 / +0.000` says nothing at all.
+
+So every row is one selection, with the realized rate once and each
+stream's prediction and gap beside it. Spread and total also break down
+**by line**, which is where the pooled view hides the most: the feed
+uses a handful of distinct lines, and a model quoting 0.500 on all of
+them is badly wrong on the outer ones and right in the middle, which
+averages to looking fine.
+
+### The line rule applies here too
+
+A pair only exists where both streams closed on the **same line**. Where
+the lines differ they resolved against different outcomes, so neither
+the shared realized rate nor the Brier difference means anything. Those
+are counted and dropped, as they are in play.
 
 Like the in-drive view it **costs no extra queries**: `build_pairs`
 already fetches every quote for the chunk, so a `prematch.Sink` rides

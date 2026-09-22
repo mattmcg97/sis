@@ -135,6 +135,144 @@ def observations_for_match(match_code, quotes_by_stream, first_play_message,
 
 
 # ---------------------------------------------------------------------------
+# Pairing
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Pair:
+    """One closing price from each stream, on the same question.
+
+    Same question means the same match, the same selection AND the same
+    line. Where the lines differ the two streams resolved against
+    DIFFERENT outcomes, so neither the realized rate nor the Brier
+    difference means anything -- the same rule the in-play comparison
+    runs on, and the reason this is a pairing step rather than two
+    independent tallies.
+    """
+    match_code: str
+    market_id: int
+    line: Optional[float]
+    outcome: bool
+    prod: Observation
+    candidate: Observation
+
+
+def build_pairs(observations, stats=None):
+    """Every (match, selection) both streams closed on the same line."""
+    stats = stats if stats is not None else collections.defaultdict(int)
+    keyed = collections.defaultdict(dict)
+    for o in observations:
+        keyed[(o.match_code, o.market_id)][o.stream] = o
+
+    out = []
+    for (match_code, market_id), sides in keyed.items():
+        prod, candidate = sides.get(PROD), sides.get(CANDIDATE)
+        if prod is None or candidate is None:
+            stats["prematch_one_stream_only"] += 1
+            continue
+        if markets.needs_line(market_id) and prod.line != candidate.line:
+            stats["prematch_line_differs"] += 1
+            continue
+        stats["prematch_paired"] += 1
+        out.append(Pair(match_code=match_code, market_id=market_id,
+                        line=prod.line, outcome=prod.outcome,
+                        prod=prod, candidate=candidate))
+    out.sort(key=lambda p: (p.match_code, p.market_id))
+    return out
+
+
+def selection_key(pair):
+    return (markets.market_group(pair.market_id),
+            markets.selection_label(pair.market_id))
+
+
+def line_key(pair):
+    return selection_key(pair) + (pair.line,)
+
+
+def cell(pairs, n_bootstrap=1000, seed=0):
+    """Both streams against the SAME realized rate.
+
+    The shape the cross-section uses, and for the same reason: one
+    realized number with each stream's prediction beside it is the only
+    way to see which one is off and in which direction.
+    """
+    out = {"n": len(pairs), "matches": len({p.match_code for p in pairs}),
+           "realized": None, "prod_predicted": None, "candidate_predicted": None,
+           "prod_gap": None, "candidate_gap": None, "prod_brier": None,
+           "candidate_brier": None, "brier_delta": None, "ci_low": None,
+           "ci_high": None, "p_value": None, "closer": None}
+    if not pairs:
+        return out
+    n = len(pairs)
+    out["realized"] = sum(1 for p in pairs if p.outcome) / n
+    out["prod_predicted"] = sum(p.prod.probability for p in pairs) / n
+    out["candidate_predicted"] = sum(p.candidate.probability for p in pairs) / n
+    out["prod_gap"] = out["realized"] - out["prod_predicted"]
+    out["candidate_gap"] = out["realized"] - out["candidate_predicted"]
+    out["prod_brier"] = sum(p.prod.brier for p in pairs) / n
+    out["candidate_brier"] = sum(p.candidate.brier for p in pairs) / n
+    out["closer"] = ("cand" if abs(out["candidate_gap"]) < abs(out["prod_gap"])
+                     else "prod")
+
+    # Positive favours the candidate, clustered on matches.
+    per_match = collections.defaultdict(list)
+    for p in pairs:
+        per_match[p.match_code].append(p.prod.brier - p.candidate.brier)
+    deltas = [sum(v) / len(v) for v in per_match.values()]
+    out["brier_delta"] = sum(deltas) / len(deltas)
+    out["p_value"] = metrics.sign_test(sum(1 for d in deltas if d > 0),
+                                       sum(1 for d in deltas if d < 0))
+    if len(deltas) >= 2 and n_bootstrap > 0:
+        rnd = random.Random(seed)
+        means = []
+        for _ in range(n_bootstrap):
+            sample = [deltas[rnd.randrange(len(deltas))] for _ in deltas]
+            means.append(sum(sample) / len(sample))
+        means.sort()
+        out["ci_low"] = means[int(0.025 * len(means))]
+        out["ci_high"] = means[min(int(0.975 * len(means)), len(means) - 1)]
+    return out
+
+
+def cells(pairs, key, n_bootstrap=1000, min_n=1):
+    grouped = collections.defaultdict(list)
+    for p in pairs:
+        grouped[key(p)].append(p)
+    return {k: cell(v, n_bootstrap) for k, v in grouped.items()
+            if len(v) >= min_n}
+
+
+# How far from even money the closing prices actually sit. The whole
+# pre-match reading turns on this: a book that never leaves 50/50 has no
+# view to be calibrated, and its Brier will sit at 0.25 whatever else is
+# true. Bands rather than a standard deviation, because the question is
+# whether ANY price is ever confident, not what the average one looks
+# like.
+PRICE_BANDS = [(0.00, 0.02), (0.02, 0.05), (0.05, 0.10),
+               (0.10, 0.20), (0.20, 0.50)]
+
+
+def price_spread(observations):
+    """Distribution of |closing price - 0.5|, and of how many quotes it
+    was the last of."""
+    out = {"n": len(observations), "bands": [], "quotes": collections.Counter(),
+           "max_distance": None, "mean_distance": None}
+    if not observations:
+        return out
+    distances = [abs(o.probability - 0.5) for o in observations]
+    out["max_distance"] = max(distances)
+    out["mean_distance"] = sum(distances) / len(distances)
+    for low, high in PRICE_BANDS:
+        n = sum(1 for d in distances if low <= d < high)
+        out["bands"].append({"low": low, "high": high, "n": n,
+                             "share": n / len(distances)})
+    for o in observations:
+        out["quotes"][min(o.n_quotes, 10)] += 1
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
 
@@ -159,29 +297,20 @@ def selection_label(o):
     return (markets.market_group(o.market_id), markets.selection_label(o.market_id))
 
 
-def head_to_head(observations, n_bootstrap=1000, seed=0):
+def head_to_head(pairs, n_bootstrap=1000, seed=0):
     """Paired Brier, prod against candidate, on the same closing prices.
 
-    Paired on (match, selection) so both streams are being graded on the
-    same question about the same match, and clustered on matches because
-    six selections inside one match are not six independent draws.
+    Takes PAIRS rather than observations, which is the fix this needed: a
+    pair only exists where both streams closed on the same line, so the
+    two Briers are squared against the same 0/1. Differencing them across
+    a line change would have compared two different questions.
     """
-    keyed = collections.defaultdict(dict)
-    for o in observations:
-        keyed[(o.match_code, o.market_id)][o.stream] = o
-
     per_match = collections.defaultdict(list)
-    for (match_code, _), sides in keyed.items():
-        prod, candidate = sides.get(PROD), sides.get(CANDIDATE)
-        if prod is None or candidate is None:
-            continue
-        # Positive favours the candidate, matching the rest of the suite.
-        per_match[match_code].append(prod.brier - candidate.brier)
-
+    for p in pairs:
+        per_match[p.match_code].append(p.prod.brier - p.candidate.brier)
     deltas = [sum(v) / len(v) for v in per_match.values()]
-    out = {"pairs": sum(len(v) for v in per_match.values()),
-           "matches": len(deltas), "mean": None, "ci_low": None,
-           "ci_high": None, "p_value": None,
+    out = {"pairs": len(pairs), "matches": len(deltas), "mean": None,
+           "ci_low": None, "ci_high": None, "p_value": None,
            "matches_favouring_candidate": sum(1 for d in deltas if d > 0),
            "matches_favouring_prod": sum(1 for d in deltas if d < 0)}
     if not deltas:
@@ -202,25 +331,39 @@ def head_to_head(observations, n_bootstrap=1000, seed=0):
     return out
 
 
-def report(observations, n_bootstrap=1000, n_bins=None):
-    """The whole pre-match reading, in the shape the report renders."""
+def report(observations, n_bootstrap=1000, n_bins=None, stats=None,
+           min_line_n=10):
+    """The whole pre-match reading.
+
+    Built on PAIRS, per SELECTION, against one shared realized rate.
+    Pooling the two sides of a market would force the realized rate and
+    both predictions to exactly 0.500 whatever the model does -- the
+    sides are complements, so the mean of a price and one minus it is
+    0.5 by arithmetic -- which is the same trap the cross-section avoids
+    by reading one selection per market. The Brier survives that pooling;
+    the gap does not.
+    """
     if not observations:
         return None
-    out = {"n": len(observations),
-           "matches": len({o.match_code for o in observations}),
-           "head_to_head": head_to_head(observations, n_bootstrap),
-           "streams": {}}
-    for stream in (PROD, CANDIDATE):
-        mine = [o for o in observations if o.stream == stream]
-        if not mine:
-            continue
-        out["streams"][stream] = {
-            "overall": block(mine, n_bins),
-            "by_market": by(mine, lambda o: markets.market_group(o.market_id),
-                            n_bins),
-            "by_selection": by(mine, selection_label, n_bins),
-        }
-    return out
+    stats = stats if stats is not None else collections.defaultdict(int)
+    pairs = build_pairs(observations, stats)
+    lined = [p for p in pairs if markets.needs_line(p.market_id)]
+    return {
+        "n": len(observations),
+        "matches": len({o.match_code for o in observations}),
+        "pairs": len(pairs),
+        "line_differs": stats.get("prematch_line_differs", 0),
+        "one_stream_only": stats.get("prematch_one_stream_only", 0),
+        "head_to_head": head_to_head(pairs, n_bootstrap),
+        "by_selection": cells(pairs, selection_key, n_bootstrap),
+        "by_line": cells(lined, line_key, n_bootstrap, min_n=min_line_n),
+        "spread": price_spread(observations),
+        "spread_by_market": {
+            group: price_spread([o for o in observations
+                                 if markets.market_group(o.market_id) == group])
+            for group in sorted({markets.market_group(o.market_id)
+                                 for o in observations})},
+    }
 
 
 class Sink:
@@ -242,6 +385,9 @@ class Sink:
 
     def summary(self, n_bootstrap=300):
         return report(self.observations, n_bootstrap=n_bootstrap)
+
+    def rows(self):
+        return [row(o) for o in self.observations]
 
 
 FIELDS = ["match_code", "stream", "market_id", "market", "selection",

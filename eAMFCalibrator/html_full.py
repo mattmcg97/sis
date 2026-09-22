@@ -820,59 +820,100 @@ def _pair_rows(pairs):
 def _prematch_block(summary):
     """Calibration of the CLOSING price, before a snap was taken.
 
-    A different question from everything above it, which reads prices
-    taken during a match. Here the model had no play feed to react to,
-    so there is nothing to be fast or slow about -- only whether the
-    number was right.
+    Laid out the way the cross-section is, and for the same reason: one
+    realized rate with each stream's prediction beside it. Pooling the
+    two sides of a market would force the realized rate and both
+    predictions to exactly 0.500 whatever the model does, since the
+    sides are complements.
     """
     if not summary:
         return ""
-    from . import directional
-    rows = []
-    for stream in (directional.PROD, directional.CANDIDATE):
-        s = summary["streams"].get(stream)
-        if not s:
-            continue
-        for label, block in [("All", s["overall"])] + [
-                (str(k).capitalize(), v)
-                for k, v in sorted(s["by_market"].items(), key=lambda kv: str(kv[0]))]:
-            rows.append(f"""<tr>
-                <th>{stream.capitalize()}</th>
-                <td>{label}</td>
-                <td>{block['n']:,}</td><td>{block['matches']:,}</td>
-                <td>{_n(block['mean_predicted'], '.3f')}</td>
-                <td>{_n(block['realized'], '.3f')}</td>
-                <td class="{_gap(block['gap'], PROB_GAP)}">{_n(block['gap'], '+.3f')}</td>
-                <td>{_n(block['brier'], '.4f')}</td>
-                <td>{_n(block['ece'], '.4f')}</td>
-            </tr>""")
-    h2h = summary["head_to_head"]
+
+    def cell_row(label, c):
+        return f"""<tr>
+            <th>{label}</th>
+            <td>{c['n']:,}</td><td>{c['matches']:,}</td>
+            <td><b>{_n(c['realized'], '.3f')}</b></td>
+            <td>{_n(c['prod_predicted'], '.3f')}</td>
+            <td class="{_gap(c['prod_gap'], PROB_GAP)}">{_n(c['prod_gap'], '+.3f')}</td>
+            <td>{_n(c['candidate_predicted'], '.3f')}</td>
+            <td class="{_gap(c['candidate_gap'], PROB_GAP)}">{_n(c['candidate_gap'], '+.3f')}</td>
+            <td class="{_cls(c['brier_delta'])}">{_n(c['brier_delta'])}</td>
+            <td>{_p(c['p_value'])}</td>
+            <td class="dim">{c['closer'] or '&mdash;'}</td>
+        </tr>"""
+
+    head = """<thead><tr><th>Selection</th><th>N</th><th>Matches</th>
+        <th title="share that actually came in">Real</th>
+        <th>Prod</th><th title="realized minus predicted">P gap</th>
+        <th>Cand</th><th title="realized minus predicted">C gap</th>
+        <th title="prod minus candidate, match-clustered; positive favours the candidate">&Delta;Brier</th>
+        <th>p</th><th title="whose gap is smaller">Closer</th></tr></thead>"""
+
+    selections = "".join(
+        cell_row(f"{k[0]} {k[1]}", summary["by_selection"][k])
+        for k in sorted(summary["by_selection"],
+                        key=lambda k: (str(k[0]), str(k[1]))))
+    lines = "".join(
+        cell_row(f"{k[0]} {k[1]} {k[2]:+g}", summary["by_line"][k])
+        for k in sorted(summary["by_line"],
+                        key=lambda k: (str(k[0]), str(k[1]),
+                                       k[2] if k[2] is not None else 0)))
+
+    spread = summary["spread"]
+    bands = "".join(
+        f"<tr><th>{b['low']:.2f} to {b['high']:.2f}</th>"
+        f"<td>{b['n']:,}</td><td>{_pct(b['share'])}</td></tr>"
+        for b in spread["bands"])
+    markets_rows = "".join(
+        f"<tr><th>{group}</th><td>{s['n']:,}</td>"
+        f"<td>{s['mean_distance']:.3f}</td><td>{s['max_distance']:.3f}</td>"
+        f"<td>{_pct(s['bands'][0]['share']) if s['bands'] else '&mdash;'}</td></tr>"
+        for group, s in summary["spread_by_market"].items())
+
+    h = summary["head_to_head"]
+    line_rows = (f"""
+      <h3>By line</h3>
+      <table>{head}<tbody>{lines}</tbody></table>""" if lines else "")
     return f"""
     <section class="panel" id="prematch">
       <h2>Pre-match calibration</h2>
-      <table>
-        <thead><tr><th>Stream</th><th>Market</th><th>N</th><th>Matches</th>
-          <th title="mean closing probability">Pred</th>
-          <th title="share that actually came in">Real</th>
-          <th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th>
-          <th>Brier</th>
-          <th title="expected calibration error">ECE</th></tr></thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
+      <p class="count">{summary['n']:,} closing prices &middot;
+        {summary['matches']:,} matches &middot; {summary['pairs']:,} pairs on
+        the same line &middot; {summary['line_differs']:,} dropped for a
+        different line</p>
+      <div class="cols">
+        <div>
+          <table>
+            <thead><tr><th title="distance of the closing price from even money">|p &minus; 0.500|</th>
+              <th>N</th><th>Share</th></tr></thead>
+            <tbody>{bands}</tbody>
+          </table>
+        </div>
+        <div>
+          <table>
+            <thead><tr><th>Market</th><th>N</th><th>Mean |p&minus;.5|</th>
+              <th>Max</th><th>Within .02</th></tr></thead>
+            <tbody>{markets_rows}</tbody>
+          </table>
+        </div>
+      </div>
+      <h3>By selection</h3>
+      <table>{head}<tbody>{selections}</tbody></table>{line_rows}
       <h3>Head to head</h3>
       <table>
-        <thead><tr><th>Closing prices</th><th>Matches</th>
+        <thead><tr><th>Pairs</th><th>Matches</th>
           <th title="per match, positive favours the candidate">&Delta;Brier</th>
           <th>95% CI</th>
           <th title="matches where the candidate priced closer">Cand</th>
           <th>Prod</th><th title="match-clustered sign test">p</th></tr></thead>
         <tbody><tr>
-          <td>{h2h['pairs']:,}</td><td>{h2h['matches']:,}</td>
-          <td class="{_cls(h2h['mean'])}">{_n(h2h['mean'])}</td>
-          <td class="dim">{_ci(h2h)}</td>
-          <td>{h2h['matches_favouring_candidate']:,}</td>
-          <td>{h2h['matches_favouring_prod']:,}</td>
-          <td>{_p(h2h['p_value'])}</td>
+          <td>{h['pairs']:,}</td><td>{h['matches']:,}</td>
+          <td class="{_cls(h['mean'])}">{_n(h['mean'])}</td>
+          <td class="dim">{_ci(h)}</td>
+          <td>{h['matches_favouring_candidate']:,}</td>
+          <td>{h['matches_favouring_prod']:,}</td>
+          <td>{_p(h['p_value'])}</td>
         </tr></tbody>
       </table>
     </section>"""

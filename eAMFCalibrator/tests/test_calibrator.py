@@ -2821,32 +2821,130 @@ class TestPrematchReport(unittest.TestCase):
         block = prematch.block(self.observations(spec), n_bins=5)
         self.assertAlmostEqual(block["gap"], -0.4)
 
-    def test_the_head_to_head_is_paired_on_the_same_question(self):
-        # Prod at 0.9 and candidate at 0.6 on the same match and market,
-        # and it came in: prod priced it closer.
-        obs = [prematch.Observation("AF1", directional.PROD, 50, 0.9, None,
-                                    True, None, True, 1),
-               prematch.Observation("AF1", directional.CANDIDATE, 50, 0.6,
-                                    None, True, None, True, 1)]
-        h = prematch.head_to_head(obs, n_bootstrap=20)
+    def obs(self, stream, market_id, probability, outcome, line=None,
+            match="AF1"):
+        return prematch.Observation(match, stream, market_id, probability,
+                                    line, outcome, None, True, 1)
+
+    def test_pooling_both_sides_would_force_the_gap_to_zero(self):
+        # The trap the cross-section already documents. Home and Away are
+        # complements, so the mean of a price and one minus it is 0.5 by
+        # arithmetic -- the realized rate and both predictions land on
+        # 0.500 however good or bad the model is. Reading per SELECTION
+        # is what keeps the gap meaningful.
+        pooled = []
+        for i in range(20):
+            p = 0.2 + 0.03 * i
+            pooled.append(self.obs(directional.PROD, 50, p, True, match=f"AF{i}"))
+            pooled.append(self.obs(directional.PROD, 51, 1 - p, False,
+                                   match=f"AF{i}"))
+        block = prematch.block(pooled, n_bins=5)
+        self.assertAlmostEqual(block["mean_predicted"], 0.5)
+        self.assertAlmostEqual(block["realized"], 0.5)
+        self.assertAlmostEqual(block["gap"], 0.0)
+        # Per selection it is not forced, and says something real.
+        home = [o for o in pooled if o.market_id == 50]
+        self.assertAlmostEqual(prematch.block(home, n_bins=5)["realized"], 1.0)
+
+    def test_the_head_to_head_needs_the_same_line(self):
+        # Prod closed -3.5 and the candidate -6.5, so they resolved
+        # against DIFFERENT outcomes. Differencing their Briers would
+        # compare two different questions.
+        stats = collections.defaultdict(int)
+        obs = [self.obs(directional.PROD, 52, 0.55, True, line=-3.5),
+               self.obs(directional.CANDIDATE, 52, 0.55, False, line=-6.5)]
+        pairs = prematch.build_pairs(obs, stats)
+        self.assertEqual(pairs, [])
+        self.assertEqual(stats["prematch_line_differs"], 1)
+        self.assertEqual(prematch.head_to_head(pairs)["pairs"], 0)
+
+    def test_the_same_line_pairs_and_is_compared(self):
+        obs = [self.obs(directional.PROD, 52, 0.9, True, line=-3.5),
+               self.obs(directional.CANDIDATE, 52, 0.6, True, line=-3.5)]
+        pairs = prematch.build_pairs(obs)
+        self.assertEqual(len(pairs), 1)
+        h = prematch.head_to_head(pairs, n_bootstrap=20)
         self.assertEqual(h["pairs"], 1)
         self.assertLess(h["mean"], 0)          # negative favours prod
         self.assertEqual(h["matches_favouring_prod"], 1)
 
-    def test_an_unpaired_price_decides_nothing(self):
-        obs = [prematch.Observation("AF1", directional.PROD, 50, 0.9, None,
-                                    True, None, True, 1)]
-        self.assertEqual(prematch.head_to_head(obs, n_bootstrap=20)["pairs"], 0)
+    def test_a_moneyline_needs_no_line_to_pair(self):
+        obs = [self.obs(directional.PROD, 50, 0.9, True),
+               self.obs(directional.CANDIDATE, 50, 0.6, True)]
+        self.assertEqual(len(prematch.build_pairs(obs)), 1)
 
-    def test_the_report_splits_by_market_and_selection(self):
+    def test_an_unpaired_price_decides_nothing(self):
+        stats = collections.defaultdict(int)
+        obs = [self.obs(directional.PROD, 50, 0.9, True)]
+        self.assertEqual(prematch.build_pairs(obs, stats), [])
+        self.assertEqual(stats["prematch_one_stream_only"], 1)
+
+    def test_a_cell_puts_both_streams_against_one_realized_rate(self):
         obs = []
-        for market_id in (50, 52, 54):
-            obs.append(prematch.Observation("AF1", directional.PROD, market_id,
-                                            0.6, None, True, None, True, 1))
-        result = prematch.report(obs, n_bootstrap=20)
-        s = result["streams"][directional.PROD]
-        self.assertEqual(sorted(s["by_market"]), ["moneyline", "spread", "total"])
-        self.assertEqual(len(s["by_selection"]), 3)
+        for i in range(10):
+            obs.append(self.obs(directional.PROD, 50, 0.8, i < 6,
+                                match=f"AF{i}"))
+            obs.append(self.obs(directional.CANDIDATE, 50, 0.5, i < 6,
+                                match=f"AF{i}"))
+        c = prematch.cell(prematch.build_pairs(obs), n_bootstrap=20)
+        self.assertEqual(c["n"], 10)
+        self.assertAlmostEqual(c["realized"], 0.6)
+        self.assertAlmostEqual(c["prod_predicted"], 0.8)
+        self.assertAlmostEqual(c["candidate_predicted"], 0.5)
+        self.assertAlmostEqual(c["prod_gap"], -0.2)
+        self.assertAlmostEqual(c["candidate_gap"], 0.1)
+        self.assertEqual(c["closer"], "cand")
+
+    def test_the_report_breaks_down_by_selection_and_by_line(self):
+        obs = []
+        for i in range(12):
+            for market_id, line in ((50, None), (52, -3.5), (54, 44.5)):
+                obs.append(self.obs(directional.PROD, market_id, 0.5, i < 6,
+                                    line=line, match=f"AF{i}"))
+                obs.append(self.obs(directional.CANDIDATE, market_id, 0.5,
+                                    i < 6, line=line, match=f"AF{i}"))
+        result = prematch.report(obs, n_bootstrap=20, min_line_n=1)
+        self.assertEqual(sorted(result["by_selection"]),
+                         [("moneyline", "Home"), ("spread", "Home"),
+                          ("total", "Over")])
+        # The moneyline has no line, so it is not in the by-line table.
+        self.assertEqual(sorted(result["by_line"]),
+                         [("spread", "Home", -3.5), ("total", "Over", 44.5)])
+
+    def test_a_thin_line_bucket_is_left_out(self):
+        obs = []
+        for i in range(3):
+            obs.append(self.obs(directional.PROD, 52, 0.5, True, line=-3.5,
+                                match=f"AF{i}"))
+            obs.append(self.obs(directional.CANDIDATE, 52, 0.5, True,
+                                line=-3.5, match=f"AF{i}"))
+        result = prematch.report(obs, n_bootstrap=20, min_line_n=10)
+        self.assertEqual(result["by_line"], {})
+
+    def test_the_price_spread_says_whether_there_is_a_view_at_all(self):
+        # The reading the whole panel turns on. A book that never leaves
+        # 50/50 has no view to be calibrated, and its Brier sits at 0.25
+        # whatever else is true.
+        flat = [self.obs(directional.PROD, 50, 0.501, True, match=f"AF{i}")
+                for i in range(50)]
+        s = prematch.price_spread(flat)
+        self.assertEqual(s["bands"][0]["n"], 50)      # all within 0.02
+        self.assertAlmostEqual(s["bands"][0]["share"], 1.0)
+        self.assertLess(s["max_distance"], 0.02)
+
+        confident = [self.obs(directional.PROD, 50, 0.85, True, match=f"AF{i}")
+                     for i in range(50)]
+        s = prematch.price_spread(confident)
+        self.assertEqual(s["bands"][0]["n"], 0)
+        self.assertAlmostEqual(s["max_distance"], 0.35)
+
+    def test_the_price_spread_counts_how_many_quotes_it_was_last_of(self):
+        obs = [prematch.Observation(f"AF{i}", directional.PROD, 50, 0.5, None,
+                                    True, None, True, 1 if i < 8 else 5)
+               for i in range(10)]
+        s = prematch.price_spread(obs)
+        self.assertEqual(s["quotes"][1], 8)
+        self.assertEqual(s["quotes"][5], 2)
 
     def test_no_observations_reports_nothing_rather_than_zeroes(self):
         self.assertIsNone(prematch.report([]))
