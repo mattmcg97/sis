@@ -714,10 +714,7 @@ def _full_cell(report):
             </tr>""")
     return f"""
     <section class="panel" id="cross">
-      <h2>Cross-section calibration <span class="tag">score diff &times; quarter &times; possession</span></h2>
-      <p class="count">{len(rows):,} cells &middot; {thin:,} under
-         {config.MIN_CELL_MATCHES} matches</p>
-      {_gap_key(PROB_GAP, 'Gap', '.2f')}
+      <h2>Cross-section calibration <span class="tag"></span></h2>
       <div class="scroll">
       <table class="sortable" id="crossTable">
         <thead><tr><th class="ax">Score diff</th><th class="ax">Quarter</th><th class="ax" title="which side has the ball">Possession</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
@@ -910,15 +907,13 @@ def _indrive_block(summary):
 def _pair_table(pairs):
     return f"""
     <section class="panel" id="pairs">
-      <h2>Every pair <span class="tag">{len(pairs):,} rows</span></h2>
+      <h2>Every pair <span class="tag"></span></h2>
       <div class="filter">
         <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
                placeholder="filter by match id" aria-label="Filter rows by match id">
         <span id="pairCount" class="count">{len(pairs):,} rows</span>
         <span class="count" title="works in every table; Escape clears them all">pin</span>
       </div>
-      {_gap_key(PROB_DELTA, '&Delta;prob', '.2f')}
-      {_gap_key(LINE_GAP, 'Line gap', '.1f')}
       <div class="scroll">
       <table class="sortable" id="pairTable">
         <thead><tr>
@@ -1012,25 +1007,14 @@ def render(report, header, stats, pairs, handle_scan,
 <body>
 <div class="wrap">
   <header>
-    <h1>eAMF &mdash; candidate vs prod</h1>
+    <h1>eAMF candidate vs prod</h1>
   </header>
-
-  <nav>
-    <a href="#headline">Directional calibration</a>
-    <a href="#cross">Cross-section calibration</a>
-    <a href="#indrive">In-drive reaction</a>
-    <a href="#checks">Checks</a>
-    <a href="#pairs">Every pair</a>
-    <button type="button" id="foldAll" class="fold">collapse all</button>
-  </nav>
-
-  <div class="verdict {verdict_class}">{verdict_text}</div>
 
   <div id="headline">{_headline(report)}{_market_block(report)}</div>
   {_full_cell(report)}
   {_indrive_block(indrive_summary)}
   <details class="panel" id="checks">
-    <summary>Checks &mdash; {checks_summary}</summary>
+    <summary>Additional Checks</summary>
     {_run_block(header, stats, report, pairs)}
     {_handle_block(handle_scan)}
     {_anchor_block(report)}
