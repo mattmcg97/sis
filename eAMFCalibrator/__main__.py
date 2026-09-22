@@ -103,15 +103,14 @@ def cmd_preflight(args):
                 print(f"  in window from {config.CUTOFF_START}: {n_rows:,} rows, {n_matches:,} matches")
                 print(f"  span: {first}  ->  {last}")
 
-                # What STATUS and IS_ACTIVE really contain. The pipeline
-                # calls 'open' + 'true' live and everything else suspended,
-                # which is a guess until this says otherwise.
+                # What STATUS and IS_ACTIVE really contain. Only
+                # IS_ACTIVE decides -- STATUS is reported beside it so the
+                # two can be checked against each other.
                 profile = snowflake_io.status_profile(cur, table)
                 print(f"  {'STATUS':<14}{'ACTIVE':<9}{'ROWS':>12}{'MATCHES':>9}"
                       f"{'NULL P':>8}{'ZERO P':>8}  live?")
                 for status, active, rows, matches, null_p, zero_p in profile:
-                    live = ("live" if directional.is_live(status, active)
-                            else "SUSPENDED")
+                    live = "live" if directional.is_live(active) else "SUSPENDED"
                     print(f"  {str(status):<14}{str(active):<9}{rows:>12,}"
                           f"{matches:>9,}{null_p or 0:>8.1%}{zero_p or 0:>8.1%}  {live}")
     finally:

@@ -591,13 +591,14 @@ def print_market_state(report):
             print(f"  {label:<9}{str(key):<14}{total:>9,}{dead:>8,}"
                   f"{_pct(dead / total):>8}")
     print("\n  These pairs are shown in the report and scored by nothing: a")
-    print("  price nobody could have taken is not a price. This feed has no")
-    print("  suspended state -- markets run open -> UNDER SETTLEMENT ->")
-    print("  CLOSED -- so most non-live rows are post-match settlement that a")
-    print("  drive-start snapshot should never land on. Anything here that is")
-    print("  NOT post-match is the interesting case, and a lopsided split")
-    print("  between the streams is the one to chase: those pairs cluster")
-    print("  around scores, which is where the two models differ most.")
+    print("  price nobody could have taken is not a price. Liveness is read")
+    print("  from IS_ACTIVE alone -- GAMEPLAI say STATUS is wrong, so it is")
+    print("  reported in the table beside it but gets no vote. Most non-live")
+    print("  rows are post-match settlement that a drive-start snapshot")
+    print("  should never land on. Anything here that is NOT post-match is")
+    print("  the interesting case, and a lopsided split between the streams")
+    print("  is the one to chase: those pairs cluster around scores, which")
+    print("  is where the two models differ most.")
 
 
 def print_selections(summary):

@@ -90,12 +90,16 @@ SCORE_DIFF_BUCKETS = [
 # so the size of the problem is visible before any data is thrown away.
 EXCLUDE_FLIPPED_MATCHES = False
 
-# A quote is live when STATUS is 'open' and IS_ACTIVE is 'true'; anything
-# else is not tradeable. This feed publishes four combinations and none of
-# them is a suspension: open/true, UNDER SETTLEMENT/false, CLOSED/false and
-# CLOSED/true. Only about 15% of rows are open. `preflight` prints the real
-# counts, so this stays a checked fact rather than an assumption.
-LIVE_STATUS = "open"
+# A quote is live when IS_ACTIVE is 'true'. STATUS is NOT read: GAMEPLAI
+# say that column is wrong, so it does not get a vote. It is still carried
+# onto every pair and still broken out in the report, which is how the two
+# columns can be checked against each other.
+#
+# The feed publishes four combinations -- open/true, UNDER SETTLEMENT/false,
+# CLOSED/false and CLOSED/true -- and none of them is a suspension. Dropping
+# STATUS from the test moves CLOSED/true (about 0.1% of rows) from dead to
+# live and moves nothing the other way. `preflight` prints the real counts,
+# so this stays a checked fact rather than an assumption.
 LIVE_IS_ACTIVE = "true"
 
 # Non-live quotes are carried onto the pairs and flagged, but kept out of

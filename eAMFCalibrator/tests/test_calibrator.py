@@ -589,13 +589,11 @@ class TestMarketStateFlag(unittest.TestCase):
             pair(0.9, 0.1, True, **kw),
             prod_live=prod_live, candidate_live=candidate_live)
 
-    def test_live_is_read_from_the_two_columns_not_assumed(self):
-        self.assertTrue(directional.is_live("open", "true"))
-        self.assertTrue(directional.is_live("OPEN", "TRUE"))
-        for status, active in (("suspended", "true"), ("open", "false"),
-                               ("closed", "false"), ("settled", "true")):
-            self.assertFalse(directional.is_live(status, active),
-                             f"{status}/{active}")
+    def test_is_active_alone_decides(self):
+        self.assertTrue(directional.is_live("true"))
+        self.assertTrue(directional.is_live("TRUE"))
+        for active in ("false", "FALSE", "", None):
+            self.assertFalse(directional.is_live(active), repr(active))
 
     def test_either_side_not_live_marks_the_pair(self):
         self.assertFalse(self.dead().not_live)
@@ -634,17 +632,37 @@ class TestMarketStateFlag(unittest.TestCase):
             config.REQUIRE_LIVE_QUOTE = previous
 
     def test_the_state_string_is_kept_verbatim(self):
-        # This feed has no "suspended" value -- markets run open -> UNDER
-        # SETTLEMENT -> CLOSED -- so the columns are reported as they are
-        # rather than mapped onto a vocabulary that does not exist.
+        # STATUS no longer decides anything, but it is still recorded
+        # beside IS_ACTIVE: side by side is how a disagreement between the
+        # two columns stays visible.
         self.assertEqual(directional.state_label("UNDER SETTLEMENT", "false"),
                          "UNDER SETTLEMENT/false")
         self.assertEqual(directional.state_label("open", "true"), "open/true")
 
-    def test_closed_but_active_is_not_read_as_live(self):
-        # A real combination in the feed, and an inconsistent one. It is
-        # not open, so it is not tradeable, whatever IS_ACTIVE claims.
-        self.assertFalse(directional.is_live("CLOSED", "true"))
+    def test_closed_but_active_is_live_now_that_status_does_not_vote(self):
+        # The one combination the change actually moves. GAMEPLAI say the
+        # status column is wrong, so a row it calls CLOSED while IS_ACTIVE
+        # is true is a price somebody could have taken.
+        self.assertTrue(directional.is_live("true"))
+
+    def test_settlement_is_still_dead_because_is_active_says_so(self):
+        # Nothing moves the other way: the 83% of rows that read
+        # UNDER SETTLEMENT / false are still out, on IS_ACTIVE alone.
+        self.assertFalse(directional.is_live("false"))
+
+    def test_the_index_prefers_a_live_row_on_is_active_alone(self):
+        # A message carrying a settled row and an active one must keep the
+        # active one, and that choice is now made without reading STATUS.
+        when = dt.datetime(2026, 9, 18, 12, 0)
+        rows = [("AF1", 52, when, 61.0, 2.0, "PLAYER 1 -3.5", 6,
+                 "UNDER SETTLEMENT", "false"),
+                ("AF1", 52, when, 48.0, 2.1, "PLAYER 1 -6.5", 6,
+                 "CLOSED", "true")]
+        index = directional.index_by_message(rows)
+        kept = index[("AF1", 52)][6]
+        self.assertEqual(kept.probability, 48.0)
+        self.assertTrue(kept.live)
+        self.assertEqual(kept.state, "CLOSED/true")
 
     def test_the_report_breaks_down_by_state_and_by_stream(self):
         pairs = [
@@ -724,6 +742,7 @@ class TestGeneratedQueries(unittest.TestCase):
             ("fetch_message_times", lambda c: io.fetch_message_times(c, "S", ["A"])),
             ("stream_window_summary", lambda c: io.stream_window_summary(c, "S")),
             ("status_profile", lambda c: io.status_profile(c, "S")),
+            ("rows_per_message", lambda c: io.rows_per_message(c, "S")),
         ]
         for name, call in cases:
             cursor = RecordingCursor()
@@ -739,7 +758,7 @@ class TestGeneratedQueries(unittest.TestCase):
         for name, sql, params in self.each_query():
             seen += 1
             self.assertEqual(sql.count("%s"), len(params or ()), name)
-        self.assertGreaterEqual(seen, 12)
+        self.assertGreaterEqual(seen, 13)
 
     def test_every_query_is_fully_interpolated(self):
         # An unresolved brace means an f-string placeholder was left behind,
@@ -753,6 +772,21 @@ class TestGeneratedQueries(unittest.TestCase):
             if name in ("team_vocabulary", "team_join_test"):
                 self.assertIn("SPORT_CODE", sql, name)
                 self.assertEqual(list(params), [config.SPORT_CODE] * sql.count("%s"))
+
+    def test_no_query_decides_liveness_on_status(self):
+        # The quote STATUS column is wrong, per GAMEPLAI, so nothing may
+        # test it. It is still SELECTed and still reported -- it just gets
+        # no vote. INPLAY_EVENT_STATUS is a different column, the match's
+        # own lifecycle, and picking settled matches still depends on it.
+        quote_status = re.compile(r"(?<![A-Z_])STATUS\s*=")
+        for name, sql, _ in self.each_query():
+            self.assertIsNone(quote_status.search(sql), name)
+
+    def test_the_live_count_is_read_from_is_active_alone(self):
+        for name, sql, params in self.each_query():
+            if name == "rows_per_message":
+                self.assertIn("SUM(CASE WHEN IS_ACTIVE = %s", sql)
+                self.assertEqual(params[0], config.LIVE_IS_ACTIVE)
 
     def test_quotes_are_no_longer_filtered_on_status_in_sql(self):
         # The filter moved onto the pair so what it drops can be counted.

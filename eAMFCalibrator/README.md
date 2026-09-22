@@ -469,7 +469,13 @@ the report both say the flagged matches are still in the numbers. Pass
 quote in any other state produced no row and the snapshot simply vanished,
 indistinguishable from a feed gap.
 
-`preflight` now prints what those columns really contain. On the
+**`IS_ACTIVE` alone decides.** GAMEPLAI say the `STATUS` column is wrong,
+so it gets no vote. It is still selected, still carried onto every pair
+and still broken out in the report — side by side is how a disagreement
+between the two columns stays visible, and the breakdown is now the
+evidence for the claim rather than a decoration.
+
+`preflight` prints what those columns really contain. On the
 2026-09-17 → 09-21 window, per stream:
 
 | STATUS | IS_ACTIVE | Rows | Share | Read as |
@@ -477,13 +483,19 @@ indistinguishable from a feed gap.
 | `UNDER SETTLEMENT` | false | ~985k | 83% | not live |
 | `open` | true | ~178k | 15% | **live** |
 | `CLOSED` | false | ~14.5k | 1.2% | not live |
-| `CLOSED` | true | ~1.7k | 0.1% | not live |
+| `CLOSED` | true | ~1.7k | 0.1% | **live** |
 
-**There is no suspension in this feed.** Markets run `open` →
-`UNDER SETTLEMENT` → `CLOSED`, and only ~15% of published rows are open.
-So the state is reported verbatim rather than mapped onto a vocabulary the
-feed does not use. `CLOSED`/`true` is an inconsistent combination and is
-read as not live: it is not open, whatever `IS_ACTIVE` claims.
+Dropping `STATUS` from the test moves exactly one bucket, and it is worth
+being explicit that this is not a no-op: `CLOSED`/`true` — about 0.1% of
+rows — goes from dead to live. Under the old rule those prices were
+thrown away on the strength of a column now known to be wrong. Nothing
+moves the other way: `UNDER SETTLEMENT`/`false` is still out, on
+`IS_ACTIVE` alone.
+
+The state is still reported verbatim rather than mapped onto a tidy
+vocabulary. Markets run `open` → `UNDER SETTLEMENT` → `CLOSED`, and
+**there is no suspension value in this feed** — inventing a word for one
+would be guessing where reporting the value is not.
 
 Most non-live rows are almost certainly post-match settlement churn that a
 drive-start snapshot would never land on — but "would never" is an
