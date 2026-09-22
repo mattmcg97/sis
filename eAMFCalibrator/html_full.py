@@ -894,7 +894,6 @@ def _indrive_block(summary):
           </table>
         </div>
       </div>
-      {html_indrive._rate_key()}
       <h3>Head to head</h3>
       <table>
         <thead><tr><th>Pairs</th>
