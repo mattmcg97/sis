@@ -2565,6 +2565,118 @@ class TestDriveCensusAndCsv(unittest.TestCase):
             self.assertIn(outcome, html_indrive.DRIVE_TITLES, outcome)
 
 
+class TestIndriveSink(unittest.TestCase):
+    """The in-drive analysis riding along on the pairing pass."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def feed(self):
+        plays = [PlayRow(m, 1, t, d, dist, f, None)
+                 for m, t, d, dist, f in [
+                     (1, self.HOME, 2, 3, 32), (2, self.HOME, 1, 10, 40),
+                     (9, self.AWAY, 1, 10, 25)]]
+        scores = [ScoreRow(5, 1, 7, None, 7, 0)]
+        return plays, scores
+
+    def indexes(self):
+        rows = [("AF1", 50, self.T, 40.0, 2.0, "PLAYER 1 to win", 1, "open", "true"),
+                ("AF1", 50, self.T, 46.0, 2.0, "PLAYER 1 to win", 2, "open", "true")]
+        return {directional.PROD: directional.index_by_message(rows),
+                directional.CANDIDATE: directional.index_by_message(rows)}
+
+    def test_it_collects_all_three_views_from_one_pass(self):
+        sink = indrive.Sink()
+        sink.add("AF1", *self.feed(), self.indexes())
+        self.assertTrue(sink.transitions)
+        self.assertTrue(sink.moves)
+        self.assertTrue(sink.outcomes)
+
+    def test_it_accumulates_across_matches(self):
+        sink = indrive.Sink()
+        for code in ("AF1", "AF2", "AF3"):
+            sink.add(code, *self.feed(), self.indexes())
+        self.assertEqual(len({o.match_code for o in sink.outcomes}), 3)
+
+    def test_the_summary_carries_the_drive_view_as_well_as_the_moves(self):
+        sink = indrive.Sink()
+        sink.add("AF1", *self.feed(), self.indexes())
+        summary = sink.summary(n_bootstrap=20)
+        self.assertEqual(summary["drives"], len(sink.outcomes))
+        self.assertEqual(summary["transitions"], len(sink.transitions))
+        self.assertIn("result", summary)
+        self.assertIn("census", summary)
+        self.assertIsNotNone(summary["points_per_drive"])
+
+    def test_an_empty_sink_summarises_to_nothing_rather_than_crashing(self):
+        self.assertIsNone(indrive.Sink().summary())
+
+    def test_a_failed_reconciliation_is_counted_into_the_shared_stats(self):
+        sink = indrive.Sink()
+        stats = collections.defaultdict(int)
+        sink.add("AF1", *self.feed(), self.indexes(), stats)
+        # This feed reconciles, so nothing is counted.
+        self.assertEqual(stats["match_points_do_not_reconcile"], 0)
+
+    def test_build_pairs_feeds_the_sink_without_a_second_fetch(self):
+        # The point of the sink: build_pairs already holds everything the
+        # in-drive analysis reads, so it must not query again.
+        from .. import snowflake_io
+        calls = []
+        plays, scores = self.feed()
+        originals = (snowflake_io.fetch_plays, snowflake_io.fetch_scores,
+                     snowflake_io.fetch_quotes, snowflake_io.fetch_final_scores)
+        rows = [("AF1", 50, self.T, 40.0, 2.0, "PLAYER 1 to win", 1, "open", "true"),
+                ("AF1", 50, self.T, 46.0, 2.0, "PLAYER 1 to win", 2, "open", "true")]
+        snowflake_io.fetch_plays = lambda c, m, t: (
+            calls.append("plays") or
+            [("AF1", p.event_message_count, 1, p.offensive_team, p.down_number,
+              p.distance, p.field_position, None) for p in plays])
+        snowflake_io.fetch_scores = lambda c, m: (
+            calls.append("scores") or
+            [("AF1", s.event_message_count, 1, s.p1_change, s.p2_change,
+              s.p1_cumulative, s.p2_cumulative) for s in scores])
+        snowflake_io.fetch_quotes = lambda c, table, m: (
+            calls.append("quotes") or rows)
+        snowflake_io.fetch_final_scores = lambda c, m: (
+            calls.append("finals") or {"AF1": (7, 0)})
+        try:
+            sink = indrive.Sink()
+            directional.build_pairs(None, ["AF1"], "FILE_TIME",
+                                    collections.defaultdict(int), None, sink)
+        finally:
+            (snowflake_io.fetch_plays, snowflake_io.fetch_scores,
+             snowflake_io.fetch_quotes, snowflake_io.fetch_final_scores) = originals
+        self.assertEqual(calls.count("plays"), 1)
+        self.assertEqual(calls.count("scores"), 1)
+        self.assertEqual(calls.count("quotes"), 2)   # one per stream
+        self.assertTrue(sink.outcomes)
+
+    def test_the_report_renders_the_panel_when_there_is_one(self):
+        from .. import html_full
+        sink = indrive.Sink()
+        sink.add("AF1", *self.feed(), self.indexes())
+        pairs = [pair(0.6, 0.8, True, match="AF1")]
+        full = directional.build_full_report(pairs, n_bootstrap=20)
+        page = html_full.render(full, {"paired_matches": 1},
+                                collections.defaultdict(int), pairs,
+                                handles.Scan().summary(),
+                                sink.summary(n_bootstrap=20))
+        self.assertIn('id="indrive"', page)
+        self.assertIn("In-drive reaction", page)
+        self.assertIn("Head to head", page)
+        self.assertIn("py -m eAMFCalibrator indrive", page)
+
+    def test_the_panel_is_left_out_when_there_is_nothing_to_say(self):
+        from .. import html_full
+        pairs = [pair(0.6, 0.8, True, match="AF1")]
+        full = directional.build_full_report(pairs, n_bootstrap=20)
+        page = html_full.render(full, {"paired_matches": 1},
+                                collections.defaultdict(int), pairs,
+                                handles.Scan().summary(), None)
+        self.assertNotIn('id="indrive"', page)
+
+
 class TestNearestQuote(unittest.TestCase):
     def setUp(self):
         self.times = [BASE + dt.timedelta(seconds=s) for s in (-10, -2, 1, 6)]
@@ -3576,27 +3688,32 @@ class TestGapRamp(unittest.TestCase):
         self.assertIn("&le;0.02", key)
         self.assertIn("&gt;0.20", key)
 
-    def test_the_ramp_moves_in_lightness_as_well_as_hue(self):
-        # Green and red are the one pair red-green colour blindness cannot
-        # separate, so hue alone cannot carry the ordering. Lightness has
-        # to move monotonically, by more than the 0.06 step floor, in BOTH
-        # themes. The DIRECTION differs by theme on purpose: prominence
-        # rises with severity either way, darkest on light and brightest
-        # on dark, so the worst numbers shout loudest with no hue at all.
+    def test_the_ramp_is_hue_only(self):
+        # It must not brighten. Every step sits at the same OKLCH
+        # lightness as --bad in its own theme and differs by hue alone,
+        # so the ramp sweeps green to red without ever getting lighter.
         import re
         from .. import html_style
-        source = html_style.CSS
         found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
-                           r" --g3:(#\w{6}); --g4:(#\w{6});", source)
+                           r" --g3:(#\w{6}); --g4:(#\w{6});", html_style.CSS)
         self.assertEqual(len(found), 3)   # light, media-query dark, forced dark
         self.assertEqual(len(set(found[1:])), 1, "both dark rules must agree")
         for ramp in (found[0], found[1]):
             lightness = [_oklab_l(step) for step in ramp]
-            ordered = (lightness == sorted(lightness)
-                       or lightness == sorted(lightness, reverse=True))
-            self.assertTrue(ordered, f"{ramp} is not monotone: {lightness}")
-            gaps = [abs(lightness[i + 1] - lightness[i]) for i in range(4)]
-            self.assertTrue(all(g >= 0.06 for g in gaps), f"{ramp}: {gaps}")
+            self.assertLess(max(lightness) - min(lightness), 0.01,
+                            f"{ramp} varies in lightness: {lightness}")
+
+    def test_the_red_end_is_the_red_the_rest_of_the_report_uses(self):
+        # Not a brighter or paler red of its own -- the same one the
+        # Brier columns already read in.
+        import re
+        from .. import html_style
+        ramps = re.findall(r"--g0:#\w{6}; --g1:#\w{6}; --g2:#\w{6};"
+                           r" --g3:#\w{6}; --g4:(#\w{6});", html_style.CSS)
+        bads = re.findall(r"--bad:(#\w{6});", html_style.CSS)
+        self.assertEqual(len(ramps), len(bads))
+        for red, bad in zip(ramps, bads):
+            self.assertEqual(red, bad)
 
     def test_the_number_stays_readable_on_every_step(self):
         # The ramp IS the number now, not a wash behind it, so each step
@@ -3641,12 +3758,41 @@ class TestReportRendering(unittest.TestCase):
         return self.html_full.render(self.report, self.header, self.stats,
                                      self.pairs, self.scan)
 
-    def test_header_separates_contributing_matches_from_the_universe(self):
+    def test_the_run_facts_separate_contributing_matches_from_the_universe(self):
         # 5 matches produced pairs; 9 were settled. Reporting only one
-        # number implied the wrong thing.
+        # number implied the wrong thing. They moved out of the title
+        # area into the Run table, but they are still both there.
         rendered = self._render()
-        self.assertIn("<b>5</b> matches with pairs", rendered)
-        self.assertIn("<b>9</b> settled", rendered)
+        run = rendered[rendered.index("<h2>Run</h2>"):]
+        run = run[:run.index("</section>")]
+        self.assertIn("<th>Matches with pairs</th><td>5</td>", run)
+        self.assertIn("<th>Of settled matches</th><td>9</td>", run)
+
+    def test_the_title_carries_nothing_but_the_title(self):
+        rendered = self._render()
+        head = rendered[rendered.index("<header>"):rendered.index("</header>")]
+        self.assertIn("<h1>", head)
+        self.assertNotIn("class=\"meta\"", head)
+
+    def test_every_panel_folds(self):
+        rendered = self._render()
+        script = rendered.split("<script>")[1]
+        self.assertIn("section.panel", script)
+        self.assertIn("folded", script)
+        self.assertIn("fold-body", script)
+        # The heading is the handle, so it has to be reachable by keyboard.
+        self.assertIn("tabindex", script)
+        self.assertIn("Enter", script)
+        self.assertIn(".panel.folded > .fold-body{display:none}", rendered)
+
+    def test_collapse_all_reaches_the_details_panels_too(self):
+        # The checks group is a native <details>, not a section, so the
+        # button has to close both kinds or "collapse all" is a lie.
+        rendered = self._render()
+        script = rendered.split("<script>")[1]
+        self.assertIn("foldAll", script)
+        self.assertIn("details.panel", script)
+        self.assertIn('id="foldAll"', rendered)
 
     def test_pair_table_carries_the_message_columns(self):
         rendered = self._render()

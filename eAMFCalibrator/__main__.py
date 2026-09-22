@@ -449,7 +449,10 @@ def cmd_report(args):
     """
     out_dir = args.out or DEFAULT_OUT
     print("\nPairing prod against candidate at each drive-start snapshot")
-    pairs, stats, header, handle_scan = directional.run()
+    # The in-drive analysis rides along on the same fetch rather than
+    # paying for a second set of queries to read the same rows.
+    sink = indrive.Sink()
+    pairs, stats, header, handle_scan = directional.run(sink=sink)
 
     report.print_directional_header(header, stats)
     # Before any comparison: is the PLAYER_1 frame the buckets are read in
@@ -512,7 +515,8 @@ def cmd_report(args):
 
     ordered = directional.sorted_pairs_by_disagreement(pairs)
     html_path = args.html or os.path.join(out_dir, "eamf_report.html")
-    html_full.write(html_path, full, header, stats, ordered, handle_scan)
+    html_full.write(html_path, full, header, stats, ordered, handle_scan,
+                    sink.summary())
     size = os.path.getsize(html_path) / 1024 ** 2
     print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
           f"{len(ordered):,} pair rows)")

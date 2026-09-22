@@ -337,12 +337,18 @@ def nearest_message(messages, target, max_gap):
     return best
 
 
-def build_pairs(cur, match_codes, time_column, stats, scan=None):
+def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
     """Every paired observation for one chunk of matches.
 
     `scan` is the handle check, accumulating across chunks. Every match is
     scanned whether or not the result is acted on, so the report can say
     how big the problem is even when nothing is being excluded.
+
+    `sink`, when given, also gets the in-drive analysis built from the
+    SAME fetched rows. The plays, the scores and both quote indexes are
+    already in hand here, and they are everything that analysis needs, so
+    running it as a second pass would double the query load to learn
+    nothing new.
     """
     scan = scan if scan is not None else handles.Scan()
     prod_table = config.STREAMS[PROD]
@@ -392,6 +398,10 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
             stats["matches_without_final"] += 1
             continue
         final_p1, final_p2 = final
+
+        if sink is not None:
+            sink.add(match_code, plays, scores,
+                     {PROD: prod_index, CANDIDATE: candidate_index}, stats)
 
         snapshots = build_snapshots(match_code, plays, scores)
         stats["snapshots"] += len(snapshots)
@@ -485,8 +495,12 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None):
     return pairs
 
 
-def run(verbose=True):
-    """Build every paired observation across the window."""
+def run(verbose=True, sink=None):
+    """Build every paired observation across the window.
+
+    `sink` rides along to collect the in-drive analysis off the same
+    fetch. See build_pairs.
+    """
     stats = defaultdict(int)
     pairs = []
     header = {}
@@ -521,7 +535,8 @@ def run(verbose=True):
                 batch = match_codes[start:start + chunk]
                 if verbose:
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
-                pairs.extend(build_pairs(cur, batch, time_column, stats, scan))
+                pairs.extend(build_pairs(cur, batch, time_column, stats, scan,
+                                         sink))
     finally:
         conn.close()
 

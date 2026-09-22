@@ -321,6 +321,21 @@ same event for both. Matching independently on time would let one stream
 land 0.1s from the snapshot and the other 2.5s away, scoring two different
 game states against one outcome.
 
+## The in-drive section on the main report
+
+`report` carries a high-level in-drive panel: the hit rate per stream
+overall and split in-drive against drive-end, the drive outcomes and
+what they were worth, and the head to head. Everything else — by
+outcome, by period, by market, by selection, the checks, the CSVs —
+lives in `indrive`, and the panel names that command rather than trying
+to be it.
+
+It costs **no extra queries**. `directional.build_pairs` already holds
+the plays, the scores and both quote indexes for each chunk of matches,
+which is everything the in-drive analysis reads, so an `indrive.Sink`
+rides along on that same fetch. A second pass would have doubled the
+query load to read the same rows twice.
+
 ## Reading the gap columns
 
 Every column headed a **gap** — the calibration gap (realized minus
@@ -348,25 +363,36 @@ painted a badly over-predicted `+0.40` *green* and a near-perfect
 A cell with nothing to compare (a dashed `Δprob` on a different-line
 pair) gets no colour at all. "Not comparable" is not a small gap.
 
-### The colour is on the number, not behind it
+### The colour is on the number, and it is hue only
 
 A wash of filled cells reads as a heat map when what is wanted is a
 table, so the ramp colours the type.
 
-Green and red are the one pair red-green colour blindness cannot
-separate, so hue alone cannot carry the ordering. The five steps also
-move monotonically in OKLCH lightness, every adjacent gap clearing the
-0.06 floor. The **direction** differs by theme on purpose, so that
-prominence rises with severity either way: darkest on the light theme
-(0.55 → 0.29), brightest on the dark one (0.63 → 0.89). A reader who
-sees no hue still sees the worst numbers shout loudest.
+It is **hue only**. Every step sits at the same OKLCH lightness as
+`--bad` in its own theme — 0.501 on light, 0.693 on dark — and differs
+from its neighbours by hue alone, so the ramp sweeps green → amber →
+orange → red without ever getting brighter, and its last step *is*
+`--bad`: `#b3261e` and `#ef6f66`, the same red the ΔBrier columns
+already use.
 
-As type rather than fill, every step has to clear 4.5:1 against the
-panel it sits on — a colour light enough to be a pleasant background is
-nowhere near dark enough to be read — which the light ramp does from 4.6
-and the dark from 5.0. The number is readable first and coloured second,
-and a key above each table names every band, so nothing is ever read by
-colour alone.
+The cost is named rather than hidden. Green and red at equal lightness
+are the one pair red-green colour blindness cannot separate, and a
+constant-lightness ramp gives up the second channel that would otherwise
+carry the ordering. What carries it instead is the **number**, which is
+in the cell and is the real answer, and the **key** above each table,
+which names every band. Every step still clears 4.5:1 against its panel
+— 5.6 at worst — so it is readable type first and coloured second.
+
+### Every panel folds
+
+The heading is the handle: click it, or tab to it and press Enter. The
+nav carries a **collapse all**, which closes the native `<details>`
+groups as well as the sections, so it does not collapse most of the page
+and quietly leave the rest open.
+
+Done in script rather than in the markup, so a panel does not have to
+know it is foldable — the heading becomes the handle and everything
+after it becomes the body, whichever function built it.
 
 ## In-drive reaction: `indrive`
 
