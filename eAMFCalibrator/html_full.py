@@ -148,54 +148,46 @@ def _verdict(report):
 
 
 def _headline(report):
-    """The directional result as two tables: the combined reading, then
-    the two halves it is made of."""
+    """The directional result as one table.
+
+    Three readings, one row each. The Brier delta is only defined where
+    both streams quoted the SAME line -- a different line is a different
+    question, so there is no shared 0/1 to square an error against -- and
+    the rows it does not apply to say so with a dash rather than with a
+    number that would invite the comparison anyway.
+    """
     same = report["summary"]["same_line"]
     line = report["summary"]["different_line"]
-    d = report["summary"]["decisive"]
-    dv = d["votes"]
+    decisive = report["summary"]["decisive"]
 
-    views = []
-    for block, label, metric, spec in ((same, "Same line", "brier", "+.4f"),
-                                       (line, "Different line", "mae", "+.3f")):
-        o, v, m = block["overall"], block["votes"], block[metric]
-        views.append(f"""<tr>
+    def row(label, n, matches, win_rate, brier):
+        delta = ("&mdash;" if brier is None
+                 else f'<span class="{_cls(brier)}">{_n(brier)}</span>')
+        return f"""<tr>
             <th>{label}</th>
-            <td>{o['n']:,}</td><td>{o['n_matches']:,}</td>
-            <td class="{_cls((o['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(o['candidate_win_rate'])}</td>
-            <td>{v['candidate']}&ndash;{v['prod']}</td>
-            <td class="dim">{v['tie']}</td>
-            <td class="{_cls(m.get('mean'))}">{_n(m.get('mean'), spec)}</td>
-            <td class="dim">{_ci(m, spec)}</td>
-            <td>{_p(m.get('p_value'))}</td>
-        </tr>""")
+            <td>{n:,}</td><td>{matches:,}</td>
+            <td class="{_cls((win_rate or 0.5) - 0.5)}">{_pct(win_rate)}</td>
+            <td>{delta}</td>
+        </tr>"""
 
+    rows = [
+        row("Overall", decisive["n"], decisive["matches"],
+            decisive["candidate_win_rate"], None),
+        row("Same line", same["overall"]["n"], same["overall"]["n_matches"],
+            same["overall"]["candidate_win_rate"], same["brier"].get("mean")),
+        row("Different line", line["overall"]["n"],
+            line["overall"]["n_matches"],
+            line["overall"]["candidate_win_rate"], None),
+    ]
     return f"""
     <section class="panel" id="directional">
       <h2>Directional calibration</h2>
       <table>
         <thead><tr><th>Reading</th><th>Pairs</th><th>Matches</th>
-          <th title="both streams quoted the same line">On prob</th>
-          <th title="lines differ, so the closer line decides">On line</th>
-          <th>Cand win</th><th>Match vote</th><th>Level</th>
-          <th title="match-clustered sign test">p</th></tr></thead>
-        <tbody><tr>
-          <th>Overall</th>
-          <td>{d['n']:,}</td><td>{d['matches']:,}</td>
-          <td>{d['settled_on_probability']:,}</td>
-          <td>{d['settled_on_line']:,}</td>
-          <td class="{_cls((d['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(d['candidate_win_rate'])}</td>
-          <td>{dv['candidate']}&ndash;{dv['prod']}</td>
-          <td class="dim">{dv['tie']}</td>
-          <td>{_p(dv['p_value'])}</td>
-        </tr></tbody>
-      </table>
-      <table>
-        <thead><tr><th>Reading</th><th>Pairs</th><th>Matches</th>
-          <th>Cand win</th><th>Match vote</th><th>Level</th>
-          <th title="Brier on the same line, points on a different one">&Delta;</th>
-          <th>95% CI</th><th>p</th></tr></thead>
-        <tbody>{''.join(views)}</tbody>
+          <th title="candidate share of decisive pairs">Cand win</th>
+          <th title="per match, positive favours the candidate; only defined where both streams quoted the same line">&Delta;Brier</th>
+        </tr></thead>
+        <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
 
@@ -582,7 +574,7 @@ def _both_sides_block(report):
       {_gap_key(PROB_GAP, 'Gap', '.2f')}
       <table>
         <thead><tr><th>Market</th><th>Sel</th><th>Used</th><th>N</th><th>Matches</th>
-          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th><th>Cand</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -663,7 +655,7 @@ def _cross_axis(axis):
       <h3>Same line</h3>
       <table>
         <thead><tr><th>Cell</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
-          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th><th>Cand</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
         <tbody>{''.join(prob_rows) or '<tr><td colspan="12" class="dim">no pairs</td></tr>'}</tbody>
       </table>
       <h3>Different line</h3>
@@ -714,11 +706,11 @@ def _full_cell(report):
             </tr>""")
     return f"""
     <section class="panel" id="cross">
-      <h2>Cross-section calibration <span class="tag"></span></h2>
+      <h2>Cross-section calibration</h2>
       <div class="scroll">
       <table class="sortable" id="crossTable">
         <thead><tr><th class="ax">Score diff</th><th class="ax">Quarter</th><th class="ax" title="which side has the ball">Possession</th><th>Market</th><th>Sel</th><th>N</th><th>Matches</th>
-          <th>Real</th><th>Prod</th><th title="realized minus predicted">Gap</th><th>Cand</th><th title="realized minus predicted">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
+          <th>Real</th><th>Prod</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th><th>Cand</th><th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th><th title="prod minus candidate: positive favours the candidate">&Delta;Brier</th><th title="match-clustered">p</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
       </div>
@@ -825,6 +817,67 @@ def _pair_rows(pairs):
     return "".join(out)
 
 
+def _prematch_block(summary):
+    """Calibration of the CLOSING price, before a snap was taken.
+
+    A different question from everything above it, which reads prices
+    taken during a match. Here the model had no play feed to react to,
+    so there is nothing to be fast or slow about -- only whether the
+    number was right.
+    """
+    if not summary:
+        return ""
+    from . import directional
+    rows = []
+    for stream in (directional.PROD, directional.CANDIDATE):
+        s = summary["streams"].get(stream)
+        if not s:
+            continue
+        for label, block in [("All", s["overall"])] + [
+                (str(k).capitalize(), v)
+                for k, v in sorted(s["by_market"].items(), key=lambda kv: str(kv[0]))]:
+            rows.append(f"""<tr>
+                <th>{stream.capitalize()}</th>
+                <td>{label}</td>
+                <td>{block['n']:,}</td><td>{block['matches']:,}</td>
+                <td>{_n(block['mean_predicted'], '.3f')}</td>
+                <td>{_n(block['realized'], '.3f')}</td>
+                <td class="{_gap(block['gap'], PROB_GAP)}">{_n(block['gap'], '+.3f')}</td>
+                <td>{_n(block['brier'], '.4f')}</td>
+                <td>{_n(block['ece'], '.4f')}</td>
+            </tr>""")
+    h2h = summary["head_to_head"]
+    return f"""
+    <section class="panel" id="prematch">
+      <h2>Pre-match calibration</h2>
+      <table>
+        <thead><tr><th>Stream</th><th>Market</th><th>N</th><th>Matches</th>
+          <th title="mean closing probability">Pred</th>
+          <th title="share that actually came in">Real</th>
+          <th title="realized minus predicted &mdash; green within 0.02, then 0.05, 0.10, 0.20; beyond 0.20 is red">Gap</th>
+          <th>Brier</th>
+          <th title="expected calibration error">ECE</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+      <h3>Head to head</h3>
+      <table>
+        <thead><tr><th>Closing prices</th><th>Matches</th>
+          <th title="per match, positive favours the candidate">&Delta;Brier</th>
+          <th>95% CI</th>
+          <th title="matches where the candidate priced closer">Cand</th>
+          <th>Prod</th><th title="match-clustered sign test">p</th></tr></thead>
+        <tbody><tr>
+          <td>{h2h['pairs']:,}</td><td>{h2h['matches']:,}</td>
+          <td class="{_cls(h2h['mean'])}">{_n(h2h['mean'])}</td>
+          <td class="dim">{_ci(h2h)}</td>
+          <td>{h2h['matches_favouring_candidate']:,}</td>
+          <td>{h2h['matches_favouring_prod']:,}</td>
+          <td>{_p(h2h['p_value'])}</td>
+        </tr></tbody>
+      </table>
+    </section>"""
+
+
 def _indrive_block(summary):
     """The in-drive reading, at the altitude this report wants it.
 
@@ -868,13 +921,13 @@ def _indrive_block(summary):
         </tr>""")
     return f"""
     <section class="panel" id="indrive">
-      <h2>In-drive reaction <span class="tag"></span></h2>
+      <h2>In-drive reaction</h2>
       <div class="cols">
         <div>
           <table>
             <thead><tr><th>Stream</th><th>Scope</th><th>Moves</th>
               <th title="moves that moved at all">Decided</th>
-              <th title="share of decided moves that went the expected way">Right</th>
+              <th title="share of decided moves that went the expected way &mdash; green from 70%, then 62%, 56%, 52%; below 52% is red, because 50% is a coin">Right</th>
               <th>95% CI</th><th>Flat</th><th>p</th></tr></thead>
             <tbody>{''.join(rows)}</tbody>
           </table>
@@ -907,7 +960,7 @@ def _indrive_block(summary):
 def _pair_table(pairs):
     return f"""
     <section class="panel" id="pairs">
-      <h2>Every pair <span class="tag"></span></h2>
+      <h2>Every pair</h2>
       <div class="filter">
         <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
                placeholder="filter by match id" aria-label="Filter rows by match id">
@@ -991,9 +1044,8 @@ def _checks_summary(report, scan=None):
 
 
 def render(report, header, stats, pairs, handle_scan,
-           indrive_summary=None):
+           indrive_summary=None, prematch_summary=None):
     css = html_style.CSS
-    verdict_class, verdict_text = _verdict(report)
     checks_summary = _checks_summary(report, handle_scan)
 
     return f"""<!DOCTYPE html>
@@ -1012,9 +1064,11 @@ def render(report, header, stats, pairs, handle_scan,
 
   <div id="headline">{_headline(report)}{_market_block(report)}</div>
   {_full_cell(report)}
+  {_prematch_block(prematch_summary)}
   {_indrive_block(indrive_summary)}
   <details class="panel" id="checks">
-    <summary>Additional Checks</summary>
+    <summary>Additional checks</summary>
+    <p class="count">{checks_summary}</p>
     {_run_block(header, stats, report, pairs)}
     {_handle_block(handle_scan)}
     {_anchor_block(report)}
@@ -1157,9 +1211,9 @@ def render(report, header, stats, pairs, handle_scan,
 
 
 def write(path, report, header, stats, pairs, handle_scan,
-          indrive_summary=None):
+          indrive_summary=None, prematch_summary=None):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(render(report, header, stats, pairs, handle_scan,
-                        indrive_summary))
+                        indrive_summary, prematch_summary))
     return path

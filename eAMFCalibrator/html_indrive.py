@@ -104,7 +104,7 @@ def _row(label, block, tag=""):
 HEAD = """<thead><tr><th>Split</th><th>Moves</th>
     <th title="moves that moved at all: a flat price is neither right nor wrong">Decided</th>
     <th>Matches</th>
-    <th title="share of decided moves that went the expected way">Right</th>
+    <th title="share of decided moves that went the expected way &mdash; green from 70%, then 62%, 56%, 52%; below 52% is red, because 50% is a coin">Right</th>
     <th title="match-clustered">95% CI</th>
     <th title="share of moves where nothing changed">Flat</th>
     <th title="moves scored on the probability, because the line held">On prob</th>

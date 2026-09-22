@@ -321,6 +321,54 @@ same event for both. Matching independently on time would let one stream
 land 0.1s from the snapshot and the other 2.5s away, scoring two different
 game states against one outcome.
 
+## Pre-match calibration
+
+```
+py -m eAMFCalibrator report      # the section, and prematch_closing.csv
+```
+
+Everything else in this suite reads prices taken DURING a match, at a
+drive start or between two plays, where being right and being *fast* are
+tangled together. This reads the last price published **before** the
+match got under way and asks the oldest question there is: when the
+model said 62%, did it happen 62% of the time? There is no play feed to
+react to, so nothing to be quick or slow about — only whether the number
+was right.
+
+### What counts as pre-match
+
+Taken from the play feed rather than from a schedule. The play rows
+begin when the match does, so a quote is pre-match when it carries **no
+message count at all** or one **below the first play row's**. That needs
+no column the rest of the suite does not already read, and it cannot
+drift out of step with a kickoff time nobody publishes.
+
+Those rows were being fetched and thrown away: `index_by_message` drops
+a quote with no message count, which is exactly what a pre-match quote
+has.
+
+### One observation per (match, selection, stream)
+
+The **closing** quote — the last one before kickoff, the most informed
+price the model ever published without seeing a snap. Taking the first
+instead would grade it on how it opened, which is a different and much
+easier question. The count of pre-match quotes travels with it, so a
+market quoted once months out is not read as the same kind of thing as
+one quoted two hundred times up to kickoff.
+
+A selection the final score cannot settle — a push, or a match with no
+final — is counted and dropped. It has no realized 0/1 to compare a
+probability against.
+
+The section reports predicted against realized, the gap, Brier, log loss
+and ECE per stream and per market, then a head-to-head paired on (match,
+selection) and clustered on matches, so six selections inside one match
+are not read as six independent draws.
+
+Like the in-drive view it **costs no extra queries**: `build_pairs`
+already fetches every quote for the chunk, so a `prematch.Sink` rides
+along on that same fetch.
+
 ## The in-drive section on the main report
 
 `report` carries a high-level in-drive panel: the hit rate per stream

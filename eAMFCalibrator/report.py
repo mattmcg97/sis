@@ -1355,3 +1355,56 @@ def directional_prod():
 def directional_candidate():
     from . import directional
     return directional.CANDIDATE
+
+
+# ---------------------------------------------------------------------------
+# Pre-match calibration
+# ---------------------------------------------------------------------------
+
+def print_prematch(summary, stats=None):
+    """Were the closing prices calibrated against what happened?"""
+    from . import directional
+    print(f"\n{'=' * 78}\nPRE-MATCH CALIBRATION -- the closing price"
+          f"\n{'=' * 78}")
+    if not summary:
+        print("  No pre-match quotes resolved.")
+        return
+    print(f"  {summary['n']:,} closing prices across {summary['matches']:,} "
+          f"matches")
+    print("  One per (match, selection, stream): the LAST quote published")
+    print("  before the first play row, resolved against the final score.")
+
+    for stream in (directional.PROD, directional.CANDIDATE):
+        s = summary["streams"].get(stream)
+        if not s:
+            continue
+        print(f"\n  {stream.upper():<12}{'N':>8}{'MATCHES':>9}{'PRED':>8}"
+              f"{'REAL':>8}{'GAP':>9}{'BRIER':>9}{'LOGLOSS':>9}{'ECE':>9}")
+        rows = [("all", s["overall"])]
+        rows += sorted(s["by_market"].items(), key=lambda kv: str(kv[0]))
+        for label, b in rows:
+            print(f"  {str(label):<12}{b['n']:>8,}{b['matches']:>9,}"
+                  f"{_fmt(b['mean_predicted'], '.3f'):>8}"
+                  f"{_fmt(b['realized'], '.3f'):>8}"
+                  f"{_fmt(b['gap'], '+.3f'):>9}{_fmt(b['brier'], '.4f'):>9}"
+                  f"{_fmt(b['log_loss'], '.4f'):>9}{_fmt(b['ece'], '.4f'):>9}")
+
+    h = summary["head_to_head"]
+    print(f"\n  {'HEAD TO HEAD':<18}{'PRICES':>8}{'MATCHES':>9}{'DBRIER':>10}"
+          f"{'95% CI':>22}{'CAND':>7}{'PROD':>7}{'P':>9}")
+    ci = ("" if h["ci_low"] is None
+          else f"[{h['ci_low']:+.4f}, {h['ci_high']:+.4f}]")
+    print(f"  {'closing price':<18}{h['pairs']:>8,}{h['matches']:>9,}"
+          f"{_fmt(h['mean'], '+.4f'):>10}{ci:>22}"
+          f"{h['matches_favouring_candidate']:>7,}"
+          f"{h['matches_favouring_prod']:>7,}{_p(h['p_value']):>9}")
+    print("\n  Positive DBRIER favours the candidate. Paired on (match,")
+    print("  selection) and clustered on matches, so six selections inside")
+    print("  one match are not read as six independent draws.")
+
+    if stats:
+        print(f"\n  {'DROPPED':<26}{'N':>10}")
+        for key in ("prematch_no_final", "prematch_no_quotes",
+                    "prematch_push", "prematch_not_live"):
+            if stats.get(key):
+                print(f"  {key:<26}{stats[key]:>10,}")

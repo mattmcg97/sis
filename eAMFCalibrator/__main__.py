@@ -20,7 +20,7 @@ import os
 import sys
 
 from . import (buckets, config, directional, dump, html_full, html_indrive,
-               html_report, indrive, pipeline,
+               html_report, indrive, pipeline, prematch,
                report, snowflake_io)
 
 
@@ -452,7 +452,9 @@ def cmd_report(args):
     # The in-drive analysis rides along on the same fetch rather than
     # paying for a second set of queries to read the same rows.
     sink = indrive.Sink()
-    pairs, stats, header, handle_scan = directional.run(sink=sink)
+    closing = prematch.Sink()
+    pairs, stats, header, handle_scan = directional.run(sink=sink,
+                                                        prematch_sink=closing)
 
     report.print_directional_header(header, stats)
     # Before any comparison: is the PLAYER_1 frame the buckets are read in
@@ -467,6 +469,7 @@ def cmd_report(args):
 
     # --- 0. the combined verdict, before either half of it ---
     report.print_decisive(summary["decisive"])
+    report.print_prematch(closing.summary(), stats)
 
     # --- 1. directional calibration ---
     report.print_block(
@@ -512,11 +515,13 @@ def cmd_report(args):
     # --- outputs ---
     report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)
     report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
+    _write_csv(os.path.join(out_dir, "prematch_closing.csv"), prematch.FIELDS,
+               [prematch.row(o) for o in closing.observations])
 
     ordered = directional.sorted_pairs_by_disagreement(pairs)
     html_path = args.html or os.path.join(out_dir, "eamf_report.html")
     html_full.write(html_path, full, header, stats, ordered, handle_scan,
-                    sink.summary())
+                    sink.summary(), closing.summary())
     size = os.path.getsize(html_path) / 1024 ** 2
     print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
           f"{len(ordered):,} pair rows)")
