@@ -389,7 +389,9 @@ possession.
 | Outcome | For the offence | How it is read |
 |---|---|---|
 | `touchdown` | good | six or more points to the side with the ball |
-| `score` | good | one to five points: a field goal or a conversion |
+| `field_goal` | good | exactly three |
+| `extra_point` | good | one or two: a PAT or a two-point conversion |
+| `score` | good | any other points short of a touchdown |
 | `first_down` | good | the down reset to 1 with the ball forward |
 | `big_gain` | good | 5+ yards, short of the line to gain |
 | `short_gain` | — | 1–4 yards, short of it |
@@ -415,14 +417,43 @@ Scored on the **sign**, not the size. `|Move|` and `Signed` report the size
 beside it, so a model that gets the direction right on a touchdown and a
 five-yard gain by the same amount is visible as such.
 
-### What is refused
+### When the line moves, the line is what is scored
 
-- A transition whose **line moved** between the two messages. A different
-  line is a different question, exactly as it is on a pair.
+A line move is not a failure to react — it *is* the reaction, and on a live
+feed it is about a third of everything. So the basis switches rather than
+the move being dropped:
+
+| The line | What is scored | Why |
+|---|---|---|
+| held | the **probability** | nothing else changed, so the price carries the news |
+| moved | the **line** | the probability answers a different question at each end and cannot be differenced |
+
+The direction expected of a line is **not** the direction expected of the
+probability, and getting that wrong would score a third of the sample
+backwards:
+
+- A **spread** line follows the side it names, exactly as that side's
+  probability would. Checked against the data rather than assumed: market
+  52's line tracks the home lead almost one for one (−14.9 at a 15–21
+  point deficit, +14.5 at a 21–27 point lead) and 53's is its mirror.
+- A **total** line does not. Over and Under share one number — 94% of
+  snapshots quote the identical value on both — so it goes **up** on a good
+  offensive play whichever selection is carrying it. Under's probability
+  should fall while Under's line rises.
+
+`Signed` is reported twice, once per basis, in probability points and in
+line points. They are different units and are **never** pooled; the hit
+rate does pool them, because right is right whichever moved.
+
+### What is still refused
+
 - A transition where **either endpoint was not live**. A price nobody could
   have taken did not move.
+- A line that moved but had **no readable number** at one end. That is a
+  difference in the description text, not a move.
 - A **flat** price is neither right nor wrong. It is reported as its own
-  column rather than counted as a miss — silence is a finding, not an error.
+  column rather than counted as a miss — silence is a finding, not an
+  error, and on some classes it is the whole finding.
 
 ### The bias to know before reading any number
 
@@ -441,6 +472,34 @@ other goes down and the expectations mirror, so the per-selection rates
 come in identical pairs. That is arithmetic, not a measurement. A row that
 does **not** match its partner is the interesting one — which is why the
 split is shown at all.
+
+### What the first full run said
+
+326 matches, 18,321 transitions, and the answer to the headline question is
+yes: both streams move the right way about three quarters of the time,
+overall and inside a drive alike, on every split with enough rows to say so.
+Four things in it are worth more than the headline.
+
+**The model does not react to a failed conversion at all.** `RIGHT` reads
+73.4%, on 158 decided moves out of 5,698 — because **97.2% were flat**, with
+a mean absolute move of 0.0009. That is not a hit rate, it is a frozen
+price, and the flat column is the only honest way to read that row.
+
+**Prices freeze in Q4.** Flat runs 12.8% in Q1 and **56.2%** in Q4. Any Q4
+number is computed on less than half the moves the count column implies.
+
+**A 5+ yard gain barely registers** — 56.2% against 81.3% for no gain and
+84.7% for a loss. Both streams read bad plays much better than good ones
+short of a first down. `BIG_GAIN_YARDS` is a constant, and five yards on
+1st and 10 leaving 2nd and 5 is close to neutral, so the threshold is worth
+moving before concluding anything about the models.
+
+**Points short of a touchdown scored below a coin** — 41.0% and 36.8%, with
+a negative signed move. Splitting `score` into `field_goal` and
+`extra_point` is what tells the two candidates apart: a field goal is real
+news, while a PAT follows a touchdown that was already priced one
+transition earlier, and the transition carrying it is drive-ending, where
+the team label is least reliable.
 
 ### Output
 

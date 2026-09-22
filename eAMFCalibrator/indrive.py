@@ -40,13 +40,16 @@ from typing import Optional
 from . import buckets, config, directional, drives, markets, metrics, snowflake_io
 
 TOUCHDOWN_POINTS = 6
+FIELD_GOAL_POINTS = 3
 BIG_GAIN_YARDS = 5
 
 # What a play did for the offence. The sign is the whole model: +1 means
 # the side with the ball should be priced better after it than before, -1
 # worse, 0 that nobody can say.
 TOUCHDOWN = "touchdown"
-SCORE = "score"                        # points short of a touchdown
+FIELD_GOAL = "field_goal"              # exactly three
+EXTRA_POINT = "extra_point"            # one or two: a PAT or a conversion
+SCORE = "score"                        # any other points short of a touchdown
 FIRST_DOWN = "first_down"
 BIG_GAIN = "big_gain"                  # 5+ yards, short of the line to gain
 SHORT_GAIN = "short_gain"              # 1-4 yards, short of it
@@ -58,6 +61,8 @@ POINTS_AGAINST = "points_against"        # a safety, or the defence scored
 
 OUTCOME_SIGN = {
     TOUCHDOWN: +1,
+    FIELD_GOAL: +1,
+    EXTRA_POINT: +1,
     SCORE: +1,
     FIRST_DOWN: +1,
     BIG_GAIN: +1,
@@ -71,11 +76,18 @@ OUTCOME_SIGN = {
 
 # Strongest first, which is the order they are reported in. A model that
 # gets the direction right should also move MORE on the ones near the top.
-OUTCOME_ORDER = [TOUCHDOWN, SCORE, FIRST_DOWN, BIG_GAIN, SHORT_GAIN,
+OUTCOME_ORDER = [TOUCHDOWN, FIELD_GOAL, EXTRA_POINT, SCORE,
+                 FIRST_DOWN, BIG_GAIN, SHORT_GAIN,
                  NO_GAIN, LOSS, FAILED_CONVERSION, POSSESSION_LOST,
                  POINTS_AGAINST]
 
 HOME, AWAY = drives.HOME_TEAM, drives.AWAY_TEAM
+
+# What moved, and therefore what was scored. Where the line held, the
+# probability carries the news; where it moved, the probability is not
+# comparable across it and the line carries it instead.
+PROBABILITY = "prob"
+LINE = "line"
 
 
 @dataclass(frozen=True)
@@ -108,14 +120,24 @@ class Transition:
 
 @dataclass(frozen=True)
 class Move:
-    """One selection's price move across one transition, for one stream."""
+    """One selection's move across one transition, for one stream.
+
+    `basis` says WHAT moved. Where the line held, the probability carries
+    the news and is scored. Where the line moved, the probability is not
+    comparable across it -- a different line is a different question, the
+    same rule the pair comparison runs on -- so the LINE is scored
+    instead. `before` and `after` are whichever of the two the basis names,
+    which is why magnitudes are never pooled across bases.
+    """
     transition: Transition
     stream: str
     market_id: int
     before: float
     after: float
-    line: Optional[float]
+    line_before: Optional[float]
+    line_after: Optional[float]
     expected: int
+    basis: str = PROBABILITY
 
     @property
     def delta(self):
@@ -137,6 +159,33 @@ class Move:
     def signed(self):
         """The move, oriented so that positive is the expected direction."""
         return self.delta * self.expected
+
+
+def expected_line_sign(market_id, offensive_team, outcome_sign):
+    """Which way this selection's LINE should move.
+
+    Not the same question as the probability, and the difference is the
+    whole reason a line move is worth scoring rather than dropping.
+
+    A SPREAD line follows the side it names, exactly as that side's
+    probability would: checked against the data, market 52's line tracks
+    the home lead almost one for one and 53's is its mirror.
+
+    A TOTAL line does NOT. Over and Under share ONE number -- 94% of
+    snapshots quote the identical value on both -- so it rises on a good
+    offensive play whichever selection is carrying it. Under's PROBABILITY
+    should fall while Under's LINE goes up, and reading the line with the
+    probability's expectation would score every one of them backwards.
+    """
+    if not outcome_sign or not markets.needs_line(market_id):
+        return 0
+    selection = markets.selection_label(market_id)
+    if selection in ("Over", "Under"):
+        return outcome_sign
+    if offensive_team not in (HOME, AWAY) or selection not in ("Home", "Away"):
+        return 0
+    offence = "Home" if offensive_team == HOME else "Away"
+    return outcome_sign if selection == offence else -outcome_sign
 
 
 def expected_sign(market_id, offensive_team, outcome_sign):
@@ -189,6 +238,13 @@ def classify(before, after, points, in_drive, possession_kept):
     # which is not a good play for the offence by any reading.
     if points >= TOUCHDOWN_POINTS:
         return TOUCHDOWN
+    if points == FIELD_GOAL_POINTS:
+        return FIELD_GOAL
+    if points in (1, 2):
+        # A PAT or a two-point conversion. Their own points, but the
+        # touchdown they follow was already priced one transition ago, so
+        # there is much less news in them than the class above.
+        return EXTRA_POINT
     if points > 0:
         return SCORE
     if points < 0:
@@ -297,22 +353,36 @@ def moves_for_transitions(transitions, indexes, stats=None):
                     continue
                 line_before = markets.parse_line(before.description)
                 line_after = markets.parse_line(after.description)
-                if markets.needs_line(market_id) and line_before != line_after:
-                    stats["move_line_changed"] += 1
+                moved = (markets.needs_line(market_id)
+                         and line_before != line_after)
+                if moved and (line_before is None or line_after is None):
+                    # One end carried no readable number, so there is no
+                    # move to measure, only a difference in the text.
+                    stats["move_line_unreadable"] += 1
                     continue
-                expected = expected_sign(market_id, transition.offensive_team,
-                                         transition.sign)
+                if moved:
+                    # The line moved, so the probability is answering a
+                    # different question at each end and cannot be
+                    # differenced. The line itself carries the news.
+                    expected = expected_line_sign(
+                        market_id, transition.offensive_team, transition.sign)
+                    basis, first, second = LINE, line_before, line_after
+                else:
+                    # GAMEPLAI publishes 0-100; everything in this suite
+                    # works in 0-1, so a move reads on the same scale as a
+                    # Brier delta rather than a hundred times larger.
+                    expected = expected_sign(
+                        market_id, transition.offensive_team, transition.sign)
+                    basis = PROBABILITY
+                    first = before.probability / 100.0
+                    second = after.probability / 100.0
                 if not expected:
                     continue
-                stats["move_scored"] += 1
-                # GAMEPLAI publishes 0-100; everything in this suite works
-                # in 0-1, so a move reads on the same scale as a Brier
-                # delta rather than a hundred times larger.
+                stats[f"move_scored_on_{basis}"] += 1
                 out.append(Move(
                     transition=transition, stream=stream, market_id=market_id,
-                    before=before.probability / 100.0,
-                    after=after.probability / 100.0,
-                    line=line_before, expected=expected))
+                    before=first, after=second, line_before=line_before,
+                    line_after=line_after, expected=expected, basis=basis))
     return out
 
 
@@ -357,10 +427,17 @@ def _clustered_rate(by_match, n_bootstrap=1000, seed=0):
 
 
 def block(moves, n_bootstrap=1000):
-    """Everything worth saying about one bag of moves."""
+    """Everything worth saying about one bag of moves.
+
+    The hit RATE pools both bases -- right is right, whether the news
+    arrived as a probability or as a line. The MAGNITUDES never pool:
+    probability points and handicap points are different units, and
+    averaging them together would produce a number in no units at all.
+    """
     by_match = collections.defaultdict(lambda: [0, 0])
     flat = 0
-    sizes, signed = [], []
+    sizes = {PROBABILITY: [], LINE: []}
+    signed = {PROBABILITY: [], LINE: []}
     for move in moves:
         code = move.transition.match_code
         if move.flat:
@@ -368,15 +445,23 @@ def block(moves, n_bootstrap=1000):
         else:
             by_match[code][1] += 1
             by_match[code][0] += int(move.hit)
-        sizes.append(abs(move.delta))
-        signed.append(move.signed)
+        sizes[move.basis].append(abs(move.delta))
+        signed[move.basis].append(move.signed)
+
+    def mean(values):
+        return (sum(values) / len(values)) if values else None
+
     out = _clustered_rate({k: tuple(v) for k, v in by_match.items()},
                           n_bootstrap)
     out["n"] = len(moves)
     out["flat"] = flat
     out["flat_share"] = (flat / len(moves)) if moves else None
-    out["mean_move"] = (sum(sizes) / len(sizes)) if sizes else None
-    out["mean_signed"] = (sum(signed) / len(signed)) if signed else None
+    out["n_prob"] = len(sizes[PROBABILITY])
+    out["n_line"] = len(sizes[LINE])
+    out["mean_move"] = mean(sizes[PROBABILITY])
+    out["mean_signed"] = mean(signed[PROBABILITY])
+    out["mean_line_move"] = mean(sizes[LINE])
+    out["mean_line_signed"] = mean(signed[LINE])
     return out
 
 
@@ -459,6 +544,7 @@ def report(moves, n_bootstrap=1000):
             "by_selection": by(mine, selection_label, n_bootstrap),
             "by_market": by(mine, lambda m: markets.market_group(m.market_id),
                             n_bootstrap),
+            "by_basis": by(mine, lambda m: m.basis, n_bootstrap),
         }
     return out
 
@@ -540,7 +626,8 @@ TRANSITION_FIELDS = [
 ]
 
 MOVE_FIELDS = TRANSITION_FIELDS + [
-    "stream", "market_id", "market", "selection", "line",
+    "stream", "market_id", "market", "selection", "basis",
+    "line_before", "line_after",
     "before", "after", "delta", "expected", "signed", "flat", "hit",
 ]
 
@@ -565,7 +652,9 @@ def move_row(move):
         "stream": move.stream, "market_id": move.market_id,
         "market": markets.market_group(move.market_id),
         "selection": markets.selection_label(move.market_id),
-        "line": "" if move.line is None else move.line,
+        "basis": move.basis,
+        "line_before": "" if move.line_before is None else move.line_before,
+        "line_after": "" if move.line_after is None else move.line_after,
         "before": move.before, "after": move.after,
         "delta": round(move.delta, 6), "expected": move.expected,
         "signed": round(move.signed, 6), "flat": int(move.flat),
