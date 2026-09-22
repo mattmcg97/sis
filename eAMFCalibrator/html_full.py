@@ -87,8 +87,7 @@ def _gap_key(cuts, unit, fmt=".2f"):
     labels.append(f"&gt;{cuts[-1]:{fmt}}")
     swatches = "".join(
         f'<span class="key g{i}">{label}</span>' for i, label in enumerate(labels))
-    return (f'<p class="gapkey"><span class="klab">{unit}</span>{swatches}'
-            f'<span class="klab">further from agreement &rarr;</span></p>')
+    return f'<p class="gapkey"><span class="klab">{unit}</span>{swatches}</p>'
 
 
 def _outcome(value):
@@ -102,19 +101,15 @@ def _outcome(value):
 # ---------------------------------------------------------------------------
 
 def _verdict(report):
-    """The headline, over EVERY pair rather than the same-line half.
+    """The headline as a line of numbers, over EVERY pair.
 
     Two readings, and they can disagree. The same-line Brier is the
-    sharper instrument, but it only covers pairs where both streams quoted
-    the same line. The combined decision covers all of them under the rule
-    that actually applies to each -- the closer line where the lines
-    differ, the closer probability where they do not -- so where it
-    separates the two models it OVERRULES the same-line reading, exactly
-    as a different line overrules a probability on a single pair.
-
-    Where they point opposite ways that is stated rather than smoothed
-    over: a candidate that prices better but lines worse is a real result
-    and the reader needs both halves of it.
+    sharper instrument but only covers pairs where both streams quoted
+    the same line; the combined decision covers all of them under the
+    rule that applies to each, so where it separates the two it overrules
+    the same-line reading. Both are shown rather than reconciled into a
+    sentence -- a candidate that prices better but lines worse is a real
+    result and the numbers say so without being narrated.
     """
     same = report["summary"]["same_line"]
     decisive = report["summary"]["decisive"]
@@ -124,93 +119,84 @@ def _verdict(report):
     rate, p_value = votes.get("candidate_win_rate"), votes.get("p_value")
 
     def name(side):
-        return "the candidate" if side == "candidate" else "prod"
+        return "CANDIDATE" if side == "candidate" else "PROD"
 
-    on_line = decisive["settled_on_line"]
-    coverage = f"{decisive['n']:,} pairs"
-    if on_line:
-        coverage += f", {on_line:,} settled on the line"
     combined_side = None if rate is None or rate == 0.5 else (
         "candidate" if rate > 0.5 else "prod")
-    combined = (f'Every pair on its own question ({coverage}): matches vote '
-                f'{votes["candidate"]}&ndash;{votes["prod"]} to '
-                f'{name(combined_side)}, p {_p(p_value)}.') if combined_side else (
-                f'Every pair on its own question ({coverage}): level.')
-
     same_side = None if mean is None else ("candidate" if mean > 0 else "prod")
-    same_separates = (mean is not None and lo is not None
-                      and not (lo <= 0 <= hi))
-    if mean is None or lo is None:
-        same_line_text = "Not enough same-line data for a Brier interval."
-    else:
-        same_line_text = (
-            f'Same line: {mean:+.4f} Brier to {name(same_side)}, interval '
-            f'{"excludes" if same_separates else "crosses"} zero.')
-
+    same_separates = mean is not None and lo is not None and not (lo <= 0 <= hi)
     combined_separates = p_value is not None and p_value <= 0.05 and combined_side
 
-    # The combined reading covers everything under the right rule, so it
-    # takes precedence wherever it can separate the two at all.
     if combined_separates:
-        clash = ("" if same_side in (None, combined_side)
-                 else f' The two disagree: {name(same_side)} prices better '
-                      'where the lines match, but that does not survive the '
-                      'lines.')
-        return (("good" if combined_side == "candidate" else "bad"),
-                f"{name(combined_side).capitalize()} is better. {combined} "
-                f"{same_line_text}{clash}")
-    if same_separates:
-        return (("good" if same_side == "candidate" else "bad"),
-                f"{name(same_side).capitalize()} is better where both quoted "
-                f"the same line, and the interval excludes zero. "
-                f"{combined} The combined reading does not separate them.")
-    return ("neutral",
-            f"No detectable difference. {same_line_text} {combined}")
+        tone, head = ("good" if combined_side == "candidate" else "bad",
+                      name(combined_side))
+    elif same_separates:
+        tone, head = ("good" if same_side == "candidate" else "bad",
+                      f"{name(same_side)} on same line")
+    else:
+        tone, head = "neutral", "NO DIFFERENCE"
+
+    parts = [f"<b>{head}</b>",
+             f"overall {votes['candidate']}&ndash;{votes['prod']} "
+             f"<span class=\"dim\">matches</span>, p {_p(p_value)}",
+             f"{decisive['n']:,} pairs "
+             f"<span class=\"dim\">({decisive['settled_on_line']:,} on line)</span>"]
+    if mean is not None:
+        parts.append(f"same line {mean:+.4f} &Delta;Brier, CI "
+                     f"{'excludes' if same_separates else 'crosses'} 0")
+    return tone, ' <span class="dim">&middot;</span> '.join(parts)
 
 
 def _headline(report):
+    """The directional result as two tables: the combined reading, then
+    the two halves it is made of."""
     same = report["summary"]["same_line"]
     line = report["summary"]["different_line"]
-    o, v, b = same["overall"], same["votes"], same["brier"]
-    lo, lv, lm = line["overall"], line["votes"], line["mae"]
     d = report["summary"]["decisive"]
     dv = d["votes"]
+
+    views = []
+    for block, label, metric, spec in ((same, "Same line", "brier", "+.4f"),
+                                       (line, "Different line", "mae", "+.3f")):
+        o, v, m = block["overall"], block["votes"], block[metric]
+        views.append(f"""<tr>
+            <th>{label}</th>
+            <td>{o['n']:,}</td><td>{o['n_matches']:,}</td>
+            <td class="{_cls((o['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(o['candidate_win_rate'])}</td>
+            <td>{v['candidate']}&ndash;{v['prod']}</td>
+            <td class="dim">{v['tie']}</td>
+            <td class="{_cls(m.get('mean'))}">{_n(m.get('mean'), spec)}</td>
+            <td class="dim">{_ci(m, spec)}</td>
+            <td>{_p(m.get('p_value'))}</td>
+        </tr>""")
+
     return f"""
     <section class="panel" id="directional">
-      <h2>Directional calibration <span class="tag">paired per snapshot</span></h2>
-      <h3>Overall <span class="tag">every pair on its own question</span></h3>
-      <dl class="stats">
-        <div><dt>Pairs decided</dt><dd>{d['n']:,} <span class="dim">/ {d['matches']:,} matches</span></dd></div>
-        <div><dt title="both streams quoted the same line">On probability</dt><dd>{d['settled_on_probability']:,}</dd></div>
-        <div><dt title="lines differ, so the closer line decides">On the line</dt><dd>{d['settled_on_line']:,}</dd></div>
-        <div><dt>Candidate win rate</dt><dd>{_pct(d['candidate_win_rate'])}</dd></div>
-        <div><dt>Match vote</dt><dd>{dv['candidate']}&ndash;{dv['prod']} <span class="dim">({dv['tie']} level)</span></dd></div>
-        <div><dt title="match-clustered sign test">p</dt><dd>{_p(dv['p_value'])}</dd></div>
-      </dl>
-      <div class="cols">
-        <div>
-          <h3>Same line</h3>
-          <dl class="stats">
-            <div><dt>Pairs</dt><dd>{o['n']:,} <span class="dim">/ {o['n_matches']:,} matches</span></dd></div>
-            <div><dt>Candidate win rate</dt><dd>{_pct(o['candidate_win_rate'])}</dd></div>
-            <div><dt>Match vote</dt><dd>{v['candidate']}&ndash;{v['prod']} <span class="dim">({v['tie']} level)</span></dd></div>
-            <div><dt>&Delta;Brier / match</dt><dd class="{_cls(b.get('mean'))}">{_n(b.get('mean'))}</dd></div>
-            <div><dt>95% CI</dt><dd class="dim">{_ci(b)}</dd></div>
-            <div><dt>p (clustered)</dt><dd>{_p(b.get('p_value'))}</dd></div>
-          </dl>
-        </div>
-        <div>
-          <h3>Different line</h3>
-          <dl class="stats">
-            <div><dt>Pairs</dt><dd>{lo['n']:,} <span class="dim">/ {lo['n_matches']:,} matches</span></dd></div>
-            <div><dt>Candidate win rate</dt><dd>{_pct(lo['candidate_win_rate'])}</dd></div>
-            <div><dt>Match vote</dt><dd>{lv['candidate']}&ndash;{lv['prod']} <span class="dim">({lv['tie']} level)</span></dd></div>
-            <div><dt>&Delta;points / match</dt><dd class="{_cls(lm.get('mean'))}">{_n(lm.get('mean'), '+.3f')}</dd></div>
-            <div><dt>95% CI</dt><dd class="dim">{_ci(lm, '+.3f')}</dd></div>
-            <div><dt>p (clustered)</dt><dd>{_p(lm.get('p_value'))}</dd></div>
-          </dl>
-        </div>
-      </div>
+      <h2>Directional calibration</h2>
+      <table>
+        <thead><tr><th>Reading</th><th>Pairs</th><th>Matches</th>
+          <th title="both streams quoted the same line">On prob</th>
+          <th title="lines differ, so the closer line decides">On line</th>
+          <th>Cand win</th><th>Match vote</th><th>Level</th>
+          <th title="match-clustered sign test">p</th></tr></thead>
+        <tbody><tr>
+          <th>Overall</th>
+          <td>{d['n']:,}</td><td>{d['matches']:,}</td>
+          <td>{d['settled_on_probability']:,}</td>
+          <td>{d['settled_on_line']:,}</td>
+          <td class="{_cls((d['candidate_win_rate'] or 0.5) - 0.5)}">{_pct(d['candidate_win_rate'])}</td>
+          <td>{dv['candidate']}&ndash;{dv['prod']}</td>
+          <td class="dim">{dv['tie']}</td>
+          <td>{_p(dv['p_value'])}</td>
+        </tr></tbody>
+      </table>
+      <table>
+        <thead><tr><th>Reading</th><th>Pairs</th><th>Matches</th>
+          <th>Cand win</th><th>Match vote</th><th>Level</th>
+          <th title="Brier on the same line, points on a different one">&Delta;</th>
+          <th>95% CI</th><th>p</th></tr></thead>
+        <tbody>{''.join(views)}</tbody>
+      </table>
     </section>"""
 
 
@@ -285,7 +271,7 @@ def _integrity_block(report, stats):
       <h2>Integrity checks</h2>
       <table>
         <thead><tr><th>Market</th><th>Pairs</th><th>Same line</th>
-          <th title="1.0000 means a fair book, so one side can be dropped">P(both sides)</th><th title="should be 100%: exactly one side wins">Partition</th><th>Both won / lost</th></tr></thead>
+          <th>P(both sides)</th><th>Partition</th><th>Both won / lost</th></tr></thead>
         <tbody>{''.join(line_rows)}</tbody>
       </table>
       <h3>Spread reading</h3>
@@ -354,7 +340,7 @@ def _handle_block(scan):
       <h3>Flagged events</h3>
       <div class="scroll">
       <table>
-        <thead><tr><th>Match</th><th title="a message count, the final cross-check, or a verdict on the whole match">Where</th>
+        <thead><tr><th>Match</th><th>Where</th>
           <th>Kind</th><th title="p1-p2 either side of the flag, or how many touchdowns agreed">Evidence</th></tr></thead>
         <tbody>{''.join(event_rows)}</tbody>
       </table>
@@ -362,7 +348,7 @@ def _handle_block(scan):
 
     return f"""
     <section class="panel">
-      <h2>Handle check <span class="tag">does PLAYER_1 stay on one team?</span></h2>
+      <h2>Handle check</h2>
       <p class="count">{state}</p>
       <table>
         <thead><tr><th>Kind</th><th>Events</th><th>Matches</th>
@@ -415,10 +401,10 @@ def _anchor_block(report):
     tone = "good" if a["share_clean"] > 0.9 else "bad"
     return f"""
     <section class="panel">
-      <h2>Snapshot anchor <span class="tag">did the snapshot land on the drive's start?</span></h2>
-      <p class="count"><span class="{tone}">{_pct(a['share_clean'])} on the
-        opening 1st &amp; 10</span> &middot; {a['off_anchor']:,} of
-        {a['pairs']:,} pairs elsewhere, across {a['matches']:,} matches</p>
+      <h2>Snapshot anchor</h2>
+      <p class="count"><span class="{tone}">{_pct(a['share_clean'])}</span>
+        on the opening 1st &amp; 10 &middot; {a['off_anchor']:,} of
+        {a['pairs']:,} pairs elsewhere &middot; {a['matches']:,} matches</p>
       <div class="cols">
         <div>
           <h3>Where it landed</h3>
@@ -452,8 +438,8 @@ def _market_state_block(report):
     if not state["not_live"]:
         return """
     <section class="panel">
-      <h2>Market state <span class="tag">were both quotes tradeable?</span></h2>
-      <p class="count"><span class="good">every pair open and active</span></p>
+      <h2>Market state</h2>
+      <p class="count"><span class="good">all open and active</span></p>
     </section>"""
 
     state_rows = []
@@ -482,12 +468,11 @@ def _market_state_block(report):
     tone = "bad" if lopsided > max(10, 0.2 * max(1, state["not_live"])) else "dim"
     return f"""
     <section class="panel">
-      <h2>Market state <span class="tag">were both quotes tradeable?</span></h2>
+      <h2>Market state</h2>
       <p class="count">{state['not_live']:,} of {state['pairs']:,} pairs
-        ({_pct(state['share'])}) across {state['matches']:,} matches &middot;
-        shown in the table, scored by nothing</p>
+        ({_pct(state['share'])}) &middot; {state['matches']:,} matches</p>
       <dl class="stats">
-        <div><dt title="the split is what matters: pairs lost on one side only are lost around scores">Prod only</dt><dd class="{tone}">{state['prod_only']:,}</dd></div>
+        <div><dt>Prod only</dt><dd class="{tone}">{state['prod_only']:,}</dd></div>
         <div><dt>Candidate only</dt><dd class="{tone}">{state['candidate_only']:,}</dd></div>
         <div><dt>Both</dt><dd>{state['both']:,}</dd></div>
       </dl>
@@ -548,7 +533,7 @@ def _selection_block(report):
             </tr>""")
     return f"""
     <section class="panel">
-      <h2>By selection <span class="tag">both sides of every market</span></h2>
+      <h2>By selection</h2>
       <div class="scroll">
       <table>
         <thead><tr><th>View</th><th>Market</th><th>Sel</th>
@@ -618,14 +603,6 @@ def _daily(report):
             <td class="dim">{_ci(brier)}</td>
             <td>{_p(brier.get('p_value'))}</td>
         </tr>""")
-    means = [r["brier"].get("mean") for r in daily.values()
-             if r["brier"].get("mean") is not None]
-    note = ""
-    if len(means) > 1:
-        agree = len({m > 0 for m in means}) == 1
-        note = (f"Daily &Delta;Brier spans {min(means):+.4f} to {max(means):+.4f}. "
-                + ("All days agree on direction." if agree
-                   else "Days disagree on direction &mdash; the effect is not stable yet."))
     return f"""
     <section class="panel" id="daily">
       <h2>By day</h2>
@@ -739,7 +716,7 @@ def _full_cell(report):
     <section class="panel" id="cross">
       <h2>Cross-section calibration <span class="tag">score diff &times; quarter &times; possession</span></h2>
       <p class="count">{len(rows):,} cells &middot; {thin:,} under
-         {config.MIN_CELL_MATCHES} matches, dimmed</p>
+         {config.MIN_CELL_MATCHES} matches</p>
       {_gap_key(PROB_GAP, 'Gap', '.2f')}
       <div class="scroll">
       <table class="sortable" id="crossTable">
@@ -854,13 +831,12 @@ def _pair_rows(pairs):
 def _pair_table(pairs):
     return f"""
     <section class="panel" id="pairs">
-      <h2>Every pair <span class="tag">{len(pairs):,} rows, widest
-          &Delta;prob first</span></h2>
+      <h2>Every pair <span class="tag">{len(pairs):,} rows</span></h2>
       <div class="filter">
         <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
                placeholder="filter by match id" aria-label="Filter rows by match id">
         <span id="pairCount" class="count">{len(pairs):,} rows</span>
-        <span class="count" title="works in every table on this page; Escape clears them all">click a row to pin it</span>
+        <span class="count" title="works in every table; Escape clears them all">pin</span>
       </div>
       {_gap_key(PROB_DELTA, '&Delta;prob', '.2f')}
       {_gap_key(LINE_GAP, 'Line gap', '.1f')}
@@ -910,9 +886,7 @@ def _checks_summary(report, scan=None):
         issues.append(f"spread reads {verdict}, configured {config.SPREAD_RESOLUTION}")
     if issues:
         return '<span class="bad">' + "; ".join(issues) + "</span>"
-    return ('<span class="good">all pass</span> '
-            '<span class="dim">handles, anchor, market state, selections, '
-            'integrity, mirror, spread reading, by day, single axes</span>')
+    return '<span class="good">all pass</span>'
 
 
 def render(report, header, stats, pairs, handle_scan):
@@ -1065,7 +1039,7 @@ def render(report, header, stats, pairs, handle_scan):
     <h1>eAMF &mdash; candidate vs prod</h1>
     <span class="meta">from <b>{html.escape(str(config.CUTOFF_START))}</b></span>
     <span class="meta"><b>{contributing}</b> matches with pairs</span>
-    <span class="meta" title="settled matches in both streams">of <b>{header.get('paired_matches', 0)}</b> settled</span>
+    <span class="meta">of <b>{header.get('paired_matches', 0)}</b> settled</span>
     <span class="meta"><b>{report['summary']['pairs']:,}</b> pairs</span>
     <span class="meta"><b>{stats.get('snapshots', 0):,}</b> drive snapshots</span>
     <span class="meta">exact-message pairing <b>{exact_rate}</b></span>

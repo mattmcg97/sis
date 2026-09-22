@@ -426,10 +426,11 @@ class TestDecisiveBlock(unittest.TestCase):
         from .. import html_full
         cls, text = html_full._verdict(self.report)
         self.assertEqual(cls, "bad")
-        self.assertTrue(text.startswith("Prod is better"))
-        # And it says so rather than hiding the disagreement.
-        self.assertIn("disagree", text)
-        self.assertIn("does not survive the lines", text)
+        self.assertIn("<b>PROD</b>", text)
+        # Both readings stay on the line, so a disagreement between them
+        # is visible in the numbers rather than narrated away.
+        self.assertIn("same line", text)
+        self.assertIn("&Delta;Brier", text)
 
     def test_the_verdict_still_uses_the_brier_when_the_combined_read_is_flat(self):
         from .. import html_full
@@ -438,7 +439,10 @@ class TestDecisiveBlock(unittest.TestCase):
         report = directional.build_full_report(pairs, n_bootstrap=100)
         cls, text = html_full._verdict(report)
         self.assertEqual(cls, "bad")
-        self.assertIn("Every pair on its own question", text)
+        # Both readings are on the line, so neither is hidden behind the
+        # other: the same-line Brier and its interval are always shown.
+        self.assertIn("&Delta;Brier", text)
+        self.assertIn("CI excludes 0", text)
 
 
 class TestSelectionBlocks(unittest.TestCase):
@@ -2838,7 +2842,8 @@ class TestReportRendering(unittest.TestCase):
     def test_the_ramp_is_spelled_out_rather_than_left_to_colour(self):
         rendered = self._render()
         self.assertIn("gapkey", rendered)
-        self.assertIn("further from agreement", rendered)
+        for step in range(5):
+            self.assertIn(f'class="key g{step}"', rendered)
 
     def test_every_pair_reaches_the_table(self):
         rendered = self._render()
@@ -3171,7 +3176,8 @@ class TestReportShape(unittest.TestCase):
         self.assertIn("tbody tr.picked > *{background:var(--pick)", self.rendered)
         self.assertIn("box-shadow:inset", self.rendered)
         self.assertIn("--pick:", self.rendered)
-        self.assertIn("click a row to pin it", self.rendered)
+        # The affordance is still named, just not explained at length.
+        self.assertIn(">pin</span>", self.rendered)
 
     def test_handle_check_reports_clean_when_nothing_flipped(self):
         block = self.rendered[self.rendered.index("Handle check"):]
@@ -3241,18 +3247,50 @@ class TestReportShape(unittest.TestCase):
         body = body[:body.index("</table>")]
         self.assertIn('class="ax" data-v=', body)
 
-    def test_same_line_headline_drops_the_mae_row(self):
+    def test_the_directional_result_is_two_tables(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
+        self.assertEqual(head.count("<table>"), 2)
+        self.assertEqual(head.count("<dl"), 0)     # was three stat lists
         self.assertNotIn("&Delta;MAE", head)
-        self.assertIn("&Delta;Brier / match", head)
+        # One row for the combined reading, then the two halves of it.
+        overall, views = head.split("<table>")[1], head.split("<table>")[2]
+        self.assertIn("<th>Overall</th>", overall)
+        self.assertIn("<th>Same line</th>", views)
+        self.assertIn("<th>Different line</th>", views)
+
+    def test_the_directional_tables_keep_every_number_the_stat_lists_had(self):
+        head = self.rendered[self.rendered.index('id="directional"'):]
+        head = head[:head.index("</section>")]
+        for column in ("Pairs", "Matches", "Cand win", "Match vote",
+                       "On prob", "On line", "95% CI"):
+            self.assertIn(f">{column}</th>", head, column)
 
     def test_report_carries_no_explanatory_prose(self):
-        # The report is a dashboard, not a write-up: column meanings live in
-        # header tooltips so the tables stay readable.
+        # The report is a dashboard, not a write-up: headings, tables and
+        # numbers. Column meanings live in header tooltips, which cost no
+        # space until asked for.
         self.assertNotIn('class="note"', self.rendered)
         self.assertNotIn('class="sub"', self.rendered)
         self.assertGreater(self.rendered.count("<th title="), 20)
+
+    def test_no_heading_asks_itself_a_question(self):
+        # Headings name the thing; they do not introduce it.
+        import re
+        for heading in re.findall(r"<h[123][^>]*>(.*?)</h[123]>", self.rendered,
+                                  re.S):
+            self.assertNotIn("?", heading, heading)
+
+    def test_nothing_on_the_page_is_a_sentence(self):
+        # Anything long enough to be prose, outside the tooltips that only
+        # appear on hover, is the thing this strips.
+        import re
+        body = self.rendered[self.rendered.index("<body"):]
+        body = re.sub(r"<script.*?</script>", "", body, flags=re.S)
+        body = re.sub(r'title="[^"]*"', "", body)
+        for line in re.sub(r"<[^>]+>", "\n", body).split("\n"):
+            words = line.strip().split()
+            self.assertLess(len(words), 12, line.strip())
 
     def test_nav_names_the_two_headline_views(self):
         nav = self.rendered[self.rendered.index("<nav>"):self.rendered.index("</nav>")]

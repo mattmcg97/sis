@@ -240,6 +240,27 @@ py -m eAMFCalibrator directional --html report.html
 Pairs prod against candidate at each drive-start snapshot and reports both
 halves of the comparison, because they do not always agree.
 
+The HTML panel is **two tables**: the combined reading over every pair,
+then the two halves it is made of.
+
+| Reading | Pairs | Matches | On prob | On line | Cand win | Match vote | Level | p |
+|---|---|---|---|---|---|---|---|---|
+| Overall | every decided pair, under the rule that applies to each |
+
+| Reading | Pairs | Matches | Cand win | Match vote | Level | Δ | 95% CI | p |
+|---|---|---|---|---|---|---|---|---|
+| Same line | Δ is ΔBrier per match |
+| Different line | Δ is Δpoints per match |
+
+### The report is a dashboard, not a write-up
+
+Headings, tables and numbers. No paragraph explains what a table is for,
+no heading asks itself a question, and the verdict is a line of figures
+rather than a sentence — where the two readings disagree, both are on
+the page and the reader can see it without being told. Column meanings
+live in header tooltips, which cost nothing until hovered. A test keeps
+it that way: nothing rendered outside a tooltip may run to twelve words.
+
 ### Each stream is graded against its own line
 
 The streams do not always quote the same line, so the run splits on that
