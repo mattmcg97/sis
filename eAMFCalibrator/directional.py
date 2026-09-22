@@ -337,7 +337,8 @@ def nearest_message(messages, target, max_gap):
     return best
 
 
-def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
+def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
+                prematch_sink=None):
     """Every paired observation for one chunk of matches.
 
     `scan` is the handle check, accumulating across chunks. Every match is
@@ -348,7 +349,9 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
     SAME fetched rows. The plays, the scores and both quote indexes are
     already in hand here, and they are everything that analysis needs, so
     running it as a second pass would double the query load to learn
-    nothing new.
+    nothing new. `prematch_sink` rides along the same way, off the RAW
+    quote rows rather than the indexes -- the pre-match ones carry no
+    message count, which is exactly what the index drops.
     """
     scan = scan if scan is not None else handles.Scan()
     prod_table = config.STREAMS[PROD]
@@ -370,6 +373,11 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
     scores_by_match = defaultdict(list)
     for row in score_rows:
         scores_by_match[row[0]].append(row)
+    quotes_by_match = defaultdict(lambda: {PROD: [], CANDIDATE: []})
+    if prematch_sink is not None:
+        for stream, rows in ((PROD, prod_quotes), (CANDIDATE, candidate_quotes)):
+            for row in rows:
+                quotes_by_match[row[0]][stream].append(row)
 
     pairs = []
     for match_code in match_codes:
@@ -402,6 +410,9 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
         if sink is not None:
             sink.add(match_code, plays, scores,
                      {PROD: prod_index, CANDIDATE: candidate_index}, stats)
+        if prematch_sink is not None:
+            prematch_sink.add(match_code, plays, final,
+                              quotes_by_match[match_code], stats)
 
         snapshots = build_snapshots(match_code, plays, scores)
         stats["snapshots"] += len(snapshots)
@@ -495,11 +506,11 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None):
     return pairs
 
 
-def run(verbose=True, sink=None):
+def run(verbose=True, sink=None, prematch_sink=None):
     """Build every paired observation across the window.
 
-    `sink` rides along to collect the in-drive analysis off the same
-    fetch. See build_pairs.
+    `sink` and `prematch_sink` ride along to collect the in-drive and
+    pre-match views off the same fetch. See build_pairs.
     """
     stats = defaultdict(int)
     pairs = []
@@ -536,7 +547,7 @@ def run(verbose=True, sink=None):
                 if verbose:
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
                 pairs.extend(build_pairs(cur, batch, time_column, stats, scan,
-                                         sink))
+                                         sink, prematch_sink))
     finally:
         conn.close()
 

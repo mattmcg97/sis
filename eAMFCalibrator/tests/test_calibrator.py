@@ -19,7 +19,7 @@ import unittest
 from unittest import mock
 
 from .. import (buckets, clock, config, directional, drives, handles,
-                indrive, markets, metrics, report)
+                indrive, markets, metrics, prematch, report)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -2247,12 +2247,12 @@ class TestIndriveCsvAndHtml(unittest.TestCase):
                  for r in (0.50, 0.55, 0.60, 0.70, 0.90)]
         self.assertEqual(steps, sorted(steps, reverse=True))
 
-    def test_the_ramp_is_spelled_out_in_a_key(self):
+    def test_the_rate_bands_are_documented_where_the_colour_is_read(self):
+        # The visible key is gone, so the thresholds live in the column
+        # tooltip -- hover-only, no space on the page, but still not
+        # colour alone.
         from .. import html_indrive
-        key = html_indrive._rate_key()
-        for step in range(5):
-            self.assertIn(f'class="key g{step}"', key)
-        self.assertIn("50% is a coin", key)
+        self.assertIn("50% is a coin", html_indrive.HEAD)
 
 
 class TestIndriveChecks(unittest.TestCase):
@@ -2663,9 +2663,8 @@ class TestIndriveSink(unittest.TestCase):
                                 handles.Scan().summary(),
                                 sink.summary(n_bootstrap=20))
         self.assertIn('id="indrive"', page)
-        self.assertIn("In-drive reaction", page)
+        self.assertIn("<h2>In-drive reaction</h2>", page)
         self.assertIn("Head to head", page)
-        self.assertIn("py -m eAMFCalibrator indrive", page)
 
     def test_the_panel_is_left_out_when_there_is_nothing_to_say(self):
         from .. import html_full
@@ -2675,6 +2674,266 @@ class TestIndriveSink(unittest.TestCase):
                                 collections.defaultdict(int), pairs,
                                 handles.Scan().summary(), None)
         self.assertNotIn('id="indrive"', page)
+
+
+class TestPrematchClosingPrice(unittest.TestCase):
+    """The last price published before the match got under way."""
+
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def quote(self, market_id, probability, description, message, minutes,
+              active="true"):
+        return ("AF1", market_id, self.T + dt.timedelta(minutes=minutes),
+                probability, 2.0, description, message, "open", active)
+
+    def test_a_quote_with_no_message_count_is_prematch(self):
+        self.assertTrue(prematch.is_prematch(None, 10))
+        self.assertTrue(prematch.is_prematch(None, None))
+
+    def test_a_message_below_the_first_play_is_prematch(self):
+        self.assertTrue(prematch.is_prematch(4, 10))
+        self.assertFalse(prematch.is_prematch(10, 10))
+        self.assertFalse(prematch.is_prematch(40, 10))
+
+    def test_without_a_first_play_only_a_null_message_counts(self):
+        # No plays means no kickoff to be before, so a numbered quote
+        # cannot be shown to be pre-match and is not claimed to be.
+        self.assertFalse(prematch.is_prematch(4, None))
+
+    def test_the_closing_price_is_the_last_one_before_kickoff(self):
+        rows = [self.quote(50, 55.0, "PLAYER 1 to win", None, -120),
+                self.quote(50, 62.0, "PLAYER 1 to win", None, -5),
+                self.quote(50, 71.0, "PLAYER 1 to win", 40, 10)]
+        closing = prematch.closing_quotes(rows, 10)
+        self.assertAlmostEqual(closing[50]["probability"], 0.62)
+        self.assertEqual(closing[50]["n_quotes"], 2)
+
+    def test_the_in_play_quotes_are_not_in_it(self):
+        rows = [self.quote(50, 71.0, "PLAYER 1 to win", 40, 10)]
+        self.assertEqual(prematch.closing_quotes(rows, 10), {})
+
+    def test_the_line_is_parsed_only_where_the_market_has_one(self):
+        rows = [self.quote(52, 48.0, "PLAYER 1 -3.5", None, -5),
+                self.quote(50, 62.0, "PLAYER 1 to win", None, -5)]
+        closing = prematch.closing_quotes(rows, 10)
+        self.assertEqual(closing[52]["line"], -3.5)
+        self.assertIsNone(closing[50]["line"])
+
+    def test_probabilities_are_read_on_the_suite_scale(self):
+        rows = [self.quote(50, 62.0, "PLAYER 1 to win", None, -5)]
+        self.assertAlmostEqual(
+            prematch.closing_quotes(rows, 10)[50]["probability"], 0.62)
+
+
+class TestPrematchObservations(unittest.TestCase):
+    """Resolving the closing price against the final score."""
+
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def quote(self, market_id, probability, description, active="true"):
+        return ("AF1", market_id, self.T, probability, 2.0, description,
+                None, "open", active)
+
+    def observations(self, final=(31, 17), **kw):
+        quotes = {directional.PROD: [
+            self.quote(50, 62.0, "PLAYER 1 to win"),
+            self.quote(54, 48.0, "Over 44.5"),
+        ], directional.CANDIDATE: [
+            self.quote(50, 58.0, "PLAYER 1 to win"),
+        ]}
+        quotes.update(kw.pop("quotes", {}))
+        return prematch.observations_for_match("AF1", quotes, 10, final,
+                                               kw.pop("stats", None))
+
+    def test_each_stream_gets_its_own_observation(self):
+        streams = [o.stream for o in self.observations()]
+        self.assertEqual(streams.count(directional.PROD), 2)
+        self.assertEqual(streams.count(directional.CANDIDATE), 1)
+
+    def test_the_outcome_comes_from_the_final_score(self):
+        by_key = {(o.stream, o.market_id): o for o in self.observations()}
+        # Home won 31-17, so the home moneyline came in.
+        self.assertTrue(by_key[(directional.PROD, 50)].outcome)
+        # 48 points against a 44.5 total, so Over came in too.
+        self.assertTrue(by_key[(directional.PROD, 54)].outcome)
+
+    def test_the_error_and_brier_read_off_that(self):
+        o = next(o for o in self.observations()
+                 if o.stream == directional.PROD and o.market_id == 50)
+        self.assertAlmostEqual(o.error, 0.38)
+        self.assertAlmostEqual(o.brier, 0.38 ** 2)
+
+    def test_a_push_is_counted_and_dropped(self):
+        # 44 points against a 44.0 total: the line landed exactly.
+        stats = collections.defaultdict(int)
+        quotes = {directional.PROD: [self.quote(54, 48.0, "Over 44")],
+                  directional.CANDIDATE: []}
+        out = prematch.observations_for_match("AF1", quotes, 10, (27, 17),
+                                              stats)
+        self.assertEqual(out, [])
+        self.assertEqual(stats["prematch_push"], 1)
+
+    def test_a_match_with_no_final_produces_nothing(self):
+        stats = collections.defaultdict(int)
+        self.assertEqual(self.observations(final=None, stats=stats), [])
+        self.assertEqual(stats["prematch_no_final"], 1)
+
+    def test_a_dead_closing_quote_is_dropped_under_the_live_rule(self):
+        previous = config.REQUIRE_LIVE_QUOTE
+        config.REQUIRE_LIVE_QUOTE = True
+        try:
+            stats = collections.defaultdict(int)
+            quotes = {directional.PROD: [
+                self.quote(50, 62.0, "PLAYER 1 to win", active="false")],
+                directional.CANDIDATE: []}
+            out = prematch.observations_for_match("AF1", quotes, 10, (31, 17),
+                                                  stats)
+            self.assertEqual(out, [])
+            self.assertEqual(stats["prematch_not_live"], 1)
+        finally:
+            config.REQUIRE_LIVE_QUOTE = previous
+
+
+class TestPrematchReport(unittest.TestCase):
+    """Calibration of the closing prices, and the head to head."""
+
+    def observations(self, spec):
+        """spec: (stream, probability, outcome) per closing price."""
+        out = []
+        for i, (stream, probability, outcome) in enumerate(spec):
+            out.append(prematch.Observation(
+                match_code=f"AF{i // 2}", stream=stream, market_id=50,
+                probability=probability, line=None, outcome=outcome,
+                publish_time=None, live=True, n_quotes=1))
+        return out
+
+    def test_a_perfectly_calibrated_bag_reads_as_one(self):
+        # Ten prices at 0.50, five of which came in.
+        spec = [(directional.PROD, 0.5, i < 5) for i in range(10)]
+        block = prematch.block(self.observations(spec), n_bins=5)
+        self.assertEqual(block["n"], 10)
+        self.assertAlmostEqual(block["mean_predicted"], 0.5)
+        self.assertAlmostEqual(block["realized"], 0.5)
+        self.assertAlmostEqual(block["gap"], 0.0)
+
+    def test_an_overconfident_bag_shows_a_negative_gap(self):
+        spec = [(directional.PROD, 0.9, i < 5) for i in range(10)]
+        block = prematch.block(self.observations(spec), n_bins=5)
+        self.assertAlmostEqual(block["gap"], -0.4)
+
+    def test_the_head_to_head_is_paired_on_the_same_question(self):
+        # Prod at 0.9 and candidate at 0.6 on the same match and market,
+        # and it came in: prod priced it closer.
+        obs = [prematch.Observation("AF1", directional.PROD, 50, 0.9, None,
+                                    True, None, True, 1),
+               prematch.Observation("AF1", directional.CANDIDATE, 50, 0.6,
+                                    None, True, None, True, 1)]
+        h = prematch.head_to_head(obs, n_bootstrap=20)
+        self.assertEqual(h["pairs"], 1)
+        self.assertLess(h["mean"], 0)          # negative favours prod
+        self.assertEqual(h["matches_favouring_prod"], 1)
+
+    def test_an_unpaired_price_decides_nothing(self):
+        obs = [prematch.Observation("AF1", directional.PROD, 50, 0.9, None,
+                                    True, None, True, 1)]
+        self.assertEqual(prematch.head_to_head(obs, n_bootstrap=20)["pairs"], 0)
+
+    def test_the_report_splits_by_market_and_selection(self):
+        obs = []
+        for market_id in (50, 52, 54):
+            obs.append(prematch.Observation("AF1", directional.PROD, market_id,
+                                            0.6, None, True, None, True, 1))
+        result = prematch.report(obs, n_bootstrap=20)
+        s = result["streams"][directional.PROD]
+        self.assertEqual(sorted(s["by_market"]), ["moneyline", "spread", "total"])
+        self.assertEqual(len(s["by_selection"]), 3)
+
+    def test_no_observations_reports_nothing_rather_than_zeroes(self):
+        self.assertIsNone(prematch.report([]))
+        self.assertIsNone(prematch.Sink().summary())
+
+
+class TestPrematchSinkAndOutput(unittest.TestCase):
+
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def add(self, sink, code="AF1"):
+        quotes = {directional.PROD: [
+            (code, 50, self.T, 62.0, 2.0, "PLAYER 1 to win", None, "open", "true")],
+            directional.CANDIDATE: [
+            (code, 50, self.T, 58.0, 2.0, "PLAYER 1 to win", None, "open", "true")]}
+        plays = [PlayRow(10, 1, "Home Team", 1, 10, 25, None)]
+        sink.add(code, plays, (31, 17), quotes)
+
+    def test_the_sink_takes_the_first_play_as_kickoff(self):
+        sink = prematch.Sink()
+        self.add(sink)
+        self.assertEqual(len(sink.observations), 2)
+
+    def test_it_accumulates_across_matches(self):
+        sink = prematch.Sink()
+        for code in ("AF1", "AF2", "AF3"):
+            self.add(sink, code)
+        self.assertEqual(sink.summary(n_bootstrap=20)["matches"], 3)
+
+    def test_build_pairs_feeds_it_without_a_second_fetch(self):
+        from .. import snowflake_io
+        calls = []
+        rows = [("AF1", 50, self.T, 62.0, 2.0, "PLAYER 1 to win", None,
+                 "open", "true"),
+                ("AF1", 50, self.T, 71.0, 2.0, "PLAYER 1 to win", 40,
+                 "open", "true")]
+        originals = (snowflake_io.fetch_plays, snowflake_io.fetch_scores,
+                     snowflake_io.fetch_quotes, snowflake_io.fetch_final_scores)
+        snowflake_io.fetch_plays = lambda c, m, t: (
+            calls.append("plays") or [("AF1", 10, 1, "Home Team", 1, 10, 25, None)])
+        snowflake_io.fetch_scores = lambda c, m: calls.append("scores") or []
+        snowflake_io.fetch_quotes = lambda c, table, m: (
+            calls.append("quotes") or rows)
+        snowflake_io.fetch_final_scores = lambda c, m: (
+            calls.append("finals") or {"AF1": (31, 17)})
+        try:
+            closing = prematch.Sink()
+            directional.build_pairs(None, ["AF1"], "FILE_TIME",
+                                    collections.defaultdict(int), None, None,
+                                    closing)
+        finally:
+            (snowflake_io.fetch_plays, snowflake_io.fetch_scores,
+             snowflake_io.fetch_quotes, snowflake_io.fetch_final_scores) = originals
+        self.assertEqual(calls.count("plays"), 1)
+        self.assertEqual(calls.count("quotes"), 2)   # one per stream
+        # And it saw only the pre-match row, not the in-play one.
+        self.assertEqual(len(closing.observations), 2)
+        self.assertAlmostEqual(closing.observations[0].probability, 0.62)
+
+    def test_a_row_is_exactly_the_csv_columns(self):
+        sink = prematch.Sink()
+        self.add(sink)
+        for o in sink.observations:
+            self.assertEqual(sorted(prematch.row(o)), sorted(prematch.FIELDS))
+
+    def test_the_report_renders_the_section_between_cross_and_indrive(self):
+        from .. import html_full
+        sink = prematch.Sink()
+        self.add(sink)
+        pairs = [pair(0.6, 0.8, True, match="AF1")]
+        full = directional.build_full_report(pairs, n_bootstrap=20)
+        page = html_full.render(full, {"paired_matches": 1},
+                                collections.defaultdict(int), pairs,
+                                handles.Scan().summary(), None,
+                                sink.summary(n_bootstrap=20))
+        self.assertIn('id="prematch"', page)
+        self.assertIn("<h2>Pre-match calibration</h2>", page)
+        self.assertLess(page.index('id="cross"'), page.index('id="prematch"'))
+
+    def test_the_section_is_left_out_when_there_is_nothing_to_say(self):
+        from .. import html_full
+        pairs = [pair(0.6, 0.8, True, match="AF1")]
+        full = directional.build_full_report(pairs, n_bootstrap=20)
+        page = html_full.render(full, {"paired_matches": 1},
+                                collections.defaultdict(int), pairs,
+                                handles.Scan().summary(), None, None)
+        self.assertNotIn('id="prematch"', page)
 
 
 class TestNearestQuote(unittest.TestCase):
@@ -3785,14 +4044,15 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn("Enter", script)
         self.assertIn(".panel.folded > .fold-body{display:none}", rendered)
 
-    def test_collapse_all_reaches_the_details_panels_too(self):
-        # The checks group is a native <details>, not a section, so the
-        # button has to close both kinds or "collapse all" is a lie.
+    def test_folding_survives_the_nav_being_removed(self):
+        # The collapse-all button went with the nav. Clicking a heading
+        # still folds its panel, and the button handler no-ops rather
+        # than throwing when there is no button to bind.
         rendered = self._render()
         script = rendered.split("<script>")[1]
-        self.assertIn("foldAll", script)
-        self.assertIn("details.panel", script)
-        self.assertIn('id="foldAll"', rendered)
+        self.assertIn("section.panel", script)
+        self.assertIn("folded", script)
+        self.assertIn("if (!button) return;", script)
 
     def test_pair_table_carries_the_message_columns(self):
         rendered = self._render()
@@ -4187,8 +4447,13 @@ class TestReportShape(unittest.TestCase):
         self.assertNotIn("all pass", summary)
 
     def test_cross_section_is_the_three_axes_together(self):
-        self.assertIn("Cross-section calibration", self.rendered)
-        self.assertIn("score diff &times; quarter &times; possession", self.rendered)
+        self.assertIn("<h2>Cross-section calibration</h2>", self.rendered)
+        # The axes are named by the columns now that the heading is a
+        # title and nothing else.
+        cross = self.rendered[self.rendered.index('id="cross"'):]
+        head = cross[cross.index("<thead>"):cross.index("</thead>")]
+        for axis in ("Score diff", "Quarter", "Possession"):
+            self.assertIn(f">{axis}</th>", head)
 
     def test_cross_section_covers_every_market_not_just_moneyline(self):
         cells = self.report["full_cell"]
@@ -4198,10 +4463,18 @@ class TestReportShape(unittest.TestCase):
 
     def test_diagnostics_are_behind_a_disclosure(self):
         self.assertIn("<details", self.rendered)
-        self.assertIn("<summary>Checks &mdash;", self.rendered)
+        self.assertIn("<summary>Additional checks</summary>", self.rendered)
         # And they are still present, not dropped.
         self.assertIn("Mirror check", self.rendered)
         self.assertIn("Integrity checks", self.rendered)
+
+    def test_the_check_status_is_kept_even_though_the_summary_is_a_title(self):
+        # The line that says whether anything FAILED is the answer the
+        # group exists for, so trimming the summary moved it into the
+        # body rather than deleting it.
+        checks = self.rendered[self.rendered.index('id="checks"'):]
+        checks = checks[:checks.index("</details>")]
+        self.assertIn('<p class="count">', checks)
 
     def test_cross_section_axes_are_three_shaded_columns(self):
         head = self.rendered[self.rendered.index('id="crossTable"'):]
@@ -4221,24 +4494,37 @@ class TestReportShape(unittest.TestCase):
         body = body[:body.index("</table>")]
         self.assertIn('class="ax" data-v=', body)
 
-    def test_the_directional_result_is_two_tables(self):
+    def test_the_directional_result_is_one_table(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
-        self.assertEqual(head.count("<table>"), 2)
-        self.assertEqual(head.count("<dl"), 0)     # was three stat lists
-        self.assertNotIn("&Delta;MAE", head)
-        # One row for the combined reading, then the two halves of it.
-        overall, views = head.split("<table>")[1], head.split("<table>")[2]
-        self.assertIn("<th>Overall</th>", overall)
-        self.assertIn("<th>Same line</th>", views)
-        self.assertIn("<th>Different line</th>", views)
+        self.assertEqual(head.count("<table>"), 1)
+        self.assertEqual(head.count("<dl"), 0)
+        for label in ("Overall", "Same line", "Different line"):
+            self.assertIn(f"<th>{label}</th>", head)
 
-    def test_the_directional_tables_keep_every_number_the_stat_lists_had(self):
+    def test_the_directional_table_carries_five_columns(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
-        for column in ("Pairs", "Matches", "Cand win", "Match vote",
-                       "On prob", "On line", "95% CI"):
-            self.assertIn(f">{column}</th>", head, column)
+        columns = re.findall(r"<th[^>]*>([^<]+)</th>",
+                             head[head.index("<thead>"):head.index("</thead>")])
+        self.assertEqual(columns,
+                         ["Reading", "Pairs", "Matches", "Cand win",
+                          "&Delta;Brier"])
+
+    def test_the_brier_delta_is_dashed_where_it_does_not_apply(self):
+        # A different line is a different question, so there is no shared
+        # 0/1 to square an error against. A number there would invite the
+        # comparison the line rule exists to prevent.
+        head = self.rendered[self.rendered.index('id="directional"'):]
+        head = head[:head.index("</section>")]
+        body = head[head.index("<tbody>"):head.index("</tbody>")]
+        rows = body.split("<tr>")[1:]
+        overall = next(r for r in rows if "<th>Overall</th>" in r)
+        different = next(r for r in rows if "<th>Different line</th>" in r)
+        same = next(r for r in rows if "<th>Same line</th>" in r)
+        self.assertIn("&mdash;", overall)
+        self.assertIn("&mdash;", different)
+        self.assertNotIn("&mdash;", same)
 
     def test_report_carries_no_explanatory_prose(self):
         # The report is a dashboard, not a write-up: headings, tables and
@@ -4247,6 +4533,20 @@ class TestReportShape(unittest.TestCase):
         self.assertNotIn('class="note"', self.rendered)
         self.assertNotIn('class="sub"', self.rendered)
         self.assertGreater(self.rendered.count("<th title="), 20)
+
+    def test_section_headings_are_titles_and_nothing_else(self):
+        import re as _re
+        for heading in _re.findall(r"<h2[^>]*>(.*?)</h2>", self.rendered, _re.S):
+            self.assertNotIn("<span", heading, heading)
+        # The disclosure group is a summary rather than an h2, and it is
+        # held to the same rule.
+        for summary in _re.findall(r"<summary[^>]*>(.*?)</summary>",
+                                   self.rendered, _re.S):
+            self.assertNotIn("&mdash;", summary, summary)
+            self.assertNotIn("<span", summary, summary)
+
+    def test_the_disclosure_is_called_additional_checks(self):
+        self.assertIn("<summary>Additional checks</summary>", self.rendered)
 
     def test_no_heading_asks_itself_a_question(self):
         # Headings name the thing; they do not introduce it.
@@ -4266,10 +4566,9 @@ class TestReportShape(unittest.TestCase):
             words = line.strip().split()
             self.assertLess(len(words), 12, line.strip())
 
-    def test_nav_names_the_two_headline_views(self):
-        nav = self.rendered[self.rendered.index("<nav>"):self.rendered.index("</nav>")]
-        self.assertIn("Directional calibration", nav)
-        self.assertIn("Cross-section calibration", nav)
+    def test_the_headline_views_are_both_on_the_page(self):
+        for heading in ("Directional calibration", "Cross-section calibration"):
+            self.assertIn(f"<h2>{heading}</h2>", self.rendered)
 
     def test_thin_cells_are_dimmed_not_dropped(self):
         # These cells sit well under MIN_CELL_MATCHES, so they must still be
