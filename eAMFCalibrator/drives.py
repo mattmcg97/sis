@@ -360,8 +360,31 @@ def score_at(scores, event_message_count):
     return p1, p2
 
 
-def build_snapshots(match_code, plays, scores):
-    """One snapshot per cleaned drive, taken at the drive's first play."""
+@dataclass(frozen=True)
+class Drive:
+    """One possession: the cleaned plays in it, in message order."""
+    match_code: str
+    drive_number: int
+    offensive_team: Optional[str]
+    period_number: Optional[int]
+    plays: tuple
+
+    @property
+    def first(self):
+        return self.plays[0]
+
+    @property
+    def last(self):
+        return self.plays[-1]
+
+
+def build_drives(match_code, plays, scores):
+    """Group the cleaned play rows into drives.
+
+    The single definition of where one possession ends and the next
+    begins. build_snapshots reads it, and so does the in-drive analysis,
+    so the two cannot come to different answers about what a drive is.
+    """
     plays = sorted(plays, key=lambda p: p.event_message_count)
     scores = sorted(scores, key=lambda s: s.event_message_count)
 
@@ -370,51 +393,6 @@ def build_snapshots(match_code, plays, scores):
                if not was_dropped(reasons[p.event_message_count])]
     if not cleaned:
         return []
-
-    snapshots = []
-    drive_number = 0
-    current_run = []
-
-    def flush():
-        if not current_run:
-            return
-        # A drive starts at 1st and 10. Taking the run's first ROW instead
-        # lands on whatever survived cleaning: the general rule drops only
-        # ONE row per team change, so a transition carrying several
-        # kickoff-mechanic rows leaves the rest behind, and the snapshot
-        # sits on a row whose down, distance and team label all belong to
-        # the kick rather than the drive.
-        #
-        # So the anchor walks forward to the first row that is a plausible
-        # SNAP, and then asks whether that snap is 1st and 10. Walking to
-        # the first 1st-and-10 instead would be wrong: a drive whose run
-        # opens 2nd and 7 has already lost its start, and the next
-        # 1st-and-10 in it is a first-down CONVERSION -- a real game state,
-        # but not this drive's. Stopping at the first real snap keeps that
-        # case visible as MID_DRIVE rather than silently relabelling it.
-        anchor = next((p for p in current_run if is_snap(p)), None)
-        if anchor is None:
-            anchor, kind = current_run[0], NO_SNAP
-        elif anchor.down_number == 1 and anchor.distance == 10:
-            kind = FIRST_DOWN
-        else:
-            kind = MID_DRIVE
-        p1, p2 = score_at(scores, anchor.event_message_count)
-        snapshots.append(Snapshot(
-            match_code=match_code,
-            drive_number=drive_number,
-            event_message_count=anchor.event_message_count,
-            period_number=anchor.period_number,
-            offensive_team=anchor.offensive_team,
-            field_position=anchor.field_position,
-            down_number=anchor.down_number,
-            distance=anchor.distance,
-            play_time=anchor.play_time,
-            score_p1=p1,
-            score_p2=p2,
-            n_plays=len(current_run),
-            anchor=kind,
-        ))
 
     # Points are the one boundary the play feed cannot argue with: nobody
     # is on the same drive before and after a score. Where the team label
@@ -434,6 +412,8 @@ def build_snapshots(match_code, plays, scores):
         low = previous_play.event_message_count if previous_play else -1
         return any(low <= m < play.event_message_count for m in scoring_msgs)
 
+    runs = []
+    current_run = []
     previous_play = None
     for p in cleaned:
         # A team change ends a drive, and so does a row the kickoff rule
@@ -446,11 +426,62 @@ def build_snapshots(match_code, plays, scores):
                         or reasons[p.event_message_count] == DRIVE_START
                         or scored_before(previous_play, p))
         previous_play = p
-        if starts_drive:
-            flush()
-            drive_number += 1
+        if starts_drive and current_run:
+            runs.append(current_run)
             current_run = []
         current_run.append(p)
-    flush()
+    if current_run:
+        runs.append(current_run)
+
+    return [Drive(match_code=match_code, drive_number=i + 1,
+                  offensive_team=run[0].offensive_team,
+                  period_number=run[0].period_number,
+                  plays=tuple(run))
+            for i, run in enumerate(runs)]
+
+
+def build_snapshots(match_code, plays, scores):
+    """One snapshot per cleaned drive, taken at the drive's first play."""
+    scores = sorted(scores, key=lambda s: s.event_message_count)
+
+    snapshots = []
+    for drive in build_drives(match_code, plays, scores):
+        # A drive starts at 1st and 10. Taking the run's first ROW instead
+        # lands on whatever survived cleaning: the general rule drops only
+        # ONE row per team change, so a transition carrying several
+        # kickoff-mechanic rows leaves the rest behind, and the snapshot
+        # sits on a row whose down, distance and team label all belong to
+        # the kick rather than the drive.
+        #
+        # So the anchor walks forward to the first row that is a plausible
+        # SNAP, and then asks whether that snap is 1st and 10. Walking to
+        # the first 1st-and-10 instead would be wrong: a drive whose run
+        # opens 2nd and 7 has already lost its start, and the next
+        # 1st-and-10 in it is a first-down CONVERSION -- a real game state,
+        # but not this drive's. Stopping at the first real snap keeps that
+        # case visible as MID_DRIVE rather than silently relabelling it.
+        anchor = next((p for p in drive.plays if is_snap(p)), None)
+        if anchor is None:
+            anchor, kind = drive.first, NO_SNAP
+        elif anchor.down_number == 1 and anchor.distance == 10:
+            kind = FIRST_DOWN
+        else:
+            kind = MID_DRIVE
+        p1, p2 = score_at(scores, anchor.event_message_count)
+        snapshots.append(Snapshot(
+            match_code=match_code,
+            drive_number=drive.drive_number,
+            event_message_count=anchor.event_message_count,
+            period_number=anchor.period_number,
+            offensive_team=anchor.offensive_team,
+            field_position=anchor.field_position,
+            down_number=anchor.down_number,
+            distance=anchor.distance,
+            play_time=anchor.play_time,
+            score_p1=p1,
+            score_p2=p2,
+            n_plays=len(drive.plays),
+            anchor=kind,
+        ))
 
     return snapshots

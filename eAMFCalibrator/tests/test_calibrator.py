@@ -19,7 +19,7 @@ import unittest
 from unittest import mock
 
 from .. import (buckets, clock, config, directional, drives, handles,
-                markets, metrics, report)
+                indrive, markets, metrics, report)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -1786,6 +1786,397 @@ class TestDriveCleaning(unittest.TestCase):
 BASE = dt.datetime(2026, 9, 17, 12, 0, 0)
 
 
+class TestTransitionClassification(unittest.TestCase):
+    """What the play feed says happened between two rows."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def feed(self):
+        plays = [PlayRow(m, 1, self.HOME, d, dist, f, None)
+                 for m, d, dist, f in [
+                     (10, 1, 10, 25),   # drive opens
+                     (12, 2, 3, 32),    # +7, short of the line to gain
+                     (14, 1, 10, 35),   # +3 and a fresh set: converted
+                     (16, 2, 10, 35),   # 0
+                     (18, 3, 14, 31),   # -4
+                     (20, 4, 14, 31)]]  # 3rd down came and went
+        plays.append(PlayRow(30, 1, self.AWAY, 1, 10, 25, None))
+        return plays, []
+
+    def outcomes(self):
+        return {(t.from_message, t.to_message): t
+                for t in indrive.transitions_for_match("AF1", *self.feed())}
+
+    def test_each_class_comes_out_of_the_play_feed_alone(self):
+        got = self.outcomes()
+        self.assertEqual(got[(10, 12)].outcome, indrive.BIG_GAIN)
+        self.assertEqual(got[(12, 14)].outcome, indrive.FIRST_DOWN)
+        self.assertEqual(got[(14, 16)].outcome, indrive.NO_GAIN)
+        self.assertEqual(got[(16, 18)].outcome, indrive.LOSS)
+        self.assertEqual(got[(18, 20)].outcome, indrive.FAILED_CONVERSION)
+
+    def test_the_drive_ending_transition_is_built_and_marked(self):
+        got = self.outcomes()
+        ending = got[(20, 30)]
+        self.assertEqual(ending.outcome, indrive.POSSESSION_LOST)
+        self.assertFalse(ending.in_drive)
+        self.assertTrue(all(t.in_drive for k, t in got.items() if k != (20, 30)))
+
+    def test_yards_are_only_claimed_inside_a_drive(self):
+        # Across a kickoff the two field positions are in different frames,
+        # so the difference between them is not a gain.
+        got = self.outcomes()
+        self.assertEqual(got[(10, 12)].yards, 7)
+        self.assertIsNone(got[(20, 30)].yards)
+
+    def test_a_short_gain_carries_no_direction(self):
+        plays = [PlayRow(m, 1, self.HOME, d, dist, f, None)
+                 for m, d, dist, f in [(1, 1, 10, 25), (2, 2, 7, 28)]]
+        t = indrive.transitions_for_match("AF1", plays, [])[0]
+        self.assertEqual(t.outcome, indrive.SHORT_GAIN)
+        self.assertEqual(t.sign, 0)
+        self.assertFalse(t.scorable)
+
+    def test_points_settle_it_before_any_yardage(self):
+        # Home scores; the next surviving row is Away receiving. The
+        # transition between them is the touchdown, not a possession loss.
+        plays = [PlayRow(1, 1, self.HOME, 3, 2, 95, None),
+                 PlayRow(9, 1, self.AWAY, 1, 10, 25, None)]
+        scores = [ScoreRow(5, 1, 6, None, 6, 0)]
+        t = indrive.transitions_for_match("AF1", plays, scores)[0]
+        self.assertEqual(t.outcome, indrive.TOUCHDOWN)
+        self.assertEqual(t.points, 6)
+        self.assertEqual(t.sign, +1)
+
+    def test_a_field_goal_is_points_not_a_big_gain(self):
+        plays = [PlayRow(1, 1, self.HOME, 4, 5, 80, None),
+                 PlayRow(9, 1, self.AWAY, 1, 10, 25, None)]
+        scores = [ScoreRow(5, 1, 3, None, 3, 0)]
+        t = indrive.transitions_for_match("AF1", plays, scores)[0]
+        self.assertEqual(t.outcome, indrive.SCORE)
+        self.assertEqual(t.sign, +1)
+
+    def test_the_defence_scoring_is_bad_for_the_offence(self):
+        # Points are signed to the side with the ball, so a pick six or a
+        # safety comes back negative and cannot read as a good play.
+        plays = [PlayRow(1, 1, self.HOME, 2, 8, 20, None),
+                 PlayRow(9, 1, self.AWAY, 1, 10, 25, None)]
+        scores = [ScoreRow(5, 1, None, 6, 0, 6)]
+        t = indrive.transitions_for_match("AF1", plays, scores)[0]
+        self.assertEqual(t.outcome, indrive.POINTS_AGAINST)
+        self.assertEqual(t.sign, -1)
+        self.assertEqual(t.points, -6)
+
+    def test_every_class_has_a_sign_and_an_order(self):
+        for outcome in indrive.OUTCOME_SIGN:
+            self.assertIn(outcome, indrive.OUTCOME_ORDER, outcome)
+        self.assertEqual(len(indrive.OUTCOME_ORDER),
+                         len(indrive.OUTCOME_SIGN))
+
+
+class TestExpectedDirection(unittest.TestCase):
+    """Which way a selection should move when the offence does well."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def test_the_offence_own_side_follows_the_play(self):
+        # Home has the ball and does something good.
+        self.assertEqual(indrive.expected_sign(50, self.HOME, +1), +1)
+        self.assertEqual(indrive.expected_sign(52, self.HOME, +1), +1)
+        # The opponent's side moves the other way.
+        self.assertEqual(indrive.expected_sign(51, self.HOME, +1), -1)
+        self.assertEqual(indrive.expected_sign(53, self.HOME, +1), -1)
+
+    def test_it_flips_with_possession(self):
+        for market_id in (50, 51, 52, 53):
+            self.assertEqual(indrive.expected_sign(market_id, self.AWAY, +1),
+                             -indrive.expected_sign(market_id, self.HOME, +1),
+                             market_id)
+
+    def test_totals_are_possession_blind(self):
+        # Points are points whoever scores them, so Over follows a good
+        # offensive play from either side.
+        for team in (self.HOME, self.AWAY):
+            self.assertEqual(indrive.expected_sign(54, team, +1), +1, team)
+            self.assertEqual(indrive.expected_sign(55, team, +1), -1, team)
+
+    def test_a_bad_play_reverses_every_expectation(self):
+        for market_id in markets.MARKET_IDS:
+            good = indrive.expected_sign(market_id, self.HOME, +1)
+            bad = indrive.expected_sign(market_id, self.HOME, -1)
+            self.assertEqual(good, -bad, market_id)
+
+    def test_nothing_is_expected_without_a_direction_or_a_side(self):
+        self.assertEqual(indrive.expected_sign(50, self.HOME, 0), 0)
+        self.assertEqual(indrive.expected_sign(50, None, +1), 0)
+        self.assertEqual(indrive.expected_sign(50, "Some Other Team", +1), 0)
+
+
+class TestMoves(unittest.TestCase):
+    """Reading the two prices, and refusing to where it would be wrong."""
+
+    HOME = "Home Team"
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def quote(self, message, market_id, probability, description,
+              status="open", active="true"):
+        return ("AF1", market_id, self.T, probability, 2.0, description,
+                message, status, active)
+
+    def transition(self, outcome=None):
+        plays = [PlayRow(m, 1, self.HOME, d, dist, f, None)
+                 for m, d, dist, f in [(1, 2, 3, 32), (2, 1, 10, 40)]]
+        return indrive.transitions_for_match("AF1", plays, [])[0]
+
+    def index(self, rows):
+        return {directional.PROD: directional.index_by_message(rows),
+                directional.CANDIDATE: directional.index_by_message([])}
+
+    def test_a_move_is_scored_on_its_sign(self):
+        t = self.transition()
+        self.assertEqual(t.outcome, indrive.FIRST_DOWN)
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win"),
+                self.quote(2, 50, 46.0, "PLAYER 1 to win")]
+        move = indrive.moves_for_transitions([t], self.index(rows))[0]
+        self.assertEqual(move.expected, +1)
+        self.assertAlmostEqual(move.delta, 0.06)
+        self.assertTrue(move.hit)
+        self.assertFalse(move.flat)
+
+    def test_the_wrong_way_is_a_miss(self):
+        rows = [self.quote(1, 50, 46.0, "PLAYER 1 to win"),
+                self.quote(2, 50, 40.0, "PLAYER 1 to win")]
+        move = indrive.moves_for_transitions([self.transition()],
+                                             self.index(rows))[0]
+        self.assertFalse(move.hit)
+        self.assertLess(move.signed, 0)
+
+    def test_a_price_that_did_not_move_is_neither(self):
+        rows = [self.quote(1, 50, 44.0, "PLAYER 1 to win"),
+                self.quote(2, 50, 44.0, "PLAYER 1 to win")]
+        move = indrive.moves_for_transitions([self.transition()],
+                                             self.index(rows))[0]
+        self.assertTrue(move.flat)
+        self.assertIsNone(move.hit)
+
+    def test_probabilities_are_read_on_the_suite_scale(self):
+        # The feed publishes 0-100. A move has to read like a Brier delta,
+        # not a hundred times larger than one.
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win"),
+                self.quote(2, 50, 46.0, "PLAYER 1 to win")]
+        move = indrive.moves_for_transitions([self.transition()],
+                                             self.index(rows))[0]
+        self.assertAlmostEqual(move.before, 0.40)
+        self.assertAlmostEqual(move.after, 0.46)
+
+    def test_a_line_that_moved_is_not_a_reaction(self):
+        # A different line is a different question, exactly as it is on a
+        # pair, so the delta says nothing about the play.
+        rows = [self.quote(1, 52, 46.0, "PLAYER 1 -2.5"),
+                self.quote(2, 52, 52.0, "PLAYER 1 -6.5")]
+        stats = collections.defaultdict(int)
+        moves = indrive.moves_for_transitions([self.transition()],
+                                              self.index(rows), stats)
+        self.assertEqual(moves, [])
+        self.assertEqual(stats["move_line_changed"], 1)
+
+    def test_the_same_line_is_fine(self):
+        rows = [self.quote(1, 52, 46.0, "PLAYER 1 -2.5"),
+                self.quote(2, 52, 52.0, "PLAYER 1 -2.5")]
+        moves = indrive.moves_for_transitions([self.transition()],
+                                              self.index(rows))
+        self.assertEqual(len(moves), 1)
+        self.assertTrue(moves[0].hit)
+
+    def test_a_dead_endpoint_is_not_a_move(self):
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win", active="false"),
+                self.quote(2, 50, 46.0, "PLAYER 1 to win")]
+        stats = collections.defaultdict(int)
+        self.assertEqual(
+            indrive.moves_for_transitions([self.transition()],
+                                          self.index(rows), stats), [])
+        self.assertEqual(stats["move_not_live"], 1)
+
+    def test_a_missing_endpoint_is_not_a_move(self):
+        # One market quoted at the first message and nowhere else. Every
+        # (stream, selection) with nothing at both ends is counted, which
+        # is six selections across two streams.
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win")]
+        stats = collections.defaultdict(int)
+        self.assertEqual(
+            indrive.moves_for_transitions([self.transition()],
+                                          self.index(rows), stats), [])
+        self.assertEqual(stats["move_missing_quote"],
+                         len(markets.MARKET_IDS) * 2)
+
+    def test_a_transition_with_no_direction_is_skipped_whole(self):
+        plays = [PlayRow(m, 1, self.HOME, d, dist, f, None)
+                 for m, d, dist, f in [(1, 1, 10, 25), (2, 2, 7, 28)]]
+        t = indrive.transitions_for_match("AF1", plays, [])[0]
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win"),
+                self.quote(2, 50, 46.0, "PLAYER 1 to win")]
+        stats = collections.defaultdict(int)
+        self.assertEqual(
+            indrive.moves_for_transitions([t], self.index(rows), stats), [])
+        self.assertEqual(stats["transition_no_direction"], 1)
+
+
+class TestIndriveAggregation(unittest.TestCase):
+    """Hit rates, the flat case, and the head to head."""
+
+    HOME = "Home Team"
+    T = dt.datetime(2026, 9, 18, 12, 0)
+
+    def moves(self, pattern, stream=None):
+        """One move per character: + right, - wrong, 0 flat."""
+        stream = stream or directional.PROD
+        out = []
+        for i, mark in enumerate(pattern):
+            plays = [PlayRow(1, 1, self.HOME, 2, 3, 32, None),
+                     PlayRow(2, 1, self.HOME, 1, 10, 40, None)]
+            t = indrive.transitions_for_match(f"AF{i}", plays, [])[0]
+            delta = {"+": 0.02, "-": -0.02, "0": 0.0}[mark]
+            out.append(indrive.Move(transition=t, stream=stream, market_id=50,
+                                    before=0.50, after=0.50 + delta,
+                                    line=None, expected=+1))
+        return out
+
+    def test_the_rate_is_out_of_the_moves_that_moved(self):
+        b = indrive.block(self.moves("+++--000"), n_bootstrap=50)
+        self.assertEqual(b["n"], 8)
+        self.assertEqual(b["decided"], 5)
+        self.assertEqual(b["hits"], 3)
+        self.assertAlmostEqual(b["rate"], 0.6)
+        self.assertEqual(b["flat"], 3)
+        self.assertAlmostEqual(b["flat_share"], 3 / 8)
+
+    def test_a_flat_price_is_not_counted_as_wrong(self):
+        # Silence is not a miss. It is its own finding, and pretending a
+        # model that never moved got it wrong would overstate the result.
+        self.assertEqual(indrive.block(self.moves("0000"), 50)["rate"], None)
+        self.assertEqual(indrive.block(self.moves("0000"), 50)["flat"], 4)
+
+    def test_the_interval_is_clustered_on_matches(self):
+        b = indrive.block(self.moves("+-+-+-+-+-"), n_bootstrap=200)
+        self.assertEqual(b["matches"], 10)
+        self.assertIsNotNone(b["ci_low"])
+        self.assertLessEqual(b["ci_low"], b["rate"])
+        self.assertGreaterEqual(b["ci_high"], b["rate"])
+
+    def test_head_to_head_pairs_the_two_streams_on_one_question(self):
+        prod = self.moves("++--", directional.PROD)
+        cand = self.moves("+-+-", directional.CANDIDATE)
+        h = indrive.head_to_head(prod + cand, n_bootstrap=50)
+        # Move 0: both right -> tie. Move 3: both wrong -> tie.
+        self.assertEqual(h["ties"], 2)
+        # Move 1: prod right, candidate wrong. Move 2: the other way.
+        self.assertEqual(h["decided"], 2)
+        self.assertAlmostEqual(h["rate"], 0.5)
+
+    def test_both_flat_is_counted_apart_from_a_tie(self):
+        h = indrive.head_to_head(self.moves("00", directional.PROD)
+                                 + self.moves("00", directional.CANDIDATE),
+                                 n_bootstrap=50)
+        self.assertEqual(h["both_flat"], 2)
+        self.assertEqual(h["ties"], 0)
+        self.assertEqual(h["decided"], 0)
+
+    def test_an_unpaired_move_decides_nothing(self):
+        h = indrive.head_to_head(self.moves("++++", directional.PROD),
+                                 n_bootstrap=50)
+        self.assertEqual(h["decided"], 0)
+        self.assertEqual(h["pairs"], 4)
+
+    def test_the_report_splits_in_drive_from_the_drive_end(self):
+        plays = [PlayRow(m, 1, self.HOME, d, dist, f, None)
+                 for m, d, dist, f in [(1, 2, 3, 32), (2, 1, 10, 40)]]
+        plays.append(PlayRow(9, 1, "Away Team", 1, 10, 25, None))
+        transitions = indrive.transitions_for_match("AF1", plays, [])
+        moves = []
+        for t in transitions:
+            moves.append(indrive.Move(transition=t, stream=directional.PROD,
+                                      market_id=50, before=0.5, after=0.52,
+                                      line=None,
+                                      expected=indrive.expected_sign(
+                                          50, self.HOME, t.sign)))
+        result = indrive.report(moves, n_bootstrap=50)
+        self.assertEqual(result["in_drive"], 1)
+        self.assertEqual(result["ending"], 1)
+        self.assertEqual(result["moves"], 2)
+
+
+class TestIndriveCsvAndHtml(unittest.TestCase):
+    """The files it writes."""
+
+    HOME = "Home Team"
+
+    def move(self):
+        plays = [PlayRow(1, 1, self.HOME, 2, 3, 32, None),
+                 PlayRow(2, 1, self.HOME, 1, 10, 40, None)]
+        t = indrive.transitions_for_match("AF1", plays, [])[0]
+        return indrive.Move(transition=t, stream=directional.PROD,
+                            market_id=52, before=0.50, after=0.54,
+                            line=-2.5, expected=+1)
+
+    def test_a_move_row_needs_no_join_to_be_read(self):
+        row = indrive.move_row(self.move())
+        self.assertEqual(sorted(row), sorted(indrive.MOVE_FIELDS))
+        self.assertEqual(row["outcome"], indrive.FIRST_DOWN)
+        self.assertEqual(row["market"], "spread")
+        self.assertEqual(row["selection"], "Home")
+        self.assertEqual(row["hit"], 1)
+        self.assertEqual(row["line"], -2.5)
+
+    def test_the_move_row_carries_its_whole_transition(self):
+        row = indrive.move_row(self.move())
+        for field in indrive.TRANSITION_FIELDS:
+            self.assertIn(field, row, field)
+
+    def test_a_transition_row_is_exactly_the_csv_columns(self):
+        plays = [PlayRow(1, 1, self.HOME, 2, 3, 32, None),
+                 PlayRow(2, 1, self.HOME, 1, 10, 40, None)]
+        for t in indrive.transitions_for_match("AF1", plays, []):
+            self.assertEqual(sorted(indrive.transition_row(t)),
+                             sorted(indrive.TRANSITION_FIELDS))
+
+    def test_the_html_renders_and_names_every_outcome_it_has(self):
+        from .. import html_indrive
+        moves = [self.move()]
+        plays = [PlayRow(1, 1, self.HOME, 2, 3, 32, None),
+                 PlayRow(2, 1, self.HOME, 1, 10, 40, None)]
+        transitions = indrive.transitions_for_match("AF1", plays, [])
+        page = html_indrive.render(indrive.report(moves, 50),
+                                   indrive.outcome_census(transitions),
+                                   transitions, {})
+        self.assertIn("<!DOCTYPE html>", page)
+        self.assertIn("in-drive reaction", page)
+        self.assertIn("First down", page)
+        self.assertIn("</html>", page)
+
+    def test_every_outcome_class_has_a_title_in_the_html(self):
+        from .. import html_indrive
+        for outcome in indrive.OUTCOME_ORDER:
+            self.assertIn(outcome, html_indrive.TITLES, outcome)
+
+    def test_the_rate_ramp_is_centred_on_a_coin(self):
+        from .. import html_indrive
+        # Worse than random is the red end, however close to 50% it is.
+        self.assertEqual(html_indrive._rate_class(0.49), "g4")
+        self.assertEqual(html_indrive._rate_class(0.51), "g4")
+        self.assertEqual(html_indrive._rate_class(0.95), "g0")
+        # And it is monotone in between.
+        steps = [html_indrive._rate_class(r)
+                 for r in (0.50, 0.55, 0.60, 0.70, 0.90)]
+        self.assertEqual(steps, sorted(steps, reverse=True))
+
+    def test_the_ramp_is_spelled_out_in_a_key(self):
+        from .. import html_indrive
+        key = html_indrive._rate_key()
+        for step in range(5):
+            self.assertIn(f'class="key g{step}"', key)
+        self.assertIn("50% is a coin", key)
+
+
 class TestNearestQuote(unittest.TestCase):
     def setUp(self):
         self.times = [BASE + dt.timedelta(seconds=s) for s in (-10, -2, 1, 6)]
@@ -2803,7 +3194,8 @@ class TestGapRamp(unittest.TestCase):
         # to fall monotonically, by more than the 0.06 step floor, in BOTH
         # themes -- a reader who sees no hue still sees the cell darken.
         import re
-        source = open(self.h.__file__).read()
+        from .. import html_style
+        source = html_style.CSS
         found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
                            r" --g3:(#\w{6}); --g4:(#\w{6});", source)
         self.assertEqual(len(found), 3)   # light, media-query dark, forced dark
@@ -2820,7 +3212,8 @@ class TestGapRamp(unittest.TestCase):
         # The colour says which band; the number IS the answer. It has to
         # clear AA against every background it can land on.
         import re
-        source = open(self.h.__file__).read()
+        from .. import html_style
+        source = html_style.CSS
         found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
                            r" --g3:(#\w{6}); --g4:(#\w{6});", source)
         for ramp, ink in ((found[0], "#1a1a18"), (found[1], "#ededea")):

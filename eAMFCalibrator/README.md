@@ -363,6 +363,94 @@ sitting on it. The number is the real answer; the colour only says which
 band it is in, and a key above each table names every band, so nothing
 is ever read by colour alone.
 
+## In-drive reaction: `indrive`
+
+```
+py -m eAMFCalibrator indrive                    # every match in both streams
+py -m eAMFCalibrator indrive --match AF063170926
+py -m eAMFCalibrator indrive --matches 50
+```
+
+Every other view asks whether a probability was **right**. This one asks
+something cheaper to be sure about and harder to fake: does the model
+**react**? A first down is good for the team with the ball. Its moneyline
+should go up. If it does not, the number is not reading the game, whatever
+its Brier score says.
+
+### The unit is a transition
+
+Two consecutive cleaned play rows, and what happened between them. Inside a
+drive that is one snap to the next; at a drive's end it is the last row of
+one possession to the first row of the next. Each is classified from the
+play feed alone — down, distance, field position, and any points on the
+scoreboard — and each class carries an expected direction for the side in
+possession.
+
+| Outcome | For the offence | How it is read |
+|---|---|---|
+| `touchdown` | good | six or more points to the side with the ball |
+| `score` | good | one to five points: a field goal or a conversion |
+| `first_down` | good | the down reset to 1 with the ball forward |
+| `big_gain` | good | 5+ yards, short of the line to gain |
+| `short_gain` | — | 1–4 yards, short of it |
+| `no_gain` | bad | the ball did not move |
+| `loss` | bad | the ball went backwards |
+| `failed_conversion` | bad | 3rd or 4th down came and went without a first |
+| `possession_lost` | bad | the drive ended and nobody scored |
+| `points_against` | bad | a safety, or the defence scored |
+
+`short_gain` carries **no** expectation. Three yards on 3rd and 8 helps
+nobody, so it is counted and shown and scored by nothing. Points settle a
+transition before any yardage does, and they are signed to the side with
+the ball — a pick six comes back negative and cannot read as a good play.
+
+### Which way a price should move
+
+A team-sided selection follows the side it names: on a good play the
+offence's own moneyline and spread rise, its opponent's fall. Totals are
+possession-blind — points are points whoever scores them — so Over follows
+the play and Under opposes it from either side.
+
+Scored on the **sign**, not the size. `|Move|` and `Signed` report the size
+beside it, so a model that gets the direction right on a touchdown and a
+five-yard gain by the same amount is visible as such.
+
+### What is refused
+
+- A transition whose **line moved** between the two messages. A different
+  line is a different question, exactly as it is on a pair.
+- A transition where **either endpoint was not live**. A price nobody could
+  have taken did not move.
+- A **flat** price is neither right nor wrong. It is reported as its own
+  column rather than counted as a miss — silence is a finding, not an error.
+
+### The bias to know before reading any number
+
+A failed third down usually **ends the drive**, so it is not an in-drive
+transition at all. Restricted to plays inside one possession the sample
+leans towards things going well. That is why the drive-ending transition is
+built too, and why in-drive and drive-ending are reported apart rather than
+pooled. The drive-ending rows are also the noisier half: their two messages
+sit either side of a kickoff, so more than one play's worth of news is in
+the price difference.
+
+### Two sides of one market read the same
+
+Wherever the feed publishes exact complements, one side goes up as the
+other goes down and the expectations mirror, so the per-selection rates
+come in identical pairs. That is arithmetic, not a measurement. A row that
+does **not** match its partner is the interesting one — which is why the
+split is shown at all.
+
+### Output
+
+`indrive_moves.csv` is one row per (transition × selection × stream),
+carrying the whole transition so it needs no join. `indrive_transitions.csv`
+is one row per transition. `indrive.html` is the same tables on a page,
+with the hit-rate ramp centred on a **coin**: 50% is a model reacting at
+random, and a rate barely above it lands on the red end alongside one below
+it.
+
 ## The split axes
 
 | Axis | Buckets |

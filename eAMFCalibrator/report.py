@@ -1153,3 +1153,131 @@ def print_checks_summary(full):
         print(f"    - {issue}")
     if not issues:
         print("  Run with --axes for the full integrity tables and single-axis views.")
+
+
+# ---------------------------------------------------------------------------
+# In-drive reaction
+# ---------------------------------------------------------------------------
+
+def _rate_row(label, b, width=22):
+    ci = ("" if b["ci_low"] is None
+          else f"[{_pct(b['ci_low'])}, {_pct(b['ci_high'])}]")
+    move = "" if b["mean_move"] is None else f"{b['mean_move']:.4f}"
+    signed = "" if b["mean_signed"] is None else f"{b['mean_signed']:+.4f}"
+    print(f"  {label:<{width}}{b['n']:>8,}{b['decided']:>9,}"
+          f"{_pct(b['rate']):>8}{ci:>18}{_pct(b['flat_share']):>8}"
+          f"{move:>9}{signed:>10}{_p(b['p_value']):>9}")
+
+
+def _rate_header(label, width=22):
+    print(f"\n  {label:<{width}}{'MOVES':>8}{'DECIDED':>9}{'RIGHT':>8}"
+          f"{'95% CI':>18}{'FLAT':>8}{'|MOVE|':>9}{'SIGNED':>10}{'P':>9}")
+
+
+def print_indrive_census(census, transitions):
+    """What the play feed actually produced, before any price is read."""
+    print(f"\n{'=' * 78}\nIN-DRIVE REACTION -- what the plays were\n{'=' * 78}")
+    total = len(transitions)
+    if not total:
+        print("  No transitions.")
+        return
+    in_drive = sum(1 for t in transitions if t.in_drive)
+    scorable = sum(1 for t in transitions if t.scorable)
+    print(f"  {total:,} transitions across "
+          f"{len({t.match_code for t in transitions}):,} matches")
+    print(f"    inside a drive        : {in_drive:,}")
+    print(f"    at a drive's end      : {total - in_drive:,}")
+    print(f"    carrying a direction  : {scorable:,} "
+          f"({_pct(scorable / total)})")
+
+    print(f"\n  {'OUTCOME':<22}{'SIGN':>6}{'N':>9}{'IN DRIVE':>10}"
+          f"{'MATCHES':>9}{'SHARE':>8}")
+    for outcome, row in census.items():
+        if not row["n"]:
+            continue
+        sign = {1: "good", -1: "bad", 0: "--"}[row["sign"]]
+        print(f"  {outcome:<22}{sign:>6}{row['n']:>9,}{row['in_drive']:>10,}"
+              f"{row['matches']:>9,}{_pct(row['n'] / total):>8}")
+    print("\n  A failed third down usually ENDS the drive, so it is not an")
+    print("  in-drive transition. Restricted to plays inside one possession")
+    print("  the sample leans towards things going well, which is why the")
+    print("  drive-ending rows are built and reported apart.")
+
+
+def print_indrive(result, stats=None):
+    """Did the price move the way the play says it should?"""
+    from . import indrive
+    print(f"\n{'=' * 78}\nIN-DRIVE REACTION -- did the price follow the "
+          f"play?\n{'=' * 78}")
+    if not result["moves"]:
+        print("  No scorable moves.")
+        return
+    print(f"  {result['moves']:,} moves from {result['transitions']:,} "
+          f"transitions across {result['matches']:,} matches")
+    print(f"  RIGHT is the share of moves that went the expected way, out of")
+    print(f"  the ones that moved at all. FLAT is the share that did not move.")
+
+    for stream in (directional_prod(), directional_candidate()):
+        s = result["streams"][stream]
+        _rate_header(stream.upper())
+        for label, key in (("overall", "overall"), ("inside a drive", "in_drive"),
+                           ("at a drive's end", "ending")):
+            if s[key]["n"]:
+                _rate_row(label, s[key])
+
+    for stream in (directional_prod(), directional_candidate()):
+        s = result["streams"][stream]
+        _rate_header(f"{stream.upper()} BY OUTCOME")
+        for outcome in indrive.OUTCOME_ORDER:
+            b = s["by_outcome"].get(outcome)
+            if b and b["n"]:
+                _rate_row(outcome, b)
+
+        _rate_header(f"{stream.upper()} BY PERIOD")
+        for period in sorted(s["by_period"]):
+            _rate_row(str(period), s["by_period"][period])
+
+        _rate_header(f"{stream.upper()} BY MARKET")
+        for market in sorted(s["by_market"], key=str):
+            _rate_row(str(market), s["by_market"][market])
+
+        _rate_header(f"{stream.upper()} BY SELECTION")
+        for key in sorted(s["by_selection"], key=lambda k: (str(k[0]), str(k[1]))):
+            _rate_row(f"{key[0]} {key[1]}", s["by_selection"][key])
+        print("  Two sides of one market read the same wherever the feed")
+        print("  publishes exact complements: one goes up, the other down,")
+        print("  and the expectations mirror. A row that does NOT match its")
+        print("  partner is the interesting one.")
+
+    print(f"\n  {'HEAD TO HEAD':<22}{'PAIRS':>8}{'DECIDED':>9}{'CAND':>8}"
+          f"{'95% CI':>18}{'TIES':>8}{'BOTH FLAT':>11}{'P':>9}")
+    for label, key in (("overall", "all"), ("inside a drive", "in_drive"),
+                       ("at a drive's end", "ending")):
+        h = result["head_to_head"][key]
+        if not h["pairs"]:
+            continue
+        ci = ("" if h["ci_low"] is None
+              else f"[{_pct(h['ci_low'])}, {_pct(h['ci_high'])}]")
+        print(f"  {label:<22}{h['pairs']:>8,}{h['decided']:>9,}"
+              f"{_pct(h['rate']):>8}{ci:>18}{h['ties']:>8,}"
+              f"{h['both_flat']:>11,}{_p(h['p_value']):>9}")
+    print("\n  Head to head is paired on (transition, selection), so both")
+    print("  streams answer the same question about the same play. CAND is")
+    print("  the candidate's share of the moves the two disagreed on.")
+
+    if stats:
+        print(f"\n  {'DROPPED':<28}{'N':>10}")
+        for key in ("transition_no_direction", "move_missing_quote",
+                    "move_not_live", "move_line_changed"):
+            if stats.get(key):
+                print(f"  {key:<28}{stats[key]:>10,}")
+
+
+def directional_prod():
+    from . import directional
+    return directional.PROD
+
+
+def directional_candidate():
+    from . import directional
+    return directional.CANDIDATE

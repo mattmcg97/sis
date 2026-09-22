@@ -2,6 +2,7 @@
 
     py -m eAMFCalibrator preflight
     py -m eAMFCalibrator directional
+    py -m eAMFCalibrator indrive
     py -m eAMFCalibrator run prod
     py -m eAMFCalibrator run candidate
     py -m eAMFCalibrator run both
@@ -18,8 +19,8 @@ import datetime as dt
 import os
 import sys
 
-from . import (buckets, config, directional, dump, html_full, html_report,
-               pipeline,
+from . import (buckets, config, directional, dump, html_full, html_indrive,
+               html_report, indrive, pipeline,
                report, snowflake_io)
 
 
@@ -301,6 +302,75 @@ def _possession_label(pair):
     return buckets.possession_bucket(pair.offensive_team)
 
 
+def cmd_indrive(args):
+    """Does the price move the right way when a play goes well?
+
+    Every pair of consecutive cleaned play rows is classified from the
+    play feed alone -- first down, touchdown, five yards, a stop -- and
+    each class carries an expected direction for the side in possession.
+    Both streams' probabilities are then read at the two messages and
+    scored on their SIGN.
+    """
+    out_dir = args.out or DEFAULT_OUT
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            time_column, _ = snowflake_io.detect_play_time_column(cur)
+            if args.match:
+                match_codes = list(args.match)
+            else:
+                prod = set(snowflake_io.match_universe(
+                    cur, config.STREAMS[directional.PROD]))
+                candidate = set(snowflake_io.match_universe(
+                    cur, config.STREAMS[directional.CANDIDATE]))
+                match_codes = sorted(prod & candidate)
+                if args.matches:
+                    match_codes = match_codes[-args.matches:]
+            print(f"\nIn-drive reaction across {len(match_codes)} matches")
+            transitions, moves, stats = indrive.run(
+                cur, match_codes, time_column, n_bootstrap=args.bootstrap)
+    finally:
+        conn.close()
+
+    report.print_indrive_census(indrive.outcome_census(transitions), transitions)
+    if not moves:
+        print("\n  No scorable price moves.")
+        return 1
+
+    result = indrive.report(moves, n_bootstrap=args.bootstrap)
+    report.print_indrive(result, stats)
+
+    written = [
+        _write_csv(os.path.join(out_dir, "indrive_moves.csv"),
+                   indrive.MOVE_FIELDS,
+                   [indrive.move_row(m) for m in moves]),
+        _write_csv(os.path.join(out_dir, "indrive_transitions.csv"),
+                   indrive.TRANSITION_FIELDS,
+                   [indrive.transition_row(t) for t in transitions]),
+    ]
+    path = args.html or os.path.join(out_dir, "indrive.html")
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(html_indrive.render(
+            result, indrive.outcome_census(transitions), transitions, stats))
+    written.append(path)
+
+    print()
+    for item in written:
+        print(f"  wrote {item}  ({os.path.getsize(item) / 1024:,.0f} KB)")
+    return 0
+
+
+def _write_csv(path, fields, rows):
+    import csv
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
 def cmd_cross(args):
     """Cross-sectional calibration by cell, under the line rule.
 
@@ -563,6 +633,23 @@ def build_parser():
     dump_parser.add_argument("--matches", type=int, default=3, metavar="N",
                              help="how many recent matches to dump (default 3)")
 
+    indrive_parser = sub.add_parser(
+        "indrive", parents=[shared],
+        help="does the price move the right way when a play goes well for "
+             "the offence?")
+    indrive_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    indrive_parser.add_argument("--html", help="path for the HTML report")
+    indrive_parser.add_argument("--match", action="append", metavar="CODE",
+                                help="analyse this match; repeatable. Without "
+                                     "it, every match in both streams is used")
+    indrive_parser.add_argument("--matches", type=int, default=0, metavar="N",
+                                help="limit to the most recent N matches "
+                                     "(default 0, meaning all of them)")
+    indrive_parser.add_argument("--bootstrap", type=int, default=1000,
+                                metavar="N",
+                                help="bootstrap resamples for the intervals "
+                                     "(default 1000)")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -585,6 +672,8 @@ def main(argv=None):
         return cmd_dump(args)
     if args.command == "report":
         return cmd_report(args)
+    if args.command == "indrive":
+        return cmd_indrive(args)
     if args.command == "compare":
         return cmd_compare(args)
     return 1
