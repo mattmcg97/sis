@@ -871,11 +871,7 @@ def _indrive_block(summary):
         </tr>""")
     return f"""
     <section class="panel" id="indrive">
-      <h2>In-drive reaction <span class="tag">py -m eAMFCalibrator indrive</span></h2>
-      <p class="count">{result['moves']:,} moves from
-        {summary['transitions']:,} transitions &middot; {summary['drives']:,}
-        drives &middot; {summary['drives_per_match']:.1f} per match &middot;
-        {summary['points_per_drive']:.2f} points per drive</p>
+      <h2>In-drive reaction <span class="tag"></span></h2>
       <div class="cols">
         <div>
           <table>
