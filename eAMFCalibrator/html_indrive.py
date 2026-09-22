@@ -84,17 +84,6 @@ def _rate_class(rate):
                  if (rate - 0.5) <= cut), len(RATE_STEPS))
     return f"g{len(RATE_STEPS) - step}"
 
-
-def _rate_key():
-    """The ramp spelled out, so no cell is read by colour alone."""
-    labels = [f"&ge;{100 * (0.5 + cut):.0f}%" for cut in reversed(RATE_STEPS)]
-    labels.append(f"&lt;{100 * (0.5 + RATE_STEPS[0]):.0f}%")
-    swatches = "".join(f'<span class="key g{i}">{label}</span>'
-                       for i, label in enumerate(labels))
-    return (f'<p class="gapkey"><span class="klab">Right</span>{swatches}'
-            f'<span class="klab">50% is a coin</span></p>')
-
-
 def _row(label, block, tag=""):
     return f"""<tr>
         <th>{label}{tag}</th>
@@ -227,7 +216,6 @@ def _stream_panel(stream, s):
     return f"""
     <section class="panel" id="{stream}">
       <h2>{html.escape(stream.capitalize())}</h2>
-      {_rate_key()}
       <h3>Scope</h3>
       <table>{HEAD}<tbody>{scope}</tbody></table>
       <h3>By outcome</h3>
