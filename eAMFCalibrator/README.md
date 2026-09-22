@@ -515,6 +515,41 @@ claim the data does not support. Whether to zero its sign — as
 each against a median of 5.28, so the feed quotes those messages far less
 often than any other class. Its 77.5% rests on 178 decided moves.
 
+### What each drive produced
+
+The transition view answers "did the price follow the play". It cannot
+answer "what did this drive do", and two gaps say why:
+
+- a drive-ending transition needs a **following** drive to point at, so
+  the last drive of every match has none at all — 326 of 4,468 on the full
+  run;
+- another 110 drive-ending rows carry a yardage class rather than an
+  outcome, because the team label did not change across the break.
+
+So `indrive_drives.csv` is one row per drive, every drive, carrying what
+it produced and the scoreboard either side of it: `points_for`,
+`points_against`, `score_p1_before` through `score_diff_after`, the
+`outcome` (`touchdown`, `field_goal`, `extra_point`, `score`,
+`points_against`, `no_points`) and how it `ended` — `handover`,
+`same_team` where the feed never said possession turned over, or
+`match_end`.
+
+#### The windows partition the match
+
+Drive N owns every score from where drive N−1's window closed up to the
+message drive N+1 opens on; the first drive owns everything before that
+and the last owns everything after. No score belongs to two drives and
+none belongs to none.
+
+That is what makes the reconciliation a real test rather than a
+restatement of itself: **the points the drives claim must equal the
+points the feed sent.** A mismatch means a drive boundary is in the wrong
+place or a score is being counted twice, and it is reported per match and
+as an `ERROR`.
+
+A drive owns the score that *ended* it, which is why a touchdown drive
+reads 7 rather than 6 — the PAT lands in the same window.
+
 ### Checks
 
 The run checks itself, on the console and at the top of the HTML. The
@@ -525,7 +560,7 @@ it is one miscoded expectation.
 
 | Severity | What it means |
 |---|---|
-| `ERROR` | a class whose interval sits entirely below a coin on **both** streams — the expected direction for it is backwards |
+| `ERROR` | a class whose interval sits entirely below a coin on **both** streams — the expected direction for it is backwards; or the points the drives claim not matching the points the feed sent |
 | `WARN` | a class that is mostly flat, so its rate is a minority report; or one the feed quotes far less often than the rest, so it is not measured the same way |
 | `note` | a thin row; or two sides of a market that do not match, meaning the feed is not publishing exact complements there |
 
@@ -537,7 +572,8 @@ fires, the basis is being set somewhere it should not be.
 
 `indrive_moves.csv` is one row per (transition × selection × stream),
 carrying the whole transition so it needs no join. `indrive_transitions.csv`
-is one row per transition. `indrive.html` is the same tables on a page,
+is one row per transition, and `indrive_drives.csv` one row per drive.
+`indrive.html` is the same tables on a page,
 with the hit-rate ramp centred on a **coin**: 50% is a model reacting at
 random, and a rate barely above it lands on the red end alongside one below
 it.

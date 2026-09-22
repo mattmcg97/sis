@@ -386,6 +386,204 @@ def moves_for_transitions(transitions, indexes, stats=None):
     return out
 
 
+
+# ---------------------------------------------------------------------------
+# Drive outcomes
+# ---------------------------------------------------------------------------
+
+NO_POINTS = "no_points"          # the drive ended and nobody scored on it
+
+HANDOVER = "handover"            # the next drive belongs to the other side
+SAME_TEAM = "same_team"          # the next drive carries the SAME label
+MATCH_END = "match_end"          # there is no next drive
+
+DRIVE_OUTCOME_ORDER = [TOUCHDOWN, FIELD_GOAL, EXTRA_POINT, SCORE,
+                       POINTS_AGAINST, NO_POINTS]
+
+
+@dataclass(frozen=True)
+class DriveOutcome:
+    """One drive, what it produced, and the scoreboard either side of it."""
+    match_code: str
+    drive_number: int
+    period_number: Optional[int]
+    offensive_team: Optional[str]
+    first_message: int
+    last_message: int
+    n_plays: int
+    start_field: Optional[int]
+    end_field: Optional[int]
+    score_p1_before: int
+    score_p2_before: int
+    score_p1_after: int
+    score_p2_after: int
+    points_for: int
+    points_against: int
+    outcome: str
+    ended: str
+
+    @property
+    def score_diff_before(self):
+        return self.score_p1_before - self.score_p2_before
+
+    @property
+    def score_diff_after(self):
+        return self.score_p1_after - self.score_p2_after
+
+
+def _classify_drive(points_for, points_against):
+    if points_for >= TOUCHDOWN_POINTS:
+        return TOUCHDOWN
+    if points_for == FIELD_GOAL_POINTS:
+        return FIELD_GOAL
+    if points_for in (1, 2):
+        return EXTRA_POINT
+    if points_for > 0:
+        return SCORE
+    if points_against > 0:
+        return POINTS_AGAINST
+    return NO_POINTS
+
+
+def drive_outcomes(match_code, plays, scores):
+    """One row per drive: what it produced and what the scoreboard did.
+
+    Every drive gets one, including the last of the match -- which has no
+    following drive, so the transition view cannot see it at all.
+
+    The scoring windows PARTITION the match. Drive N owns every score from
+    where drive N-1's window ended up to the message drive N+1 opens on,
+    the first drive owns everything before that and the last owns
+    everything after. No score belongs to two drives and none belongs to
+    none, which is what makes `reconcile` a real test rather than a
+    restatement.
+    """
+    drive_list = drives.build_drives(match_code, plays, scores)
+    if not drive_list:
+        return []
+    scores = sorted(scores, key=lambda s: s.event_message_count)
+
+    # Each drive's window closes where the next one opens, so one drive's
+    # upper bound is the next one's lower bound. None at either end means
+    # unbounded: the first drive owns everything before it, the last owns
+    # everything after.
+    uppers = [(drive_list[i + 1].first.event_message_count
+               if i + 1 < len(drive_list) else None)
+              for i in range(len(drive_list))]
+    lowers = [None] + uppers[:-1]
+    boundaries = list(zip(drive_list, lowers, uppers))
+
+    rows = []
+    for index, (drive, low, high) in enumerate(boundaries):
+        window = [s for s in scores
+                  if (low is None or s.event_message_count >= low)
+                  and (high is None or s.event_message_count < high)]
+        p1 = sum(s.p1_change or 0 for s in window)
+        p2 = sum(s.p2_change or 0 for s in window)
+        if drive.offensive_team == HOME:
+            points_for, points_against = p1, p2
+        elif drive.offensive_team == AWAY:
+            points_for, points_against = p2, p1
+        else:
+            points_for = points_against = 0
+
+        before = score_before(scores, low)
+        following = (drive_list[index + 1]
+                     if index + 1 < len(drive_list) else None)
+        if following is None:
+            ended = MATCH_END
+        elif following.offensive_team == drive.offensive_team:
+            ended = SAME_TEAM
+        else:
+            ended = HANDOVER
+
+        rows.append(DriveOutcome(
+            match_code=match_code,
+            drive_number=drive.drive_number,
+            period_number=drive.period_number,
+            offensive_team=drive.offensive_team,
+            first_message=drive.first.event_message_count,
+            last_message=drive.last.event_message_count,
+            n_plays=len(drive.plays),
+            start_field=drive.first.field_position,
+            end_field=drive.last.field_position,
+            score_p1_before=before[0], score_p2_before=before[1],
+            score_p1_after=before[0] + p1, score_p2_after=before[1] + p2,
+            points_for=points_for, points_against=points_against,
+            outcome=_classify_drive(points_for, points_against),
+            ended=ended,
+        ))
+    return rows
+
+
+def score_before(scores, message):
+    """The scoreboard as it stood entering a drive's scoring window."""
+    if message is None:
+        return 0, 0
+    p1 = sum(s.p1_change or 0 for s in scores if s.event_message_count < message)
+    p2 = sum(s.p2_change or 0 for s in scores if s.event_message_count < message)
+    return p1, p2
+
+
+def reconcile(outcomes, scores):
+    """Do the points the drives claim add up to the points the feed sent?
+
+    The one test that catches attribution silently going wrong. Every
+    score row belongs to exactly one drive's window, so the totals have to
+    match; if they do not, a drive boundary is in the wrong place or a
+    score is being counted twice.
+    """
+    claimed_p1 = sum(o.score_p1_after - o.score_p1_before for o in outcomes)
+    claimed_p2 = sum(o.score_p2_after - o.score_p2_before for o in outcomes)
+    feed_p1 = sum(s.p1_change or 0 for s in scores)
+    feed_p2 = sum(s.p2_change or 0 for s in scores)
+    return {"claimed_p1": claimed_p1, "claimed_p2": claimed_p2,
+            "feed_p1": feed_p1, "feed_p2": feed_p2,
+            "ok": claimed_p1 == feed_p1 and claimed_p2 == feed_p2}
+
+
+def drive_census(outcomes):
+    """How many drives ended each way, and what they were worth."""
+    out = collections.OrderedDict()
+    for outcome in DRIVE_OUTCOME_ORDER:
+        rows = [o for o in outcomes if o.outcome == outcome]
+        out[outcome] = {
+            "n": len(rows),
+            "matches": len({o.match_code for o in rows}),
+            "points": sum(o.points_for for o in rows),
+            "against": sum(o.points_against for o in rows),
+            "mean_plays": (sum(o.n_plays for o in rows) / len(rows)) if rows else None,
+        }
+    return out
+
+
+DRIVE_FIELDS = [
+    "match_code", "drive_number", "period_number", "offensive_team",
+    "first_message", "last_message", "n_plays", "start_field", "end_field",
+    "score_p1_before", "score_p2_before", "score_p1_after", "score_p2_after",
+    "score_diff_before", "score_diff_after",
+    "points_for", "points_against", "outcome", "ended",
+]
+
+
+def drive_row(o):
+    return {
+        "match_code": o.match_code, "drive_number": o.drive_number,
+        "period_number": o.period_number, "offensive_team": o.offensive_team,
+        "first_message": o.first_message, "last_message": o.last_message,
+        "n_plays": o.n_plays,
+        "start_field": "" if o.start_field is None else o.start_field,
+        "end_field": "" if o.end_field is None else o.end_field,
+        "score_p1_before": o.score_p1_before,
+        "score_p2_before": o.score_p2_before,
+        "score_p1_after": o.score_p1_after,
+        "score_p2_after": o.score_p2_after,
+        "score_diff_before": o.score_diff_before,
+        "score_diff_after": o.score_diff_after,
+        "points_for": o.points_for, "points_against": o.points_against,
+        "outcome": o.outcome, "ended": o.ended,
+    }
+
 # ---------------------------------------------------------------------------
 # Aggregation
 # ---------------------------------------------------------------------------
@@ -571,7 +769,7 @@ def run(cur, match_codes, time_column, stats=None, n_bootstrap=1000,
         verbose=True):
     """Build every transition and every move across these matches."""
     stats = stats if stats is not None else collections.defaultdict(int)
-    transitions, moves = [], []
+    transitions, moves, outcomes = [], [], []
 
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(match_codes), chunk):
@@ -611,7 +809,11 @@ def run(cur, match_codes, time_column, stats=None, n_bootstrap=1000,
             transitions.extend(match_transitions)
             moves.extend(moves_for_transitions(match_transitions, indexes,
                                                stats))
-    return transitions, moves, stats
+            match_drives = drive_outcomes(match_code, plays, scores)
+            outcomes.extend(match_drives)
+            if not reconcile(match_drives, scores)["ok"]:
+                stats["match_points_do_not_reconcile"] += 1
+    return transitions, moves, outcomes, stats
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +878,7 @@ THIN_DECIDED = 200         # below this, a rate says very little
 COVERAGE_RATIO = 0.5       # of the median moves per transition
 
 
-def checks(result, transitions, moves):
+def checks(result, transitions, moves, outcomes=(), scores=()):
     """Findings about the ANALYSIS, not about the models.
 
     The distinction is the point. Two independently built models agreeing
@@ -687,8 +889,9 @@ def checks(result, transitions, moves):
     reads its own output.
     """
     out = []
+    by_stream = (result or {}).get("streams") or {}
     streams = [s for s in (directional.PROD, directional.CANDIDATE)
-               if result["streams"][s]["overall"]["n"]]
+               if (by_stream.get(s) or {}).get("overall", {}).get("n")]
 
     # 1. A class below a coin on BOTH streams: the expectation is backwards.
     for outcome in OUTCOME_ORDER:
@@ -757,7 +960,30 @@ def checks(result, transitions, moves):
                     f"happen: a move is scored on the line only where the line "
                     f"changed"))
 
-    # 6. Both sides of a market should read the same where the feed
+    # 6. Do the points the drives claim add up to the points the feed sent?
+    #    Every score belongs to exactly one drive's window, so a mismatch
+    #    means a boundary is in the wrong place or a score is counted twice.
+    if outcomes:
+        by_match = collections.defaultdict(list)
+        for o in outcomes:
+            by_match[o.match_code].append(o)
+        claimed = sum(o.score_p1_after - o.score_p1_before for o in outcomes)
+        claimed += sum(o.score_p2_after - o.score_p2_before for o in outcomes)
+        if scores:
+            feed = sum((s.p1_change or 0) + (s.p2_change or 0) for s in scores)
+            if claimed != feed:
+                out.append((ERROR, "reconcile",
+                            f"the drives claim {claimed:,} points and the feed "
+                            f"sent {feed:,} -- a drive boundary is in the wrong "
+                            f"place or a score is being counted twice"))
+        no_outcome = sum(1 for o in outcomes if o.ended == SAME_TEAM)
+        if no_outcome:
+            out.append((NOTE, "drives",
+                        f"{no_outcome:,} of {len(outcomes):,} drives are "
+                        f"followed by another drive with the SAME team label, "
+                        f"so the feed never said possession changed"))
+
+    # 7. Both sides of a market should read the same where the feed
     #    publishes complements. Where they do not, it does not.
     for stream in streams:
         by_selection = result["streams"][stream]["by_selection"]

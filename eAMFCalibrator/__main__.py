@@ -327,19 +327,20 @@ def cmd_indrive(args):
                 if args.matches:
                     match_codes = match_codes[-args.matches:]
             print(f"\nIn-drive reaction across {len(match_codes)} matches")
-            transitions, moves, stats = indrive.run(
+            transitions, moves, outcomes, stats = indrive.run(
                 cur, match_codes, time_column, n_bootstrap=args.bootstrap)
     finally:
         conn.close()
 
     report.print_indrive_census(indrive.outcome_census(transitions), transitions)
+    report.print_drive_outcomes(indrive.drive_census(outcomes), outcomes, stats)
     if not moves:
         print("\n  No scorable price moves.")
         return 1
 
     result = indrive.report(moves, n_bootstrap=args.bootstrap)
     report.print_indrive(result, stats)
-    findings = indrive.checks(result, transitions, moves)
+    findings = indrive.checks(result, transitions, moves, outcomes)
     report.print_indrive_checks(findings)
 
     written = [
@@ -349,13 +350,16 @@ def cmd_indrive(args):
         _write_csv(os.path.join(out_dir, "indrive_transitions.csv"),
                    indrive.TRANSITION_FIELDS,
                    [indrive.transition_row(t) for t in transitions]),
+        _write_csv(os.path.join(out_dir, "indrive_drives.csv"),
+                   indrive.DRIVE_FIELDS,
+                   [indrive.drive_row(o) for o in outcomes]),
     ]
     path = args.html or os.path.join(out_dir, "indrive.html")
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(html_indrive.render(
             result, indrive.outcome_census(transitions), transitions, stats,
-            findings))
+            findings, indrive.drive_census(outcomes), outcomes))
     written.append(path)
 
     print()
