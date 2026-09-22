@@ -232,7 +232,42 @@ def _dropped_panel(stats):
     </section>"""
 
 
-def render(result, census, transitions, stats=None):
+SEVERITY = {indrive.ERROR: ("bad", "Error"),
+            indrive.WARN: ("warn", "Warn"),
+            indrive.NOTE: ("dim", "Note")}
+
+
+def _checks_panel(findings):
+    if not findings:
+        return """
+    <section class="panel" id="checks">
+      <h2>Checks</h2>
+      <p class="count"><span class="good">all pass</span></p>
+    </section>"""
+    order = {indrive.ERROR: 0, indrive.WARN: 1, indrive.NOTE: 2}
+    rows = []
+    for severity, subject, message in sorted(findings,
+                                             key=lambda f: (order[f[0]], f[1])):
+        tone, label = SEVERITY[severity]
+        rows.append(f"""<tr>
+            <th class="{tone}">{label}</th>
+            <td>{html.escape(str(subject))}</td>
+            <td class="wrap">{html.escape(message)}</td>
+        </tr>""")
+    errors = sum(1 for f in findings if f[0] == indrive.ERROR)
+    return f"""
+    <section class="panel" id="checks">
+      <h2>Checks</h2>
+      <p class="count">{len(findings):,} findings &middot; {errors:,} errors
+        &middot; an error is about the check, not the models</p>
+      <table>
+        <thead><tr><th>Severity</th><th>Subject</th><th class="wrap">Finding</th></tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>"""
+
+
+def render(result, census, transitions, stats=None, findings=()):
     streams = "".join(_stream_panel(stream, result["streams"][stream])
                       for stream in (directional.PROD, directional.CANDIDATE)
                       if result["streams"][stream]["overall"]["n"])
@@ -255,11 +290,13 @@ def render(result, census, transitions, stats=None):
     <span class="meta"><b>{result['ending']:,}</b> drive end</span>
   </header>
   <nav>
+    <a href="#checks">Checks</a>
     <a href="#plays">Plays</a>
     <a href="#{directional.PROD}">Prod</a>
     <a href="#{directional.CANDIDATE}">Candidate</a>
     <a href="#h2h">Head to head</a>
   </nav>
+  {_checks_panel(findings)}
   {_census_panel(census, transitions)}
   {streams}
   {_head_to_head_panel(result)}

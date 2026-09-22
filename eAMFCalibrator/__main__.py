@@ -339,6 +339,8 @@ def cmd_indrive(args):
 
     result = indrive.report(moves, n_bootstrap=args.bootstrap)
     report.print_indrive(result, stats)
+    findings = indrive.checks(result, transitions, moves)
+    report.print_indrive_checks(findings)
 
     written = [
         _write_csv(os.path.join(out_dir, "indrive_moves.csv"),
@@ -352,7 +354,8 @@ def cmd_indrive(args):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(html_indrive.render(
-            result, indrive.outcome_census(transitions), transitions, stats))
+            result, indrive.outcome_census(transitions), transitions, stats,
+            findings))
     written.append(path)
 
     print()

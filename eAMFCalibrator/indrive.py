@@ -661,3 +661,122 @@ def move_row(move):
         "hit": "" if move.hit is None else int(move.hit),
     })
     return row
+
+
+# ---------------------------------------------------------------------------
+# Checks
+# ---------------------------------------------------------------------------
+
+ERROR = "error"
+WARN = "warn"
+NOTE = "note"
+
+MOSTLY_FLAT = 0.5          # above this share, the rate is a minority report
+THIN_DECIDED = 200         # below this, a rate says very little
+COVERAGE_RATIO = 0.5       # of the median moves per transition
+
+
+def checks(result, transitions, moves):
+    """Findings about the ANALYSIS, not about the models.
+
+    The distinction is the point. Two independently built models agreeing
+    with each other in the WRONG direction, on thousands of plays, is not
+    two broken models -- it is one miscoded expectation. Anything this
+    turns up should be read as "the check is wrong" first and "the model
+    is wrong" second, which is the opposite of how the rest of the suite
+    reads its own output.
+    """
+    out = []
+    streams = [s for s in (directional.PROD, directional.CANDIDATE)
+               if result["streams"][s]["overall"]["n"]]
+
+    # 1. A class below a coin on BOTH streams: the expectation is backwards.
+    for outcome in OUTCOME_ORDER:
+        rates = []
+        for stream in streams:
+            b = result["streams"][stream]["by_outcome"].get(outcome)
+            if not b or not b["decided"] or b["ci_high"] is None:
+                continue
+            rates.append((stream, b))
+        if len(rates) < len(streams) or not rates:
+            continue
+        if all(b["ci_high"] < 0.5 for _, b in rates):
+            worst = min(b["rate"] for _, b in rates)
+            out.append((ERROR, outcome,
+                        f"below a coin on every stream ({_pct(worst)} at worst, "
+                        f"interval entirely under 50%) -- two models agreeing "
+                        f"this far in the wrong direction means the expected "
+                        f"direction for this class is backwards, not that both "
+                        f"models are"))
+
+    # 2. A class that barely moves at all: the rate is a minority report.
+    for outcome in OUTCOME_ORDER:
+        for stream in streams:
+            b = result["streams"][stream]["by_outcome"].get(outcome)
+            if b and b["n"] and (b["flat_share"] or 0) > MOSTLY_FLAT:
+                out.append((WARN, outcome,
+                            f"{stream}: {_pct(b['flat_share'])} of {b['n']:,} "
+                            f"moves were FLAT, so the rate is computed on "
+                            f"{b['decided']:,} rows. The finding is that the "
+                            f"price does not move, not the percentage"))
+            break   # one stream is enough to make the point
+
+    # 3. A class the quotes barely cover: it cannot be compared to the rest.
+    per_transition = {}
+    for outcome in OUTCOME_ORDER:
+        rows = [t for t in transitions if t.outcome == outcome and t.scorable]
+        if not rows:
+            continue
+        mine = sum(1 for m in moves if m.transition.outcome == outcome)
+        per_transition[outcome] = mine / len(rows)
+    if len(per_transition) > 2:
+        median = sorted(per_transition.values())[len(per_transition) // 2]
+        for outcome, rate in sorted(per_transition.items(), key=lambda kv: kv[1]):
+            if rate < median * COVERAGE_RATIO:
+                out.append((WARN, outcome,
+                            f"{rate:.2f} moves per transition against a median "
+                            f"of {median:.2f} -- the feed quotes these messages "
+                            f"far less often, so this class is not measured the "
+                            f"same way as the others"))
+
+    # 4. Thin rows, so nobody reads a percentage off four plays.
+    for outcome in OUTCOME_ORDER:
+        for stream in streams[:1]:
+            b = result["streams"][stream]["by_outcome"].get(outcome)
+            if b and b["n"] and b["decided"] < THIN_DECIDED:
+                out.append((NOTE, outcome,
+                            f"only {b['decided']:,} decided moves"))
+
+    # 5. An invariant. A line-basis move exists BECAUSE the line changed,
+    #    so it cannot also have stood still. If this ever fires, the basis
+    #    is being set somewhere it should not be.
+    flat_lines = sum(1 for m in moves if m.basis == LINE and m.flat)
+    if flat_lines:
+        out.append((ERROR, "basis",
+                    f"{flat_lines:,} line-basis moves are flat, which cannot "
+                    f"happen: a move is scored on the line only where the line "
+                    f"changed"))
+
+    # 6. Both sides of a market should read the same where the feed
+    #    publishes complements. Where they do not, it does not.
+    for stream in streams:
+        by_selection = result["streams"][stream]["by_selection"]
+        grouped = collections.defaultdict(list)
+        for (market, selection), b in by_selection.items():
+            if b["rate"] is not None:
+                grouped[market].append((selection, b["rate"]))
+        for market, sides in grouped.items():
+            if len(sides) != 2:
+                continue
+            gap = abs(sides[0][1] - sides[1][1])
+            if gap > 0.02:
+                out.append((NOTE, str(market),
+                            f"{stream}: the two sides differ by {_pct(gap)} "
+                            f"({sides[0][0]} {_pct(sides[0][1])}, "
+                            f"{sides[1][0]} {_pct(sides[1][1])}), so the feed "
+                            f"is not publishing exact complements here"))
+    return out
+
+
+def _pct(value):
+    return "n/a" if value is None else f"{100 * value:.1f}%"

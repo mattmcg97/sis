@@ -1284,6 +1284,28 @@ def print_indrive(result, stats=None):
                 print(f"  {key:<28}{stats[key]:>10,}")
 
 
+def print_indrive_checks(findings):
+    """What the run says about itself, before anything is read off it."""
+    from . import indrive
+    print(f"\n{'=' * 78}\nIN-DRIVE REACTION -- checks\n{'=' * 78}")
+    if not findings:
+        print("  All pass.")
+        return
+    order = {indrive.ERROR: 0, indrive.WARN: 1, indrive.NOTE: 2}
+    labels = {indrive.ERROR: "ERROR", indrive.WARN: "WARN", indrive.NOTE: "note"}
+    import textwrap
+    for severity, subject, message in sorted(
+            findings, key=lambda f: (order[f[0]], f[1])):
+        lines = textwrap.wrap(message, 50) or [""]
+        print(f"  {labels[severity]:<6}{subject:<20}{lines[0]}")
+        for line in lines[1:]:
+            print(f"  {'':<26}{line}")
+    print("\n  An ERROR here is about the CHECK, not the models: two models")
+    print("  built separately do not agree with each other in the wrong")
+    print("  direction across thousands of plays. Read it as the expected")
+    print("  direction being backwards for that class.")
+
+
 def directional_prod():
     from . import directional
     return directional.PROD
