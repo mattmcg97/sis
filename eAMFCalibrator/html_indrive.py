@@ -12,7 +12,9 @@ from . import directional, html_style, indrive
 
 TITLES = {
     indrive.TOUCHDOWN: "Touchdown",
-    indrive.SCORE: "Score (not a TD)",
+    indrive.FIELD_GOAL: "Field goal",
+    indrive.EXTRA_POINT: "PAT or two-point",
+    indrive.SCORE: "Other points",
     indrive.FIRST_DOWN: "First down",
     indrive.BIG_GAIN: f"Gain of {indrive.BIG_GAIN_YARDS}+",
     indrive.SHORT_GAIN: "Short gain",
@@ -87,8 +89,10 @@ def _row(label, block, tag=""):
         <td class="{_rate_class(block['rate'])}"><b>{_pct(block['rate'])}</b></td>
         <td class="dim">{_ci(block)}</td>
         <td>{_pct(block['flat_share'])}</td>
-        <td>{_n(block['mean_move'])}</td>
+        <td>{block['n_prob']:,}</td>
         <td>{_n(block['mean_signed'], '+.4f')}</td>
+        <td>{block['n_line']:,}</td>
+        <td>{_n(block['mean_line_signed'], '+.2f')}</td>
         <td>{_p(block['p_value'])}</td>
     </tr>"""
 
@@ -98,9 +102,11 @@ HEAD = """<thead><tr><th>Split</th><th>Moves</th>
     <th>Matches</th>
     <th title="share of decided moves that went the expected way">Right</th>
     <th title="match-clustered">95% CI</th>
-    <th title="share of moves where the price did not change">Flat</th>
-    <th title="mean absolute probability change">|Move|</th>
-    <th title="mean change, oriented so positive is the expected direction">Signed</th>
+    <th title="share of moves where nothing changed">Flat</th>
+    <th title="moves scored on the probability, because the line held">On prob</th>
+    <th title="mean probability change, oriented so positive is the expected direction">Signed</th>
+    <th title="moves scored on the line, because it moved">On line</th>
+    <th title="mean line change, in points, oriented the same way">Signed</th>
     <th title="against a coin, match-clustered">p</th></tr></thead>"""
 
 
@@ -146,6 +152,8 @@ def _stream_panel(stream, s):
         if s["by_outcome"].get(o, {}).get("n"))
     periods = "".join(_row(str(k), s["by_period"][k])
                       for k in sorted(s["by_period"]))
+    basis_rows = "".join(_row(str(k), s["by_basis"][k])
+                        for k in sorted(s["by_basis"], key=str))
     market_rows = "".join(_row(str(k), s["by_market"][k])
                           for k in sorted(s["by_market"], key=str))
     selections = "".join(
@@ -161,6 +169,8 @@ def _stream_panel(stream, s):
       <table>{HEAD}<tbody>{outcomes}</tbody></table>
       <h3>By period</h3>
       <table>{HEAD}<tbody>{periods}</tbody></table>
+      <h3>By basis</h3>
+      <table>{HEAD}<tbody>{basis_rows}</tbody></table>
       <h3>By market</h3>
       <table>{HEAD}<tbody>{market_rows}</tbody></table>
       <h3>By selection</h3>
@@ -202,17 +212,19 @@ def _head_to_head_panel(result):
 
 
 def _dropped_panel(stats):
-    keys = [("transition_no_direction", "No direction to check"),
+    keys = [("move_scored_on_prob", "Scored on the probability"),
+            ("move_scored_on_line", "Scored on the line"),
+            ("transition_no_direction", "No direction to check"),
             ("move_missing_quote", "No quote at one end"),
             ("move_not_live", "Not live at one end"),
-            ("move_line_changed", "Line moved between the two")]
+            ("move_line_unreadable", "No readable line at one end")]
     rows = "".join(f"<tr><th>{label}</th><td>{stats[key]:,}</td></tr>"
                    for key, label in keys if stats.get(key))
     if not rows:
         return ""
     return f"""
     <section class="panel">
-      <h2>Not scored</h2>
+      <h2>Where the moves went</h2>
       <table>
         <thead><tr><th>Reason</th><th>N</th></tr></thead>
         <tbody>{rows}</tbody>

@@ -1162,16 +1162,19 @@ def print_checks_summary(full):
 def _rate_row(label, b, width=22):
     ci = ("" if b["ci_low"] is None
           else f"[{_pct(b['ci_low'])}, {_pct(b['ci_high'])}]")
-    move = "" if b["mean_move"] is None else f"{b['mean_move']:.4f}"
-    signed = "" if b["mean_signed"] is None else f"{b['mean_signed']:+.4f}"
+    prob = "" if b["mean_signed"] is None else f"{b['mean_signed']:+.4f}"
+    line = ("" if b["mean_line_signed"] is None
+            else f"{b['mean_line_signed']:+.2f}")
     print(f"  {label:<{width}}{b['n']:>8,}{b['decided']:>9,}"
           f"{_pct(b['rate']):>8}{ci:>18}{_pct(b['flat_share']):>8}"
-          f"{move:>9}{signed:>10}{_p(b['p_value']):>9}")
+          f"{b['n_prob']:>8,}{prob:>10}{b['n_line']:>8,}{line:>8}"
+          f"{_p(b['p_value']):>9}")
 
 
 def _rate_header(label, width=22):
     print(f"\n  {label:<{width}}{'MOVES':>8}{'DECIDED':>9}{'RIGHT':>8}"
-          f"{'95% CI':>18}{'FLAT':>8}{'|MOVE|':>9}{'SIGNED':>10}{'P':>9}")
+          f"{'95% CI':>18}{'FLAT':>8}{'ON PROB':>8}{'SIGNED':>10}"
+          f"{'ON LINE':>8}{'SIGNED':>8}{'P':>9}")
 
 
 def print_indrive_census(census, transitions):
@@ -1216,6 +1219,9 @@ def print_indrive(result, stats=None):
           f"transitions across {result['matches']:,} matches")
     print(f"  RIGHT is the share of moves that went the expected way, out of")
     print(f"  the ones that moved at all. FLAT is the share that did not move.")
+    print(f"  A move is scored ON PROB where the line held and ON LINE where")
+    print(f"  it moved; the two SIGNED columns are in their own units and are")
+    print(f"  never pooled. Probability points on the left, line points right.")
 
     for stream in (directional_prod(), directional_candidate()):
         s = result["streams"][stream]
@@ -1236,6 +1242,10 @@ def print_indrive(result, stats=None):
         _rate_header(f"{stream.upper()} BY PERIOD")
         for period in sorted(s["by_period"]):
             _rate_row(str(period), s["by_period"][period])
+
+        _rate_header(f"{stream.upper()} BY BASIS")
+        for basis in sorted(s["by_basis"], key=str):
+            _rate_row(str(basis), s["by_basis"][basis])
 
         _rate_header(f"{stream.upper()} BY MARKET")
         for market in sorted(s["by_market"], key=str):
@@ -1266,9 +1276,10 @@ def print_indrive(result, stats=None):
     print("  the candidate's share of the moves the two disagreed on.")
 
     if stats:
-        print(f"\n  {'DROPPED':<28}{'N':>10}")
+        print(f"\n  {'WHERE THE MOVES WENT':<28}{'N':>10}")
         for key in ("transition_no_direction", "move_missing_quote",
-                    "move_not_live", "move_line_changed"):
+                    "move_not_live", "move_line_unreadable",
+                    "move_scored_on_prob", "move_scored_on_line"):
             if stats.get(key):
                 print(f"  {key:<28}{stats[key]:>10,}")
 

@@ -1848,12 +1848,22 @@ class TestTransitionClassification(unittest.TestCase):
         self.assertEqual(t.points, 6)
         self.assertEqual(t.sign, +1)
 
-    def test_a_field_goal_is_points_not_a_big_gain(self):
+    def test_a_field_goal_is_its_own_class(self):
         plays = [PlayRow(1, 1, self.HOME, 4, 5, 80, None),
                  PlayRow(9, 1, self.AWAY, 1, 10, 25, None)]
         scores = [ScoreRow(5, 1, 3, None, 3, 0)]
         t = indrive.transitions_for_match("AF1", plays, scores)[0]
-        self.assertEqual(t.outcome, indrive.SCORE)
+        self.assertEqual(t.outcome, indrive.FIELD_GOAL)
+        self.assertEqual(t.sign, +1)
+
+    def test_a_conversion_is_told_apart_from_a_field_goal(self):
+        # A PAT is their own point, but the touchdown it follows was
+        # priced one transition ago, so there is far less news in it.
+        plays = [PlayRow(1, 1, self.HOME, 1, 10, 95, None),
+                 PlayRow(9, 1, self.AWAY, 1, 10, 25, None)]
+        scores = [ScoreRow(5, 1, 1, None, 1, 0)]
+        t = indrive.transitions_for_match("AF1", plays, scores)[0]
+        self.assertEqual(t.outcome, indrive.EXTRA_POINT)
         self.assertEqual(t.sign, +1)
 
     def test_the_defence_scoring_is_bad_for_the_offence(self):
@@ -1969,16 +1979,82 @@ class TestMoves(unittest.TestCase):
         self.assertAlmostEqual(move.before, 0.40)
         self.assertAlmostEqual(move.after, 0.46)
 
-    def test_a_line_that_moved_is_not_a_reaction(self):
-        # A different line is a different question, exactly as it is on a
-        # pair, so the delta says nothing about the play.
+    def test_a_line_that_moved_is_scored_on_the_line(self):
+        # The probability is answering a different question at each end,
+        # but the LINE itself carries the news, so the move is not lost.
         rows = [self.quote(1, 52, 46.0, "PLAYER 1 -2.5"),
                 self.quote(2, 52, 52.0, "PLAYER 1 -6.5")]
         stats = collections.defaultdict(int)
-        moves = indrive.moves_for_transitions([self.transition()],
-                                              self.index(rows), stats)
-        self.assertEqual(moves, [])
-        self.assertEqual(stats["move_line_changed"], 1)
+        move = indrive.moves_for_transitions([self.transition()],
+                                             self.index(rows), stats)[0]
+        self.assertEqual(move.basis, indrive.LINE)
+        self.assertEqual((move.before, move.after), (-2.5, -6.5))
+        self.assertEqual(stats["move_scored_on_line"], 1)
+        # Home has the ball and converted, so its own spread line should
+        # have gone UP. It went down, so this is a miss.
+        self.assertEqual(move.expected, +1)
+        self.assertFalse(move.hit)
+
+    def test_the_spread_line_follows_the_side_it_names(self):
+        rows = [self.quote(1, 52, 46.0, "PLAYER 1 2.5"),
+                self.quote(2, 52, 46.0, "PLAYER 1 6.5")]
+        move = indrive.moves_for_transitions([self.transition()],
+                                             self.index(rows))[0]
+        self.assertEqual(move.basis, indrive.LINE)
+        self.assertTrue(move.hit)
+
+    def test_the_total_line_rises_for_over_AND_under(self):
+        # Over and Under share one number, so a good offensive play pushes
+        # it up whichever selection is carrying it. Reading the line with
+        # the probability's expectation would score every Under backwards.
+        for market_id in (54, 55):
+            rows = [self.quote(1, market_id, 46.0, "Over 44.5"),
+                    self.quote(2, market_id, 46.0, "Over 47.5")]
+            move = indrive.moves_for_transitions([self.transition()],
+                                                 self.index(rows))[0]
+            self.assertEqual(move.basis, indrive.LINE, market_id)
+            self.assertEqual(move.expected, +1, market_id)
+            self.assertTrue(move.hit, market_id)
+
+    def test_the_under_probability_still_opposes_the_play(self):
+        # The line expectation and the probability expectation differ for
+        # Under, which is the whole reason they are separate functions.
+        self.assertEqual(indrive.expected_sign(55, self.HOME, +1), -1)
+        self.assertEqual(indrive.expected_line_sign(55, self.HOME, +1), +1)
+        # For a spread they agree.
+        self.assertEqual(indrive.expected_sign(52, self.HOME, +1),
+                         indrive.expected_line_sign(52, self.HOME, +1))
+
+    def test_a_moneyline_has_no_line_to_score(self):
+        self.assertEqual(indrive.expected_line_sign(50, self.HOME, +1), 0)
+        self.assertEqual(indrive.expected_line_sign(51, self.HOME, +1), 0)
+
+    def test_an_unreadable_line_is_not_a_move(self):
+        rows = [self.quote(1, 52, 46.0, "PLAYER 1 to cover"),
+                self.quote(2, 52, 52.0, "PLAYER 1 -6.5")]
+        stats = collections.defaultdict(int)
+        self.assertEqual(
+            indrive.moves_for_transitions([self.transition()],
+                                          self.index(rows), stats), [])
+        self.assertEqual(stats["move_line_unreadable"], 1)
+
+    def test_magnitudes_are_never_pooled_across_bases(self):
+        # Probability points and handicap points are different units.
+        t = self.transition()
+        prob = indrive.Move(transition=t, stream=directional.PROD,
+                            market_id=50, before=0.50, after=0.54,
+                            line_before=None, line_after=None, expected=+1)
+        line = indrive.Move(transition=t, stream=directional.PROD,
+                            market_id=52, before=2.5, after=6.5,
+                            line_before=2.5, line_after=6.5, expected=+1,
+                            basis=indrive.LINE)
+        b = indrive.block([prob, line], n_bootstrap=20)
+        self.assertEqual((b["n_prob"], b["n_line"]), (1, 1))
+        self.assertAlmostEqual(b["mean_signed"], 0.04)
+        self.assertAlmostEqual(b["mean_line_signed"], 4.0)
+        # The RATE still pools: right is right, whichever moved.
+        self.assertEqual(b["decided"], 2)
+        self.assertEqual(b["rate"], 1.0)
 
     def test_the_same_line_is_fine(self):
         rows = [self.quote(1, 52, 46.0, "PLAYER 1 -2.5"),
@@ -2038,7 +2114,8 @@ class TestIndriveAggregation(unittest.TestCase):
             delta = {"+": 0.02, "-": -0.02, "0": 0.0}[mark]
             out.append(indrive.Move(transition=t, stream=stream, market_id=50,
                                     before=0.50, after=0.50 + delta,
-                                    line=None, expected=+1))
+                                    line_before=None, line_after=None,
+                                    expected=+1))
         return out
 
     def test_the_rate_is_out_of_the_moves_that_moved(self):
@@ -2096,7 +2173,7 @@ class TestIndriveAggregation(unittest.TestCase):
         for t in transitions:
             moves.append(indrive.Move(transition=t, stream=directional.PROD,
                                       market_id=50, before=0.5, after=0.52,
-                                      line=None,
+                                      line_before=None, line_after=None,
                                       expected=indrive.expected_sign(
                                           50, self.HOME, t.sign)))
         result = indrive.report(moves, n_bootstrap=50)
@@ -2116,7 +2193,7 @@ class TestIndriveCsvAndHtml(unittest.TestCase):
         t = indrive.transitions_for_match("AF1", plays, [])[0]
         return indrive.Move(transition=t, stream=directional.PROD,
                             market_id=52, before=0.50, after=0.54,
-                            line=-2.5, expected=+1)
+                            line_before=-2.5, line_after=-2.5, expected=+1)
 
     def test_a_move_row_needs_no_join_to_be_read(self):
         row = indrive.move_row(self.move())
@@ -2125,7 +2202,8 @@ class TestIndriveCsvAndHtml(unittest.TestCase):
         self.assertEqual(row["market"], "spread")
         self.assertEqual(row["selection"], "Home")
         self.assertEqual(row["hit"], 1)
-        self.assertEqual(row["line"], -2.5)
+        self.assertEqual(row["basis"], indrive.PROBABILITY)
+        self.assertEqual(row["line_before"], -2.5)
 
     def test_the_move_row_carries_its_whole_transition(self):
         row = indrive.move_row(self.move())
