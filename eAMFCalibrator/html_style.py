@@ -8,21 +8,21 @@ are defined once and embedded verbatim by both.
 CSS = r'''<style>
   :root {
     --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --dim:#6b6b66; --line:#e2e2dd;
-    --g0:#c9f6ca; --g1:#eccf92; --g2:#eeae82; --g3:#e49082; --g4:#d5766c;
+    --g0:#268631; --g1:#775800; --g2:#763900; --g3:#750100; --g4:#580003;
     --good:#1c7c4a; --bad:#b3261e; --warn:#8a6d1f; --accent:#2d4a7c;
     --head:#f0f0ec; --axis:#eaeef4; --pick:#fdf0c8; --hover:#f2f2ef;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
-      --g0:#132d15; --g1:#463305; --g2:#663c1c; --g3:#82463c; --g4:#9d534c;
+      --g0:#44a04b; --g1:#c69500; --g2:#f99549; --g3:#ffafa2; --g4:#ffcfc8;
       --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
       --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
     }
   }
   :root[data-theme="dark"] {
     --bg:#17171a; --panel:#1f1f23; --ink:#ededea; --dim:#9a9a95; --line:#32323a;
-    --g0:#132d15; --g1:#463305; --g2:#663c1c; --g3:#82463c; --g4:#9d534c;
+    --g0:#44a04b; --g1:#c69500; --g2:#f99549; --g3:#ffafa2; --g4:#ffcfc8;
     --good:#4cc281; --bad:#ef6f66; --warn:#d9b451; --accent:#8fb0e8;
     --head:#26262c; --axis:#232833; --pick:#4a3f1c; --hover:#26262c;
   }
@@ -51,6 +51,7 @@ CSS = r'''<style>
   table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
   th,td{text-align:right;padding:4px 6px;border-bottom:1px solid var(--line);
          white-space:nowrap}
+  td.wrap,th.wrap{white-space:normal;text-align:left;max-width:620px}
   thead th{color:var(--dim);font-weight:500;font-size:10.5px;text-transform:uppercase;
             letter-spacing:0.04em;background:var(--head)}
   tbody th,tfoot th{text-align:left;font-weight:600}
@@ -60,33 +61,35 @@ CSS = r'''<style>
   .good{color:var(--good);font-weight:600}
   .bad{color:var(--bad);font-weight:600}
   .warn{color:var(--warn)}
-  /* Gap columns: green near zero, red far from it, as asked for.
+  /* Gap columns: green near zero, red far from it, on the NUMBER rather
+     than behind it -- a wash of filled cells reads as a heat map when
+     what is wanted is a table.
      Green and red are the one pair red-green colour blindness cannot
-     separate, so the steps are NOT just five hues -- their OKLCH
-     lightness falls monotonically, 0.93 -> 0.67 on light and 0.27 ->
-     0.53 on dark, with every adjacent gap over the 0.06 floor. A reader
-     who sees no hue at all still sees the cell darken as the gap grows.
-     Each mode's steps are picked against its own surface rather than
-     flipped, and every step clears 4.7:1 against the ink on it, so the
-     number stays readable -- and the number is the real answer; the
-     colour only says which band it is in, and the key names the bands. */
-  td.g0{background:var(--g0)}
-  td.g1{background:var(--g1)}
-  td.g2{background:var(--g2)}
-  td.g3{background:var(--g3)}
-  td.g4{background:var(--g4)}
+     separate, so the steps are NOT just five hues. Their OKLCH lightness
+     moves monotonically with severity, every adjacent gap over the 0.06
+     floor, and it moves so that PROMINENCE rises either way: darkest on
+     the light theme, brightest on the dark one. A reader who sees no hue
+     still sees the worst numbers shout loudest.
+     As type rather than fill every step has to clear 4.5:1 against the
+     panel it sits on, which the light ramp does from 4.6 and the dark
+     from 5.0 -- so the number is readable first and coloured second. */
+  td.g0{color:var(--g0);font-weight:600}
+  td.g1{color:var(--g1);font-weight:600}
+  td.g2{color:var(--g2);font-weight:600}
+  td.g3{color:var(--g3);font-weight:600}
+  td.g4{color:var(--g4);font-weight:600}
   .gapkey{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin:0 0 8px;
            font-size:10.5px;font-variant-numeric:tabular-nums}
   .gapkey .klab{color:var(--dim);text-transform:uppercase;letter-spacing:0.04em;
                  margin-right:5px}
   .gapkey .klab+.klab,.gapkey .key+.klab{margin-left:6px;margin-right:0}
   .key{padding:1px 6px;border-radius:3px;border:1px solid var(--line);
-        color:var(--ink)}
-  .key.g0{background:var(--g0)}
-  .key.g1{background:var(--g1)}
-  .key.g2{background:var(--g2)}
-  .key.g3{background:var(--g3)}
-  .key.g4{background:var(--g4)}
+        font-weight:600}
+  .key.g0{color:var(--g0)}
+  .key.g1{color:var(--g1)}
+  .key.g2{color:var(--g2)}
+  .key.g3{color:var(--g3)}
+  .key.g4{color:var(--g4)}
   .dim{color:var(--dim);font-weight:400}
   .stats{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0}
   .stats dt{color:var(--dim);font-size:10.5px;text-transform:uppercase;

@@ -348,20 +348,25 @@ painted a badly over-predicted `+0.40` *green* and a near-perfect
 A cell with nothing to compare (a dashed `Δprob` on a different-line
 pair) gets no colour at all. "Not comparable" is not a small gap.
 
-### Why the ramp darkens as well as reddening
+### The colour is on the number, not behind it
+
+A wash of filled cells reads as a heat map when what is wanted is a
+table, so the ramp colours the type.
 
 Green and red are the one pair red-green colour blindness cannot
 separate, so hue alone cannot carry the ordering. The five steps also
-fall monotonically in OKLCH lightness — 0.93 → 0.67 on the light theme,
-0.27 → 0.53 on the dark one — with every adjacent gap clearing the 0.06
-floor. A reader who sees no hue at all still sees the cell darken as the
-gap grows.
+move monotonically in OKLCH lightness, every adjacent gap clearing the
+0.06 floor. The **direction** differs by theme on purpose, so that
+prominence rises with severity either way: darkest on the light theme
+(0.55 → 0.29), brightest on the dark one (0.63 → 0.89). A reader who
+sees no hue still sees the worst numbers shout loudest.
 
-Each theme's steps are picked against its own surface rather than
-flipped from the other's, and every step clears 4.7:1 against the ink
-sitting on it. The number is the real answer; the colour only says which
-band it is in, and a key above each table names every band, so nothing
-is ever read by colour alone.
+As type rather than fill, every step has to clear 4.5:1 against the
+panel it sits on — a colour light enough to be a pleasant background is
+nowhere near dark enough to be read — which the light ramp does from 4.6
+and the dark from 5.0. The number is readable first and coloured second,
+and a key above each table names every band, so nothing is ever read by
+colour alone.
 
 ## In-drive reaction: `indrive`
 
@@ -494,12 +499,39 @@ short of a first down. `BIG_GAIN_YARDS` is a constant, and five yards on
 1st and 10 leaving 2nd and 5 is close to neutral, so the threshold is worth
 moving before concluding anything about the models.
 
-**Points short of a touchdown scored below a coin** — 41.0% and 36.8%, with
-a negative signed move. Splitting `score` into `field_goal` and
-`extra_point` is what tells the two candidates apart: a field goal is real
-news, while a PAT follows a touchdown that was already priced one
-transition earlier, and the transition carrying it is drive-ending, where
-the team label is least reliable.
+**A made field goal moves the price AGAINST the kicking team** — 32.0% and
+31.7%, both intervals entirely below a coin, on 1,854 and 1,887 decided
+moves. Splitting `score` isolated it: `extra_point` is fine at 77.5%, and
+`touchdown` at 97.7%, so this is not the drive-ending structure. It is the
+three points. The check reports it as an `ERROR` because the expectation
+is the likely fault, not the models: a made field goal ends the drive,
+hands over possession, and banks three where the market had priced some
+chance of seven, so calling it unambiguously good for the offence is a
+claim the data does not support. Whether to zero its sign — as
+`short_gain` already is — is a football judgement, not a coding one, and
+`OUTCOME_SIGN` is where it lives.
+
+**`extra_point` is barely measured.** 512 transitions produced 0.39 moves
+each against a median of 5.28, so the feed quotes those messages far less
+often than any other class. Its 77.5% rests on 178 decided moves.
+
+### Checks
+
+The run checks itself, on the console and at the top of the HTML. The
+findings are about the **analysis**, not the models, and the distinction
+is the point: two independently built models agreeing with each other in
+the *wrong* direction across thousands of plays is not two broken models,
+it is one miscoded expectation.
+
+| Severity | What it means |
+|---|---|
+| `ERROR` | a class whose interval sits entirely below a coin on **both** streams — the expected direction for it is backwards |
+| `WARN` | a class that is mostly flat, so its rate is a minority report; or one the feed quotes far less often than the rest, so it is not measured the same way |
+| `note` | a thin row; or two sides of a market that do not match, meaning the feed is not publishing exact complements there |
+
+One `ERROR` is also an invariant: a line-basis move cannot be flat, since
+a move is scored on the line only where the line changed. If that ever
+fires, the basis is being set somewhere it should not be.
 
 ### Output
 

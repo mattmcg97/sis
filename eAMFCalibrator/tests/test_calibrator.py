@@ -2255,6 +2255,139 @@ class TestIndriveCsvAndHtml(unittest.TestCase):
         self.assertIn("50% is a coin", key)
 
 
+class TestIndriveChecks(unittest.TestCase):
+    """Findings about the analysis, not about the models."""
+
+    def block(self, n=1000, decided=900, rate=0.8, lo=0.78, hi=0.82, flat=0.1):
+        return {"n": n, "decided": decided, "rate": rate, "ci_low": lo,
+                "ci_high": hi, "flat_share": flat, "hits": round(rate * decided),
+                "matches": 100, "p_value": 0.0, "flat": round(flat * n),
+                "n_prob": n, "n_line": 0, "mean_move": 0.02,
+                "mean_signed": 0.01, "mean_line_move": None,
+                "mean_line_signed": None}
+
+    def result(self, prod_outcomes, cand_outcomes=None, selections=None):
+        cand_outcomes = cand_outcomes or prod_outcomes
+        def stream(outcomes):
+            return {"overall": self.block(), "in_drive": self.block(),
+                    "ending": self.block(), "by_outcome": outcomes,
+                    "by_period": {}, "by_market": {},
+                    "by_selection": selections or {}, "by_basis": {}}
+        return {"streams": {directional.PROD: stream(prod_outcomes),
+                            directional.CANDIDATE: stream(cand_outcomes)},
+                "head_to_head": {}, "moves": 0, "matches": 0,
+                "transitions": 0, "in_drive": 0, "ending": 0}
+
+    def transition(self, outcome):
+        plays = [PlayRow(1, 1, "Home Team", 2, 3, 32, None),
+                 PlayRow(2, 1, "Home Team", 1, 10, 40, None)]
+        t = indrive.transitions_for_match("AF1", plays, [])[0]
+        return dataclasses.replace(t, outcome=outcome)
+
+    def move(self, outcome, basis=None, delta=0.02):
+        return indrive.Move(transition=self.transition(outcome),
+                            stream=directional.PROD, market_id=50,
+                            before=0.5, after=0.5 + delta, line_before=None,
+                            line_after=None, expected=+1,
+                            basis=basis or indrive.PROBABILITY)
+
+    def findings(self, result, transitions=(), moves=()):
+        return {(sev, subject): message
+                for sev, subject, message in
+                indrive.checks(result, list(transitions), list(moves))}
+
+    def test_a_class_below_a_coin_on_both_streams_is_an_error(self):
+        # This is the field_goal case. Two models built separately do not
+        # agree with each other in the wrong direction on 1,800 plays, so
+        # the expectation is what is backwards.
+        below = self.block(rate=0.32, lo=0.29, hi=0.36)
+        found = self.findings(self.result({indrive.FIELD_GOAL: below}))
+        self.assertIn((indrive.ERROR, indrive.FIELD_GOAL), found)
+        self.assertIn("backwards", found[(indrive.ERROR, indrive.FIELD_GOAL)])
+
+    def test_one_stream_below_a_coin_is_not_enough(self):
+        # One model getting it wrong is a finding about that model, which
+        # is not what this check is for.
+        found = self.findings(self.result(
+            {indrive.BIG_GAIN: self.block(rate=0.32, lo=0.29, hi=0.36)},
+            {indrive.BIG_GAIN: self.block(rate=0.80)}))
+        self.assertNotIn((indrive.ERROR, indrive.BIG_GAIN), found)
+
+    def test_an_interval_that_still_touches_a_coin_is_not_an_error(self):
+        found = self.findings(self.result(
+            {indrive.BIG_GAIN: self.block(rate=0.48, lo=0.44, hi=0.52)}))
+        self.assertNotIn((indrive.ERROR, indrive.BIG_GAIN), found)
+
+    def test_a_mostly_flat_class_is_flagged_as_a_minority_report(self):
+        # failed_conversion: 96% flat, so 74.8% is computed on 4% of rows.
+        found = self.findings(self.result(
+            {indrive.FAILED_CONVERSION: self.block(n=5762, decided=222,
+                                                   rate=0.748, flat=0.961)}))
+        message = found[(indrive.WARN, indrive.FAILED_CONVERSION)]
+        self.assertIn("FLAT", message)
+        self.assertIn("does not move", message)
+
+    def test_a_class_the_quotes_barely_cover_is_flagged(self):
+        # extra_point: 0.4 moves per transition against a median near 5.
+        transitions, moves = [], []
+        for outcome, n_t, n_m in ((indrive.FIRST_DOWN, 100, 500),
+                                  (indrive.NO_GAIN, 100, 500),
+                                  (indrive.LOSS, 100, 500),
+                                  (indrive.EXTRA_POINT, 100, 20)):
+            transitions += [self.transition(outcome)] * n_t
+            moves += [self.move(outcome)] * n_m
+        found = self.findings(self.result({}), transitions, moves)
+        self.assertIn((indrive.WARN, indrive.EXTRA_POINT), found)
+        self.assertIn("per transition",
+                      found[(indrive.WARN, indrive.EXTRA_POINT)])
+        self.assertNotIn((indrive.WARN, indrive.FIRST_DOWN), found)
+
+    def test_a_flat_line_move_is_impossible_and_says_so(self):
+        # A move is scored on the line only where the line CHANGED, so a
+        # flat one means the basis was set somewhere it should not be.
+        moves = [self.move(indrive.FIRST_DOWN, indrive.LINE, delta=0.0)]
+        found = self.findings(self.result({}), [], moves)
+        self.assertIn((indrive.ERROR, "basis"), found)
+        self.assertIn("cannot", found[(indrive.ERROR, "basis")])
+
+    def test_a_real_line_move_does_not_trip_the_invariant(self):
+        moves = [self.move(indrive.FIRST_DOWN, indrive.LINE, delta=1.0)]
+        self.assertNotIn((indrive.ERROR, "basis"),
+                         self.findings(self.result({}), [], moves))
+
+    def test_two_sides_of_a_market_disagreeing_is_worth_saying(self):
+        selections = {("moneyline", "Home"): self.block(rate=0.81),
+                      ("moneyline", "Away"): self.block(rate=0.70)}
+        found = self.findings(self.result({}, selections=selections))
+        self.assertIn((indrive.NOTE, "moneyline"), found)
+        self.assertIn("complements", found[(indrive.NOTE, "moneyline")])
+
+    def test_matching_sides_say_nothing(self):
+        selections = {("moneyline", "Home"): self.block(rate=0.811),
+                      ("moneyline", "Away"): self.block(rate=0.812)}
+        self.assertNotIn((indrive.NOTE, "moneyline"),
+                         self.findings(self.result({}, selections=selections)))
+
+    def test_a_clean_run_produces_nothing(self):
+        found = self.findings(self.result(
+            {indrive.FIRST_DOWN: self.block(n=20000, decided=18000)}))
+        self.assertEqual(found, {})
+
+    def test_the_html_renders_the_findings(self):
+        from .. import html_indrive
+        findings = [(indrive.ERROR, "field_goal", "below a coin everywhere"),
+                    (indrive.NOTE, "total", "sides differ")]
+        page = html_indrive.render(indrive.report([], 20), {}, [], {}, findings)
+        self.assertIn("Checks", page)
+        self.assertIn("below a coin everywhere", page)
+        self.assertIn("Error", page)
+
+    def test_the_html_says_so_when_everything_passes(self):
+        from .. import html_indrive
+        page = html_indrive.render(indrive.report([], 20), {}, [], {}, [])
+        self.assertIn("all pass", page)
+
+
 class TestNearestQuote(unittest.TestCase):
     def setUp(self):
         self.times = [BASE + dt.timedelta(seconds=s) for s in (-10, -2, 1, 6)]
@@ -3266,11 +3399,13 @@ class TestGapRamp(unittest.TestCase):
         self.assertIn("&le;0.02", key)
         self.assertIn("&gt;0.20", key)
 
-    def test_the_ramp_darkens_as_well_as_reddening(self):
+    def test_the_ramp_moves_in_lightness_as_well_as_hue(self):
         # Green and red are the one pair red-green colour blindness cannot
         # separate, so hue alone cannot carry the ordering. Lightness has
-        # to fall monotonically, by more than the 0.06 step floor, in BOTH
-        # themes -- a reader who sees no hue still sees the cell darken.
+        # to move monotonically, by more than the 0.06 step floor, in BOTH
+        # themes. The DIRECTION differs by theme on purpose: prominence
+        # rises with severity either way, darkest on light and brightest
+        # on dark, so the worst numbers shout loudest with no hue at all.
         import re
         from .. import html_style
         source = html_style.CSS
@@ -3287,16 +3422,27 @@ class TestGapRamp(unittest.TestCase):
             self.assertTrue(all(g >= 0.06 for g in gaps), f"{ramp}: {gaps}")
 
     def test_the_number_stays_readable_on_every_step(self):
-        # The colour says which band; the number IS the answer. It has to
-        # clear AA against every background it can land on.
+        # The ramp IS the number now, not a wash behind it, so each step
+        # has to clear AA against the PANEL it sits on rather than against
+        # the ink -- and a colour light enough to be a nice fill is not
+        # necessarily dark enough to be read as type.
         import re
         from .. import html_style
         source = html_style.CSS
         found = re.findall(r"--g0:(#\w{6}); --g1:(#\w{6}); --g2:(#\w{6});"
                            r" --g3:(#\w{6}); --g4:(#\w{6});", source)
-        for ramp, ink in ((found[0], "#1a1a18"), (found[1], "#ededea")):
+        for ramp, panel in ((found[0], "#ffffff"), (found[1], "#1f1f23")):
             for step in ramp:
-                self.assertGreaterEqual(_contrast(step, ink), 4.5, f"{ink} on {step}")
+                self.assertGreaterEqual(_contrast(step, panel), 4.5,
+                                        f"{step} on {panel}")
+
+    def test_the_ramp_colours_the_type_not_the_cell(self):
+        # A wash of filled cells reads as a heat map; the table wanted a
+        # table. Nothing in the ramp may paint a background.
+        from .. import html_style
+        for step in range(5):
+            self.assertIn(f"td.g{step}{{color:var(--g{step})", html_style.CSS)
+            self.assertNotIn(f"td.g{step}{{background", html_style.CSS)
 
 
 class TestReportRendering(unittest.TestCase):
