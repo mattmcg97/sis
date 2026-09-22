@@ -2388,6 +2388,183 @@ class TestIndriveChecks(unittest.TestCase):
         self.assertIn("all pass", page)
 
 
+class TestDriveOutcomes(unittest.TestCase):
+    """One row per drive: what it produced and what the scoreboard did."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def feed(self):
+        plays = [PlayRow(m, p, t, d, dist, f, None)
+                 for m, p, t, d, dist, f in [
+                     (10, 1, self.HOME, 1, 10, 25), (12, 1, self.HOME, 2, 4, 31),
+                     (14, 1, self.HOME, 3, 1, 95),
+                     (30, 1, self.AWAY, 1, 10, 25), (32, 1, self.AWAY, 2, 3, 32),
+                     (50, 2, self.HOME, 1, 10, 40), (52, 2, self.HOME, 2, 6, 44)]]
+        scores = [ScoreRow(16, 1, 6, None, 6, 0),     # the touchdown
+                  ScoreRow(18, 1, 1, None, 7, 0),     # and its PAT
+                  ScoreRow(40, 1, None, 3, 7, 3)]     # an away field goal
+        return plays, scores
+
+    def outcomes(self):
+        return indrive.drive_outcomes("AF1", *self.feed())
+
+    def test_every_drive_gets_a_row_including_the_last(self):
+        # The transition view cannot see the last drive of a match at all:
+        # a drive-ending transition needs a FOLLOWING drive to point at.
+        outcomes = self.outcomes()
+        self.assertEqual(len(outcomes), 3)
+        self.assertEqual([o.drive_number for o in outcomes], [1, 2, 3])
+        self.assertEqual(outcomes[-1].ended, indrive.MATCH_END)
+
+    def test_a_drive_owns_the_score_that_ended_it(self):
+        first = self.outcomes()[0]
+        self.assertEqual(first.outcome, indrive.TOUCHDOWN)
+        # Six for the touchdown plus one for the PAT: both land in the
+        # window between this drive's last play and the next drive's first.
+        self.assertEqual(first.points_for, 7)
+        self.assertEqual((first.score_p1_before, first.score_p2_before), (0, 0))
+        self.assertEqual((first.score_p1_after, first.score_p2_after), (7, 0))
+
+    def test_points_are_signed_to_the_side_with_the_ball(self):
+        second = self.outcomes()[1]
+        self.assertEqual(second.offensive_team, self.AWAY)
+        self.assertEqual(second.outcome, indrive.FIELD_GOAL)
+        self.assertEqual(second.points_for, 3)
+        self.assertEqual(second.points_against, 0)
+
+    def test_a_scoreless_drive_says_so_rather_than_saying_nothing(self):
+        last = self.outcomes()[-1]
+        self.assertEqual(last.outcome, indrive.NO_POINTS)
+        self.assertEqual(last.points_for, 0)
+        self.assertEqual(last.score_diff_before, last.score_diff_after)
+
+    def test_the_defence_scoring_lands_on_the_offence_row(self):
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None),
+                 PlayRow(30, 1, self.AWAY, 1, 10, 41, None)]
+        scores = [ScoreRow(20, 1, None, 6, 0, 6)]
+        first = indrive.drive_outcomes("AF1", plays, scores)[0]
+        self.assertEqual(first.offensive_team, self.HOME)
+        self.assertEqual(first.outcome, indrive.POINTS_AGAINST)
+        self.assertEqual((first.points_for, first.points_against), (0, 6))
+
+    def test_how_it_ended_is_recorded(self):
+        outcomes = self.outcomes()
+        self.assertEqual(outcomes[0].ended, indrive.HANDOVER)
+        self.assertEqual(outcomes[1].ended, indrive.HANDOVER)
+        self.assertEqual(outcomes[2].ended, indrive.MATCH_END)
+
+    def test_a_break_that_kept_the_team_label_is_marked(self):
+        # Points end a drive even where the label never changed, which is
+        # the case the feed never said possession turned over.
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None),
+                 PlayRow(30, 1, self.HOME, 2, 7, 28, None)]
+        scores = [ScoreRow(20, 1, 7, None, 7, 0)]
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        self.assertEqual(len(outcomes), 2)
+        self.assertEqual(outcomes[0].ended, indrive.SAME_TEAM)
+
+
+class TestDriveReconciliation(unittest.TestCase):
+    """The points the drives claim against the points the feed sent."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def test_the_windows_partition_the_match(self):
+        # Every score belongs to exactly one drive, which is what makes
+        # the check a test rather than a restatement of itself.
+        plays = [PlayRow(m, 1, t, 1, 10, f, None) for m, t, f in
+                 [(10, self.HOME, 25), (30, self.AWAY, 41), (50, self.HOME, 33)]]
+        scores = [ScoreRow(5, 1, 3, None, 3, 0),      # before any drive ended
+                  ScoreRow(20, 1, 7, None, 10, 0),
+                  ScoreRow(40, 1, None, 7, 10, 7),
+                  ScoreRow(90, 1, 6, None, 16, 7)]    # after the last play
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        claimed = sum(o.points_for + o.points_against for o in outcomes)
+        self.assertEqual(claimed, 3 + 7 + 7 + 6)
+        self.assertTrue(indrive.reconcile(outcomes, scores)["ok"])
+
+    def test_a_score_after_the_last_play_still_belongs_to_a_drive(self):
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None)]
+        scores = [ScoreRow(99, 1, 6, None, 6, 0)]
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        self.assertEqual(outcomes[0].points_for, 6)
+        self.assertTrue(indrive.reconcile(outcomes, scores)["ok"])
+
+    def test_a_score_before_the_first_play_still_belongs_to_a_drive(self):
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None)]
+        scores = [ScoreRow(1, 1, 3, None, 3, 0)]
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        self.assertEqual(outcomes[0].points_for, 3)
+        self.assertTrue(indrive.reconcile(outcomes, scores)["ok"])
+
+    def test_a_mismatch_is_reported_as_an_error(self):
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None)]
+        scores = [ScoreRow(20, 1, 7, None, 7, 0)]
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        # Hand the check a score the drives were never built from.
+        extra = list(scores) + [ScoreRow(99, 1, 6, None, 13, 0)]
+        findings = indrive.checks({"streams": {}}, [], [], outcomes, extra)
+        self.assertIn((indrive.ERROR, "reconcile"),
+                      {(f[0], f[1]) for f in findings})
+
+    def test_a_clean_match_reports_nothing(self):
+        plays = [PlayRow(10, 1, self.HOME, 1, 10, 25, None)]
+        scores = [ScoreRow(20, 1, 7, None, 7, 0)]
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        findings = indrive.checks({"streams": {}}, [], [], outcomes, scores)
+        self.assertNotIn((indrive.ERROR, "reconcile"),
+                         {(f[0], f[1]) for f in findings})
+
+    def test_no_drives_means_no_rows_rather_than_a_crash(self):
+        self.assertEqual(indrive.drive_outcomes("AF1", [], []), [])
+
+
+class TestDriveCensusAndCsv(unittest.TestCase):
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def outcomes(self):
+        plays = [PlayRow(m, 1, t, 1, 10, f, None) for m, t, f in
+                 [(10, self.HOME, 25), (30, self.AWAY, 41), (50, self.HOME, 33)]]
+        scores = [ScoreRow(20, 1, 7, None, 7, 0)]
+        return indrive.drive_outcomes("AF1", plays, scores)
+
+    def test_the_census_counts_points_as_well_as_drives(self):
+        census = indrive.drive_census(self.outcomes())
+        self.assertEqual(census[indrive.TOUCHDOWN]["n"], 1)
+        self.assertEqual(census[indrive.TOUCHDOWN]["points"], 7)
+        self.assertEqual(census[indrive.NO_POINTS]["n"], 2)
+
+    def test_every_drive_class_is_in_the_census(self):
+        census = indrive.drive_census([])
+        self.assertEqual(list(census), indrive.DRIVE_OUTCOME_ORDER)
+
+    def test_a_drive_row_is_exactly_the_csv_columns(self):
+        for o in self.outcomes():
+            self.assertEqual(sorted(indrive.drive_row(o)),
+                             sorted(indrive.DRIVE_FIELDS))
+
+    def test_the_row_carries_the_score_either_side(self):
+        row = indrive.drive_row(self.outcomes()[0])
+        self.assertEqual((row["score_p1_before"], row["score_p1_after"]), (0, 7))
+        self.assertEqual(row["score_diff_after"], 7)
+        self.assertEqual(row["outcome"], indrive.TOUCHDOWN)
+
+    def test_the_html_renders_the_drive_panel(self):
+        from .. import html_indrive
+        outcomes = self.outcomes()
+        page = html_indrive.render(indrive.report([], 20), {}, [], {}, [],
+                                   indrive.drive_census(outcomes), outcomes)
+        self.assertIn("What each drive produced", page)
+        self.assertIn("Touchdown", page)
+        self.assertIn("Last of the match", page)
+
+    def test_every_drive_class_has_a_title_in_the_html(self):
+        from .. import html_indrive
+        for outcome in indrive.DRIVE_OUTCOME_ORDER:
+            self.assertIn(outcome, html_indrive.DRIVE_TITLES, outcome)
+
+
 class TestNearestQuote(unittest.TestCase):
     def setUp(self):
         self.times = [BASE + dt.timedelta(seconds=s) for s in (-10, -2, 1, 6)]

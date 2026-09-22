@@ -1207,6 +1207,47 @@ def print_indrive_census(census, transitions):
     print("  drive-ending rows are built and reported apart.")
 
 
+def print_drive_outcomes(census, outcomes, stats=None):
+    """What each drive produced, and whether the points add up."""
+    from . import indrive
+    print(f"\n{'=' * 78}\nIN-DRIVE REACTION -- what each drive produced"
+          f"\n{'=' * 78}")
+    if not outcomes:
+        print("  No drives.")
+        return
+    matches = len({o.match_code for o in outcomes})
+    points = sum(o.points_for + o.points_against for o in outcomes)
+    print(f"  {len(outcomes):,} drives across {matches:,} matches "
+          f"({len(outcomes) / matches:.1f} per match) carrying {points:,} points")
+
+    print(f"\n  {'OUTCOME':<18}{'DRIVES':>8}{'SHARE':>8}{'POINTS':>9}"
+          f"{'PTS/DRIVE':>11}{'PLAYS':>8}{'MATCHES':>9}")
+    for outcome, row in census.items():
+        if not row["n"]:
+            continue
+        plays = "" if row["mean_plays"] is None else f"{row['mean_plays']:.1f}"
+        print(f"  {outcome:<18}{row['n']:>8,}{_pct(row['n'] / len(outcomes)):>8}"
+              f"{row['points']:>9,}{row['points'] / row['n']:>11.2f}"
+              f"{plays:>8}{row['matches']:>9,}")
+
+    ended = collections.Counter(o.ended for o in outcomes)
+    print(f"\n  {'HOW IT ENDED':<18}{'DRIVES':>8}{'SHARE':>8}")
+    for kind in (indrive.HANDOVER, indrive.SAME_TEAM, indrive.MATCH_END):
+        n = ended.get(kind, 0)
+        if n:
+            print(f"  {kind:<18}{n:>8,}{_pct(n / len(outcomes)):>8}")
+
+    scored = [o for o in outcomes if o.points_for or o.points_against]
+    print(f"\n  drives that produced points: {len(scored):,} "
+          f"({_pct(len(scored) / len(outcomes))})")
+    print(f"  points per drive overall   : {points / len(outcomes):.2f}")
+    if stats and stats.get("match_points_do_not_reconcile"):
+        print(f"  matches whose points do NOT reconcile: "
+              f"{stats['match_points_do_not_reconcile']:,}")
+    else:
+        print("  every match's drive points reconcile with the feed")
+
+
 def print_indrive(result, stats=None):
     """Did the price move the way the play says it should?"""
     from . import indrive

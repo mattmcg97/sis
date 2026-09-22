@@ -27,6 +27,21 @@ TITLES = {
 
 SIGN_TITLES = {1: "good", -1: "bad", 0: "--"}
 
+DRIVE_TITLES = {
+    indrive.TOUCHDOWN: "Touchdown",
+    indrive.FIELD_GOAL: "Field goal",
+    indrive.EXTRA_POINT: "PAT or two-point",
+    indrive.SCORE: "Other points",
+    indrive.POINTS_AGAINST: "Defence scored",
+    indrive.NO_POINTS: "No points",
+}
+
+ENDED_TITLES = {
+    indrive.HANDOVER: "Handed over",
+    indrive.SAME_TEAM: "Same team label after",
+    indrive.MATCH_END: "Last of the match",
+}
+
 # The ramp is centred on a COIN, not on zero. 50% is a model that reacted
 # at random, so the green end is a long way above it and anything at or
 # below it is the red end. The cut points are how far above a coin a rate
@@ -137,6 +152,56 @@ def _census_panel(census, transitions):
           <th>Share</th></tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
+    </section>"""
+
+
+def _drives_panel(census, outcomes):
+    if not outcomes:
+        return ""
+    import collections as _c
+    rows = []
+    for outcome, row in census.items():
+        if not row["n"]:
+            continue
+        plays = "&mdash;" if row["mean_plays"] is None else f"{row['mean_plays']:.1f}"
+        rows.append(f"""<tr>
+            <th>{DRIVE_TITLES.get(outcome, outcome)}</th>
+            <td>{row['n']:,}</td><td>{_pct(row['n'] / len(outcomes))}</td>
+            <td>{row['points']:,}</td>
+            <td>{row['points'] / row['n']:.2f}</td>
+            <td>{plays}</td><td>{row['matches']:,}</td>
+        </tr>""")
+    ended = _c.Counter(o.ended for o in outcomes)
+    end_rows = "".join(
+        f"<tr><th>{ENDED_TITLES.get(k, k)}</th><td>{ended[k]:,}</td>"
+        f"<td>{_pct(ended[k] / len(outcomes))}</td></tr>"
+        for k in (indrive.HANDOVER, indrive.SAME_TEAM, indrive.MATCH_END)
+        if ended.get(k))
+    points = sum(o.points_for + o.points_against for o in outcomes)
+    matches = len({o.match_code for o in outcomes})
+    return f"""
+    <section class="panel" id="drives">
+      <h2>What each drive produced</h2>
+      <p class="count">{len(outcomes):,} drives &middot; {matches:,} matches
+        &middot; {len(outcomes) / matches:.1f} per match &middot;
+        {points:,} points &middot; {points / len(outcomes):.2f} per drive</p>
+      <div class="cols">
+        <div>
+          <table>
+            <thead><tr><th>Outcome</th><th>Drives</th><th>Share</th>
+              <th>Points</th><th>Per drive</th><th>Plays</th>
+              <th>Matches</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+        </div>
+        <div>
+          <table>
+            <thead><tr><th>How it ended</th><th>Drives</th>
+              <th>Share</th></tr></thead>
+            <tbody>{end_rows}</tbody>
+          </table>
+        </div>
+      </div>
     </section>"""
 
 
@@ -267,7 +332,8 @@ def _checks_panel(findings):
     </section>"""
 
 
-def render(result, census, transitions, stats=None, findings=()):
+def render(result, census, transitions, stats=None, findings=(),
+           drive_census=None, outcomes=()):
     streams = "".join(_stream_panel(stream, result["streams"][stream])
                       for stream in (directional.PROD, directional.CANDIDATE)
                       if result["streams"][stream]["overall"]["n"])
@@ -291,12 +357,14 @@ def render(result, census, transitions, stats=None, findings=()):
   </header>
   <nav>
     <a href="#checks">Checks</a>
+    <a href="#drives">Drives</a>
     <a href="#plays">Plays</a>
     <a href="#{directional.PROD}">Prod</a>
     <a href="#{directional.CANDIDATE}">Candidate</a>
     <a href="#h2h">Head to head</a>
   </nav>
   {_checks_panel(findings)}
+  {_drives_panel(drive_census or {}, outcomes)}
   {_census_panel(census, transitions)}
   {streams}
   {_head_to_head_panel(result)}
