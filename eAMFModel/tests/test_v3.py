@@ -127,6 +127,25 @@ class TestTables(unittest.TestCase):
         mean = lambda k: t.seconds[t.start[k]:t.start[k] + t.count[k]].mean()
         self.assertGreater(mean(lead), mean(even) + 5)
 
+    def test_rows_missing_fields_are_skipped_not_fatal(self):
+        # real exports have rows with no quarter (a feed that missed the
+        # quarter-start status), no clock, no scores or no down and distance
+        matches = _matches(30, seed=9)
+        rng = random.Random(4)
+        fields = ["period", "clock_seconds", "down", "distance", "field_position", "offense",
+                  "score_p1", "score_p2", "play_messages"]
+        for rows in matches.values():
+            for r in rows:
+                if rng.random() < 0.2:
+                    for f in rng.sample(fields, 3):
+                        r[f] = ""
+        next(iter(matches.values()))[0]["period"] = ""
+        for r in list(matches.values())[1]:
+            r["period"] = ""
+        t = sim.Tables.build(matches, min_records=20)
+        self.assertGreater(t.n_snaps, 100)
+        self.assertEqual(len(sim.quarter_points(matches)), 4)
+
     def test_save_and_load(self):
         import os
         import tempfile
