@@ -328,6 +328,10 @@ def _v3_quotes(cur, match_codes):
     (built exactly as `scouting` exports them), priced by simulation and
     held at prod's lines until the next PLAY_OVER."""
     from collections import defaultdict
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        raise SystemExit("--candidate v3 needs numpy:  py -m pip install numpy")
     from eAMFModel import v3_stream
     from . import directional, scouting
     v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions

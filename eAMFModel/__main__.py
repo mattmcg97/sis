@@ -23,7 +23,7 @@ import csv
 import os
 import sys
 
-from . import backtest, dist, feed, fit, playover, players, v3
+from . import backtest, dist, feed, fit, playover, players
 from .params import VERSIONS, version
 from .pricer import (AWAY, HOME, ML_HOME, SPREAD_HOME, TOTAL_OVER, GameState, Model)
 from .strength import Prior
@@ -122,7 +122,18 @@ def _half(path, half):
     return codes[0::2] if half == "train" else codes[1::2] if half == "test" else codes
 
 
+def _v3_module():
+    """v3 needs numpy; nothing else in the package does, so it loads here."""
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        raise SystemExit("v3 needs numpy:  py -m pip install numpy   (or python -m pip ...)")
+    from . import v3
+    return v3
+
+
 def cmd_v3_build(args):
+    v3 = _v3_module()
     data = playover.load(args.snapshots)
     keep = set(_half(args.snapshots, args.half))
     v3.build({c: rows for c, rows in data.items() if c in keep}, args.out)
@@ -130,6 +141,7 @@ def cmd_v3_build(args):
 
 
 def cmd_v3(args):
+    v3 = _v3_module()
     variants = [v3.Variant("v3", react=False)]
     if args.react:
         variants.append(v3.Variant("v3_react", kappa=args.kappa))
