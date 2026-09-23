@@ -284,6 +284,12 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
     return [_distributions(home[i], away[i]) for i in range(len(messages))]
 
 
+def pool_context():
+    """fork where there is one (Linux, macOS); spawn on Windows, which has no
+    fork. Workers are top-level functions with picklable jobs, so either works."""
+    return mp.get_context("fork" if "fork" in mp.get_all_start_methods() else "spawn")
+
+
 def _grade_matches(job):
     (matches, tables_path, grid_path, variants, n_paths, seed, book, handles, require_live) = job
     tables = sim.Tables.load(tables_path)
@@ -374,7 +380,7 @@ def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, work
     if workers <= 1:
         results = [_grade_matches(j) for j in jobs]
     else:
-        with mp.get_context("fork").Pool(len(jobs)) as pool:
+        with pool_context().Pool(len(jobs)) as pool:
             results = pool.map(_grade_matches, jobs)
     for g, s in results:
         graded += g

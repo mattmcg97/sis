@@ -17,7 +17,6 @@ fitted on the matches it prices here.
 """
 
 import math
-import multiprocessing as mp
 import os
 from bisect import bisect_right
 
@@ -156,6 +155,6 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     if workers == 1:
         results = [_worker(j) for j in jobs]
     else:
-        with mp.get_context("fork").Pool(workers) as pool:
+        with v3.pool_context().Pool(workers) as pool:
             results = pool.map(_worker, jobs)
     return [row for part in results for row in part]
