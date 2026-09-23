@@ -39,6 +39,9 @@ from dataclasses import dataclass
 REGULATION_PERIODS = 4
 
 
+QUARTER_SECONDS = 240          # a Madden quarter, counted down (SCOUTING_FULL)
+
+
 @dataclass(frozen=True)
 class ClockParams:
     # Messages per period, mean and spread. Fitted from 262 matches of
@@ -163,6 +166,27 @@ def half_left(params, period, elapsed, points=48):
     return mean, max(0.0, m2 / w_sum - mean * mean)
 
 
+def position_in_half(period, clock_seconds):
+    """Game-time fraction of the half gone, from the real clock."""
+    gone = 1.0 - max(0.0, min(float(clock_seconds), QUARTER_SECONDS)) / QUARTER_SECONDS
+    return (0.0 if period % 2 == 1 else 0.5) + 0.5 * gone
+
+
+def remaining_on_clock(params, period, clock_seconds):
+    """Remaining, when the feed gives the game clock: exact, no variance."""
+    if period is None:
+        return Remaining(params.half_shares[0], 0.0, params.half_shares[1], 0.0)
+    if period > REGULATION_PERIODS:
+        return Remaining(0.0, 0.0, 0.0, 0.0)
+    period = max(1, int(period))
+    half = half_of(period)
+    a = params.half_slopes[half - 1]
+    u = position_in_half(period, clock_seconds)
+    share = params.half_shares[half - 1]
+    nxt = params.half_shares[1] if half == 1 else 0.0
+    return Remaining(share * (1.0 - u) ** (1.0 + a), 0.0, nxt, 0.0)
+
+
 def remaining(params, period, elapsed_in_period, elapsed_in_half=None):
     """Share of the game's drives left (and its variance), split by half.
 
@@ -198,18 +222,22 @@ def remaining(params, period, elapsed_in_period, elapsed_in_half=None):
     return Remaining(mean, var, nxt, nxt_var)
 
 
-def intensity(params, period, elapsed_in_period):
+def intensity(params, period, elapsed_in_period, clock_seconds=None):
     """Scoring rate now, relative to the half's average: w(u) = (1+a)(1-u)^a,
-    at the expected position u in the half (quarter-anchored game time).
-    Second half only -- the first's slope is slight and the per-drive
-    effect of it did not hold up; 1 on the quarter clock or in overtime."""
+    at the position u in the half (the clock's, or the expected one from
+    messages). Second half only -- the first's slope is slight and the
+    per-drive effect of it did not hold up; 1 on the quarter clock or in
+    overtime."""
     if (params.mode != "half" or period is None or period > REGULATION_PERIODS
             or period <= 2):
         return 1.0
     period = max(1, int(period))
     a = params.half_slopes[half_of(period) - 1]
-    share, _ = half_left(params, period, max(0.0, float(elapsed_in_period or 0)))
-    u = 1.0 - max(0.0, share) ** (1.0 / (1.0 + a))
+    if clock_seconds is not None:
+        u = position_in_half(period, clock_seconds)
+    else:
+        share, _ = half_left(params, period, max(0.0, float(elapsed_in_period or 0)))
+        u = 1.0 - max(0.0, share) ** (1.0 / (1.0 + a))
     return (1.0 + a) * max(0.0, 1.0 - u) ** a
 
 

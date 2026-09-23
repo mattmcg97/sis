@@ -53,6 +53,8 @@ class GameState:
     distance: Optional[int] = None
     drive_age: Optional[float] = None       # messages since this drive began
     elapsed_in_half: Optional[float] = None  # messages since the half began
+    clock_seconds: Optional[float] = None    # game clock left in the quarter, when known
+    pending_conversion: Optional[str] = None # scored a TD, the extra point still to come
     opening_receiver: Optional[str] = None  # who had the ball first
 
     @property
@@ -160,13 +162,14 @@ class Model:
                                      p.points_per_score, p.n_slices)
         return [(w, self.drives.quality_for(per_drive * theta)) for w, theta in nodes]
 
-    def _team_pmfs(self, qualities, n_max, current=None, policy=NORMAL):
-        """out[n] = pmf of points from n more fresh drives (after `current`)."""
+    def _team_pmfs(self, qualities, n_max, current=None, policy=NORMAL, scale=1.0):
+        """out[n] = pmf of points from n more fresh drives (after `current`),
+        each drive's scoring scaled by `scale`."""
         out = [None] * (n_max + 1)
         mixes = [[] for _ in range(n_max + 1)]
         for w, q in qualities:
             base = dist.point(0) if current is None else current(q)
-            fresh = self.fresh_pmf(q, policy)
+            fresh = _truncate(self.fresh_pmf(q, policy), scale)
             acc = base
             for n in range(n_max + 1):
                 if n:
@@ -179,7 +182,7 @@ class Model:
     # -- the pre-match anchor --------------------------------------------
 
     def fit_prior(self, spread_line, total_line, ml_home=None, spread_home=None,
-                  over=None, rounds=2, steps=24):
+                  over=None, rounds=2, steps=24, on_clock=False):
         """The Prior whose kickoff book reproduces the pre-match prices.
 
         Half-point lines throw information away -- a -2.5 at 46% is not a
@@ -190,22 +193,27 @@ class Model:
         at its line) matches. Monotone in each, so bisection; two rounds
         settle the small interaction between the two.
 
+        `on_clock`: fit on the game-clock path (the pricer's structure
+        differs a little with the clock known), for pricing off SCOUTING_FULL.
+
         At kickoff nothing has been scored and nothing was expected yet, so
         the prior strength k plays no part: versions that differ only in k
         share the answer, cached.
         """
         key = (replace(self.params, prior_strength=0.0), spread_line, total_line,
-               ml_home, spread_home, over, rounds, steps)
+               ml_home, spread_home, over, rounds, steps, on_clock)
         if key in _PRIOR_CACHE:
             return _PRIOR_CACHE[key]
         prior = self._fit_prior(spread_line, total_line, ml_home, spread_home, over,
-                                rounds, steps)
+                                rounds, steps, on_clock)
         _PRIOR_CACHE[key] = prior
         return prior
 
-    def _fit_prior(self, spread_line, total_line, ml_home, spread_home, over, rounds, steps):
+    def _fit_prior(self, spread_line, total_line, ml_home, spread_home, over, rounds, steps,
+                   on_clock=False):
         total, margin = float(total_line), float(spread_line)
-        kickoff = GameState(period=1, elapsed_in_period=0.0, home_score=0, away_score=0)
+        kickoff = GameState(period=1, elapsed_in_period=0.0, home_score=0, away_score=0,
+                            clock_seconds=clock.QUARTER_SECONDS if on_clock else None)
 
         def book(t, m):
             return self.book(strength.Prior.from_lines(m, t), kickoff)
@@ -237,8 +245,13 @@ class Model:
 
     def book(self, prior, state):
         p = self.params
-        left = clock.remaining(p.clock, state.period, state.elapsed_in_period,
-                               state.elapsed_in_half)
+        clock_left = self._drives_of_clock(state)
+        future_scale = 1.0
+        if state.clock_seconds is not None:
+            left, future_scale = self._on_the_clock(state, clock_left)
+        else:
+            left = clock.remaining(p.clock, state.period, state.elapsed_in_period,
+                                   state.elapsed_in_half)
         f = left.fraction
         home_q = self.side_qualities(prior.home_points, state.home_score, f)
         away_q = self.side_qualities(prior.away_points, state.away_score, f)
@@ -254,11 +267,15 @@ class Model:
         # whole drive, scaled by how much of the field is left to cover --
         # a drive on the 1 needs a snap or two, one from its own 20 all of
         # it (see _in_time).
-        clock_left = self._drives_of_clock(state)
         policies, kill = self._endgame(state, clock_left)
         # The half's scoring falls away (clock.py); the drive in progress
         # shares in that, not just the count of drives to come.
-        rate_now = min(1.0, clock.intensity(p.clock, state.period, state.elapsed_in_period))
+        rate_now = clock.intensity(p.clock, state.period, state.elapsed_in_period,
+                                   state.clock_seconds)
+        if state.clock_seconds is not None and state.period in (3, 4):
+            shares = p.clock.half_shares
+            rate_now *= shares[1] / shares[0]
+        rate_now = min(1.0, rate_now)
         slow = rate_now ** p.current_intensity
         if state.has_snap and not kickoff:
             offense = state.offense
@@ -297,8 +314,14 @@ class Model:
         for weight, offense, current, part in branches:
             # The current drive is the offense's; the rest of this half
             # alternates starting with the defense.
+            # On the real clock the count's spread also carries how long the
+            # current drive will take: a quick turnover hands the ball back
+            # with time on it.
+            drive_var = ((p.drive_time_cv * p.drive_time * part) ** 2
+                         if state.clock_seconds is not None else 0.0)
             this_half_after = self.drive_count(
-                max(0.0, rate * left.this_half - part), rate * rate * left.this_half_var)
+                max(0.0, rate * left.this_half - part),
+                rate * rate * left.this_half_var + drive_var)
             counts = {}
             for w2, receiver in second:
                 for r1, p1 in enumerate(this_half_after):
@@ -316,8 +339,14 @@ class Model:
             n_def = max(d_ for _, d_ in counts)
             off_q, def_q = (home_q, away_q) if offense == HOME else (away_q, home_q)
             defense = AWAY if offense == HOME else HOME
-            off = self._team_pmfs(off_q, n_off, current, policies[offense])
-            dfn = self._team_pmfs(def_q, n_def, None, policies[defense])
+            off = self._team_pmfs(off_q, n_off, current, policies[offense], future_scale)
+            dfn = self._team_pmfs(def_q, n_def, None, policies[defense], future_scale)
+            if state.pending_conversion in (HOME, AWAY):
+                extra = self._conversion_pmf()
+                if state.pending_conversion == offense:
+                    off = [dist.convolve(pmf, extra, POINTS_CAP) for pmf in off]
+                else:
+                    dfn = [dist.convolve(pmf, extra, POINTS_CAP) for pmf in dfn]
             # For each offense count, the defense's points mixed over its counts.
             by_off = {}
             for (o, d_), pr in counts.items():
@@ -367,9 +396,52 @@ class Model:
             return _truncate(self.fresh_pmf(quality, policy), in_time)
         return pmf
 
-    def _drives_of_clock(self, state):
-        """Clock left in the half, in average drives' worth of messages."""
+    def _on_the_clock(self, state, clock_left):
+        """(Remaining, scale of later drives' scoring) off the real clock.
+
+        With the game clock known, how many drives are left is a matter of
+        TIME: this half's clock in drives' worth, and a whole half more if
+        this is the first. The second half's lower scoring then comes off
+        what each drive is worth, not off how many there are: its drives
+        score at half_shares[1] / half_shares[0] of the first half's, and
+        through the half at the rate w(u) (clock.py), so a later drive from
+        position u is worth the average of w over what is left, (1 - u)^a.
+        """
         p = self.params
+        rate = 2.0 * p.drives_per_team
+        if state.period is None:
+            return clock.Remaining(0.5, 0.0, 0.5, 0.0), 1.0
+        if state.period > clock.REGULATION_PERIODS:
+            return clock.Remaining(0.0, 0.0, 0.0, 0.0), 1.0
+        shares = p.clock.half_shares
+        second_level = shares[1] / shares[0] if shares[0] > 0 else 1.0
+        this_half = clock_left / rate
+        if state.period <= 2:
+            n_this, n_next = clock_left, 0.5 * rate
+            scale = (n_this + n_next * second_level) / max(1e-9, n_this + n_next)
+            return clock.Remaining(this_half, 0.0, 0.5, 0.0), min(1.0, scale)
+        a = p.clock.half_slopes[1]
+        u = clock.position_in_half(state.period, state.clock_seconds)
+        scale = second_level * max(0.0, 1.0 - u) ** a
+        return clock.Remaining(this_half, 0.0, 0.0, 0.0), min(1.0, scale)
+
+    def _conversion_pmf(self):
+        """Points still to come from a touchdown's conversion: 0, 1 or 2."""
+        q6, q8 = self.params.q6, self.params.q8
+        return [q6, 1.0 - q6 - q8, q8]
+
+    def _drives_of_clock(self, state):
+        """Clock left in the half, in average drives' worth: seconds when
+        the feed gives the game clock, messages when it does not."""
+        p = self.params
+        if state.clock_seconds is not None:
+            if state.period is None or state.period > clock.REGULATION_PERIODS:
+                return 0.0
+            seconds = max(0.0, min(float(state.clock_seconds), clock.QUARTER_SECONDS))
+            if state.period % 2 == 1:
+                seconds += clock.QUARTER_SECONDS
+            regulation = clock.REGULATION_PERIODS * clock.QUARTER_SECONDS
+            return seconds * 2.0 * p.drives_per_team / regulation
         messages = clock.messages_left_in_half(p.clock, state.period, state.elapsed_in_period)
         return messages * 2.0 * p.drives_per_team / p.clock.regulation
 
