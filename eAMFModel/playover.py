@@ -9,18 +9,17 @@ Each snapshot is priced from what is known at that PLAY_OVER, on the REAL
 game clock, at prod's line on each market, and scored against the same
 outcome as prod. Only prod quotes that were live are compared.
 
-What state a PLAY_OVER is priced from depends on how the play ended:
+What state a PLAY_OVER is priced from (state_for): the row itself, which
+carries the state after the play, except after a score, where the row shows
+the set-up of what follows -- then the scorer comes off the scoring message:
 
-  SCRIMMAGE            the next PLAY_STARTED's side, down, distance and
-                       field: the result of the play, as the game shows it
-                       at the whistle -- a turnover included. `--state
-                       over` uses the PLAY_OVER row's own state instead
-                       (and a fresh drive for the other side after a
-                       turnover)
-  TOUCHDOWN            the extra point still to come for the scorer, then a
-                       fresh drive for the other side
-  FIELD_GOAL, PUNT, TURNOVER_ON_DOWNS, SAFETY, KICKOFF, CONVERSION
-                       a fresh drive for whoever starts next
+  TOUCHDOWN            the conversion pending for the scorer, then a fresh
+                       drive for the other side
+  CONVERSION, good FIELD_GOAL
+                       the points on the board, a fresh drive for the other side
+  missed FIELD_GOAL    the other side's ball at the spot
+  SAFETY               two points, and the scorer receives
+  everything else      the row's side, down, distance and field
 
 The scoreboard at a PLAY_OVER comes from SCORE_CHANGES at or before its
 message. A touchdown's six (or a field goal's three) can land a message or
@@ -31,8 +30,17 @@ started, the points are added.
 import csv
 from collections import Counter, defaultdict
 
-from . import backtest, pricer
+from dataclasses import replace
+
+from . import backtest, players, pricer
 from .pricer import AWAY, HOME, GameState
+
+# How the in-game pace enters (see _player_effects):
+PACE_OFF = "off"      # no pace effect
+PACE_NEWS = "news"    # only what the game shows beyond the players' profiles
+PACE_FULL = "full"    # the profiles' pace too, from kickoff
+# Clock evidence (seconds) before the game's own pace counts for half.
+PACE_PRIOR_SECONDS = 600.0
 
 MARKETS = (50, 51, 52, 53, 54, 55)
 NEXT = "next"
@@ -71,8 +79,31 @@ def side_of(team, team_a_side):
     return a if team == "TEAM_A" else (AWAY if a == HOME else HOME)
 
 
-def state_for(r, state_mode=NEXT):
-    """(GameState, None) or (None, reason it cannot be priced)."""
+def _message_team(messages, prefixes):
+    """TEAM_A / TEAM_B off the last message starting with one of prefixes."""
+    team = None
+    for m in messages:
+        if m.startswith(prefixes) and m[-6:] in ("TEAM_A", "TEAM_B"):
+            team = m[-6:]
+    return team
+
+
+def _other(side):
+    return AWAY if side == HOME else HOME
+
+
+def state_for(r, state_mode=OVER):
+    """(GameState, None) or (None, reason it cannot be priced).
+
+    The PLAY_OVER row carries the state AFTER the play -- it matches the
+    next PLAY_STARTED 95% of the time on scrimmage plays, the rest being
+    penalties enforced between the two -- so by default the row is the
+    state. Scores are the exception: the row then shows the set-up of what
+    comes next (the conversion on the 85, the kicker on the 35), so the
+    scorer comes off the scoring message and the other side is given the
+    ball. `state_mode=NEXT` takes scrimmage states from the next
+    PLAY_STARTED instead (a small look ahead, for comparison).
+    """
     a_side = r["team_a_side"] or None
     if a_side is None:
         return None, "team_a_unresolved"
@@ -82,42 +113,66 @@ def state_for(r, state_mode=NEXT):
         return None, "no_clock"
     kind = r["play_kind"]
     home, away = _int(r["score_p1"]) or 0, _int(r["score_p2"]) or 0
-    offense = side_of(r["offense"], a_side)
-    nxt_offense = side_of(r["next_offense"], a_side)
+    row_side = side_of(r["offense"], a_side)
     opening = side_of(r.get("opening_offense"), a_side)
+    messages = [m for m in (r.get("play_messages") or "").split("|") if m]
     base = dict(period=period, elapsed_in_period=0.0, home_score=home, away_score=away,
                 clock_seconds=clock_s, opening_receiver=opening)
 
-    if kind == "SCRIMMAGE":
-        turnover = nxt_offense is not None and offense is not None and nxt_offense != offense
-        if turnover and state_mode == OVER:
-            # Intercepted or fumbled: a drive for the other side is next.
-            return GameState(offense=nxt_offense, **base), None
-        use_next = state_mode == NEXT and nxt_offense is not None and _int(r["next_down"]) is not None
-        src = "next_" if use_next else ""
-        side = nxt_offense if use_next else offense
-        down, dist_, field = (_int(r[src + "down"]), _int(r[src + "distance"]),
-                              _int(r[src + "field_position"]))
+    def snap(side, prefix=""):
+        down, dist_, field = (_int(r[prefix + "down"]), _int(r[prefix + "distance"]),
+                              _int(r[prefix + "field_position"]))
         if side is None or down is None or dist_ is None or field is None:
             return None, "no_state"
         return GameState(offense=side, down=down, distance=dist_, field_position=field,
-                         **base), None
+                         snap_confirmed=True, **base), None
+
+    def scored(team_prefixes, points_by_message):
+        team = _message_team(messages, team_prefixes)
+        scorer = side_of(team, a_side) if team else row_side
+        points = 0
+        for m in messages:
+            for prefix, pts in points_by_message.items():
+                if m.startswith(prefix):
+                    points = pts
+        return scorer, points
+
     if kind == "TOUCHDOWN":
-        if offense is None:
+        scorer, _ = scored(("TOUCHDOWN_TEAM",), {})
+        if scorer is None:
             return None, "no_state"
-        home, away = _on_the_board(r, home, away, offense, 6)
-        other = AWAY if offense == HOME else HOME
-        return GameState(offense=other, pending_conversion=offense,
-                         **dict(base, home_score=home, away_score=away)), None
-    messages = set((r.get("play_messages") or "").split("|"))
-    if kind == "FIELD_GOAL" and offense is not None and messages & {
-            "FIELD_GOAL_GOOD_TEAM_A", "FIELD_GOAL_GOOD_TEAM_B"}:
-        home, away = _on_the_board(r, home, away, offense, 3)
-        base.update(home_score=home, away_score=away)
-    # Every other kind ends with a fresh drive for whoever starts next.
-    if nxt_offense is None:
-        return None, "no_next_offense"
-    return GameState(offense=nxt_offense, **base), None
+        h, a = _on_the_board(r, home, away, scorer, 6)
+        return GameState(offense=_other(scorer), pending_conversion=scorer,
+                         **dict(base, home_score=h, away_score=a)), None
+    if kind == "CONVERSION":
+        scorer, points = scored(("EXTRA_POINT", "TWO_POINT"), {
+            "EXTRA_POINT_GOOD": 1, "TWO_POINT_CONVERSION_SUCCESSFUL": 2})
+        if scorer is None:
+            return None, "no_state"
+        h, a = _on_the_board(r, home, away, scorer, points) if points else (home, away)
+        return GameState(offense=_other(scorer), **dict(base, home_score=h, away_score=a)), None
+    if kind == "FIELD_GOAL":
+        kicker, points = scored(("FIELD_GOAL_GOOD", "FIELD_GOAL_MISSED"), {"FIELD_GOAL_GOOD": 3})
+        if kicker is None:
+            return None, "no_state"
+        if points:
+            h, a = _on_the_board(r, home, away, kicker, 3)
+            return GameState(offense=_other(kicker), **dict(base, home_score=h, away_score=a)), None
+        if row_side == _other(kicker):
+            return snap(row_side)               # missed: their ball at the spot
+        return GameState(offense=_other(kicker), **base), None
+    if kind == "SAFETY":
+        scorer, _ = scored(("SAFETY_AWARDED",), {})
+        if scorer is None:
+            return None, "no_state"
+        h, a = _on_the_board(r, home, away, scorer, 2)
+        return GameState(offense=scorer, **dict(base, home_score=h, away_score=a)), None
+    if kind == "SCRIMMAGE" and state_mode == NEXT:
+        nxt = side_of(r["next_offense"], a_side)
+        if nxt is not None and _int(r["next_down"]) is not None:
+            return snap(nxt, "next_")
+    # Scrimmage, kickoff, punt, turnover on downs: the row is the state.
+    return snap(row_side)
 
 
 def rows_for_match(match_rows):
@@ -159,19 +214,61 @@ def prior_for(model, match_rows):
                            over=_float(r.get("prematch_prob_54")), on_clock=True)
 
 
-def run(path, versions, state_mode=NEXT, scrimmage_only=False, limit=None,
-        require_live=True):
-    data = load(path)
+def _pace_by_message(match_rows, book, handles):
+    """{message: (pace ratio so far, profile pace)} at each snapshot."""
+    pace = (players.Pace(book, *handles, prior_seconds=PACE_PRIOR_SECONDS) if handles
+            else players.Pace(book, None, None, prior_seconds=PACE_PRIOR_SECONDS))
+    intervals = sorted(players.play_intervals(match_rows), key=lambda x: x[3])
+    out = {}
+    j = 0
+    for r in match_rows:
+        m = int(r["message"])
+        while j < len(intervals) and intervals[j][3] <= m:
+            offense, sit, seconds, _ = intervals[j]
+            pace.add(offense, sit, seconds)
+            j += 1
+        out[m] = (pace.ratio(), pace.profile_pace())
+    return out
+
+
+def _player_effects(state, message, pace_table, profiles, effects):
+    """The state with the players' effects on it, per `effects`
+    ({"aggression": bool, "milk": bool, "pace": PACE_*})."""
+    changes = {}
+    home, away = profiles
+    if effects.get("aggression"):
+        changes.update(home_aggression=home.aggression, away_aggression=away.aggression)
+    if effects.get("milk"):
+        changes.update(home_milk=home.milk, away_milk=away.milk)
+    mode = effects.get("pace", PACE_OFF)
+    if mode != PACE_OFF and message in pace_table:
+        ratio, profile_pace = pace_table[message]
+        # ratio: clock used over what the profiles expected. Drives left go
+        # the other way. "full" also charges the profiles' own pace against
+        # the league's (the pre-match price assumed a league-average game).
+        mult = 1.0 / ratio
+        if mode == PACE_FULL:
+            mult /= profile_pace
+        changes["pace"] = mult
+    return replace(state, **changes) if changes else state
+
+
+def _grade_matches(job):
+    """Worker: grade a list of (match_code, rows). Top level, so it pickles."""
+    (matches, versions, state_mode, scrimmage_only, require_live, book, handles,
+     effects) = job
     models = {name: pricer.Model(params) for name, params in versions.items()}
     graded = []
     skipped = Counter()
-    for i, (match_code, match_rows) in enumerate(sorted(data.items())):
-        if limit is not None and i >= limit:
-            break
+    for match_code, match_rows in matches:
         priors = {name: prior_for(model, match_rows) for name, model in models.items()}
         if any(p is None for p in priors.values()):
             skipped["no_prior"] += 1
             continue
+        pair = handles.get(match_code) if handles else None
+        profiles = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
+                    else (players.Profile(), players.Profile()))
+        pace_table = _pace_by_message(match_rows, book, pair) if book else {}
         books = {}
         for row in rows_for_match(match_rows):
             src = row.source
@@ -188,14 +285,51 @@ def run(path, versions, state_mode=NEXT, scrimmage_only=False, limit=None,
             if state is None:
                 skipped[why] += 1
                 continue
-            key = row.message
             probs = {}
             for name, model in models.items():
-                if (name, key) not in books:
-                    books[(name, key)] = model.book(priors[name], state)
-                probs[name] = books[(name, key)].prob(row.market_id, row.prod_line)
+                key = (name, row.message)
+                if key not in books:
+                    s = _player_effects(state, row.message, pace_table, profiles,
+                                        effects.get(name, {}))
+                    books[key] = model.book(priors[name], s)
+                probs[name] = books[key].prob(row.market_id, row.prod_line)
             row.period = state.period
+            row.clock_seconds = state.clock_seconds
+            row.source = None            # the raw row is not needed past here
             graded.append((match_code, row, probs))
+    return graded, skipped
+
+
+def run(path, versions, state_mode=OVER, scrimmage_only=False, limit=None,
+        require_live=True, workers=1, matches=None, book=None, handles=None,
+        effects=None):
+    """[(match, row, {version: probability})], Counter of what was skipped.
+
+    `workers` > 1 splits the matches across processes. `matches`, if given,
+    restricts to those match codes (a train / test split, say). `book`
+    (players.Book) and `handles` ({match: (home, away)}) switch on player
+    effects, per version as `effects[name]` = {"aggression": bool,
+    "milk": bool, "pace": "off" | "news" | "full"}.
+    """
+    data = load(path)
+    items = sorted(data.items())
+    if matches is not None:
+        wanted = set(matches)
+        items = [item for item in items if item[0] in wanted]
+    if limit is not None:
+        items = items[:limit]
+    job = (versions, state_mode, scrimmage_only, require_live, book, handles or {},
+           effects or {})
+    if workers <= 1:
+        return _grade_matches((items,) + job)
+    import multiprocessing
+    chunks = [items[i::workers * 4] for i in range(workers * 4)]
+    graded, skipped = [], Counter()
+    with multiprocessing.Pool(workers) as pool:
+        for g, s in pool.imap_unordered(_grade_matches, [(c,) + job for c in chunks if c]):
+            graded.extend(g)
+            skipped.update(s)
+    graded.sort(key=lambda g: (g[0], g[1].message, g[1].market_id))
     return graded, skipped
 
 

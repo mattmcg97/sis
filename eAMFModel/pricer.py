@@ -55,6 +55,15 @@ class GameState:
     elapsed_in_half: Optional[float] = None  # messages since the half began
     clock_seconds: Optional[float] = None    # game clock left in the quarter, when known
     pending_conversion: Optional[str] = None # scored a TD, the extra point still to come
+    snap_confirmed: bool = False             # the feed says this is a snap (a 1st-and-10 on
+                                             # the 35 is then a touchback, not a kick)
+    # Player effects (players.py). pace: drives still to come, relative to
+    # what the pre-match price assumed (> 1 = the game is running faster).
+    pace: float = 1.0
+    home_aggression: float = 0.0             # 4th-down log-odds shift, each side
+    away_aggression: float = 0.0
+    home_milk: float = 1.0                   # how hard each side kills the clock late
+    away_milk: float = 1.0
     opening_receiver: Optional[str] = None  # who had the ball first
 
     @property
@@ -146,11 +155,11 @@ class Model:
 
     # -- building blocks -------------------------------------------------
 
-    def fresh_pmf(self, quality, policy=NORMAL):
-        key = (round(quality, 4), policy)
+    def fresh_pmf(self, quality, policy=NORMAL, aggression=0.0):
+        key = (round(quality, 4), policy, round(aggression, 3))
         if key not in self._fresh:
             self._fresh[key] = self.drives.pmf(quality, 1, self.params.drive.start_field,
-                                               10, policy)
+                                               10, policy, aggression)
         return self._fresh[key]
 
     def side_qualities(self, prior_points, scored, fraction_left):
@@ -162,14 +171,15 @@ class Model:
                                      p.points_per_score, p.n_slices)
         return [(w, self.drives.quality_for(per_drive * theta)) for w, theta in nodes]
 
-    def _team_pmfs(self, qualities, n_max, current=None, policy=NORMAL, scale=1.0):
+    def _team_pmfs(self, qualities, n_max, current=None, policy=NORMAL, scale=1.0,
+                   aggression=0.0):
         """out[n] = pmf of points from n more fresh drives (after `current`),
         each drive's scoring scaled by `scale`."""
         out = [None] * (n_max + 1)
         mixes = [[] for _ in range(n_max + 1)]
         for w, q in qualities:
             base = dist.point(0) if current is None else current(q)
-            fresh = _truncate(self.fresh_pmf(q, policy), scale)
+            fresh = _truncate(self.fresh_pmf(q, policy, aggression), scale)
             acc = base
             for n in range(n_max + 1):
                 if n:
@@ -200,7 +210,11 @@ class Model:
         the prior strength k plays no part: versions that differ only in k
         share the answer, cached.
         """
-        key = (replace(self.params, prior_strength=0.0), spread_line, total_line,
+        # Nothing late in the game can matter at kickoff, so versions that
+        # differ only there share the fit.
+        kickoff_params = replace(self.params, prior_strength=0.0, late_drives=0.0,
+                                 kill_time=0.0, kill_score=0.0, run_score=0.0, hurry=0.0)
+        key = (kickoff_params, spread_line, total_line,
                ml_home, spread_home, over, rounds, steps, on_clock)
         if key in _PRIOR_CACHE:
             return _PRIOR_CACHE[key]
@@ -245,22 +259,35 @@ class Model:
 
     def book(self, prior, state):
         p = self.params
-        clock_left = self._drives_of_clock(state)
         future_scale = 1.0
         if state.clock_seconds is not None:
-            left, future_scale = self._on_the_clock(state, clock_left)
+            left = self._on_the_clock(state)
+            # Drives' worth of the half left, in the same (scoring) units.
+            clock_left = 2.0 * p.drives_per_team * left.this_half
         else:
+            clock_left = self._drives_of_clock(state)
             left = clock.remaining(p.clock, state.period, state.elapsed_in_period,
                                    state.elapsed_in_half)
         f = left.fraction
+        if state.pace != 1.0:
+            # The game running faster or slower than priced: more or fewer
+            # drives in the time left, and less or more clock per drive.
+            left = clock.Remaining(left.this_half * state.pace,
+                                   left.this_half_var * state.pace ** 2,
+                                   left.next_half * state.pace,
+                                   left.next_half_var * state.pace ** 2)
+            clock_left *= state.pace
+        aggression = {HOME: state.home_aggression, AWAY: state.away_aggression}
+        milk = {HOME: state.home_milk, AWAY: state.away_milk}
         home_q = self.side_qualities(prior.home_points, state.home_score, f)
         away_q = self.side_qualities(prior.away_points, state.away_score, f)
 
-        if state.period is not None and state.period > clock.REGULATION_PERIODS:
+        if (state.period is not None and state.period > clock.REGULATION_PERIODS
+                and state.clock_seconds is None):
             return self._overtime(state, home_q, away_q, f)
 
-        kickoff = (state.has_snap and state.down == 1 and state.distance == 10
-                   and state.field_position == p.kickoff_field)
+        kickoff = (state.has_snap and not state.snap_confirmed and state.down == 1
+                   and state.distance == 10 and state.field_position == p.kickoff_field)
         # The half's clock can end the current drive before it does. Clock
         # left is in messages (time, not scoring share), counted in average
         # drives' worth; the time a drive still needs is `drive_time` of a
@@ -270,32 +297,34 @@ class Model:
         policies, kill = self._endgame(state, clock_left)
         # The half's scoring falls away (clock.py); the drive in progress
         # shares in that, not just the count of drives to come.
-        rate_now = clock.intensity(p.clock, state.period, state.elapsed_in_period,
-                                   state.clock_seconds)
-        if state.clock_seconds is not None and state.period in (3, 4):
-            shares = p.clock.half_shares
-            rate_now *= shares[1] / shares[0]
-        rate_now = min(1.0, rate_now)
+        rate_now = 1.0 if state.clock_seconds is not None else min(
+            1.0, clock.intensity(p.clock, state.period, state.elapsed_in_period))
         slow = rate_now ** p.current_intensity
         if state.has_snap and not kickoff:
             offense = state.offense
             need = min(1.3, max(0.1, (100 - state.field_position) / 75.0))
             in_time = self._in_time(clock_left, need) * slow
-            keep = 1.0 - p.kill_score if kill.get(offense) == "kneel" else 1.0
-            current = self._current_drive(state, in_time * keep, policies[offense])
-            part = self._part_left(state) + (p.kill_time if kill.get(offense) else 0.0)
+            keep = self._keep(kill.get(offense))
+            current = self._current_drive(state, in_time * keep, policies[offense],
+                                          aggression[offense])
+            part = self._part_left(state) + self._extra_time(kill.get(offense), milk[offense])
             branches = [(1.0, offense, current, part)]
         elif state.offense in (HOME, AWAY):
             offense = state.offense
             in_time = self._in_time(clock_left, 1.0) * slow
-            keep = 1.0 - p.kill_score if kill.get(offense) == "kneel" else 1.0
-            part = 1.0 + (p.kill_time if kill.get(offense) else 0.0)
-            branches = [(1.0, offense, self._fresh_drive(in_time * keep, policies[offense]),
-                         part)]
+            keep = self._keep(kill.get(offense))
+            part = 1.0 + self._extra_time(kill.get(offense), milk[offense])
+            if state.pending_conversion in (HOME, AWAY) and state.clock_seconds is not None:
+                # The scoring share already holds the conversion's point or
+                # two; it is priced explicitly, so it comes out of the drives.
+                part += sum(k * x for k, x in enumerate(self._conversion_pmf())) / max(
+                    1.0, prior.home_points + prior.away_points) * 2.0 * p.drives_per_team
+            branches = [(1.0, offense, self._fresh_drive(in_time * keep, policies[offense],
+                                                         aggression[offense]), part)]
         else:
             in_time = self._in_time(clock_left, 1.0) * slow
-            branches = [(0.5, side, self._fresh_drive(in_time, policies[side]), 1.0)
-                        for side in (HOME, AWAY)]
+            branches = [(0.5, side, self._fresh_drive(in_time, policies[side], aggression[side]),
+                         1.0) for side in (HOME, AWAY)]
 
         # Who gets the ball first in the second half: whoever did not get it
         # first in the game. Unknown -> both, half each.
@@ -317,7 +346,7 @@ class Model:
             # On the real clock the count's spread also carries how long the
             # current drive will take: a quick turnover hands the ball back
             # with time on it.
-            drive_var = ((p.drive_time_cv * p.drive_time * part) ** 2
+            drive_var = ((p.drive_time_cv * p.drive_time * min(part, clock_left)) ** 2
                          if state.clock_seconds is not None else 0.0)
             this_half_after = self.drive_count(
                 max(0.0, rate * left.this_half - part),
@@ -339,8 +368,10 @@ class Model:
             n_def = max(d_ for _, d_ in counts)
             off_q, def_q = (home_q, away_q) if offense == HOME else (away_q, home_q)
             defense = AWAY if offense == HOME else HOME
-            off = self._team_pmfs(off_q, n_off, current, policies[offense], future_scale)
-            dfn = self._team_pmfs(def_q, n_def, None, policies[defense], future_scale)
+            off = self._team_pmfs(off_q, n_off, current, policies[offense], future_scale,
+                                  aggression[offense])
+            dfn = self._team_pmfs(def_q, n_def, None, policies[defense], future_scale,
+                                  aggression[defense])
             if state.pending_conversion in (HOME, AWAY):
                 extra = self._conversion_pmf()
                 if state.pending_conversion == offense:
@@ -377,58 +408,63 @@ class Model:
         return dist.normalise(w)
 
     def _part_left(self, state):
-        """How much of the current drive is still to play, in drives."""
+        """How much of the current drive comes off the drives still to come."""
         p = self.params
+        if state.clock_seconds is not None:
+            # On the real clock "left" is a share of SCORING (the curve counts
+            # points when they land, at the end of drives), so it already
+            # holds this drive's points: the drives still to START are that
+            # share in drives less the whole of this one.
+            return 1.0
         if state.drive_age is None:
             return p.current_drive_share
         drive_messages = p.clock.regulation / (2.0 * p.drives_per_team)
         return min(1.0, max(0.15, 1.0 - state.drive_age / drive_messages))
 
-    def _current_drive(self, state, in_time=1.0, policy=NORMAL):
+    def _current_drive(self, state, in_time=1.0, policy=NORMAL, aggression=0.0):
         down, field, togo = state.down, state.field_position, state.distance
 
         def pmf(quality):
-            return _truncate(self.drives.pmf(quality, down, field, togo, policy), in_time)
+            return _truncate(self.drives.pmf(quality, down, field, togo, policy, aggression),
+                             in_time)
         return pmf
 
-    def _fresh_drive(self, in_time=1.0, policy=NORMAL):
+    def _fresh_drive(self, in_time=1.0, policy=NORMAL, aggression=0.0):
         def pmf(quality):
-            return _truncate(self.fresh_pmf(quality, policy), in_time)
+            return _truncate(self.fresh_pmf(quality, policy, aggression), in_time)
         return pmf
 
-    def _on_the_clock(self, state, clock_left):
-        """(Remaining, scale of later drives' scoring) off the real clock.
-
-        With the game clock known, how many drives are left is a matter of
-        TIME: this half's clock in drives' worth, and a whole half more if
-        this is the first. The second half's lower scoring then comes off
-        what each drive is worth, not off how many there are: its drives
-        score at half_shares[1] / half_shares[0] of the first half's, and
-        through the half at the rate w(u) (clock.py), so a later drive from
-        position u is worth the average of w over what is left, (1 - u)^a.
-        """
-        p = self.params
-        rate = 2.0 * p.drives_per_team
-        if state.period is None:
-            return clock.Remaining(0.5, 0.0, 0.5, 0.0), 1.0
-        if state.period > clock.REGULATION_PERIODS:
-            return clock.Remaining(0.0, 0.0, 0.0, 0.0), 1.0
-        shares = p.clock.half_shares
-        second_level = shares[1] / shares[0] if shares[0] > 0 else 1.0
-        this_half = clock_left / rate
-        if state.period <= 2:
-            n_this, n_next = clock_left, 0.5 * rate
-            scale = (n_this + n_next * second_level) / max(1e-9, n_this + n_next)
-            return clock.Remaining(this_half, 0.0, 0.5, 0.0), min(1.0, scale)
-        a = p.clock.half_slopes[1]
-        u = clock.position_in_half(state.period, state.clock_seconds)
-        scale = second_level * max(0.0, 1.0 - u) ** a
-        return clock.Remaining(this_half, 0.0, 0.0, 0.0), min(1.0, scale)
+    def _on_the_clock(self, state):
+        """Remaining off the real clock: the measured scoring curve
+        (clock.remaining_on_clock). The curve carries the end-of-half rush,
+        so no slope or per-drive scaling is layered on top."""
+        return clock.remaining_on_clock(self.params.clock, state.period, state.clock_seconds)
 
     def _conversion_pmf(self):
         """Points still to come from a touchdown's conversion: 0, 1 or 2."""
         q6, q8 = self.params.q6, self.params.q8
         return [q6, 1.0 - q6 - q8, q8]
+
+    def _keep(self, mode):
+        """Share of its scoring a late drive keeps: a leader protecting a
+        big lead kneels, a small one plays it safe."""
+        p = self.params
+        if mode == "kneel":
+            return 1.0 - p.kill_score
+        if mode == "run":
+            return 1.0 - p.run_score
+        return 1.0
+
+    def _extra_time(self, mode, milk=1.0):
+        """Drives' worth of clock a late drive uses beyond an ordinary one:
+        a leader runs it down (kill_time, scaled by the player's milking),
+        a trailer hurries (hurry, negative)."""
+        p = self.params
+        if mode in ("kneel", "run"):
+            return p.kill_time * milk
+        if mode == "hurry":
+            return -p.hurry
+        return 0.0
 
     def _drives_of_clock(self, state):
         """Clock left in the half, in average drives' worth: seconds when
@@ -478,7 +514,8 @@ class Model:
         p = self.params
         policies = {HOME: NORMAL, AWAY: NORMAL}
         kill = {}
-        if state.period is None or state.period < 3 or state.period > clock.REGULATION_PERIODS:
+        if state.period is None or state.period < 3 or (
+                state.period > clock.REGULATION_PERIODS and state.clock_seconds is None):
             return policies, kill
         if clock_left >= p.late_drives:
             return policies, kill
@@ -487,6 +524,7 @@ class Model:
             if lead < 0:
                 behind = -lead
                 policies[side] = NEED_TD if 4 <= behind <= 8 else MUST_SCORE
+                kill[side] = "hurry"
             elif lead > 0:
                 kill[side] = "kneel" if lead >= p.kill_lead else "run"
         return policies, kill

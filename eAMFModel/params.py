@@ -55,6 +55,14 @@ class Params:
     # ...and ahead by kill_lead or more it kneels, scoring this much less.
     kill_lead: int = 9
     kill_score: float = 0.8
+    # ...ahead by less, it plays safe, scoring this much less (fitted on
+    # SCOUTING_FULL: in the last two minutes a leader on the ball scored 2.4
+    # more points on average where the model had 4.5; 0.5 took the Q4 totals
+    # Brier from 0.248 to 0.237 against prod's 0.243 on training matches)...
+    run_score: float = 0.5
+    # ...and a trailer on the ball late hurries: its drive uses this many
+    # drives' worth of clock less, leaving more for what follows.
+    hurry: float = 0.0
 
     # Variance of the drive count, per expected drive, on top of what the
     # clock's own uncertainty adds. The finals fit's count variance is

@@ -67,6 +67,18 @@ class ClockParams:
     half_shares: tuple = (0.57, 0.43)
     half_slopes: tuple = (-0.2, 0.5)
 
+    # With the game clock (SCOUTING_FULL): the cumulative share of a
+    # regulation game's points by game second, every 30 s from 0 to 960.
+    # Measured on 2,320 matches of PLAY_OVER snapshots (fit.scoring_curve).
+    # Scoring RISES through each half in game time -- the clock stops more
+    # and play speeds up at the end of a half: Q1 5.4 points a match, Q2
+    # 12.5 (3.9 of them in its last 30 seconds), Q3 7.1, Q4 9.6.
+    scoring_curve: tuple = (0.0, 0.0133, 0.0268, 0.0397, 0.0556, 0.0762, 0.1025, 0.127, 0.1551, 0.1938, 0.2224, 0.2459, 0.2681, 0.3073, 0.3516, 0.4027, 0.5133, 0.5586, 0.5727, 0.5893, 0.6115, 0.6372, 0.6621, 0.6876, 0.7162, 0.76, 0.7886, 0.813, 0.8359, 0.8756, 0.9094, 0.9434, 1.0)
+    curve_step: int = 30
+    # An overtime period, on the clock: a timed quarter (a touchdown can be
+    # answered; a tie goes to another), worth about a quarter's scoring.
+    ot_share: float = 0.25
+
     @property
     def regulation(self):
         return sum(self.means)
@@ -172,19 +184,34 @@ def position_in_half(period, clock_seconds):
     return (0.0 if period % 2 == 1 else 0.5) + 0.5 * gone
 
 
+def game_second(period, clock_seconds):
+    """Seconds of regulation gone: 0 at kickoff, 960 at the end of the 4th."""
+    left = max(0.0, min(float(clock_seconds), QUARTER_SECONDS))
+    return (int(period) - 1) * QUARTER_SECONDS + (QUARTER_SECONDS - left)
+
+
+def curve_at(params, second):
+    """The scoring curve at a game second, interpolated."""
+    curve, step = params.scoring_curve, params.curve_step
+    x = max(0.0, min(float(second), step * (len(curve) - 1))) / step
+    i = min(int(x), len(curve) - 2)
+    return curve[i] + (curve[i + 1] - curve[i]) * (x - i)
+
+
 def remaining_on_clock(params, period, clock_seconds):
-    """Remaining, when the feed gives the game clock: exact, no variance."""
+    """Share of the game's scoring left, off the real clock and the
+    measured scoring curve: this half's, and the whole next half if any."""
     if period is None:
-        return Remaining(params.half_shares[0], 0.0, params.half_shares[1], 0.0)
+        half_end = curve_at(params, 2 * QUARTER_SECONDS)
+        return Remaining(half_end, 0.0, 1.0 - half_end, 0.0)
     if period > REGULATION_PERIODS:
-        return Remaining(0.0, 0.0, 0.0, 0.0)
-    period = max(1, int(period))
-    half = half_of(period)
-    a = params.half_slopes[half - 1]
-    u = position_in_half(period, clock_seconds)
-    share = params.half_shares[half - 1]
-    nxt = params.half_shares[1] if half == 1 else 0.0
-    return Remaining(share * (1.0 - u) ** (1.0 + a), 0.0, nxt, 0.0)
+        left = max(0.0, min(float(clock_seconds), QUARTER_SECONDS)) / QUARTER_SECONDS
+        return Remaining(params.ot_share * left, 0.0, 0.0, 0.0)
+    now = curve_at(params, game_second(period, clock_seconds))
+    half_end = curve_at(params, 2 * QUARTER_SECONDS)
+    if period <= 2:
+        return Remaining(max(0.0, half_end - now), 0.0, 1.0 - half_end, 0.0)
+    return Remaining(max(0.0, 1.0 - now), 0.0, 0.0, 0.0)
 
 
 def remaining(params, period, elapsed_in_period, elapsed_in_half=None):

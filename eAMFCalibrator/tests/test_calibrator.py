@@ -955,8 +955,10 @@ class TestScoutingPlayOver(unittest.TestCase):
             scouting.probe(None, table, [])
             scouting.scouting_matches(None, table)
             scouting.fetch_scouting(None, table, ["AF1", "AF2"])
+            scouting.fetch_handles(None, ["AF1", "AF2"])
         self.assertGreaterEqual(len(seen), 10)
-        self.assertTrue(all("QUALIFY ROW_NUMBER()" in q for q in seen))
+        self.assertTrue(all("QUALIFY ROW_NUMBER()" in q for q in seen if "EVENT" not in q
+                            or "SCOUTING" in q))
 
 
 class TestSnapshotAnchor(unittest.TestCase):

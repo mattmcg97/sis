@@ -159,3 +159,44 @@ def moments(theta_dict):
     away = stats(lambda k: k[1])
     cov = sum((k[0] - home[0]) * (k[1] - away[0]) * p for k, p in probs.items())
     return {"total": total, "margin": margin, "corr": cov / (home[1] * away[1])}
+
+
+def scoring_curve(playover_path, bucket_seconds=30, quarter_seconds=240):
+    """Cumulative share of regulation scoring by game time, off PLAY_OVER
+    snapshots (eAMFCalibrator scouting's export).
+
+    Returns ([F(0), F(b), F(2b), ..., F(960)], matches): F(t) is the mean
+    share of a match's regulation points scored by game second t. Points are
+    read as the change in the scoreboard between consecutive PLAY_OVERs, so
+    they land in the bucket of the PLAY_OVER that first shows them.
+    """
+    by_match = collections.defaultdict(list)
+    with open(playover_path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            by_match[r["match_code"]].append(r)
+    regulation = 4 * quarter_seconds
+    buckets = regulation // bucket_seconds
+    points = [0.0] * buckets
+    matches = 0
+    for rows in by_match.values():
+        rows.sort(key=lambda r: int(r["message"]))
+        previous = 0
+        seen = False
+        for r in rows:
+            if not r["period"] or not r["clock_seconds"]:
+                continue
+            period = int(r["period"])
+            if period > 4:
+                continue
+            t = (period - 1) * quarter_seconds + (quarter_seconds - float(r["clock_seconds"]))
+            b = min(buckets - 1, max(0, int(t // bucket_seconds)))
+            score = int(r["score_p1"] or 0) + int(r["score_p2"] or 0)
+            points[b] += score - previous
+            previous = score
+            seen = True
+        matches += seen
+    total = sum(points)
+    curve = [0.0]
+    for p in points:
+        curve.append(curve[-1] + p / total)
+    return curve, matches
