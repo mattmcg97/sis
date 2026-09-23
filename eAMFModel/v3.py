@@ -256,6 +256,34 @@ class Variant:
         self.sim_kw = sim_kw or {}
 
 
+def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof, n_paths, rng):
+    """(margin pmf, total pmf) for each state, in message order.
+
+    `snaps` are the match's sim.snap_records (for the efficiency update),
+    `states` playover.state_for GameStates at `messages`, `prof` the two
+    players' players.Profile."""
+    v = variant
+    start = sim.Start(len(messages))
+    sds = np.zeros((len(messages), 2))
+    eff = Efficiency(tables, theta0, v.kappa)
+    k = 0
+    for i, msg in enumerate(messages):
+        while k < len(snaps) and snaps[k]["message"] <= msg:
+            s = snaps[k]
+            eff.add(0 if (s["offense"] == "TEAM_A") == a_home else 1, s["key"], s["success"])
+            k += 1
+        _fill(start, i, start_from(states[i]))
+        start.theta[i] = eff.theta() if v.react else theta0
+        sds[i] = eff.sd() if v.react else 1.0 / math.sqrt(v.kappa)
+        if v.profiles:
+            start.aggression[i] = (prof[0].aggression, prof[1].aggression)
+        if v.pace:
+            start.pace[i] = (prof[0].pace, prof[1].pace)
+    home, away = sim.simulate(tables, start, n_paths, rng,
+                              theta_sd=sds if v.theta_sd else None, **v.sim_kw)
+    return [_distributions(home[i], away[i]) for i in range(len(messages))]
+
+
 def _grade_matches(job):
     (matches, tables_path, grid_path, variants, n_paths, seed, book, handles, require_live) = job
     tables = sim.Tables.load(tables_path)
@@ -297,28 +325,9 @@ def _grade_matches(job):
         states = {}
         for row, state in todo:
             states[row.message] = state
-        dists = {}
-        for v in variants:
-            start = sim.Start(len(messages))
-            sds = np.zeros((len(messages), 2))
-            theta0 = theta0s[v.grid]
-            eff = Efficiency(tables, theta0, v.kappa)
-            k = 0
-            for i, msg in enumerate(messages):
-                while k < len(snaps) and snaps[k]["message"] <= msg:
-                    s = snaps[k]
-                    eff.add(0 if (s["offense"] == "TEAM_A") == a_home else 1, s["key"], s["success"])
-                    k += 1
-                _fill(start, i, start_from(states[msg]))
-                start.theta[i] = eff.theta() if v.react else theta0
-                sds[i] = eff.sd() if v.react else 1.0 / math.sqrt(v.kappa)
-                if v.profiles:
-                    start.aggression[i] = (prof[0].aggression, prof[1].aggression)
-                if v.pace:
-                    start.pace[i] = (prof[0].pace, prof[1].pace)
-            home, away = sim.simulate(tables, start, n_paths, rng,
-                                      theta_sd=sds if v.theta_sd else None, **v.sim_kw)
-            dists[v.name] = [_distributions(home[i], away[i]) for i in range(len(messages))]
+        dists = {v.name: price_states(tables, theta0s[v.grid], v, snaps, a_home,
+                                      [states[m] for m in messages], messages, prof, n_paths, rng)
+                 for v in variants}
         for row, state in todo:
             i = index[row.message]
             probs = {}

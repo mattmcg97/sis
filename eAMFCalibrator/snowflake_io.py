@@ -314,11 +314,57 @@ def _model_quotes(cur, stream_table, match_codes):
     """
     from eAMFModel import stream as model_stream
     version = stream_table.split(":", 1)[1] or "v1"
+    if version.lower() == "v3":
+        return _v3_quotes(cur, match_codes)
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
     scores = fetch_scores(cur, match_codes)
     return model_stream.quotes_for_matches(model_stream.model_for(version), match_codes,
                                            plays, scores, prod)
+
+
+def _v3_quotes(cur, match_codes):
+    """eAMFModel v3, GAMEPLAI-shaped: PLAY_OVER snapshots off SCOUTING_FULL
+    (built exactly as `scouting` exports them), priced by simulation and
+    held at prod's lines until the next PLAY_OVER."""
+    from collections import defaultdict
+    from eAMFModel import v3_stream
+    from . import directional, scouting
+    v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions
+    table = scouting.locate(cur, config.SCOUTING_TABLE)
+    snapshots, prod_all = {}, []
+    chunk = config.MATCH_CHUNK_SIZE
+    for start in range(0, len(match_codes), chunk):
+        batch = list(match_codes[start:start + chunk])
+        rows = scouting.fetch_scouting(cur, table, batch)
+        scores = fetch_scores(cur, batch)
+        finals = fetch_final_scores(cur, batch)
+        prod = fetch_quotes(cur, config.STREAMS["prod"], batch)
+        prod_all.extend(prod)
+        index = directional.index_by_message(prod)
+        by_match, scores_by, prod_by = defaultdict(list), defaultdict(list), defaultdict(list)
+        for r in rows:
+            by_match[r[0]].append(r)
+        for s in scores:
+            scores_by[s[0]].append(s)
+        for q in prod:
+            prod_by[q[0]].append(q)
+        for match_code in batch:
+            match_rows = by_match.get(match_code)
+            if not match_rows:
+                continue
+            first_play = next((r[1] for r in match_rows
+                               if scouting._text(r[4]) == "PLAY_STARTED"), None)
+            snaps, _ = scouting.snapshots_for_match(
+                match_code, match_rows, scores_by.get(match_code, []), finals.get(match_code),
+                index, scouting._prematch(prod_by.get(match_code, []), first_play))
+            if snaps:
+                snapshots[match_code] = snaps
+    print(f"  v3: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
+          f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
+          f"{config.V3_PATHS:,} games each", flush=True)
+    return v3_stream.quotes_for_matches(snapshots, prod_all, config.V3_MODEL_DIR,
+                                        n_paths=config.V3_PATHS, workers=config.V3_WORKERS)
 
 
 def status_profile(cur, stream_table):

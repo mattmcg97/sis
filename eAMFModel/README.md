@@ -255,6 +255,11 @@ python -m eAMFModel v3 ... --react --profiles player_profiles.json --handles nb2
 python -m unittest eAMFModel.tests.test_v3
 ```
 
+In the calibrator, v3 stands in for the candidate with
+`python -m eAMFCalibrator report --candidate v3 --v3-model v3_model` (see
+the calibrator README): `v3_stream.py` turns its prices into
+GAMEPLAI-shaped quote rows.
+
 v3 needs numpy. The build takes about a minute; scoring the 1,160-match
 test half takes about 18 minutes on four cores at 2,000 paths.
 

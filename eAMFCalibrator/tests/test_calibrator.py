@@ -870,6 +870,93 @@ class TestModelStream(unittest.TestCase):
             config.STREAMS.update(saved)
 
 
+class TestV3Candidate(unittest.TestCase):
+    """--candidate v3: eAMFModel v3 priced off SCOUTING_FULL PLAY_OVERs."""
+
+    MC = "AF1"
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from eAMFModel import v3
+        from eAMFModel.tests.test_v3 import _matches
+        cls.tmp = tempfile.TemporaryDirectory()
+        v3.build(_matches(40), cls.tmp.name, grid_paths=60, verbose=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def scouting_rows(self):
+        return TestScoutingPlayOver.rows(self)
+
+    def prod_rows(self):
+        texts = {50: "PLAYER 1 to win", 51: "PLAYER 2 to win",
+                 52: "PLAYER 1 to score over -2.5 points more than PLAYER 2",
+                 54: "Total points over 38.5"}
+        probs = {50: 42.0, 51: 58.0, 52: 46.0, 54: 47.0}
+        rows = [(self.MC, mid, dt.datetime(2026, 9, 20, 9, 59), probs[mid], 2.0, texts[mid],
+                 None, "OPEN", "true") for mid in texts]
+        for m in (5, 6, 7, 8, 10, 13):
+            rows += [(self.MC, mid, dt.datetime(2026, 9, 20, 10, m), probs[mid], 2.0, texts[mid],
+                      m, "OPEN", "true") for mid in texts]
+        return rows
+
+    def quotes(self, model_dir):
+        from .. import snowflake_io as sio
+        prod_table = config.STREAMS["prod"]
+        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
+
+        def fetch_all(cur, sql, params=None):
+            if prod_table in sql:
+                return None, self.prod_rows()
+            raise AssertionError("unexpected query")
+
+        saved = (config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS)
+        config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS = model_dir, 50, 1
+        try:
+            with mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
+                    mock.patch.object(sio, "fetch_scores", return_value=scores), \
+                    mock.patch.object(sio, "fetch_final_scores", return_value={self.MC: (14, 21)}), \
+                    mock.patch.object(scouting, "locate", return_value=None), \
+                    mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                return sio.fetch_quotes(RecordingCursor(), "MODEL:v3", [self.MC])
+        finally:
+            config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS = saved
+
+    def test_quotes_every_prod_message_from_the_first_play_over(self):
+        rows = self.quotes(self.tmp.name)
+        self.assertTrue(rows)
+        self.assertTrue(all(len(r) == 9 for r in rows))
+        self.assertEqual(sorted({r[6] for r in rows}), [5, 6, 7, 8, 10, 13])
+        # spreads and totals only where prod had a line, at prod's line
+        self.assertEqual({r[1] for r in rows}, {50, 51, 52, 54})
+        spread = next(r for r in rows if r[1] == 52)
+        self.assertEqual(markets.parse_line(spread[5]), -2.5)
+        for m in {r[6] for r in rows}:
+            ml = {r[1]: r[3] for r in rows if r[6] == m and r[1] in (50, 51)}
+            self.assertAlmostEqual(ml[50] + ml[51], 100.0, delta=0.05)
+        index = directional.index_by_message(rows)
+        self.assertIn((self.MC, 54), index)
+
+    def test_a_held_book_is_the_last_play_overs(self):
+        rows = self.quotes(self.tmp.name)
+        at = {(r[1], r[6]): r[3] for r in rows}
+        self.assertEqual(at[(50, 6)], at[(50, 5)])      # 6 is mid-play: 5's book stands
+
+    def test_no_model_says_how_to_build_one(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as empty:
+            with self.assertRaises(SystemExit) as caught:
+                self.quotes(empty)
+        self.assertIn("v3-build", str(caught.exception))
+
+    def test_the_cli_takes_v3(self):
+        from .. import snowflake_io as sio
+        self.assertEqual(sio.stream_name("v3"), "MODEL:v3")
+
+
 class TestScoutingPlayOver(unittest.TestCase):
     """PLAY_OVER snapshots off SCOUTING_FULL rows."""
 

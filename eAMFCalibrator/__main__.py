@@ -594,9 +594,16 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2 -- see eAMFModel) priced "
-                             "live off prod's lines and the play feed "
+                             "or a model version (v1, v2, v3 -- see eAMFModel) priced "
+                             "live off prod's lines (v1/v2 off the play feed, v3 off "
+                             "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model) "
                              f"(default {config.STREAMS['candidate']})")
+    tuning.add_argument("--v3-model", metavar="DIR",
+                        help="eAMFModel v3-build's output, for --candidate v3 "
+                             "(default $EAMF_V3_MODEL, then ./v3_model)")
+    tuning.add_argument("--v3-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v3 "
+                             f"(default {config.V3_PATHS})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -618,7 +625,9 @@ def apply_overrides(args):
                            ("message_gap", "MAX_PAIR_MESSAGE_GAP"),
                            ("spread_resolution", "SPREAD_RESOLUTION"),
                            ("time_axis", "TIME_AXIS"),
-                           ("chunk", "MATCH_CHUNK_SIZE")):
+                           ("chunk", "MATCH_CHUNK_SIZE"),
+                           ("v3_model", "V3_MODEL_DIR"),
+                           ("v3_paths", "V3_PATHS")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
