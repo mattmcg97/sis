@@ -129,6 +129,15 @@ def _scorer(row, prefix):
 SNAP_KINDS = ("SCRIMMAGE", "KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
 
 
+def _margin(row, team):
+    """`team`'s lead on the row's scoreboard, or None when the row lacks the
+    scores or the team."""
+    home, away = _i(row["score_p1"]), _i(row["score_p2"])
+    if home is None or away is None or team not in ("TEAM_A", "TEAM_B"):
+        return None
+    return (home - away) * (1 if team == "TEAM_A" else -1)
+
+
 def snap_records(rows):
     """Scrimmage snaps in one match (export rows in message order):
     dicts with the snap's state, what came of it and the clock it used."""
@@ -136,16 +145,19 @@ def snap_records(rows):
     for a, b in zip(rows, rows[1:]):
         if a["play_kind"] not in SNAP_KINDS or not a["down"] or not a["field_position"]:
             continue
-        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"]:
+        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"] \
+                or not b["clock_seconds"] or not a["distance"]:
             continue
         seconds = _f(a["clock_seconds"]) - _f(b["clock_seconds"])
         if not 0 <= seconds <= 60:
             continue
         down, t, y = _i(a["down"]), max(1, _i(a["distance"])), _i(a["field_position"])
         rec = dict(offense=a["offense"], period=_i(a["period"]), clock=_f(a["clock_seconds"]),
-                   margin=(_i(a["score_p1"]) - _i(a["score_p2"])) * (1 if a["offense"] == "TEAM_A" else -1),
+                   margin=_margin(a, a["offense"]),
                    down=down, distance=t, field=y, seconds=seconds, message=_i(b["message"]),
                    kind=GAIN, gain=0, new_field=0, replay=False)
+        if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
+            continue
         bk = b["play_kind"]
         if bk == "TOUCHDOWN":
             scorer = _scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
@@ -184,12 +196,17 @@ def kick_records(rows):
     prev = None
     for r in rows:
         if r["play_kind"] == "KICKOFF" and r["field_position"] and r["clock_seconds"]:
-            if prev is not None and prev["period"] == r["period"] and \
+            if not r["period"]:
+                pass                                  # no quarter on the row: skip it
+            elif prev is not None and prev["period"] == r["period"] and \
                     prev["play_kind"] in ("CONVERSION", "FIELD_GOAL") and prev["clock_seconds"]:
                 kicker = prev["offense"]
                 seconds = _f(prev["clock_seconds"]) - _f(r["clock_seconds"])
-                margin = (_i(prev["score_p1"]) - _i(prev["score_p2"])) * (1 if kicker == "TEAM_A" else -1)
+                margin = _margin(prev, kicker)
                 p = _i(prev["period"])
+                if margin is None or p is None:
+                    prev = r
+                    continue
                 desperate = p >= 4 and margin < 0 and half_left(p, _f(prev["clock_seconds"])) <= 180
                 if 0 <= seconds <= 60:
                     out.append((desperate, r["offense"] == kicker, _i(r["field_position"]), seconds))
@@ -206,7 +223,8 @@ def kick_decisions(rows):
     ('fg', field, made, seconds, the receiver's field after a miss)."""
     out = []
     for a, b in zip(rows, rows[1:]):
-        if a["play_kind"] not in SNAP_KINDS or not a["field_position"] or a["period"] != b["period"]:
+        if a["play_kind"] not in SNAP_KINDS or not a["field_position"] or not a["period"] \
+                or a["period"] != b["period"]:
             continue
         if not a["clock_seconds"] or not b["clock_seconds"] or not b["field_position"]:
             continue
@@ -249,7 +267,9 @@ def conversions(rows):
         scorer = m[-1][-6:]
         two = any("TWO_POINT" in x for x in m)
         good = any(x.startswith(("EXTRA_POINT_GOOD", "TWO_POINT_CONVERSION_SUCCESSFUL")) for x in m[-1:])
-        margin = (_i(a["score_p1"]) - _i(a["score_p2"])) * (1 if scorer == "TEAM_A" else -1)
+        margin = _margin(a, scorer)
+        if margin is None:
+            continue
         out.append((conversion_phase(_i(a["period"]), _f(a["clock_seconds"]) or 0.0),
                     max(-CONV_MARGIN, min(CONV_MARGIN, margin)), two, good))
     return out
@@ -291,14 +311,17 @@ def early_kicks(rows):
     for a, b in zip(rows, rows[1:]):
         if a["play_kind"] not in SNAP_KINDS or a["down"] not in ("1", "2", "3"):
             continue
-        if a["period"] != b["period"] or not a["field_position"] or not a["clock_seconds"]:
+        if not a["period"] or a["period"] != b["period"] or not a["field_position"] \
+                or not a["clock_seconds"]:
             continue
         kick = 100 - _i(a["field_position"]) + 17
         if kick > EARLY_FG_RANGE:
             continue
         rb = int(np.searchsorted(EARLY_FG_RANGES, kick))
         p, cb = _i(a["period"]), _clock_bin(_f(a["clock_seconds"]))
-        margin = (_i(a["score_p1"]) - _i(a["score_p2"])) * (1 if a["offense"] == "TEAM_A" else -1)
+        margin = _margin(a, a["offense"])
+        if margin is None:
+            continue
         if cb is None:
             continue
         if p == 2:
@@ -316,12 +339,15 @@ def fourth_down_choices(rows):
     choice 'go', 'fg' or 'punt'."""
     out = []
     for a, b in zip(rows, rows[1:]):
-        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"]:
+        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"] \
+                or not a["distance"]:
             continue
         if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"]:
             continue
         p, c = _i(a["period"]), _f(a["clock_seconds"])
-        margin = (_i(a["score_p1"]) - _i(a["score_p2"])) * (1 if a["offense"] == "TEAM_A" else -1)
+        margin = _margin(a, a["offense"])
+        if margin is None:
+            continue
         choice = ("punt" if b["play_kind"] == "PUNT" else "fg" if b["play_kind"] == "FIELD_GOAL"
                   else "go")
         out.append((decision_phase(p, c), margin_bucket(margin), _i(a["field_position"]),
@@ -941,7 +967,7 @@ def quarter_points(matches):
     for rows in matches.values():
         last = {}
         for r in rows:
-            if r["period"] and r["period"] in "1234" and r["score_p1"]:
+            if r["period"] in ("1", "2", "3", "4") and r["score_p1"] and r["score_p2"]:
                 last[int(r["period"])] = int(r["score_p1"]) + int(r["score_p2"])
         if all(q in last for q in (1, 2, 3, 4)):
             for q in (1, 2, 3, 4):
