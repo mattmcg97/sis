@@ -28,6 +28,16 @@ CUTOFF_END = None  # None = up to the latest data available
 
 SPORT_CODE = "AF"
 
+# eAMFModel v3 standing in for the candidate (--candidate v3). It prices
+# PLAY_OVER snapshots off SCOUTING_FULL (the game clock lives only there),
+# with the model `python -m eAMFModel v3-build` wrote to V3_MODEL_DIR (None:
+# $EAMF_V3_MODEL, then ./v3_model). V3_PATHS games are simulated per
+# snapshot; V3_WORKERS processes (None: all cores but one).
+SCOUTING_TABLE = "SCOUTING_FULL"
+V3_MODEL_DIR = None
+V3_PATHS = 2000
+V3_WORKERS = None
+
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.
 MATCH_TOLERANCE_SECONDS = 3.0

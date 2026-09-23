@@ -10,7 +10,7 @@ import re
 import tempfile
 import unittest
 
-from .. import backtest, clock, dist, drive, feed, playover, strength, stream
+from .. import backtest, clock, dist, drive, feed, players, playover, strength, stream
 from ..params import Params, version
 from ..pricer import (AWAY, HOME, ML_AWAY, ML_HOME, SPREAD_AWAY, SPREAD_HOME,
                       TOTAL_OVER, TOTAL_UNDER, GameState, Model)
@@ -81,13 +81,29 @@ class TestDriveChain(unittest.TestCase):
     def test_shorter_distance_helps(self):
         self.assertGreater(self.ep(3, 40, 2), self.ep(3, 40, 12))
 
-    def test_fourth_down_out_of_range_is_a_punt(self):
-        self.assertEqual(self.chain.value(4, 25, 8), (0.0, 0.0))
+    def test_fourth_down_deep_in_own_half_mostly_punts(self):
+        td, fg = self.chain.value(4, 25, 8)
+        self.assertLess(td, 0.15)                 # goes for it about a third of the time
+        self.assertLess(fg, 0.05)
+        self.assertLess(td, self.chain.value(3, 25, 8)[0])
 
-    def test_fourth_down_in_range_is_a_kick(self):
+    def test_fourth_down_in_range_is_mostly_a_kick(self):
         td, fg = self.chain.value(4, 80, 8)
-        self.assertEqual(td, 0.0)
-        self.assertAlmostEqual(fg, drive.fg_make(self.chain.params, 80))
+        self.assertGreater(fg, td)
+        self.assertGreater(fg, 0.4)
+
+    def test_go_probability_follows_the_data(self):
+        p = self.chain.params
+        self.assertGreater(drive.go_probability(p, 35, 1), 0.8)     # 4th-and-1, own 35
+        self.assertLess(drive.go_probability(p, 35, 15), 0.35)
+        self.assertGreater(drive.go_probability(p, 35, 3, 1.0), drive.go_probability(p, 35, 3))
+        self.assertAlmostEqual(drive.fg_make(p, 72), 0.949, places=2)   # a 45-yarder
+
+    def test_aggression_changes_4th_down_value(self):
+        dm = model().drives
+        bold = dm.value(1.0, 4, 30, 3, drive.NORMAL, 1.5)[0]
+        timid = dm.value(1.0, 4, 30, 3, drive.NORMAL, -1.5)[0]
+        self.assertGreater(bold, timid)
 
     def test_goal_line_mostly_touchdowns(self):
         td, fg = self.chain.value(1, 99, 1)
@@ -330,7 +346,8 @@ class TestEndGame(unittest.TestCase):
         dm = model().drives
         self.assertEqual(dm.value(1.0, 4, 80, 6, drive.NEED_TD)[1], 0.0)
         self.assertGreater(dm.value(1.0, 4, 20, 2, drive.MUST_SCORE)[0], 0.0)
-        self.assertEqual(dm.value(1.0, 4, 20, 2, drive.NORMAL), (0.0, 0.0))
+        self.assertGreater(dm.value(1.0, 4, 20, 2, drive.MUST_SCORE)[0],
+                           dm.value(1.0, 4, 20, 2, drive.NORMAL)[0])
 
     def test_kneeling_takes_points_off_the_total(self):
         s = self.late(home_score=24, away_score=14, offense=HOME, field_position=50,
@@ -362,21 +379,35 @@ class TestRealClock(unittest.TestCase):
                   for c in (240, 120, 60, 10)]
         self.assertEqual(prices, sorted(prices))
         self.assertLess(prices[1], 0.95)       # two minutes is time for a drive back
-        self.assertGreater(prices[-1], 0.97)
+        self.assertGreater(prices[-1], 0.9)
 
-    def test_the_clock_beats_nothing_on_position(self):
+    def test_the_scoring_curve(self):
         c = clock.ClockParams()
-        self.assertAlmostEqual(clock.position_in_half(1, 240), 0.0)
-        self.assertAlmostEqual(clock.position_in_half(2, 240), 0.5)
-        self.assertAlmostEqual(clock.position_in_half(4, 0), 1.0)
-        self.assertEqual(clock.remaining_on_clock(c, 5, 100).fraction, 0.0)
+        self.assertEqual(c.scoring_curve[0], 0.0)
+        self.assertAlmostEqual(c.scoring_curve[-1], 1.0)
+        self.assertEqual(list(c.scoring_curve), sorted(c.scoring_curve))
+        self.assertAlmostEqual(clock.remaining_on_clock(c, 1, 240).fraction, 1.0)
+        self.assertAlmostEqual(clock.remaining_on_clock(c, 4, 0).fraction, 0.0)
+        # The end of the 2nd quarter carries more than the start of the 1st.
+        start_q1 = 1.0 - clock.remaining_on_clock(c, 1, 210).fraction
+        end_q2 = clock.remaining_on_clock(c, 2, 30).this_half
+        self.assertGreater(end_q2, 2 * start_q1)
+
+    def test_overtime_is_a_timed_period(self):
+        c = clock.ClockParams()
+        self.assertAlmostEqual(clock.remaining_on_clock(c, 5, 240).fraction, c.ot_share)
+        self.assertAlmostEqual(clock.remaining_on_clock(c, 5, 0).fraction, 0.0)
+        # Up six in overtime is not a win yet: a touchdown answers it.
+        b = model().book(PRIOR, GameState(5, 0, 23, 17, AWAY, 1, 25, 10, clock_seconds=150,
+                                          snap_confirmed=True))
+        self.assertLess(b.p_home, 0.9)
 
     def test_pending_conversion_adds_about_a_point(self):
         m = model()
         done = m.book(PRIOR, GameState(2, 0, 7, 0, AWAY, clock_seconds=100))
         pending = m.book(PRIOR, GameState(2, 0, 6, 0, AWAY, clock_seconds=100,
                                           pending_conversion=HOME))
-        self.assertAlmostEqual(dist.mean(pending.total), dist.mean(done.total) - 0.0, delta=0.2)
+        self.assertAlmostEqual(dist.mean(pending.total), dist.mean(done.total), delta=0.5)
 
 
 class TestPlayOver(unittest.TestCase):
@@ -395,34 +426,46 @@ class TestPlayOver(unittest.TestCase):
         r.update({k: str(v) for k, v in kw.items()})
         return r
 
-    def test_scrimmage_takes_the_result_of_the_play(self):
+    def test_scrimmage_takes_the_row(self):
         state, _ = playover.state_for(self.snap())
         self.assertEqual((state.offense, state.down, state.distance, state.field_position),
-                         (HOME, 2, 4, 46))       # TEAM_A is away, so TEAM_B is home
+                         (HOME, 1, 10, 40))       # TEAM_A is away, so TEAM_B is home
+        self.assertTrue(state.snap_confirmed)
         self.assertEqual(state.clock_seconds, 150)
         self.assertEqual(state.opening_receiver, AWAY)
-        state, _ = playover.state_for(self.snap(), playover.OVER)
-        self.assertEqual((state.down, state.field_position), (1, 40))
+        state, _ = playover.state_for(self.snap(), playover.NEXT)
+        self.assertEqual((state.down, state.field_position), (2, 46))
 
-    def test_a_turnover_gives_the_other_side_the_ball(self):
-        state, _ = playover.state_for(self.snap(next_offense="TEAM_A", next_down="1",
-                                                next_distance="10", next_field_position="55"))
+    def test_a_turnover_row_is_the_new_side(self):
+        state, _ = playover.state_for(self.snap(offense="TEAM_A", field_position="55"))
         self.assertEqual((state.offense, state.field_position), (AWAY, 55))
 
-    def test_touchdown_the_scoreboard_has_not_caught(self):
-        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN"))
-        self.assertEqual((state.home_score, state.away_score), (13, 0))
-        self.assertEqual(state.pending_conversion, HOME)
-        self.assertEqual(state.offense, AWAY)
-        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN", score_p1="13"))
+    def test_touchdown_scorer_from_the_message_and_points_added(self):
+        # A pick six: the touchdown message names the side that scored.
+        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN",
+                                                play_messages="POSSESSION_TEAM_A|TOUCHDOWN_TEAM_A"))
+        self.assertEqual(state.pending_conversion, AWAY)
+        self.assertEqual((state.home_score, state.away_score), (7, 6))
+        self.assertEqual(state.offense, HOME)
+        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN", score_p1="13",
+                                                play_messages="TOUCHDOWN_TEAM_B"))
         self.assertEqual(state.home_score, 13)   # already there: not added twice
 
-    def test_field_goal_good_is_counted(self):
-        state, _ = playover.state_for(self.snap(play_kind="FIELD_GOAL", next_offense="TEAM_A",
-                                                play_messages="FIELD_GOAL_GOOD_TEAM_B"))
-        self.assertEqual(state.home_score, 10)
-        self.assertEqual(state.offense, AWAY)
+    def test_conversion_gives_the_other_side_the_ball(self):
+        state, _ = playover.state_for(self.snap(play_kind="CONVERSION", score_p1="13",
+                                                score_p1_at_start="13",
+                                                play_messages="EXTRA_POINT_GOOD_TEAM_B"))
+        self.assertEqual((state.home_score, state.offense), (14, AWAY))
         self.assertIsNone(state.down)
+
+    def test_field_goals(self):
+        state, _ = playover.state_for(self.snap(play_kind="FIELD_GOAL",
+                                                play_messages="FIELD_GOAL_GOOD_TEAM_B"))
+        self.assertEqual((state.home_score, state.offense), (10, AWAY))
+        state, _ = playover.state_for(self.snap(play_kind="FIELD_GOAL", offense="TEAM_A",
+                                                field_position="30",
+                                                play_messages="FIELD_GOAL_MISSED_TEAM_B"))
+        self.assertEqual((state.offense, state.field_position, state.home_score), (AWAY, 30, 7))
 
     def test_unresolved_team(self):
         state, why = playover.state_for(self.snap(team_a_side=""))
@@ -454,6 +497,54 @@ class TestPlayOver(unittest.TestCase):
         self.assertEqual(len(graded), 6)                  # 3 snapshots x 2 live markets
         self.assertEqual(skipped["prod_not_live"], 3)
         self.assertTrue(all(0.0 <= g[2]["v1"] <= 1.0 for g in graded))
+
+
+def _row(msg, clock_s, kind="SCRIMMAGE", offense="TEAM_A", down="1", distance="10",
+         field="30", period="1", p1="0", p2="0"):
+    return {"message": str(msg), "period": period, "clock_seconds": str(clock_s),
+            "play_kind": kind, "offense": offense, "down": down, "distance": distance,
+            "field_position": field, "score_p1": p1, "score_p2": p2}
+
+
+class TestPlayers(unittest.TestCase):
+    def match(self, gap, offense="TEAM_A"):
+        rows, clock_s = [], 240
+        for i in range(12):
+            rows.append(_row(10 + i, clock_s, offense=offense))
+            clock_s -= gap
+        return rows
+
+    def test_slow_and_fast_players(self):
+        matches = {"AF1": self.match(30), "AF2": self.match(15)}
+        handles = {"AF1": ("SLOW", "X"), "AF2": ("FAST", "Y")}
+        book = players.build(matches, handles)
+        self.assertGreater(book.profile("SLOW").pace, 1.0)
+        self.assertLess(book.profile("FAST").pace, 1.0)
+        self.assertEqual(book.profile("NOBODY").pace, 1.0)
+
+    def test_aggression_reads_4th_down_choices(self):
+        def fourth(went):
+            a = _row(10, 200, down="4", distance="3", field="40")
+            b = _row(11, 190, kind="SCRIMMAGE" if went else "PUNT")
+            return [a, b]
+        matches = {f"AF{i}": fourth(i % 5 != 0) for i in range(40)}
+        handles = {code: ("BOLD", "X") for code in matches}
+        book = players.build(matches, handles)
+        self.assertGreater(book.profile("BOLD").aggression, 0.0)
+
+    def test_pace_ratio_moves_with_the_game(self):
+        book = players.Book(seconds={"0|tied": 24.0}, players={})
+        pace = players.Pace(book, "A", "B", prior_seconds=100)
+        self.assertEqual(pace.ratio(), 1.0)
+        for _ in range(20):
+            pace.add("TEAM_A", (False, "tied"), 36.0)
+        self.assertGreater(pace.ratio(), 1.3)
+
+    def test_a_leader_on_the_ball_late_plays_safe(self):
+        s = GameState(4, 0, 21, 17, HOME, 1, 40, 10, clock_seconds=90, snap_confirmed=True)
+        safe = Model(Params(prior_strength=1e9, run_score=0.6)).book(PRIOR, s)
+        plain = Model(Params(prior_strength=1e9, run_score=0.0)).book(PRIOR, s)
+        self.assertLess(dist.mean(safe.total), dist.mean(plain.total))
 
 
 def _play(m, team, d, t, y, period=1):

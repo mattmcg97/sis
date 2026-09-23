@@ -74,6 +74,9 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v1`, `v2`, `v3`) |
+| `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
+| `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
 
@@ -1274,3 +1277,38 @@ Each `scouting_playover.csv` row carries:
 - on each market, prod's line, probability, liveness and outcome.
 
 It is the input to `python -m eAMFModel playover`.
+
+## eAMFModel v3 as the candidate: `--candidate v3`
+
+```bash
+# once: export PLAY_OVER snapshots and build v3's model from them
+python -m eAMFCalibrator scouting --until 2026-09-17
+python -m eAMFModel v3-build eAMFCalibrator/out/scouting_playover.csv --half all --out v3_model
+
+# then any report, with v3 in the candidate's place
+python -m eAMFCalibrator report --candidate v3 --v3-model v3_model
+```
+
+v3 prices on the game clock, which only `SCOUTING_FULL` has. So for each
+match in the window, the calibrator builds the same `PLAY_OVER` snapshots
+the `scouting` export writes (`snowflake_io._v3_quotes`), and the model
+prices each one by simulation (`eAMFModel.v3_stream`).
+- **Prices between snapshots:** like any stream, v3's quote stands until
+  its next one. Every prod message after a `PLAY_OVER` gets that snapshot's
+  book, re-read at prod's live line on that message. Messages before the
+  first `PLAY_OVER` get no v3 quote.
+- **Lines:** spreads and totals are only quoted where prod had a line, so
+  both streams answer the same question.
+- **Liveness:** v3's quotes are always live. The pairing's own liveness
+  rule decides what counts, and prod's suspensions still apply to prod's
+  side.
+
+**The model must be built from matches before the window.** It is fitted
+to play-by-play outcomes and final scores, so building it on the matches
+being scored makes the comparison in-sample. Build it on an export that
+ends where the window starts (`scouting --until`). When the model
+directory is missing, the run stops and prints the build commands.
+
+Cost: about a second of simulation per match on each core at 2,000 paths
+(`--v3-paths`). The work is spread over all cores but one
+(`config.V3_WORKERS`).

@@ -356,7 +356,8 @@ EXPORT_FIELDS = [
     "next_start_message", "next_offense", "next_down", "next_distance", "next_field_position",
     "score_p1", "score_p2", "score_p1_at_start", "score_p2_at_start", "play_messages",
     "final_p1", "final_p2",
-    "first_play_message", "opening_offense",
+    "first_play_message", "opening_offense", "home_handle", "away_handle",
+    "next_start_clock",
 ]
 for _m in markets.MARKET_IDS:
     EXPORT_FIELDS += [f"line_{_m}", f"prob_{_m}", f"live_{_m}", f"outcome_{_m}"]
@@ -488,6 +489,7 @@ def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch)
             "next_down": _int(nxt[6]) if nxt else None,
             "next_distance": _int(nxt[7]) if nxt else None,
             "next_field_position": _int(nxt[8]) if nxt else None,
+            "next_start_clock": nxt[2] if nxt else None,
             "score_p1": p1, "score_p2": p2, "score_p1_at_start": s1, "score_p2_at_start": s2,
             "play_messages": "|".join(m for m in in_play if m not in ("PLAY_STARTED", "PLAY_OVER")),
             "final_p1": final[0] if final else None, "final_p2": final[1] if final else None,
@@ -543,6 +545,19 @@ def _prematch(prod_rows, first_play_message):
     return out
 
 
+def fetch_handles(cur, match_codes):
+    """match -> (PLAYER_1_HANDLE, PLAYER_2_HANDLE) from the EVENT table.
+    TEAM_A is PLAYER_1 (home) in this feed, so these are TEAM_A's and
+    TEAM_B's gamers."""
+    in_clause = ", ".join(["%s"] * len(match_codes))
+    _, rows = fetch_all(cur, f"""
+        SELECT MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE
+        FROM {snowflake_io.qualified(snowflake_io.EVENT_TABLE)}
+        WHERE MATCH_CODE IN ({in_clause})
+    """, tuple(match_codes))
+    return {r[0]: (_text(r[1]), _text(r[2])) for r in rows}
+
+
 def export(cur, table, path, limit=None, verbose=True):
     """Write every quoted PLAY_OVER snapshot in the window to `path`."""
     prod_matches = set(snowflake_io.match_universe(cur, _prod_table()))
@@ -569,6 +584,7 @@ def export(cur, table, path, limit=None, verbose=True):
             scores = snowflake_io.fetch_scores(cur, batch)
             finals = snowflake_io.fetch_final_scores(cur, batch)
             prod = snowflake_io.fetch_quotes(cur, _prod_table(), batch)
+            handles = fetch_handles(cur, batch)
             index = directional.index_by_message(prod)
             by_match = defaultdict(list)
             for r in rows:
@@ -589,7 +605,9 @@ def export(cur, table, path, limit=None, verbose=True):
                     finals.get(match_code), index, _prematch(prod_by.get(match_code, []), first_play))
                 totals.update(dropped)
                 totals["matches_with_snapshots"] += bool(snaps)
+                home, away = handles.get(match_code, (None, None))
                 for snap in snaps:
+                    snap["home_handle"], snap["away_handle"] = home, away
                     writer.writerow(snap)
                     written += 1
                     by_kind[snap["play_kind"]] += 1
