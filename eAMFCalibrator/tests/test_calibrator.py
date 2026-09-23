@@ -19,7 +19,7 @@ import unittest
 from unittest import mock
 
 from .. import (buckets, clock, config, directional, drives, handles,
-                indrive, markets, metrics, prematch, report)
+                indrive, markets, metrics, prematch, report, scouting)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
 from ..pipeline import nearest_quote, to_unit_probability
 
@@ -868,6 +868,95 @@ class TestModelStream(unittest.TestCase):
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
+
+
+class TestScoutingPlayOver(unittest.TestCase):
+    """PLAY_OVER snapshots off SCOUTING_FULL rows."""
+
+    MC = "AF1"
+
+    def rows(self):
+        R = lambda m, status=None, msg=None, team=None, d=None, t=None, f=None, clock=240: (
+            self.MC, m, clock, status, msg, team, d, t, f, "2026-09-20 10:00:00")
+        return [
+            R(1, "NOT_STARTED"), R(2, "FIRST_QUARTER_STARTED"),
+            R(3, msg="KICKOFF_TEAM_A"),
+            R(4, msg="PLAY_STARTED", team="TEAM_B", d=1, t=10, f=35),
+            R(5, msg="PLAY_OVER", team="TEAM_B", d=1, t=10, f=25, clock=236),
+            R(6, msg="PLAY_STARTED", team="TEAM_B", d=1, t=10, f=25, clock=230),
+            R(7, msg="PLAY_OVER", team="TEAM_B", d=2, t=4, f=31, clock=224),
+            R(8, msg="PLAY_STARTED", team="TEAM_B", d=2, t=4, f=31, clock=215),
+            R(9, msg="TOUCHDOWN_TEAM_B", team="TEAM_B", clock=205),
+            R(10, msg="PLAY_OVER", team="TEAM_B", d=2, t=4, f=31, clock=205),
+            R(11, msg="PLAY_STARTED", team="TEAM_B", d=1, t=15, f=85, clock=205),
+            R(12, msg="EXTRA_POINT_GOOD_TEAM_B", clock=205),
+            R(13, msg="PLAY_OVER", team="TEAM_B", d=1, t=15, f=85, clock=205),
+        ]
+
+    def quotes(self):
+        rows = []
+        for m in (5, 7, 10):
+            for mid, text, p in ((50, "PLAYER 1", 40.0), (51, "PLAYER 2", 60.0),
+                                 (52, "PLAYER 1 to score over -2.5 points more than PLAYER 2", 45.0),
+                                 (54, "Total points over 38.5", 50.0)):
+                rows.append((self.MC, mid, dt.datetime(2026, 9, 20, 10, m), p, 2.0, text, m,
+                             "OPEN", "true" if m != 10 else "false"))
+        return directional.index_by_message(rows)
+
+    def build(self):
+        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
+        return scouting.snapshots_for_match(self.MC, self.rows(), scores, (14, 21),
+                                            self.quotes(), {"prematch_prob_50": 0.41})
+
+    def test_one_snapshot_per_quoted_play_over(self):
+        snaps, dropped = self.build()
+        self.assertEqual([s["message"] for s in snaps], [5, 7, 10])
+        self.assertEqual(dropped["play_over_not_quoted"], 1)
+
+    def test_play_kinds(self):
+        snaps, _ = self.build()
+        self.assertEqual([s["play_kind"] for s in snaps], ["KICKOFF", "SCRIMMAGE", "TOUCHDOWN"])
+        self.assertEqual([s["scrimmage"] for s in snaps], [0, 1, 1])
+        self.assertEqual(scouting.classify_play(["PLAY_STARTED"], ["EXTRA_POINT_GOOD_TEAM_A"]),
+                         "CONVERSION")
+
+    def test_state_score_clock_and_outcomes(self):
+        snaps, _ = self.build()
+        s = snaps[1]
+        self.assertEqual((s["period"], s["clock_seconds"]), (1, 224))
+        self.assertEqual((s["offense"], s["down"], s["distance"], s["field_position"]),
+                         ("TEAM_B", 2, 4, 31))
+        self.assertEqual(s["next_start_message"], 8)
+        self.assertEqual((s["score_p1"], s["score_p2"]), (0, 0))
+        self.assertEqual((snaps[2]["score_p1"], snaps[2]["score_p2"]), (0, 6))
+        self.assertEqual(s["team_a_side"], "home")      # TEAM_B's TD moved PLAYER_2
+        self.assertEqual(s["outcome_50"], 0)            # 14-21: home lost
+        self.assertEqual(s["line_52"], -2.5)
+        self.assertEqual(s["outcome_54"], 0)            # 35 < 38.5
+        self.assertEqual(s["live_markets"], 4)
+        self.assertEqual(snaps[2]["live_markets"], 0)   # quoted, but suspended
+        self.assertEqual(s["prematch_prob_50"], 0.41)
+
+    def test_every_probe_query_binds_its_placeholders(self):
+        table = scouting.Table("DB.S.SCOUTING_FULL",
+                               {c: "VARCHAR" for c in scouting.NEEDED + ["FILE_LOADED"]})
+        seen = []
+
+        def fake(cur, sql, params=None):
+            seen.append(sql)
+            self.assertEqual(sql.count("%s"), len(params or ()), sql[:200])
+            self.assertNotIn("{", sql)
+            if "MIN(FT)" in sql:
+                return None, [(0, 0, None, None)]
+            return None, []
+
+        with mock.patch.object(scouting, "fetch_all", side_effect=fake), \
+                contextlib.redirect_stdout(io.StringIO()):
+            scouting.probe(None, table, [])
+            scouting.scouting_matches(None, table)
+            scouting.fetch_scouting(None, table, ["AF1", "AF2"])
+        self.assertGreaterEqual(len(seen), 10)
+        self.assertTrue(all("QUALIFY ROW_NUMBER()" in q for q in seen))
 
 
 class TestSnapshotAnchor(unittest.TestCase):

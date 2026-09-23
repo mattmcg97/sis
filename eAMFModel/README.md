@@ -146,6 +146,39 @@ Read it with care:
   every price. Re-rating each side's scoring rate off its points on top
   of that didn't help. That is why v1 is the anchored one.
 
+## PLAY_OVER snapshots and the real game clock
+
+`SCOUTING_FULL` has the game clock (`IN_PLAY_CLOCK_SECONDS`, 240 a
+quarter), and `PLAY_OVER` is the message snapshots are keyed on. With the
+clock known (`GameState.clock_seconds`):
+- The drives left are a matter of time: this half's seconds in drives'
+  worth, plus a whole half more in the first half.
+- The second half's lower scoring comes off what each drive is worth. Its
+  drives score at `half_shares[1] / half_shares[0]` of the first half's,
+  and fall through the half at w(u).
+- The spread of the drive count carries the current drive's own length:
+  a quick turnover hands the ball back with time on the clock.
+- The prior is fitted on this path (`fit_prior(on_clock=True)`).
+
+A touchdown's `PLAY_OVER` is priced with the conversion still to come
+(`pending_conversion`) and a fresh drive for the other side. Its points
+(or a good field goal's) are added if the scoreboard hasn't caught up with
+them yet.
+
+```bash
+python -m eAMFCalibrator scouting                            # writes scouting_playover.csv
+python -m eAMFModel playover eAMFCalibrator/out/scouting_playover.csv --versions v1,v2
+python -m eAMFModel playover ... --scrimmage-only            # leave out kicks, conversions, scores
+python -m eAMFModel playover ... --state over                # the PLAY_OVER row's own state
+```
+
+Only prod quotes that were live are compared. The kind of play a snapshot
+closed is its own breakdown (`--by kind`).
+
+The clock-path settings (half shares and slopes, drive cut-off, end-game)
+are carried over from the message-clock fit. They should be refitted on
+play-over data once there is an export to fit them on.
+
 ## Run it
 
 ```bash

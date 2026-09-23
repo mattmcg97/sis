@@ -6,6 +6,8 @@
                          the tracker's verdict and the model's prices next
                          to prod's
   price                  one state, by hand
+  playover SNAPS.csv     the same on PLAY_OVER snapshots off SCOUTING_FULL, on the
+                         real game clock (eAMFCalibrator scouting writes the file)
   fit-finals             refit the possession structure to nb2/AMFELO.csv
 
 The calibrator runs a version as a stream in its own right:
@@ -17,7 +19,7 @@ import csv
 import os
 import sys
 
-from . import backtest, dist, feed, fit
+from . import backtest, dist, feed, fit, playover
 from .params import VERSIONS, version
 from .pricer import (AWAY, HOME, ML_HOME, SPREAD_HOME, TOTAL_OVER, GameState, Model)
 from .strength import Prior
@@ -62,6 +64,28 @@ def cmd_backtest(args):
                             r.prod_probability, r.candidate_probability, r.prod_outcome]
                            + [round(probs[n], 5) for n in names])
         print(f"\n  per-pair prices -> {args.out}")
+
+
+def cmd_playover(args):
+    versions = _versions(args.versions)
+    names = list(versions)
+    graded, skipped = playover.run(args.snapshots, versions, state_mode=args.state,
+                                   scrimmage_only=args.scrimmage_only, limit=args.limit,
+                                   require_live=not args.all_rows)
+    matches = len({g[0] for g in graded})
+    print(f"\n  {len(graded):,} graded PLAY_OVER quotes across {matches:,} matches")
+    for reason, n in skipped.most_common():
+        print(f"  skipped, {reason.replace('_', ' ')}: {n:,}")
+    keys = {
+        "market": lambda r: backtest.GROUPS[r.market_id],
+        "period": lambda r: r.period if r.period and r.period <= 4 else "OT",
+        "period-market": lambda r: (r.period if r.period and r.period <= 4 else "OT",
+                                    backtest.GROUPS[r.market_id]),
+        "kind": lambda r: r.kind,
+    }
+    for by in args.by.split(","):
+        summary = backtest.summarise(graded, names, key=keys[by], n_boot=args.boot)
+        backtest.print_summary(summary, names, f"Brier by {by} (PLAY_OVER snapshots)")
 
 
 def _num(value):
@@ -164,6 +188,21 @@ def main(argv=None):
     p.add_argument("--boot", type=int, default=300)
     p.add_argument("--out", help="write per-pair prices here")
     p.set_defaults(func=cmd_backtest)
+
+    p = sub.add_parser("playover", help="score versions against prod on PLAY_OVER snapshots "
+                                        "(eAMFCalibrator scouting's export)")
+    p.add_argument("snapshots", help="scouting_playover.csv")
+    p.add_argument("--versions", default=",".join(sorted(VERSIONS)))
+    p.add_argument("--by", default="market,period-market,kind",
+                   help="comma list of: market, period, period-market, kind")
+    p.add_argument("--state", choices=[playover.NEXT, playover.OVER], default=playover.NEXT,
+                   help="scrimmage state: the next PLAY_STARTED's (default) or the PLAY_OVER row's")
+    p.add_argument("--scrimmage-only", action="store_true",
+                   help="leave out kickoffs, conversions, punts, kicks and scores")
+    p.add_argument("--all-rows", action="store_true", help="keep prod quotes that were not live")
+    p.add_argument("--limit", type=int, help="first N matches only")
+    p.add_argument("--boot", type=int, default=300)
+    p.set_defaults(func=cmd_playover)
 
     p = sub.add_parser("trace", help="message-by-message walk of one match")
     p.add_argument("dump")

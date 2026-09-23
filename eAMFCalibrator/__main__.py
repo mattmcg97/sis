@@ -21,7 +21,7 @@ import sys
 
 from . import (buckets, config, directional, dump, html_full, html_indrive,
                html_report, indrive, pipeline, prematch,
-               report, snowflake_io)
+               report, scouting, snowflake_io)
 
 
 DEFAULT_OUT = os.path.join(os.path.dirname(__file__), "out")
@@ -154,6 +154,34 @@ def cmd_dump(args):
     if len(written) < dump.FILES:
         print(f"  {dump.FILES - len(written)} file(s) could not be written")
         return 1
+    return 0
+
+
+def cmd_scouting(args):
+    """Investigate SCOUTING_FULL against GAMEPLAI_STREAM, then export the
+    PLAY_OVER snapshots GAMEPLAI quoted. Last 30 days unless told otherwise."""
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            if not args.no_probe:
+                lines = scouting.probe(cur, table, [])
+                path = os.path.join(out_dir, "scouting_probe.txt")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + "\n")
+                print(f"\n  probe -> {path}")
+            if args.sample:
+                recent = scouting.scouting_matches(cur, table)[-args.sample:]
+                path = os.path.join(out_dir, "scouting_sample.csv")
+                n = scouting.write_sample(cur, table, recent, path)
+                print(f"  sample: {n:,} rows of {len(recent)} matches -> {path}")
+            if not args.no_export:
+                scouting.export(cur, table, os.path.join(out_dir, "scouting_playover.csv"),
+                                limit=args.limit)
+    finally:
+        conn.close()
     return 0
 
 
@@ -649,6 +677,21 @@ def build_parser():
              "under the line rule")
     cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    sc_parser = sub.add_parser(
+        "scouting", parents=[shared],
+        help="SCOUTING_FULL: probe it against GAMEPLAI_STREAM and export every "
+             "PLAY_OVER snapshot GAMEPLAI quoted (AF, last 30 days by default)")
+    sc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    sc_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE "
+                                f"(default: search {config.DATABASE} for {scouting.DEFAULT_TABLE})")
+    sc_parser.add_argument("--sample", type=int, default=2, metavar="N",
+                           help="write every column for the N most recent matches (default 2)")
+    sc_parser.add_argument("--limit", type=int, metavar="N",
+                           help="export only the N most recent matches")
+    sc_parser.add_argument("--no-probe", action="store_true")
+    sc_parser.add_argument("--no-export", action="store_true")
+
     dump_parser = sub.add_parser(
         "dump", parents=[shared],
         help="write the drive-detection working out to CSV for inspection")
@@ -685,6 +728,8 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    if args.command == "scouting" and not (args.days or args.since):
+        args.days = 30          # the scouting export defaults to the last month
     apply_overrides(args)
     if args.command == "preflight":
         return cmd_preflight(args)
@@ -696,6 +741,8 @@ def main(argv=None):
         return cmd_cross(args)
     if args.command == "dump":
         return cmd_dump(args)
+    if args.command == "scouting":
+        return cmd_scouting(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":

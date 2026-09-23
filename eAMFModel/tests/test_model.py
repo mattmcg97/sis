@@ -10,7 +10,7 @@ import re
 import tempfile
 import unittest
 
-from .. import backtest, clock, dist, drive, feed, strength, stream
+from .. import backtest, clock, dist, drive, feed, playover, strength, stream
 from ..params import Params, version
 from ..pricer import (AWAY, HOME, ML_AWAY, ML_HOME, SPREAD_AWAY, SPREAD_HOME,
                       TOTAL_OVER, TOTAL_UNDER, GameState, Model)
@@ -345,6 +345,115 @@ class TestEndGame(unittest.TestCase):
         on = model().book(PRIOR, s)
         off = Model(Params(prior_strength=1e9, late_drives=0.0)).book(PRIOR, s)
         self.assertGreater(on.p_home, off.p_home)
+
+
+class TestRealClock(unittest.TestCase):
+    def test_kickoff_fit_on_the_clock_hits_the_targets(self):
+        m = model()
+        prior = m.fit_prior(-2.5, 38.5, ml_home=0.42, over=0.5, on_clock=True)
+        b = m.book(prior, GameState(1, 0, 0, 0, clock_seconds=240))
+        self.assertAlmostEqual(b.p_home, 0.42, places=2)
+        self.assertAlmostEqual(b.prob(TOTAL_OVER, 38.5), 0.5, places=2)
+
+    def test_the_clock_settles_a_late_lead_gradually(self):
+        m = model()
+        prices = [m.book(PRIOR, GameState(4, 0, 21, 17, HOME, 1, 40, 10, clock_seconds=c,
+                                          opening_receiver=HOME)).p_home
+                  for c in (240, 120, 60, 10)]
+        self.assertEqual(prices, sorted(prices))
+        self.assertLess(prices[1], 0.95)       # two minutes is time for a drive back
+        self.assertGreater(prices[-1], 0.97)
+
+    def test_the_clock_beats_nothing_on_position(self):
+        c = clock.ClockParams()
+        self.assertAlmostEqual(clock.position_in_half(1, 240), 0.0)
+        self.assertAlmostEqual(clock.position_in_half(2, 240), 0.5)
+        self.assertAlmostEqual(clock.position_in_half(4, 0), 1.0)
+        self.assertEqual(clock.remaining_on_clock(c, 5, 100).fraction, 0.0)
+
+    def test_pending_conversion_adds_about_a_point(self):
+        m = model()
+        done = m.book(PRIOR, GameState(2, 0, 7, 0, AWAY, clock_seconds=100))
+        pending = m.book(PRIOR, GameState(2, 0, 6, 0, AWAY, clock_seconds=100,
+                                          pending_conversion=HOME))
+        self.assertAlmostEqual(dist.mean(pending.total), dist.mean(done.total) - 0.0, delta=0.2)
+
+
+class TestPlayOver(unittest.TestCase):
+    def snap(self, **kw):
+        r = {f: "" for f in ("match_code", "message", "period", "clock_seconds", "play_kind",
+                              "team_a_side", "offense", "down", "distance", "field_position",
+                              "next_offense", "next_down", "next_distance",
+                              "next_field_position", "score_p1", "score_p2",
+                              "score_p1_at_start", "score_p2_at_start", "play_messages",
+                              "opening_offense")}
+        r.update(match_code="AF1", message="20", period="2", clock_seconds="150",
+                 play_kind="SCRIMMAGE", team_a_side="away", offense="TEAM_B", down="1",
+                 distance="10", field_position="40", next_offense="TEAM_B", next_down="2",
+                 next_distance="4", next_field_position="46", score_p1="7", score_p2="0",
+                 score_p1_at_start="7", score_p2_at_start="0", opening_offense="TEAM_A")
+        r.update({k: str(v) for k, v in kw.items()})
+        return r
+
+    def test_scrimmage_takes_the_result_of_the_play(self):
+        state, _ = playover.state_for(self.snap())
+        self.assertEqual((state.offense, state.down, state.distance, state.field_position),
+                         (HOME, 2, 4, 46))       # TEAM_A is away, so TEAM_B is home
+        self.assertEqual(state.clock_seconds, 150)
+        self.assertEqual(state.opening_receiver, AWAY)
+        state, _ = playover.state_for(self.snap(), playover.OVER)
+        self.assertEqual((state.down, state.field_position), (1, 40))
+
+    def test_a_turnover_gives_the_other_side_the_ball(self):
+        state, _ = playover.state_for(self.snap(next_offense="TEAM_A", next_down="1",
+                                                next_distance="10", next_field_position="55"))
+        self.assertEqual((state.offense, state.field_position), (AWAY, 55))
+
+    def test_touchdown_the_scoreboard_has_not_caught(self):
+        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN"))
+        self.assertEqual((state.home_score, state.away_score), (13, 0))
+        self.assertEqual(state.pending_conversion, HOME)
+        self.assertEqual(state.offense, AWAY)
+        state, _ = playover.state_for(self.snap(play_kind="TOUCHDOWN", score_p1="13"))
+        self.assertEqual(state.home_score, 13)   # already there: not added twice
+
+    def test_field_goal_good_is_counted(self):
+        state, _ = playover.state_for(self.snap(play_kind="FIELD_GOAL", next_offense="TEAM_A",
+                                                play_messages="FIELD_GOAL_GOOD_TEAM_B"))
+        self.assertEqual(state.home_score, 10)
+        self.assertEqual(state.offense, AWAY)
+        self.assertIsNone(state.down)
+
+    def test_unresolved_team(self):
+        state, why = playover.state_for(self.snap(team_a_side=""))
+        self.assertIsNone(state)
+        self.assertEqual(why, "team_a_unresolved")
+
+    def test_runs_on_an_export(self):
+        fields = list(self.snap()) + ["prematch_line_52", "prematch_prob_52", "prematch_line_54",
+                                      "prematch_prob_54", "prematch_prob_50"]
+        for m in (50, 51, 52, 53, 54, 55):
+            fields += [f"line_{m}", f"prob_{m}", f"live_{m}", f"outcome_{m}"]
+        rows = []
+        for msg, clock_s, kind in ((20, 150, "SCRIMMAGE"), (30, 100, "TOUCHDOWN"),
+                                   (40, 90, "KICKOFF")):
+            r = self.snap(message=msg, clock_seconds=clock_s, play_kind=kind,
+                          prematch_line_52=-2.5, prematch_prob_52=0.47, prematch_line_54=38.5,
+                          prematch_prob_54=0.5, prematch_prob_50=0.44)
+            r.update(line_50="", prob_50="0.6", live_50="1", outcome_50="1",
+                     line_52="3.5", prob_52="0.55", live_52="1", outcome_52="1",
+                     line_54="40.5", prob_54="0.5", live_54="0", outcome_54="0")
+            rows.append(r)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "po.csv")
+            with open(path, "w", newline="") as fh:
+                w = csv.DictWriter(fh, fieldnames=fields, extrasaction="ignore")
+                w.writeheader()
+                w.writerows(rows)
+            graded, skipped = playover.run(path, {"v1": version("v1")})
+        self.assertEqual(len(graded), 6)                  # 3 snapshots x 2 live markets
+        self.assertEqual(skipped["prod_not_live"], 3)
+        self.assertTrue(all(0.0 <= g[2]["v1"] <= 1.0 for g in graded))
 
 
 def _play(m, team, d, t, y, period=1):

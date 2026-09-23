@@ -1235,3 +1235,42 @@ pairs and barely further on the rest sits at a 50% win rate while the paired
 loss difference is clearly positive; and grading both streams against one
 stream's line inverts the winner on a total that falls between the two
 lines.
+
+## SCOUTING_FULL and PLAY_OVER snapshots: `scouting`
+
+```bash
+python -m eAMFCalibrator scouting                 # AF, the last 30 days
+python -m eAMFCalibrator scouting --days 7 --limit 200
+python -m eAMFCalibrator scouting --scouting-table DB.SCHEMA.SCOUTING_FULL
+```
+
+`SCOUTING_FULL` is the Madden scouting feed the play table is cut from,
+with more in it. It has explicit play bookends (`PLAY_STARTED` /
+`PLAY_OVER`), the events inside a play (touchdowns, conversions, kickoffs,
+punts, field goals), game status (quarters, `BET_SUSPEND` /
+`BET_UNSUSPEND`), and the game clock (`IN_PLAY_CLOCK_SECONDS`, 240 a
+quarter, counting down). The column names and vocabulary follow
+`MaddenScoutingAudit.py`. Duplicate (match, message) rows are collapsed to
+the latest loaded, as that script does. Only match codes starting `AF` are
+read. It compares against `GAMEPLAI_STREAM` alone.
+
+It writes three files to `--out`:
+
+| file | what it is |
+|---|---|
+| `scouting_probe.txt` | the investigation: columns (and any that look like markets or prices), message and status counts, how often GAMEPLAI quotes on the same message as each kind of scouting message (any market / at least one live / all six live), `PLAY_OVER` coverage by market and at nearby offsets, the clock at `PLAY_OVER`, the scouting state against the play table on the same message (team labels, same and mirrored field), and `TEAM_A` / `TEAM_B` against the scoreboard's `PLAYER_1` / `PLAYER_2` |
+| `scouting_sample.csv` | every column for the two most recent matches, with prod's line, probability and liveness on all six markets beside each message |
+| `scouting_playover.csv` | one row per `PLAY_OVER` that GAMEPLAI quoted on at least one market (see below) |
+
+Each `scouting_playover.csv` row carries:
+- the clock and quarter, and the betting state;
+- the kind of play it closed (scrimmage, touchdown, field goal, punt,
+  kickoff, conversion, and so on) and its messages;
+- the state on the `PLAY_OVER` row and on the next `PLAY_STARTED`;
+- the score then and when the play started, and the final;
+- which scoreboard side `TEAM_A` is in that match, read off its scoring
+  messages;
+- prod's pre-match quotes;
+- on each market, prod's line, probability, liveness and outcome.
+
+It is the input to `python -m eAMFModel playover`.
