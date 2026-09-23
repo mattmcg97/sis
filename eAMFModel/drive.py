@@ -35,6 +35,16 @@ from . import dist
 
 FIELD = 100
 
+# 4th-down policies. NORMAL kicks in range, goes on 4th-and-short past
+# go_min_field, punts otherwise. Late in a game the side behind changes
+# its mind: MUST_SCORE never punts (a punt ends the game) but still kicks
+# when a field goal is worth having; NEED_TD never punts and never kicks,
+# because three points do not catch up.
+NORMAL = "normal"
+MUST_SCORE = "must_score"
+NEED_TD = "need_td"
+POLICIES = (NORMAL, MUST_SCORE, NEED_TD)
+
 
 @dataclass(frozen=True)
 class DriveParams:
@@ -102,9 +112,10 @@ def gain_kernel(params, quality):
 class Chain:
     """Solved drive chain for one quality: P(TD), P(FG) from any state."""
 
-    def __init__(self, params, quality):
+    def __init__(self, params, quality, policy=NORMAL):
         self.params = params
         self.quality = quality
+        self.policy = policy
         self.p_turnover, kernel = gain_kernel(params, quality)
         low = -params.loss_max
         # gains[i] = P(gain == low + i), gains index up to +FIELD.
@@ -135,12 +146,17 @@ class Chain:
                 for y in range(1, L):
                     t = L - y
                     if d == 4:
-                        make = fg_make(p, y)
-                        if make > 0 and not (t <= p.go_max_togo and make < 0.9):
+                        make = fg_make(p, y) if self.policy != NEED_TD else 0.0
+                        if self.policy == NORMAL:
+                            if make > 0 and not (t <= p.go_max_togo and make < 0.9):
+                                row_fg[y] = make
+                                continue
+                            if not (t <= p.go_max_togo and y >= p.go_min_field):
+                                continue          # punt
+                        elif self.policy == MUST_SCORE and make >= 0.5:
                             row_fg[y] = make
                             continue
-                        if not (t <= p.go_max_togo and y >= p.go_min_field):
-                            continue          # punt
+                        # otherwise: go for it
                     # Conversions: gains g >= t land on a fresh first down at y + g.
                     a_td = a_fg = 0.0
                     start = t - low
@@ -217,10 +233,11 @@ class DriveModel:
         self._chains = {}
         self._fresh_ep = None
 
-    def chain(self, quality):
-        if quality not in self._chains:
-            self._chains[quality] = Chain(self.params, quality)
-        return self._chains[quality]
+    def chain(self, quality, policy=NORMAL):
+        key = (quality, policy)
+        if key not in self._chains:
+            self._chains[key] = Chain(self.params, quality, policy)
+        return self._chains[key]
 
     def _bracket(self, quality):
         grid = self.params.quality_grid
@@ -231,12 +248,12 @@ class DriveModel:
         lo, hi = grid[i - 1], grid[i]
         return lo, hi, (q - lo) / (hi - lo)
 
-    def value(self, quality, down, field_position, distance):
+    def value(self, quality, down, field_position, distance, policy=NORMAL):
         lo, hi, w = self._bracket(quality)
-        a = self.chain(lo).value(down, field_position, distance)
+        a = self.chain(lo, policy).value(down, field_position, distance)
         if w == 0.0:
             return a
-        b = self.chain(hi).value(down, field_position, distance)
+        b = self.chain(hi, policy).value(down, field_position, distance)
         return (a[0] * (1 - w) + b[0] * w, a[1] * (1 - w) + b[1] * w)
 
     def fresh_ep_curve(self):
@@ -259,6 +276,6 @@ class DriveModel:
                 return q0 + (q1 - q0) * (ep_per_drive - e0) / (e1 - e0)
         return curve[-1][0]
 
-    def pmf(self, quality, down, field_position, distance):
-        p_td, p_fg = self.value(quality, down, field_position, distance)
+    def pmf(self, quality, down, field_position, distance, policy=NORMAL):
+        p_td, p_fg = self.value(quality, down, field_position, distance, policy)
         return outcome_pmf(p_td, p_fg, self.q6, self.q8)

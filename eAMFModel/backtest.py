@@ -146,9 +146,15 @@ def context(match_rows, model=None):
 
 def state_for(row, ctx):
     start = ctx.period_starts.get(row.period, row.message)
+    half_first = 1 if row.period <= 2 else 3 if row.period <= 4 else row.period
+    half_start = ctx.period_starts.get(half_first)
+    if half_start is None:
+        # The half's first quarter had no snapshot: an average one before this.
+        half_start = start - (71.0 if half_first == 1 else 81.0)
     return GameState(
         period=row.period,
         elapsed_in_period=max(0.0, row.message - start),
+        elapsed_in_half=max(0.0, row.message - half_start),
         home_score=row.home_score,
         away_score=row.away_score,
         offense=row.offense,

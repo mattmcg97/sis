@@ -229,10 +229,13 @@ class Tracker:
         if self.period is None:
             return None
         start = self.period_starts.get(self.period, message)
+        half_first = 1 if self.period <= 2 else 3 if self.period <= 4 else self.period
+        half_start = self.period_starts.get(half_first, start)
         snap = self.last_live if self.window is None else None
         return GameState(
             period=self.period,
             elapsed_in_period=max(0, message - start),
+            elapsed_in_half=max(0, message - half_start),
             home_score=self.home,
             away_score=self.away,
             offense=snap.offense if snap else None,

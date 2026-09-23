@@ -26,7 +26,7 @@ from dataclasses import dataclass, replace
 from typing import Optional
 
 from . import clock, dist, strength
-from .drive import DriveModel
+from .drive import MUST_SCORE, NEED_TD, NORMAL, DriveModel
 
 HOME = "home"
 AWAY = "away"
@@ -52,6 +52,7 @@ class GameState:
     field_position: Optional[int] = None
     distance: Optional[int] = None
     drive_age: Optional[float] = None       # messages since this drive began
+    elapsed_in_half: Optional[float] = None  # messages since the half began
     opening_receiver: Optional[str] = None  # who had the ball first
 
     @property
@@ -143,10 +144,11 @@ class Model:
 
     # -- building blocks -------------------------------------------------
 
-    def fresh_pmf(self, quality):
-        key = round(quality, 4)
+    def fresh_pmf(self, quality, policy=NORMAL):
+        key = (round(quality, 4), policy)
         if key not in self._fresh:
-            self._fresh[key] = self.drives.pmf(quality, 1, self.params.drive.start_field, 10)
+            self._fresh[key] = self.drives.pmf(quality, 1, self.params.drive.start_field,
+                                               10, policy)
         return self._fresh[key]
 
     def side_qualities(self, prior_points, scored, fraction_left):
@@ -158,13 +160,13 @@ class Model:
                                      p.points_per_score, p.n_slices)
         return [(w, self.drives.quality_for(per_drive * theta)) for w, theta in nodes]
 
-    def _team_pmfs(self, qualities, n_max, current=None):
+    def _team_pmfs(self, qualities, n_max, current=None, policy=NORMAL):
         """out[n] = pmf of points from n more fresh drives (after `current`)."""
         out = [None] * (n_max + 1)
         mixes = [[] for _ in range(n_max + 1)]
         for w, q in qualities:
             base = dist.point(0) if current is None else current(q)
-            fresh = self.fresh_pmf(q)
+            fresh = self.fresh_pmf(q, policy)
             acc = base
             for n in range(n_max + 1):
                 if n:
@@ -235,7 +237,8 @@ class Model:
 
     def book(self, prior, state):
         p = self.params
-        left = clock.remaining(p.clock, state.period, state.elapsed_in_period)
+        left = clock.remaining(p.clock, state.period, state.elapsed_in_period,
+                               state.elapsed_in_half)
         f = left.fraction
         home_q = self.side_qualities(prior.home_points, state.home_score, f)
         away_q = self.side_qualities(prior.away_points, state.away_score, f)
@@ -245,20 +248,37 @@ class Model:
 
         kickoff = (state.has_snap and state.down == 1 and state.distance == 10
                    and state.field_position == p.kickoff_field)
-        # The half's clock can end the current drive before it does: the
-        # less of the half is left (in drives), the likelier it runs out.
-        # Drive length taken as exponential, mean `drive_time` drives.
-        half_left = 2.0 * p.drives_per_team * left.this_half
-        in_time = 1.0 - math.exp(-half_left / p.drive_time) if p.drive_time > 0 else 1.0
+        # The half's clock can end the current drive before it does. Clock
+        # left is in messages (time, not scoring share), counted in average
+        # drives' worth; the time a drive still needs is `drive_time` of a
+        # whole drive, scaled by how much of the field is left to cover --
+        # a drive on the 1 needs a snap or two, one from its own 20 all of
+        # it (see _in_time).
+        clock_left = self._drives_of_clock(state)
+        policies, kill = self._endgame(state, clock_left)
+        # The half's scoring falls away (clock.py); the drive in progress
+        # shares in that, not just the count of drives to come.
+        rate_now = min(1.0, clock.intensity(p.clock, state.period, state.elapsed_in_period))
+        slow = rate_now ** p.current_intensity
         if state.has_snap and not kickoff:
-            current = self._current_drive(state, in_time)
-            branches = [(1.0, state.offense, current, self._part_left(state))]
+            offense = state.offense
+            need = min(1.3, max(0.1, (100 - state.field_position) / 75.0))
+            in_time = self._in_time(clock_left, need) * slow
+            keep = 1.0 - p.kill_score if kill.get(offense) == "kneel" else 1.0
+            current = self._current_drive(state, in_time * keep, policies[offense])
+            part = self._part_left(state) + (p.kill_time if kill.get(offense) else 0.0)
+            branches = [(1.0, offense, current, part)]
+        elif state.offense in (HOME, AWAY):
+            offense = state.offense
+            in_time = self._in_time(clock_left, 1.0) * slow
+            keep = 1.0 - p.kill_score if kill.get(offense) == "kneel" else 1.0
+            part = 1.0 + (p.kill_time if kill.get(offense) else 0.0)
+            branches = [(1.0, offense, self._fresh_drive(in_time * keep, policies[offense]),
+                         part)]
         else:
-            current = self._fresh_drive(in_time)
-            if state.offense in (HOME, AWAY):
-                branches = [(1.0, state.offense, current, 1.0)]
-            else:
-                branches = [(0.5, HOME, current, 1.0), (0.5, AWAY, current, 1.0)]
+            in_time = self._in_time(clock_left, 1.0) * slow
+            branches = [(0.5, side, self._fresh_drive(in_time, policies[side]), 1.0)
+                        for side in (HOME, AWAY)]
 
         # Who gets the ball first in the second half: whoever did not get it
         # first in the game. Unknown -> both, half each.
@@ -295,8 +315,9 @@ class Model:
             n_off = max(o for o, _ in counts)
             n_def = max(d_ for _, d_ in counts)
             off_q, def_q = (home_q, away_q) if offense == HOME else (away_q, home_q)
-            off = self._team_pmfs(off_q, n_off, current)
-            dfn = self._team_pmfs(def_q, n_def)
+            defense = AWAY if offense == HOME else HOME
+            off = self._team_pmfs(off_q, n_off, current, policies[offense])
+            dfn = self._team_pmfs(def_q, n_def, None, policies[defense])
             # For each offense count, the defense's points mixed over its counts.
             by_off = {}
             for (o, d_), pr in counts.items():
@@ -334,17 +355,69 @@ class Model:
         drive_messages = p.clock.regulation / (2.0 * p.drives_per_team)
         return min(1.0, max(0.15, 1.0 - state.drive_age / drive_messages))
 
-    def _current_drive(self, state, in_time=1.0):
+    def _current_drive(self, state, in_time=1.0, policy=NORMAL):
         down, field, togo = state.down, state.field_position, state.distance
 
         def pmf(quality):
-            return _truncate(self.drives.pmf(quality, down, field, togo), in_time)
+            return _truncate(self.drives.pmf(quality, down, field, togo, policy), in_time)
         return pmf
 
-    def _fresh_drive(self, in_time=1.0):
+    def _fresh_drive(self, in_time=1.0, policy=NORMAL):
         def pmf(quality):
-            return _truncate(self.fresh_pmf(quality), in_time)
+            return _truncate(self.fresh_pmf(quality, policy), in_time)
         return pmf
+
+    def _drives_of_clock(self, state):
+        """Clock left in the half, in average drives' worth of messages."""
+        p = self.params
+        messages = clock.messages_left_in_half(p.clock, state.period, state.elapsed_in_period)
+        return messages * 2.0 * p.drives_per_team / p.clock.regulation
+
+    def _in_time(self, clock_left, need):
+        """P(the drive finishes before the half does).
+
+        The clock a drive still needs is normal around `drive_time` of a
+        whole drive's worth, scaled by `need`, with spread `drive_time_cv`
+        of that. Not exponential: a drive with half the game ahead of it
+        always has time, and one on the 1 needs a snap or two.
+        """
+        p = self.params
+        t = p.drive_time * need
+        if t <= 0:
+            return 1.0
+        z = (clock_left - t) / (p.drive_time_cv * t)
+        return 0.5 * math.erfc(-z / math.sqrt(2.0))
+
+    def _endgame(self, state, clock_left):
+        """End-of-game behaviour: ({side: 4th-down policy}, {side: kill}).
+
+        Late in the second half -- fewer than `late_drives` drives' worth of
+        clock left -- the two sides stop playing the same game:
+
+          behind by 1-3    MUST_SCORE: never punts, still kicks
+          behind by 4-8    NEED_TD: never punts, never kicks (3 is no use)
+          behind by 9+     MUST_SCORE: needs more than one score, any will do
+          ahead, on the ball
+                           runs the clock: the drive eats `kill_time` more
+                           drives' worth of time, so fewer are left for the
+                           other side; ahead by `kill_lead` or more it
+                           kneels, scoring `kill_score` less
+        """
+        p = self.params
+        policies = {HOME: NORMAL, AWAY: NORMAL}
+        kill = {}
+        if state.period is None or state.period < 3 or state.period > clock.REGULATION_PERIODS:
+            return policies, kill
+        if clock_left >= p.late_drives:
+            return policies, kill
+        margin = state.home_score - state.away_score
+        for side, lead in ((HOME, margin), (AWAY, -margin)):
+            if lead < 0:
+                behind = -lead
+                policies[side] = NEED_TD if 4 <= behind <= 8 else MUST_SCORE
+            elif lead > 0:
+                kill[side] = "kneel" if lead >= p.kill_lead else "run"
+        return policies, kill
 
     @staticmethod
     def _accumulate(margin, total, tied, weight, home, away, state):

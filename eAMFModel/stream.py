@@ -153,14 +153,19 @@ def quote_rows(model, match_code, plays, scores, prod_quote_rows, line_mode=MATC
             state = tick.state
             elapsed = state.elapsed_in_period + (message - tick.message)
             elapsed = ELAPSED_STEP * round(elapsed / ELAPSED_STEP)
+            half = state.elapsed_in_half
+            if half is not None:
+                half = ELAPSED_STEP * round((half + message - tick.message) / ELAPSED_STEP)
             age = state.drive_age
             if age is not None:
                 age = ELAPSED_STEP * round((age + message - tick.message) / ELAPSED_STEP)
-            key = (state.period, elapsed, state.home_score, state.away_score, state.offense,
-                   state.down, state.field_position, state.distance, age, state.opening_receiver)
+            key = (state.period, elapsed, half, state.home_score, state.away_score,
+                   state.offense, state.down, state.field_position, state.distance, age,
+                   state.opening_receiver)
             if key not in books:
                 books[key] = model.book(prior, feed.with_state(
-                    tick, elapsed_in_period=elapsed, drive_age=age).state)
+                    tick, elapsed_in_period=elapsed, elapsed_in_half=half,
+                    drive_age=age).state)
             book = books[key]
         publish_time = prod.time_at(message)
         for market_id in MARKET_IDS:

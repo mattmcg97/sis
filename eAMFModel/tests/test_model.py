@@ -152,6 +152,37 @@ class TestClock(unittest.TestCase):
             self.assertGreaterEqual(clock.residual_variance(100, 25, e), 0.0)
 
 
+class TestHalfClock(unittest.TestCase):
+    def setUp(self):
+        self.p = clock.ClockParams()
+
+    def test_default_is_the_half_clock(self):
+        self.assertEqual(self.p.mode, "half")
+        self.assertAlmostEqual(sum(self.p.half_shares), 1.0)
+
+    def test_quarter_break_is_the_middle_of_the_half(self):
+        a1, a2 = self.p.half_slopes
+        s1, s2 = self.p.half_shares
+        self.assertAlmostEqual(clock.remaining(self.p, 2, 0).this_half, s1 * 0.5 ** (1 + a1))
+        self.assertAlmostEqual(clock.remaining(self.p, 4, 0).this_half, s2 * 0.5 ** (1 + a2))
+
+    def test_no_step_at_the_quarter_break(self):
+        # The end of the 3rd, run long, meets the start of the 4th.
+        end_q3 = clock.remaining(self.p, 3, 400).this_half
+        start_q4 = clock.remaining(self.p, 4, 0).this_half
+        self.assertAlmostEqual(end_q3, start_q4, delta=0.01)
+
+    def test_second_half_slopes_down(self):
+        # Equal game time, less scoring left for it late than early.
+        early = clock.half_left(self.p, 3, 0)[0] - clock.remaining(self.p, 4, 0).this_half / self.p.half_shares[1]
+        late = clock.remaining(self.p, 4, 0).this_half / self.p.half_shares[1]
+        self.assertGreater(early, late)
+
+    def test_uncertainty_only_once_the_quarter_is_running(self):
+        self.assertEqual(clock.remaining(self.p, 1, 0).this_half_var, 0.0)
+        self.assertGreater(clock.remaining(self.p, 3, 60).this_half_var, 0.0)
+
+
 class TestStrength(unittest.TestCase):
     def test_prior_from_lines(self):
         p = strength.Prior.from_lines(3.5, 40.5)
@@ -267,6 +298,53 @@ class TestPricer(unittest.TestCase):
         b = m.book(prior, GameState(1, 0, 0, 0))
         self.assertAlmostEqual(b.p_home, 0.42, places=2)
         self.assertAlmostEqual(b.prob(TOTAL_OVER, 38.5), 0.47, places=2)
+
+
+class TestEndGame(unittest.TestCase):
+    def late(self, **kw):
+        base = dict(period=4, elapsed_in_period=100, home_score=14, away_score=19,
+                    offense=HOME, down=1, field_position=40, distance=10,
+                    opening_receiver=HOME)
+        base.update(kw)
+        return GameState(**base)
+
+    def test_policies_follow_the_deficit(self):
+        m = model()
+        left = m._drives_of_clock(self.late())
+        policies, kill = m._endgame(self.late(), left)
+        self.assertEqual(policies[HOME], drive.NEED_TD)     # down 5
+        self.assertEqual(kill[AWAY], "run")
+        policies, _ = m._endgame(self.late(away_score=16), left)
+        self.assertEqual(policies[HOME], drive.MUST_SCORE)  # down 2
+        policies, kill = m._endgame(self.late(home_score=30, away_score=7), left)
+        self.assertEqual(kill[HOME], "kneel")
+
+    def test_early_or_first_half_is_normal(self):
+        m = model()
+        for s in (self.late(period=3, elapsed_in_period=0), self.late(period=2)):
+            policies, kill = m._endgame(s, m._drives_of_clock(s))
+            self.assertEqual(set(policies.values()), {drive.NORMAL})
+            self.assertEqual(kill, {})
+
+    def test_need_td_never_kicks_and_must_score_never_punts(self):
+        dm = model().drives
+        self.assertEqual(dm.value(1.0, 4, 80, 6, drive.NEED_TD)[1], 0.0)
+        self.assertGreater(dm.value(1.0, 4, 20, 2, drive.MUST_SCORE)[0], 0.0)
+        self.assertEqual(dm.value(1.0, 4, 20, 2, drive.NORMAL), (0.0, 0.0))
+
+    def test_kneeling_takes_points_off_the_total(self):
+        s = self.late(home_score=24, away_score=14, offense=HOME, field_position=50,
+                      elapsed_in_period=40)
+        on = model().book(PRIOR, s)
+        off = Model(Params(prior_strength=1e9, late_drives=0.0)).book(PRIOR, s)
+        self.assertLess(dist.mean(on.total), dist.mean(off.total))
+
+    def test_needing_a_touchdown_on_4th_goes_for_it(self):
+        # Down 5 late, 4th-and-6 in field-goal range: the kick is worthless.
+        s = self.late(down=4, distance=6, field_position=75)
+        on = model().book(PRIOR, s)
+        off = Model(Params(prior_strength=1e9, late_drives=0.0)).book(PRIOR, s)
+        self.assertGreater(on.p_home, off.p_home)
 
 
 def _play(m, team, d, t, y, period=1):

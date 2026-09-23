@@ -35,15 +35,34 @@ class Params:
     # the feed cannot say how old the drive is.
     current_drive_share: float = 0.5
 
-    # Mean length of a drive, in drives' worth of clock, for the chance the
-    # current drive is cut off by the end of the half. 0 switches it off.
-    drive_time: float = 1.0
+    # The clock a whole drive needs, in average drives' worth, and its
+    # spread as a share of that: the chance the current drive is cut off
+    # by the end of the half (pricer.Model._in_time). drive_time 0 turns
+    # it off.
+    drive_time: float = 1.2
+    drive_time_cv: float = 0.8
+    # How far the drive in progress follows the half's falling scoring rate
+    # (clock.intensity, capped at 1): 0 not at all, 1 fully.
+    current_intensity: float = 1.0
+
+    # End of the game (pricer.Model._endgame). Late = fewer than this many
+    # drives' worth of the game left, second half only.
+    late_drives: float = 3.0
+    # A leader on the ball late runs the clock: its drive uses this many
+    # more drives' worth of time (fitted to 0: once the drive's own clock
+    # and the half's falling scoring are in, extra run-off did not help)...
+    kill_time: float = 0.0
+    # ...and ahead by kill_lead or more it kneels, scoring this much less.
+    kill_lead: int = 9
+    kill_score: float = 0.8
 
     # Variance of the drive count, per expected drive, on top of what the
     # clock's own uncertainty adds. The finals fit's count variance is
-    # 2.14^2 = 4.58 over 9.6 drives; the period-length spread in clock.py
-    # accounts for 1.69 of it, leaving 2.89 / 9.6 = 0.30.
-    count_dispersion: float = 0.30
+    # 2.14^2 = 4.58 over 9.6 drives. On the half clock nothing of it is
+    # clock uncertainty at kickoff (the whole game is ahead for certain),
+    # so all of it is the game's own: 4.58 / 9.6 = 0.48. (On the quarter
+    # clock the period-length spread takes 1.69 of it, leaving 0.30.)
+    count_dispersion: float = 0.48
 
     # Mean points of a scoring drive: 0.46 TDs at ~6.99 and 0.11 FGs at 3,
     # over 0.57 scores.
