@@ -105,7 +105,7 @@ Poisson dispersion. That overstated the total's spread (sd 14.8 against
 | v1 | 16 | anchored: four TDs above expectation move a side about 25% |
 | v2 | 4 | reactive: the game takes over about four times as fast |
 
-Add a version by naming what differs in `params.VERSIONS`.
+Add a version by naming what differs in `params.VERSIONS`. v3 is a separate model (below).
 
 ## Backtest (262 matches, directional_pairs, 17–20 Sep)
 
@@ -178,6 +178,85 @@ closed is its own breakdown (`--by kind`).
 The clock-path settings (half shares and slopes, drive cut-off, end-game)
 are carried over from the message-clock fit. They should be refitted on
 play-over data once there is an export to fit them on.
+
+## v3: a play-by-play simulation
+
+v3 is its own model (`sim.py`, `v3.py`), not a setting of v1/v2. From the
+snapshot's state it plays the rest of the game snap by snap on the real
+clock, 2,000 times, and prices the markets off the final scores.
+
+**Every snap is drawn from a real one** in the same situation: down,
+distance bucket, field zone and the offense's game situation. The
+situations are:
+- Q1;
+- Q2;
+- Q2's last two minutes;
+- second half, ahead;
+- second half, level or behind;
+- the last two minutes, split into ahead, behind and level.
+
+A drawn snap brings its yards, turnover or touchdown, and the clock it
+used through to the next snap. So a leader milks the clock because
+leaders do: about 19 s a snap in the third quarter, against 15.5 s level
+or behind. A trailer's last-minute incompletions stop it. A touchdown's
+gain is cut off at the goal line, so from further back the same play
+still scores with probability exp(−extra yards / 12).
+
+**Efficiency, not score.** Each offense has an efficiency θ that tilts its
+draws toward the good end: u → 1 − (1 − u)^e^θ. That turns the league's
+first-down rate f into f^e^−θ.
+- The **prior** θ for each side is set so that the simulation from kickoff
+  reproduces prod's pre-match spread, total and moneyline
+  (`PriorGrid.fit`, from a 17 × 17 grid of simulated games).
+- **In-game** (`--react`), θ moves with each snap's first-down success
+  against the league's rate in that situation. That is one Newton step,
+  shrunk by κ. Points never move θ.
+
+**Decisions**, all fitted to real snaps:
+- 4th down: the league's go / field-goal / punt curves, shifted by quarter
+  phase × score margin. Leaders go less; trailers go for it late.
+- Going for two: by phase × margin. Trailing by 7, a player who scores late
+  goes for two to win 65% of the time.
+- Early-down field goals as a half runs out, by clock and kick distance.
+- Level or 1–2 behind late and in range: run the clock down and kick as
+  time expires.
+- A leader with the downs to cover the clock kneels.
+- Clock management leaves time for the kick.
+- Onside kicks when chasing.
+- Overtime is a timed period, replayed while level.
+- The league's efficiency by quarter is fitted so the simulation scores
+  what the league scores in each quarter (5.5 / 13.1 / 6.7 / 9.2).
+
+**Held-out test** (the 1,160 matches not used to build the tables, 410,602
+live prod quotes; Brier, prod − v3, 95% CI clustered by match):
+
+| | prod | v1 | v3 | v3 − prod |
+|---|---|---|---|---|
+| moneyline | 0.1656 | 0.1647 | 0.1629 | +0.0026 [+0.0017, +0.0036] |
+| spread | 0.2474 | 0.2490 | 0.2345 | +0.0128 [+0.0110, +0.0146] |
+| total | 0.2475 | 0.2431 | 0.2367 | +0.0109 [+0.0092, +0.0124] |
+| all | 0.2184 | 0.2172 | 0.2098 | +0.0086 [+0.0076, +0.0096] |
+
+v3 is ahead of prod in every quarter × market. The gain is largest in Q4:
+spread +0.043 and total +0.034. Q1–Q2 gain +0.001 to +0.002, and the
+overtime moneyline (23 matches) is level. Adding each player's 4th-down
+aggression and pace (`--profiles`, where handles are known) takes the
+total to +0.0119.
+
+**What did not help.** The in-game efficiency update (`--react`) matches
+static v3: first-down success predicts later first-down success only
+weakly (best κ ≈ 80–200 snaps' worth of information), and not later
+points. Drawing θ with its uncertainty didn't help either.
+
+```bash
+python -m eAMFModel v3-build eAMFCalibrator/out/scouting_playover.csv --half train --out v3_model
+python -m eAMFModel v3 eAMFCalibrator/out/scouting_playover.csv --model v3_model --half test
+python -m eAMFModel v3 ... --react --profiles player_profiles.json --handles nb2/AMFELO.csv
+python -m unittest eAMFModel.tests.test_v3
+```
+
+v3 needs numpy. The build takes about a minute; scoring the 1,160-match
+test half takes about 18 minutes on four cores at 2,000 paths.
 
 ## Run it
 
