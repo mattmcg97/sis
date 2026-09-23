@@ -26,9 +26,32 @@ SCORE_TABLE = "SCORE_CHANGES"
 FINAL_TABLE = "SCORE_ENDGAME"
 EVENT_TABLE = "EVENT"
 
+# A stream named MODEL:<version> is not a table: it is the eAMFModel pricer,
+# run over prod's quotes and the play feed for the same matches. Everything
+# that asks a stream WHICH matches or WHEN reads prod's table in its place.
+MODEL_PREFIX = "MODEL:"
+
 # Preferred clock for a play row, best first. Anything TIMESTAMP-typed is
 # accepted as a fallback.
 PLAY_TIME_PREFERENCE = ["FILE_TIME", "PUBLISH_TIME", "EVENT_TIME", "FILE_LOADED"]
+
+
+def is_model(stream_table):
+    return isinstance(stream_table, str) and stream_table.upper().startswith(MODEL_PREFIX)
+
+
+def stream_name(value):
+    """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table."""
+    if is_model(value):
+        return MODEL_PREFIX + value.split(":", 1)[1].lower()
+    if value.lower().startswith("v") and value[1:].isdigit():
+        return MODEL_PREFIX + value.lower()
+    return value
+
+
+def source_table(stream_table):
+    """The real table behind a stream: prod's, for a model stream."""
+    return config.STREAMS["prod"] if is_model(stream_table) else stream_table
 
 
 def fetch_all(cur, sql, params=None):
@@ -81,6 +104,7 @@ def match_universe(cur, stream_table):
     Restricted to matches with a final score, since a calibration
     observation needs a realized outcome to compare against.
     """
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("g.PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         SELECT DISTINCT e.MATCH_CODE
@@ -104,6 +128,7 @@ def rows_per_message(cur, stream_table):
     and how often a message offers both a live row and a dead one -- the
     case where picking the wrong row silently costs a pair.
     """
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         WITH per_message AS (
@@ -139,6 +164,7 @@ def team_vocabulary(cur, stream_table):
     vocabularies meet decides whether PLAYER_1 = Home Team is a fact we can
     read per match or an assumption we are carrying.
     """
+    stream_table = source_table(stream_table)
     _, rows = fetch_all(cur, f"""
         SELECT 'EVENT.PLAYER_1_TEAM' AS SRC, PLAYER_1_TEAM AS VALUE,
                COUNT(*) AS N, COUNT(DISTINCT MATCH_CODE) AS MATCHES
@@ -170,6 +196,7 @@ def market_descriptions(cur, stream_table):
     Printing it puts the evidence in front of the reader rather than in a
     comment in another file.
     """
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         SELECT MARKET_ID, COUNT(DISTINCT MARKET_DESCRIPTION) AS FORMS,
@@ -190,6 +217,7 @@ def team_join_test(cur, stream_table):
     assumed. If they do not, the two feeds are naming the same two sides in
     different vocabularies and the mapping stays positional.
     """
+    stream_table = source_table(stream_table)
     _, rows = fetch_all(cur, f"""
         WITH per_match AS (
             SELECT fp.MATCH_CODE,
@@ -259,6 +287,8 @@ def fetch_quotes(cur, stream_table, match_codes):
     same rows in the metrics (config.REQUIRE_LIVE_QUOTE, on by default) and
     can now count and show what it is dropping.
     """
+    if is_model(stream_table):
+        return _model_quotes(cur, stream_table, match_codes)
     predicate, params = window_predicate("PUBLISH_TIME")
     extra = " AND PROBABILITY > 0" if config.EXCLUDE_ZERO_PROBABILITY else ""
     _, rows = fetch_all(cur, f"""
@@ -275,6 +305,22 @@ def fetch_quotes(cur, stream_table, match_codes):
     return rows
 
 
+def _model_quotes(cur, stream_table, match_codes):
+    """Price the matches with an eAMFModel version, GAMEPLAI-shaped.
+
+    Fetches what the model reads -- prod's quotes (for its pre-match prior
+    and its lines), the plays and the scores -- and returns rows exactly as
+    a stream table would.
+    """
+    from eAMFModel import stream as model_stream
+    version = stream_table.split(":", 1)[1] or "v1"
+    prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
+    plays = fetch_plays(cur, match_codes, None)
+    scores = fetch_scores(cur, match_codes)
+    return model_stream.quotes_for_matches(model_stream.model_for(version), match_codes,
+                                           plays, scores, prod)
+
+
 def status_profile(cur, stream_table):
     """What values STATUS and IS_ACTIVE actually take, and how often.
 
@@ -282,6 +328,7 @@ def status_profile(cur, stream_table):
     keeps STATUS honest: it shows how the two columns line up, which is
     the evidence for the claim that STATUS cannot be trusted.
     """
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         SELECT STATUS, IS_ACTIVE, COUNT(*) AS N,
@@ -304,6 +351,7 @@ def fetch_message_times(cur, stream_table, match_codes):
     this is establishing when a feed message happened, and a suspended or
     zero-priced market timestamps that message just as well as a live one.
     """
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         SELECT MATCH_CODE, EVENT_MESSAGE_COUNT, MIN(PUBLISH_TIME)
@@ -318,6 +366,7 @@ def fetch_message_times(cur, stream_table, match_codes):
 
 def stream_window_summary(cur, stream_table):
     """Row and match counts inside the window, for the run header."""
+    stream_table = source_table(stream_table)
     predicate, params = window_predicate("PUBLISH_TIME")
     _, rows = fetch_all(cur, f"""
         SELECT COUNT(*), COUNT(DISTINCT MATCH_CODE), MIN(PUBLISH_TIME), MAX(PUBLISH_TIME)

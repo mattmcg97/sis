@@ -797,6 +797,77 @@ class TestGeneratedQueries(unittest.TestCase):
                 self.assertIn("IS_ACTIVE", sql)
 
 
+class TestModelStream(unittest.TestCase):
+    """A MODEL:<version> stream is the eAMFModel pricer, not a table."""
+
+    def test_names(self):
+        from .. import snowflake_io as io
+        self.assertEqual(io.stream_name("v1"), "MODEL:v1")
+        self.assertEqual(io.stream_name("MODEL:V2"), "MODEL:v2")
+        self.assertEqual(io.stream_name("GAMEPLAI_STREAM_CANDIDATE"),
+                         "GAMEPLAI_STREAM_CANDIDATE")
+        self.assertTrue(io.is_model("MODEL:v1"))
+        self.assertFalse(io.is_model(config.STREAMS["prod"]))
+
+    def test_which_and_when_read_prods_table(self):
+        from .. import snowflake_io as io
+        for call in (io.match_universe, io.stream_window_summary, io.status_profile):
+            cursor = RecordingCursor()
+            try:
+                call(cursor, "MODEL:v1")
+            except (IndexError, TypeError, ValueError):
+                pass
+            sql = cursor.calls[0][0]
+            self.assertIn(config.STREAMS["prod"], sql)
+            self.assertNotIn("MODEL:", sql)
+
+    def test_quotes_are_priced_off_prods_quotes_and_the_feed(self):
+        from .. import snowflake_io as io
+        prod_table = config.STREAMS["prod"]
+        plays = [("AF1", 6, 1, "Home Team", 1, 10, 35, None),
+                 ("AF1", 10, 1, "Home Team", 1, 10, 26, None),
+                 ("AF1", 16, 1, "Home Team", 2, 11, 26, None)]
+        texts = {50: "PLAYER 1 to win", 51: "PLAYER 2 to win",
+                 52: "PLAYER 1 to score over -2.5 points more than PLAYER 2",
+                 53: "PLAYER 2 to score over 2.5 points more than PLAYER 1",
+                 54: "Total points over 38.5", 55: "Total points under 38.5"}
+        probs = {50: 42.0, 51: 58.0, 52: 46.0, 53: 54.0, 54: 47.0, 55: 53.0}
+        quotes = [("AF1", mid, m, probs[mid], 2.0, texts[mid], m if m else None, "OPEN", "true")
+                  for m in (0, 10, 16) for mid in texts]
+
+        def fetch_all(cur, sql, params=None):
+            if io.PLAY_TABLE in sql:
+                return None, plays
+            if io.SCORE_TABLE in sql:
+                return None, []
+            if prod_table in sql:
+                return None, quotes
+            raise AssertionError("unexpected query")
+
+        with mock.patch.object(io, "fetch_all", side_effect=fetch_all):
+            rows = io.fetch_quotes(RecordingCursor(), "MODEL:v1", ["AF1"])
+        self.assertTrue(rows)
+        self.assertTrue(all(len(r) == 9 for r in rows))
+        live = [r for r in rows if r[8] == "true"]
+        self.assertEqual({r[1] for r in live}, set(texts))
+        spread = next(r for r in live if r[1] == 52)
+        self.assertEqual(markets.parse_line(spread[5]), -2.5)
+        index = directional.index_by_message(rows)
+        self.assertIn(("AF1", 50), index)
+
+    def test_the_cli_swaps_the_candidate(self):
+        from .. import __main__ as cli
+        saved = dict(config.STREAMS)
+        try:
+            args = cli.build_parser().parse_args(["report", "--candidate", "v2"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                cli.apply_overrides(args)
+            self.assertEqual(config.STREAMS["candidate"], "MODEL:v2")
+        finally:
+            config.STREAMS.clear()
+            config.STREAMS.update(saved)
+
+
 class TestSnapshotAnchor(unittest.TestCase):
     """Where in a drive the snapshot is taken from."""
 

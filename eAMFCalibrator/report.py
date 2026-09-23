@@ -321,6 +321,7 @@ PAIR_FIELDS = [
     "prod_outcome", "candidate_outcome", "realized",
     "prod_error", "candidate_error", "prod_line_error", "candidate_line_error",
     "disagreement", "probability_winner", "line_winner",
+    "prod_live", "candidate_live", "prod_state", "candidate_state",
 ]
 
 
@@ -744,6 +745,10 @@ def pair_row(p):
         "disagreement": p.disagreement,
         "probability_winner": p.winner("probability"),
         "line_winner": p.winner("line"),
+        "prod_live": int(p.prod_live),
+        "candidate_live": int(p.candidate_live),
+        "prod_state": p.prod_state,
+        "candidate_state": p.candidate_state,
     }
 
 

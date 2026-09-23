@@ -1084,6 +1084,14 @@ def _checks_summary(report, scan=None):
     return '<span class="good">all pass</span>'
 
 
+def _title():
+    """Names the candidate when a model version is standing in for it."""
+    candidate = config.STREAMS.get("candidate", "")
+    if candidate.upper().startswith("MODEL:"):
+        return f"eAMF model {html.escape(candidate.split(':', 1)[1])} (as candidate) vs prod"
+    return "eAMF candidate vs prod"
+
+
 def render(report, header, stats, pairs, handle_scan,
            indrive_summary=None, prematch_summary=None):
     css = html_style.CSS
@@ -1100,7 +1108,7 @@ def render(report, header, stats, pairs, handle_scan,
 <body>
 <div class="wrap">
   <header>
-    <h1>eAMF candidate vs prod</h1>
+    <h1>{_title()}</h1>
   </header>
 
   <div id="headline">{_headline(report)}{_market_block(report)}</div>

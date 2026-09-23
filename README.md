@@ -48,6 +48,11 @@ connected. `.env` is gitignored so credentials never get committed.
   possession cells. Re-runnable: each run writes CSVs that `compare` diffs,
   so prod vs candidate (or the same stream week on week) is one command.
   See `eAMFCalibrator/README.md`.
+- `eAMFModel/` — A rival in-play pricer for moneyline, spread and total. It
+  is top-down with no machine learning: a pre-match anchor, a scoreboard
+  update, and exact Markov chains over possessions and over the current
+  drive. It suspends around feed garbage. The calibrator runs it in the
+  candidate's place with `--candidate v1`. See `eAMFModel/README.md`.
 - `nb2/` — Pre-match NB2 rating model (Adrian's): fitting (`NBRatingTrial.py`),
   schedule pricing (`NB2_schedule_predict.py`), and out-of-sample calibration
   backtests in both Python and R (`backtest_nb2_calibration.py`,
