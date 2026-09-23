@@ -364,6 +364,7 @@ def print_directional_header(header, stats):
         ("...where a live row replaced a dead one", "quote_upgraded_to_live"),
         ("market never quoted by both", "no_common_message_for_market"),
         ("nearest common message too far", "outside_message_gap"),
+        ("conversion/kick/score quote passed over", "garbage_quote_message_avoided"),
         ("line could not be parsed", "unparsed_line"),
         ("push / unresolved", "pushes_or_unresolved"),
         ("matches with no play rows", "matches_without_plays"),
