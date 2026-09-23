@@ -240,8 +240,7 @@ def _rows_at_message(quotes_by_stream):
 # market-state context that otherwise needs a four-way join.
 PAIR_DUMP_FIELDS = report.PAIR_FIELDS + [
     "market", "selection", "prod_decimal", "candidate_decimal",
-    "decisive_winner", "decided_by", "basis",
-    "prod_state", "candidate_state", "prod_live", "candidate_live", "live",
+    "decisive_winner", "decided_by", "basis", "live",
     "anchor_kind", "anchor_cleaning", "drive_n_plays", "drive_dropped_inside",
     "prod_rows_at_message", "candidate_rows_at_message",
     "score_bucket", "time_bucket", "possession_bucket",
@@ -271,10 +270,6 @@ def _pair_dump_rows(pairs, play_out, drive_out, rows_at=None):
             "decisive_winner": pair.decisive_winner,
             "decided_by": pair.decided_by,
             "basis": "line" if not pair.same_line else "prob",
-            "prod_state": pair.prod_state,
-            "candidate_state": pair.candidate_state,
-            "prod_live": int(pair.prod_live),
-            "candidate_live": int(pair.candidate_live),
             "live": _live_label(pair),
             "anchor_kind": pair.anchor,
             "anchor_cleaning": cleaning.get(

@@ -115,11 +115,21 @@ STALE_AFTER_CHANGE = "stale_after_change"   # a new team label on the old
                                             # team's down, distance and field
 IMPOSSIBLE_DOWN = "impossible_down"   # the down skipped ahead with nothing
                                       # else moving: no play happened
+CONVERSION = "conversion"        # after a score, before the other side has the
+                                 # ball: the extra point / two and the kick,
+                                 # still wearing the scoring play's down,
+                                 # distance and label
+
+# Where a conversion is tried from: the extra point (85) and the two (98).
+CONVERSION_SPOTS = (85, 98)
+KICK_SPOT = 35
+# How long after a score its conversion and kick rows can still arrive.
+CONVERSION_MESSAGES = 10
 
 FIRST_DOWN_YARDS = 10
 
 _DROPPED = (DUPLICATE, KICKOFF, SPECIAL_TEAMS, STALE_AFTER_CHANGE,
-            IMPOSSIBLE_DOWN)
+            IMPOSSIBLE_DOWN, CONVERSION)
 
 # Whether a kick stands between the last surviving row and this one, and
 # the yard line it was taken from. Field position does not carry across a
@@ -176,9 +186,15 @@ def classify_plays(plays, scores=()):
     Everything else is play. A fresh 1st-and-10 whose predecessor was a
     different team, or was dropped as a kick, begins a drive.
 
-    `scores` is accepted and unused: the rules above read the play feed
-    alone, which keeps drive detection independent of the PLAYER_1 frame
-    rather than resting on it.
+      CONVERSION      just after a score: the extra point from the 85 (or
+                      the two from the 98), still wearing the touchdown's
+                      down and distance, and the kick spot under the
+                      scorer's label. Not a scrimmage state, so a price
+                      quoted against it is not quoting one.
+
+    `scores` is read only for WHEN points were scored, never for which
+    side scored, so drive detection stays independent of the PLAYER_1
+    frame: the scoring side is whoever the feed had on the ball.
     """
     ordered = sorted(plays, key=lambda p: p.event_message_count)
     deduped = dedupe(ordered)
@@ -215,7 +231,67 @@ def classify_plays(plays, scores=()):
         elif reason not in _DROPPED:
             previous = play
             kick = _NO_KICK
+    _mark_conversions(ordered, reasons, scores)
     return reasons
+
+
+def _mark_conversions(ordered, reasons, scores):
+    """Re-label the conversion and kick rows that follow a score.
+
+    Narrow on purpose: only rows that cannot be a snap. The label is no
+    guide on its own -- the feed can keep the scoring side's label through
+    the next possession -- so a row is a conversion only if, within
+    CONVERSION_MESSAGES of a score, it sits on a conversion spot (the 85
+    for the extra point, the 98 for the two), or it is a 1st-and-10 on the
+    kick spot under the label of the side that just scored (the kickoff;
+    the receiving side can legitimately start there after a touchback).
+    """
+    windows = sorted(s.event_message_count for s in scores
+                     if s.event_message_count is not None
+                     and (s.p1_change or s.p2_change))
+    if not windows:
+        return
+    for scored_at in windows:
+        before = [p for p in ordered if p.event_message_count <= scored_at
+                  and not was_dropped(reasons[p.event_message_count])]
+        scorer = before[-1].offensive_team if before else None
+        for play in ordered:
+            m = play.event_message_count
+            if m <= scored_at or was_dropped(reasons[m]):
+                continue
+            if m - scored_at > CONVERSION_MESSAGES:
+                break
+            kick = (play.down_number == 1 and play.distance == 10
+                    and play.field_position == KICK_SPOT
+                    and play.offensive_team == scorer)
+            if play.field_position in CONVERSION_SPOTS or kick:
+                reasons[m] = CONVERSION
+
+
+def garbage_messages(plays, scores):
+    """Messages whose state is not a snap: dropped rows, conversions and
+    kicks, and the score messages themselves.
+
+    A republish of a clean row is clean; a republish of a garbage row is
+    garbage. A quote on one of these messages was published against a
+    state no one was playing, so it is not compared.
+    """
+    reasons = classify_plays(plays, scores)
+    out = set()
+    last_clean = True
+    for play in sorted(plays, key=lambda p: p.event_message_count):
+        reason = reasons[play.event_message_count]
+        if reason == DUPLICATE:
+            clean = last_clean
+        else:
+            clean = reason in (KEPT, DRIVE_START)
+            last_clean = clean
+        if not clean:
+            out.add(play.event_message_count)
+    for s in scores:
+        if s.event_message_count is not None and (s.p1_change or s.p2_change):
+            out.add(s.event_message_count)
+    return out
 
 
 def _is_impossible_down(play, previous):

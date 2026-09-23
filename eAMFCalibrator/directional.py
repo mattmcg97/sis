@@ -417,6 +417,11 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
         snapshots = build_snapshots(match_code, plays, scores)
         stats["snapshots"] += len(snapshots)
 
+        # A quote on a conversion, a kick or a score message was priced
+        # against a down and distance nobody was playing: never paired.
+        garbage = drives.garbage_messages(plays, scores)
+        clean_shared = {}
+
         for snap in snapshots:
             paired_any = False
             for market_id in markets.MARKET_IDS:
@@ -424,9 +429,14 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
                 if not messages:
                     stats["no_common_message_for_market"] += 1
                     continue
-
-                hit = nearest_message(messages, snap.event_message_count,
+                if market_id not in clean_shared:
+                    clean_shared[market_id] = [m for m in messages if m not in garbage]
+                raw = nearest_message(messages, snap.event_message_count,
                                       config.MAX_PAIR_MESSAGE_GAP)
+                hit = nearest_message(clean_shared[market_id], snap.event_message_count,
+                                      config.MAX_PAIR_MESSAGE_GAP)
+                if raw is not None and raw[0] in garbage:
+                    stats["garbage_quote_message_avoided"] += 1
                 if hit is None:
                     stats["outside_message_gap"] += 1
                     continue

@@ -564,6 +564,11 @@ def common_options():
                              f"tight on a long window (default {config.MATCH_CHUNK_SIZE})")
     tuning.add_argument("--time-axis", choices=["period", "drive"],
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
+    tuning.add_argument("--candidate", metavar="STREAM",
+                        help="what stands in the candidate's place: a table name, "
+                             "or a model version (v1, v2 -- see eAMFModel) priced "
+                             "live off prod's lines and the play feed "
+                             f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -593,6 +598,10 @@ def apply_overrides(args):
     if getattr(args, "drop_flipped", False):
         config.EXCLUDE_FLIPPED_MATCHES = True
 
+    candidate = getattr(args, "candidate", None)
+    if candidate:
+        config.STREAMS["candidate"] = snowflake_io.stream_name(candidate)
+
     clock = getattr(args, "clock", None)
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
@@ -602,7 +611,8 @@ def apply_overrides(args):
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
           f"   sport {config.SPORT_CODE}"
-          f"   spread {config.SPREAD_RESOLUTION}")
+          f"   spread {config.SPREAD_RESOLUTION}"
+          f"   candidate {config.STREAMS['candidate']}")
 
 
 def build_parser():

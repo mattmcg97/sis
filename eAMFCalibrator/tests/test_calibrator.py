@@ -233,20 +233,22 @@ class TestFlippedMatchExclusion(unittest.TestCase):
         plays = []
         scores = []
         for match in self.MATCHES:
-            for msg, team in ((1, "Home Team"), (2, "Away Team")):
+            for msg, team in ((1, "Home Team"), (3, "Away Team")):
                 plays.append((match, msg, 1, team, 1, 10, 25, None))
-        # CLEAN climbs; SWAP trades its totals on the second message. Both
+        # CLEAN climbs; SWAP trades its totals on the second score. Both
         # finish decided, so the moneyline resolves rather than pushing.
-        scores.extend([("CLEAN", 1, 1, 7, None, 7, 0),
-                       ("CLEAN", 2, 1, 7, 7, 14, 7)])
-        scores.extend([("SWAP", 1, 1, 14, None, 14, 7),
-                       ("SWAP", 2, 1, None, None, 7, 14)])
+        # Scores land on messages of their own, as in the feed: a quote on
+        # a score message is never paired.
+        scores.extend([("CLEAN", 2, 1, 7, None, 7, 0),
+                       ("CLEAN", 4, 1, 7, 7, 14, 7)])
+        scores.extend([("SWAP", 2, 1, 14, None, 14, 7),
+                       ("SWAP", 4, 1, None, None, 7, 14)])
         return plays, scores
 
     def quotes(self):
         rows = []
         for match in self.MATCHES:
-            for msg in (1, 2):
+            for msg in (1, 3):
                 rows.append((match, 50, dt.datetime(2026, 9, 18, 12, msg),
                              60.0, 1.67, "PLAYER 1", msg, "open", "true"))
         return rows
@@ -797,6 +799,77 @@ class TestGeneratedQueries(unittest.TestCase):
                 self.assertIn("IS_ACTIVE", sql)
 
 
+class TestModelStream(unittest.TestCase):
+    """A MODEL:<version> stream is the eAMFModel pricer, not a table."""
+
+    def test_names(self):
+        from .. import snowflake_io as io
+        self.assertEqual(io.stream_name("v1"), "MODEL:v1")
+        self.assertEqual(io.stream_name("MODEL:V2"), "MODEL:v2")
+        self.assertEqual(io.stream_name("GAMEPLAI_STREAM_CANDIDATE"),
+                         "GAMEPLAI_STREAM_CANDIDATE")
+        self.assertTrue(io.is_model("MODEL:v1"))
+        self.assertFalse(io.is_model(config.STREAMS["prod"]))
+
+    def test_which_and_when_read_prods_table(self):
+        from .. import snowflake_io as io
+        for call in (io.match_universe, io.stream_window_summary, io.status_profile):
+            cursor = RecordingCursor()
+            try:
+                call(cursor, "MODEL:v1")
+            except (IndexError, TypeError, ValueError):
+                pass
+            sql = cursor.calls[0][0]
+            self.assertIn(config.STREAMS["prod"], sql)
+            self.assertNotIn("MODEL:", sql)
+
+    def test_quotes_are_priced_off_prods_quotes_and_the_feed(self):
+        from .. import snowflake_io as io
+        prod_table = config.STREAMS["prod"]
+        plays = [("AF1", 6, 1, "Home Team", 1, 10, 35, None),
+                 ("AF1", 10, 1, "Home Team", 1, 10, 26, None),
+                 ("AF1", 16, 1, "Home Team", 2, 11, 26, None)]
+        texts = {50: "PLAYER 1 to win", 51: "PLAYER 2 to win",
+                 52: "PLAYER 1 to score over -2.5 points more than PLAYER 2",
+                 53: "PLAYER 2 to score over 2.5 points more than PLAYER 1",
+                 54: "Total points over 38.5", 55: "Total points under 38.5"}
+        probs = {50: 42.0, 51: 58.0, 52: 46.0, 53: 54.0, 54: 47.0, 55: 53.0}
+        quotes = [("AF1", mid, m, probs[mid], 2.0, texts[mid], m if m else None, "OPEN", "true")
+                  for m in (0, 10, 16) for mid in texts]
+
+        def fetch_all(cur, sql, params=None):
+            if io.PLAY_TABLE in sql:
+                return None, plays
+            if io.SCORE_TABLE in sql:
+                return None, []
+            if prod_table in sql:
+                return None, quotes
+            raise AssertionError("unexpected query")
+
+        with mock.patch.object(io, "fetch_all", side_effect=fetch_all):
+            rows = io.fetch_quotes(RecordingCursor(), "MODEL:v1", ["AF1"])
+        self.assertTrue(rows)
+        self.assertTrue(all(len(r) == 9 for r in rows))
+        live = [r for r in rows if r[8] == "true"]
+        self.assertEqual({r[1] for r in live}, set(texts))
+        spread = next(r for r in live if r[1] == 52)
+        self.assertEqual(markets.parse_line(spread[5]), -2.5)
+        index = directional.index_by_message(rows)
+        self.assertIn(("AF1", 50), index)
+
+    def test_the_cli_swaps_the_candidate(self):
+        from .. import __main__ as cli
+        saved = dict(config.STREAMS)
+        try:
+            args = cli.build_parser().parse_args(["report", "--candidate", "v2"])
+            with contextlib.redirect_stdout(io.StringIO()):
+                cli.apply_overrides(args)
+            self.assertEqual(config.STREAMS["candidate"], "MODEL:v2")
+        finally:
+            config.STREAMS.clear()
+            config.STREAMS.update(saved)
+
+
 class TestSnapshotAnchor(unittest.TestCase):
     """Where in a drive the snapshot is taken from."""
 
@@ -1198,6 +1271,59 @@ class TestPointsEndADrive(unittest.TestCase):
         snaps = drives.build_snapshots("AF1", plays, [])
         self.assertEqual(len(snaps), 1)
         self.assertEqual(snaps[0].n_plays, 3)
+
+
+class TestConversionsAreGarbage(unittest.TestCase):
+    """AF063170926 1st quarter: Home scores from the 90, converts from the
+    85 still wearing the touchdown's 3rd-and-5, kicks from the 35, and Away
+    starts on the 30. None of the rows between the score and Away's start
+    is a snap, and no price quoted on them may be compared."""
+
+    HOME, AWAY = "Home Team", "Away Team"
+
+    def feed(self):
+        plays = [drives.PlayRow(m, 1, team, d, dist, f, None)
+                 for m, team, d, dist, f in [
+                     (10, self.HOME, 1, 10, 26), (36, self.HOME, 3, 5, 90),
+                     (42, self.HOME, 3, 5, 85), (45, self.HOME, 3, 5, 85),
+                     (47, self.HOME, 1, 10, 35), (52, self.AWAY, 1, 10, 35),
+                     (54, self.AWAY, 1, 10, 30), (60, self.AWAY, 2, 11, 30),
+                     (87, self.AWAY, 2, 15, 85), (92, self.AWAY, 2, 35, 85),
+                     (101, self.HOME, 1, 10, 21)]]
+        scores = [drives.ScoreRow(40, 1, 6, 0, 6, 0), drives.ScoreRow(46, 1, 1, 0, 7, 0),
+                  drives.ScoreRow(86, 1, 0, 6, 7, 6), drives.ScoreRow(93, 1, 0, 1, 7, 7)]
+        return plays, scores
+
+    def test_conversion_rows(self):
+        plays, scores = self.feed()
+        reasons = drives.classify_plays(plays, scores)
+        self.assertEqual(reasons[87], drives.CONVERSION)
+        self.assertEqual(reasons[92], drives.CONVERSION)
+        self.assertNotEqual(reasons[42], drives.KEPT)
+        self.assertNotIn(reasons[47], (drives.KEPT, drives.DRIVE_START))
+        self.assertIn(reasons[54], (drives.KEPT, drives.DRIVE_START))
+
+    def test_no_drive_is_built_from_a_conversion(self):
+        plays, scores = self.feed()
+        anchors = [s.event_message_count for s in drives.build_snapshots("AF1", plays, scores)]
+        self.assertEqual(anchors, [10, 54, 101])
+
+    def test_garbage_messages(self):
+        plays, scores = self.feed()
+        garbage = drives.garbage_messages(plays, scores)
+        for m in (40, 42, 45, 46, 47, 52, 86, 87, 92, 93):
+            self.assertIn(m, garbage, m)
+        for m in (10, 36, 54, 60, 101):
+            self.assertNotIn(m, garbage, m)
+
+    def test_the_receivers_touchback_on_the_35_is_a_snap(self):
+        plays = [drives.PlayRow(10, 1, self.HOME, 1, 10, 26, None),
+                 drives.PlayRow(36, 1, self.HOME, 3, 5, 90, None),
+                 drives.PlayRow(44, 1, self.AWAY, 1, 10, 35, None),
+                 drives.PlayRow(50, 1, self.AWAY, 2, 3, 42, None)]
+        scores = [drives.ScoreRow(40, 1, 7, 0, 7, 0)]
+        reasons = drives.classify_plays(plays, scores)
+        self.assertNotEqual(reasons[44], drives.CONVERSION)
 
 
 class TestALockedFileDoesNotLoseTheRun(unittest.TestCase):

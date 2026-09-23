@@ -321,6 +321,7 @@ PAIR_FIELDS = [
     "prod_outcome", "candidate_outcome", "realized",
     "prod_error", "candidate_error", "prod_line_error", "candidate_line_error",
     "disagreement", "probability_winner", "line_winner",
+    "prod_live", "candidate_live", "prod_state", "candidate_state",
 ]
 
 
@@ -363,6 +364,7 @@ def print_directional_header(header, stats):
         ("...where a live row replaced a dead one", "quote_upgraded_to_live"),
         ("market never quoted by both", "no_common_message_for_market"),
         ("nearest common message too far", "outside_message_gap"),
+        ("conversion/kick/score quote passed over", "garbage_quote_message_avoided"),
         ("line could not be parsed", "unparsed_line"),
         ("push / unresolved", "pushes_or_unresolved"),
         ("matches with no play rows", "matches_without_plays"),
@@ -744,6 +746,10 @@ def pair_row(p):
         "disagreement": p.disagreement,
         "probability_winner": p.winner("probability"),
         "line_winner": p.winner("line"),
+        "prod_live": int(p.prod_live),
+        "candidate_live": int(p.candidate_live),
+        "prod_state": p.prod_state,
+        "candidate_state": p.candidate_state,
     }
 
 
