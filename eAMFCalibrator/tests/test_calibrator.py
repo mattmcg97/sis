@@ -1011,15 +1011,20 @@ class TestV4Candidate(unittest.TestCase):
     players' handles attached for v4's profiles."""
 
     MC = "AF1"
+    NAME = "v4"
+
+    @classmethod
+    def model(cls):
+        import importlib
+        return importlib.import_module(f"eAMFModel.{cls.NAME}")
 
     @classmethod
     def setUpClass(cls):
         import tempfile
-        from eAMFModel import v4
         from eAMFModel.tests.test_v4 import _with_handles
         from eAMFModel.tests.test_v3 import _matches
         cls.tmp = tempfile.TemporaryDirectory()
-        v4.build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
+        cls.model().build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
 
     @classmethod
     def tearDownClass(cls):
@@ -1038,9 +1043,11 @@ class TestV4Candidate(unittest.TestCase):
                 return None, self.prod_rows()
             raise AssertionError("unexpected query")
 
-        saved = (config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS, config.V4_LINES)
-        config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS = model_dir, 50, 1
-        config.V4_LINES = lines
+        key = self.NAME.upper()
+        names = (f"{key}_MODEL_DIR", f"{key}_PATHS", "V3_WORKERS", f"{key}_LINES")
+        saved = [getattr(config, n) for n in names]
+        for n, v in zip(names, (model_dir, 50, 1, lines)):
+            setattr(config, n, v)
         try:
             with mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
                     mock.patch.object(sio, "fetch_scores", return_value=scores), \
@@ -1049,11 +1056,12 @@ class TestV4Candidate(unittest.TestCase):
                     mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
                     mock.patch.object(scouting, "fetch_handles", return_value=handles) as fh, \
                     contextlib.redirect_stdout(io.StringIO()):
-                rows = sio.fetch_quotes(RecordingCursor(), "MODEL:v4", [self.MC])
+                rows = sio.fetch_quotes(RecordingCursor(), f"MODEL:{self.NAME}", [self.MC])
                 self.fetched_handles = fh.called
                 return rows
         finally:
-            config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS, config.V4_LINES = saved
+            for n, v in zip(names, saved):
+                setattr(config, n, v)
 
     def test_quotes_at_the_paired_lines_with_handles_fetched(self):
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
@@ -1071,10 +1079,10 @@ class TestV4Candidate(unittest.TestCase):
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(SystemExit) as caught:
                 self.quotes(empty, {})
-        self.assertIn("v4-build", str(caught.exception))
+        self.assertIn(f"{self.NAME}-build", str(caught.exception))
 
     def test_by_default_v4_quotes_its_own_even_lines(self):
-        self.assertEqual(config.V4_LINES, "own")
+        self.assertEqual(getattr(config, f"{self.NAME.upper()}_LINES"), "own")
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own")
         by = collections.defaultdict(dict)
         for r in rows:
@@ -1091,7 +1099,6 @@ class TestV4Candidate(unittest.TestCase):
                 self.assertAlmostEqual(quoted[52][1] + quoted[53][1], 100, delta=0.02)
 
     def test_a_model_with_nb2_is_given_each_matchs_players_and_teams(self):
-        from eAMFModel import v4
         from .. import snowflake_io as sio
         info = [{"MATCH_CODE": self.MC, "PLAYER_1_HANDLE": "ALPHA"}]
 
@@ -1103,7 +1110,7 @@ class TestV4Candidate(unittest.TestCase):
                 Fake.asked = schedule
                 return {self_mc: (21.0, 14.0) for self_mc in [r["MATCH_CODE"] for r in schedule]}
 
-        with mock.patch.object(v4, "prematch_model", return_value=Fake()), \
+        with mock.patch.object(self.model(), "prematch_model", return_value=Fake()), \
                 mock.patch.object(sio, "fetch_match_info", return_value=info) as fetch:
             rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
         self.assertEqual(fetch.call_args.args[1], [self.MC])
@@ -1120,12 +1127,19 @@ class TestV4Candidate(unittest.TestCase):
         from .. import labels, snowflake_io as sio
         saved = dict(config.STREAMS)
         try:
-            config.STREAMS["candidate"] = sio.stream_name("v4")
-            self.assertEqual(labels.candidate_label(), "v4")
-            self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v4.html")
+            config.STREAMS["candidate"] = sio.stream_name(self.NAME)
+            self.assertEqual(labels.candidate_label(), self.NAME)
+            self.assertEqual(labels.default_report_name("eamf_report.html"),
+                             f"eamf_report_{self.NAME}.html")
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
+
+
+class TestV5Candidate(TestV4Candidate):
+    """--candidate v5: wired as v4 is, off its own model (v5-build)."""
+
+    NAME = "v5"
 
 
 class TestMatchHistory(unittest.TestCase):

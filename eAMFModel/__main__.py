@@ -15,6 +15,8 @@
   v3 SNAPS.csv           score v3 -- the play-by-play simulation -- against prod
   v4-build / v4          the same for v4 (v3 plus common random numbers, player
                          profiles and, with --history, our own NB2 pre-match)
+  v5-build / v5          the same for v5 (v4 plus run/pass play calling and the
+                         rubber band)
 
 The calibrator runs a version as a stream in its own right:
   python -m eAMFCalibrator report --candidate v1
@@ -172,17 +174,18 @@ def cmd_v3(args):
         backtest.print_summary(summary, names, f"Brier by {by} (v3, PLAY_OVER snapshots)")
 
 
-def _v4_module():
+def _v4_module(name="v4"):
     try:
         import numpy  # noqa: F401
     except ImportError:
-        raise SystemExit("v4 needs numpy:  py -m pip install numpy   (or python -m pip ...)")
-    from . import v4
-    return v4
+        raise SystemExit(f"{name} needs numpy:  py -m pip install numpy   (or python -m pip ...)")
+    import importlib
+    return importlib.import_module(f".{name}", __package__)
 
 
 def cmd_v4_build(args):
-    v4 = _v4_module()
+    name = getattr(args, "version", "v4")
+    v4 = _v4_module(name)
     data = playover.load(args.snapshots)
     keep = set(_half(args.snapshots, args.half))
     handles = players.load_handles(args.handles) if args.handles else None
@@ -195,15 +198,17 @@ def cmd_v4_build(args):
             before = dt.datetime.fromisoformat(args.before)
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
              history=history, before=before)
-    print(f"  wrote {args.out}/v4tables.npz, {args.out}/v4grid.npz"
-          f"{' and v4players.json' if os.path.exists(os.path.join(args.out, 'v4players.json')) else ''}")
+    players_file = f"{name}players.json"
+    print(f"  wrote {args.out}/{name}tables.npz, {args.out}/{name}grid.npz"
+          f"{' and ' + players_file if os.path.exists(os.path.join(args.out, players_file)) else ''}")
 
 
 def cmd_v4(args):
-    v4 = _v4_module()
-    variants = [v4.Variant("v4")]
+    name = getattr(args, "version", "v4")
+    v4 = _v4_module(name)
+    variants = [v4.Variant(name)]
     if args.without_profiles:
-        variants.append(v4.Variant("v4_no_profiles", profiles=False, pace=False))
+        variants.append(v4.Variant(f"{name}_no_profiles", profiles=False, pace=False))
     handles = players.load_handles(args.handles) if args.handles else None
     matches = _half(args.snapshots, args.half)
     if args.limit:
@@ -212,8 +217,8 @@ def cmd_v4(args):
     if args.history:
         from . import nb2_prior
         history = nb2_prior.load_history(args.history)
-    graded, skipped = v4.run(args.snapshots, os.path.join(args.model, "v4tables.npz"),
-                             os.path.join(args.model, "v4grid.npz"), variants, matches=matches,
+    graded, skipped = v4.run(args.snapshots, os.path.join(args.model, f"{name}tables.npz"),
+                             os.path.join(args.model, f"{name}grid.npz"), variants, matches=matches,
                              n_paths=args.paths, workers=args.workers, handles=handles,
                              history=history)
     names = [v.name for v in variants]
@@ -228,7 +233,7 @@ def cmd_v4(args):
     }
     for by in args.by.split(","):
         summary = backtest.summarise(graded, names, key=keys[by], n_boot=args.boot)
-        backtest.print_summary(summary, names, f"Brier by {by} (v4, PLAY_OVER snapshots)")
+        backtest.print_summary(summary, names, f"Brier by {by} ({name}, PLAY_OVER snapshots)")
 
 
 def _num(value):
@@ -418,35 +423,37 @@ def main(argv=None):
     p.add_argument("--by", default="market,period-market,kind")
     p.set_defaults(func=cmd_v3)
 
-    p = sub.add_parser("v4-build", help="v4: play tables, in-game quarter fit, pre-match grid "
-                                        "and player profiles off PLAY_OVER snapshots")
-    p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--half", choices=["train", "test", "all"], default="train")
-    p.add_argument("--out", default="v4_model")
-    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
-                                     "(default: the export's own handle columns)")
-    p.add_argument("--history", help="match history (eAMFCalibrator history's CSV, shaped like "
-                                     "nb2/AMFELO.csv): fits NB2 as the pre-match model instead "
-                                     "of reading prod's pre-match quotes")
-    p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
-                                    "after the last match built on)")
-    p.set_defaults(func=cmd_v4_build)
+    for name, what in (("v4", "v4: play tables, pre-match grid (NB2 with --history) and player "
+                               "profiles off PLAY_OVER snapshots"),
+                       ("v5", "v5: v4 plus run/pass play calling and the rubber band (see README)")):
+        p = sub.add_parser(f"{name}-build", help=what)
+        p.add_argument("snapshots", help="scouting_playover.csv")
+        p.add_argument("--half", choices=["train", "test", "all"], default="train")
+        p.add_argument("--out", default=f"{name}_model")
+        p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
+                                         "(default: the export's own handle columns)")
+        p.add_argument("--history", help="match history (eAMFCalibrator history's CSV, shaped like "
+                                         "nb2/AMFELO.csv): fits NB2 as the pre-match model instead "
+                                         "of reading prod's pre-match quotes")
+        p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
+                                        "after the last match built on)")
+        p.set_defaults(func=cmd_v4_build, version=name)
 
-    p = sub.add_parser("v4", help="score v4 against prod on PLAY_OVER snapshots")
-    p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--model", default="v4_model", help="v4-build's output directory")
-    p.add_argument("--half", choices=["train", "test", "all"], default="test")
-    p.add_argument("--paths", type=int, default=2000, help="simulated games per snapshot")
-    p.add_argument("--without-profiles", action="store_true",
-                   help="also a variant without the player profiles")
-    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
-    p.add_argument("--history", help="the graded matches' players, teams and streams (eAMFCalibrator"
-                                     " history's CSV): needed when the model has NB2's pre-match")
-    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
-    p.add_argument("--limit", type=int, help="first N matches only")
-    p.add_argument("--boot", type=int, default=300)
-    p.add_argument("--by", default="market,period-market,kind")
-    p.set_defaults(func=cmd_v4)
+        p = sub.add_parser(name, help=f"score {name} against prod on PLAY_OVER snapshots")
+        p.add_argument("snapshots", help="scouting_playover.csv")
+        p.add_argument("--model", default=f"{name}_model", help=f"{name}-build's output directory")
+        p.add_argument("--half", choices=["train", "test", "all"], default="test")
+        p.add_argument("--paths", type=int, default=2000, help="simulated games per snapshot")
+        p.add_argument("--without-profiles", action="store_true",
+                       help="also a variant without the player profiles")
+        p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
+        p.add_argument("--history", help="the graded matches' players, teams and streams (eAMFCalibrator"
+                                         " history's CSV): needed when the model has NB2's pre-match")
+        p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+        p.add_argument("--limit", type=int, help="first N matches only")
+        p.add_argument("--boot", type=int, default=300)
+        p.add_argument("--by", default="market,period-market,kind")
+        p.set_defaults(func=cmd_v4, version=name)
 
     args = parser.parse_args(argv)
     args.func(args)

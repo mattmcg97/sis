@@ -47,6 +47,11 @@ V4_PATHS = 2000
 # "own": v4 quotes its own even line, moved as the game moves; "prod": v4's
 # book read at the line prod quoted, so every pair answers one question
 V4_LINES = "own"
+# The same for --candidate v5 (`python -m eAMFModel v5-build`; None:
+# $EAMF_V5_MODEL, then ./v5_model).
+V5_MODEL_DIR = None
+V5_PATHS = 2000
+V5_LINES = "own"
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.

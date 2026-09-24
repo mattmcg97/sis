@@ -316,8 +316,8 @@ def _model_quotes(cur, stream_table, match_codes):
     version = stream_table.split(":", 1)[1] or "v1"
     if version.lower() == "v3":
         return _v3_quotes(cur, match_codes)
-    if version.lower() == "v4":
-        return _v4_quotes(cur, match_codes)
+    if version.lower() in ("v4", "v5"):
+        return _v4_quotes(cur, match_codes, version.lower())
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
     scores = fetch_scores(cur, match_codes)
@@ -460,26 +460,30 @@ def _v3_quotes(cur, match_codes):
                                         n_paths=config.V3_PATHS, workers=config.V3_WORKERS)
 
 
-def _v4_quotes(cur, match_codes):
-    """eAMFModel v4, as v3 (same snapshots, same line pairing), with the
-    players' handles attached for v4's player profiles."""
-    _need_numpy("v4")
-    from eAMFModel import v4, v4_stream
-    tables, _ = v4_stream.model_paths(config.V4_MODEL_DIR)   # fail early, with instructions
-    nb2 = v4.prematch_model(tables) is not None
+def _v4_quotes(cur, match_codes, name="v4"):
+    """eAMFModel v4 (or v5, its successor), as v3 (same snapshots), with the
+    players' handles attached for the player profiles."""
+    import importlib
+    _need_numpy(name)
+    model = importlib.import_module(f"eAMFModel.{name}")
+    stream = importlib.import_module(f"eAMFModel.{name}_stream")
+    key = name.upper()
+    model_dir = getattr(config, f"{key}_MODEL_DIR")
+    paths, lines = getattr(config, f"{key}_PATHS"), getattr(config, f"{key}_LINES")
+    tables, _ = stream.model_paths(model_dir)                 # fail early, with instructions
+    nb2 = model.prematch_model(tables) is not None
     if not nb2:
-        print("  v4: this model was built without --history, so its pre-match comes from prod's"
-              " quotes; rebuild it with --history for our own (NB2)", flush=True)
+        print(f"  {name}: this model was built without --history, so its pre-match comes from"
+              " prod's quotes; rebuild it with --history for our own (NB2)", flush=True)
     snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
-    # players, teams and stream for v4's own pre-match model (NB2)
+    # players, teams and stream for the model's own pre-match model (NB2)
     match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
-    print(f"  v4: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
+    print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{config.V4_PATHS:,} games each, on "
-          f"{'its own even lines' if config.V4_LINES == 'own' else 'prod lines'}", flush=True)
-    return v4_stream.quotes_for_matches(snapshots, prod_all, config.V4_MODEL_DIR,
-                                        n_paths=config.V4_PATHS, workers=config.V3_WORKERS,
-                                        match_info=match_info, lines=config.V4_LINES)
+          f"{paths:,} games each, on "
+          f"{'its own even lines' if lines == 'own' else 'prod lines'}", flush=True)
+    return stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
+                                     workers=config.V3_WORKERS, match_info=match_info, lines=lines)
 
 
 def status_profile(cur, stream_table):
