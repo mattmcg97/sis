@@ -148,9 +148,10 @@ class TestPlayCalling(unittest.TestCase):
             path = os.path.join(d, "t.npz")
             t4.save(path)
             t5 = sim5.Tables.load(path)
+        # a game that cannot reach overtime, which v5 plays by the real rules
         st = sim4.Start(2)
         st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim4.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 14, 10
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 38, 0
         a = sim4.simulate(t4, st, 400, np.random.default_rng(1), seed=9)
         b = sim5.simulate(t5, st, 400, np.random.default_rng(1), seed=9)
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
@@ -233,6 +234,39 @@ class TestBackedUp(unittest.TestCase):
         t = self._table(safety=0.3)
         t.save(path)
         self.assertAlmostEqual(float(sim5.Tables.load(path).backed[1, sim5.B_SAFETY]), 0.3)
+
+
+class TestOvertime(unittest.TestCase):
+    """Overtime as the feed shows it played: each side has the ball once,
+    then the game ends the moment one side leads; one or two behind after
+    a touchdown once the other side has had the ball, a side goes for two."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim5.Tables.build(_matches(60), min_records=20)
+
+    def test_a_game_ends_once_both_have_had_the_ball_and_one_leads(self):
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 5, 240.0, sim5.KICK
+        st.team[:], st.home[:], st.away[:] = 0, 20, 20
+        stats = {}
+        h, a = sim5.simulate(self.tables, st, 4000, np.random.default_rng(1), seed=3, stats=stats)
+        margin, points = np.abs(h - a).ravel(), (h + a - 40).ravel()
+        self.assertGreater(stats["ot_decided"], 0)
+        # decided by the first lead after both possessions: never by more
+        # than a converted touchdown bar a defensive score, and no shoot-outs
+        self.assertGreater(float((margin <= 8).mean()), 0.97)
+        self.assertLess(float((points >= 17).mean()), 0.03)
+
+    def test_one_behind_after_a_touchdown_it_goes_for_two(self):
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 5, 150.0, sim5.CONV
+        st.team[:], st.home[:], st.away[:] = 1, 27, 26      # the away side's six: one behind
+        h, a = sim5.simulate(self.tables, st, 3000, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertTrue(set(np.unique(a)) <= {26, 28})        # never the kick to tie
+        st.home[:] = 20                                       # six to lead: kicks as usual
+        h, a = sim5.simulate(self.tables, st, 3000, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertIn(27, set(np.unique(a)))
 
 
 class TestSecondHalfKick(unittest.TestCase):
@@ -365,32 +399,40 @@ class TestBuild(unittest.TestCase):
             self.assertTrue(np.allclose(mp0, mp1))
             self.assertLess((tp1 * x).sum(), (tp0 * x).sum())
 
-    def test_the_recent_total_shade(self):
-        import datetime as dt
-        matches = {}
-        for i in range(60):
-            day = dt.date(2026, 9, 1) + dt.timedelta(days=i % 10)
-            total = 20 if i % 4 else 40            # 25% go over a line of 30.5
-            matches[f"AF{i:03d}"] = [{"match_code": f"AF{i:03d}", "file_time": f"{day} 10:00:00",
-                                       "prematch_line_52": "0.5", "prematch_prob_52": "0.5",
-                                       "prematch_line_54": "30.5", "prematch_prob_54": "0.5",
-                                       "prematch_prob_50": "0.5",
-                                       "final_p1": str(total // 2), "final_p2": str(total - total // 2)}]
-        shade, n, rate, prod = v5.recent_total_shade(matches, days=7, prior_n=200)
-        recent = [i for i in range(60) if i % 10 >= 3]          # the last 7 of the 10 days
-        self.assertEqual(n, len(recent))
-        self.assertAlmostEqual(rate, sum(i % 4 == 0 for i in recent) / len(recent), places=9)
-        self.assertAlmostEqual(prod, 0.5, places=9)
-        self.assertAlmostEqual(shade, (rate - 0.5) * n / (n + 200), places=9)
-        self.assertEqual(v5.recent_total_shade({}, 7)[0], 0.0)
+    def test_nothing_of_gameplais_is_read(self):
+        # every prod price column moved far off: v5's priors, states and
+        # prices come out the same
+        moved = {c: [dict(r, prematch_line_52="-20.5", prematch_prob_52="0.9",
+                          prematch_line_54="80.5", prematch_prob_54="0.9", prematch_prob_50="0.99",
+                          line_52="-20.5", prob_52="0.9", line_54="80.5", prob_54="0.9",
+                          prob_50="0.99") for r in rows]
+                 for c, rows in self.matches.items()}
+        for fn, k in ((v5.in_game_states, 1), (v5.rest_of_game_states, 2),
+                      (v5.quarter_start_states, 2)):
+            a, b = fn(self.matches, self.grid), fn(moved, self.grid)
+            self.assertTrue(a)
+            self.assertEqual([x[k] for x in a], [x[k] for x in b])
+            self.assertTrue(all(tuple(x[k]) == v5.LEAGUE_THETA for x in a))
+        rows = next(iter(self.matches.values()))
+        a = v5_stream.match_books(self.tables, self.grid, v5.Variant("v5"), rows, 60,
+                                  np.random.default_rng(1))
+        b = v5_stream.match_books(self.tables, self.grid, v5.Variant("v5"), moved[rows[0]["match_code"]],
+                                  60, np.random.default_rng(1))
+        self.assertTrue(a)
+        for (_, mp1, tp1), (_, mp2, tp2) in zip(a, b):
+            self.assertTrue(np.array_equal(mp1, mp2) and np.array_equal(tp1, tp2))
+        for gone in ("prior_lines", "recent_total_shade"):
+            self.assertFalse(hasattr(v5, gone))
+        self.assertFalse(hasattr(v5.PriorGrid, "fit"))
 
-    def test_the_shade_lowers_the_prior_level(self):
-        import copy
-        grid = copy.deepcopy(self.grid)
-        grid.total_shade = 0.0
-        plain = sum(grid.fit(0.5, 0.5, 30.5, 0.5, 0.5))
-        grid.total_shade = -0.08
-        self.assertLess(sum(grid.fit(0.5, 0.5, 30.5, 0.5, 0.5)), plain)
+    def test_the_build_needs_history_on_the_command_line(self):
+        from ..__main__ import main
+        path = os.path.join(self.tmp.name, "snaps_cli.csv")
+        with open(path, "w") as fh:
+            fh.write("match_code\n")
+        with self.assertRaises(SystemExit) as caught:
+            main(["v5-build", path, "--out", os.path.join(self.tmp.name, "cli")])
+        self.assertIn("--history", str(caught.exception))
 
     def test_handles_come_off_the_export(self):
         rows = next(iter(self.matches.values()))
@@ -662,7 +704,6 @@ class TestNB2Prior(unittest.TestCase):
                  before=self.BEFORE)
         self.assertIsNotNone(v5.prematch_model(out))
         self.assertIsNotNone(v5.prematch_model(os.path.join(out, "v5tables.npz")))
-        self.assertEqual(v5.PriorGrid.load(os.path.join(out, "v5grid.npz")).total_shade, 0.0)
 
     def test_a_failing_script_says_what_went_wrong(self):
         with open(os.path.join(nb2_prior.NB2_DIR, nb2_prior.FIT_SCRIPT), "w") as fh:

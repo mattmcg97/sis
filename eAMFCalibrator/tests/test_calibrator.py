@@ -5475,6 +5475,36 @@ class TestTotalsReach(unittest.TestCase):
         self.assertEqual(r["real"][totals_reach.WITHIN_ONE], 0.5)
         self.assertEqual(r["real"][totals_reach.WITHIN_TWO + "_or_less"], 1.0)
 
+    def test_the_breakdown_by_quarter_and_game_state(self):
+        from .. import totals_reach
+        level = self._at(14, 14, 34.5, 35.5, 21, 14, drive=1)
+        leading = dataclasses.replace(self._at(21, 13, 41.5, 42.5, 29, 21, drive=2),
+                                      offensive_team="Home Team", period_number=3)
+        trailing = dataclasses.replace(self._at(21, 13, 41.5, 42.5, 29, 21, drive=3),
+                                       offensive_team="Away Team", period_number=3)
+        free = dataclasses.replace(self._at(21, 0, 30.5, 30.5, 28, 0, drive=4),
+                                   offensive_team=None, period_number=3)
+        self.assertEqual(totals_reach.game_state(level), "level")
+        self.assertEqual(totals_reach.game_state(leading), "1 score, leader has ball")
+        self.assertEqual(totals_reach.game_state(trailing), "1 score, trailer has ball")
+        self.assertEqual(totals_reach.game_state(free), "no ball")
+        b = totals_reach.breakdown([level, leading, trailing, free])
+        self.assertEqual(set(b), {("Q1", "level"), ("Q3", "1 score, leader has ball"),
+                                  ("Q3", "1 score, trailer has ball"), ("Q3", "no ball")})
+        cell = b[("Q3", "1 score, leader has ball")]
+        self.assertEqual(cell["n"], 1)
+        self.assertEqual(cell["real"], (0.0, 1.0))                  # 16 more, a score of 8
+        self.assertEqual(cell["prod"], (1.0, 1.0, 1.0, 0.5))        # 41.5: 7.5 away, went over
+        self.assertEqual(cell["candidate"], (0.0, 1.0, 1.0, 0.5))   # 42.5: 8.5 away, went over
+
+    def test_the_price_of_the_over_is_read_off_either_side(self):
+        from .. import totals_reach
+        over = self._at(14, 14, 34.5, 35.5, 21, 14, drive=1)
+        under = dataclasses.replace(self._at(14, 14, 34.5, 35.5, 21, 14, drive=1, market_id=55),
+                                    prod_probability=0.3)
+        self.assertEqual(totals_reach.over_probability(over, 0.6), 0.6)
+        self.assertAlmostEqual(totals_reach.over_probability(under, 0.3), 0.7)
+
     def test_other_markets_are_left_out(self):
         from .. import totals_reach
         spread = self._at(14, 14, -2.5, -2.5, 21, 14, market_id=52)
@@ -5568,9 +5598,12 @@ class TestSeveralCandidates(unittest.TestCase):
                       "<td>100.0%</td><td>100.0%</td></tr>", block)
         # and how often the game went over each line: 45 over 44.5, under 46.5
         self.assertIn("<h3>Over at the line, by where the line sits</h3>", block)
+        self.assertIn("<h3>By quarter and game state</h3>", block)
+        self.assertIn('<th colspan="4">v4</th><th colspan="4">T2</th>', block)
+        # prod's 44.5 went over at a priced 50%, v4's 46.5 under at 52%
         self.assertIn('<tr><th>More than 2 scores</th><td>100.0% <span class="dim">(2)</span></td>'
-                      '<td>0.0% <span class="dim">(2)</span></td>'
-                      '<td>100.0% <span class="dim">(2)</span></td></tr>', block)
+                      '<td>50.0%</td><td>0.0% <span class="dim">(2)</span></td><td>52.0%</td>'
+                      '<td>100.0% <span class="dim">(2)</span></td><td>40.0%</td></tr>', block)
 
     def test_additional_checks_is_headed_like_every_other_section(self):
         from .. import html_style

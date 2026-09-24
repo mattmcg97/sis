@@ -51,7 +51,10 @@ is ahead -- runs more clock doing it.
 player's aggression; kickoffs, onside kicks, punts and conversions are drawn
 from their own tables. A leader with the ball in the last quarter kneels
 when the downs he has cover the clock left. Overtime is a timed period,
-replayed while level.
+replayed while level -- and (v5) played as the feed shows it is: each side
+has the ball once, and after that the game ends the moment one side leads;
+a side that scores a touchdown to trail by one or two after the other has
+had the ball goes for two (see "Overtime" in simulate).
 
 `Tables.build(matches)` makes the tables; `simulate(tables, start, ...)`
 plays N copies of each starting state to the end, vectorised over all of
@@ -1049,6 +1052,14 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if stats is not None else (lambda name, k: None)
     path_no = np.tile(np.arange(n_paths, dtype=np.int64), S)   # path k of its state
     free = np.zeros(P, dtype=bool)                             # the kick is a safety's free kick
+    # overtime: whose possession is running (-1 none) and which sides have
+    # had theirs -- over the whole of overtime, not per period
+    ot_cur = np.full(P, -1, dtype=np.int8)
+    ot_done = np.zeros((P, 2), dtype=bool)
+    # a state already in overtime with one side ahead: that side has had
+    # the ball (the snapshot does not say more)
+    ahead = (period >= 5) & (score[:, 0] != score[:, 1])
+    ot_done[ahead, np.where(score[ahead, 0] > score[ahead, 1], 0, 1)] = True
     step = np.zeros(P, dtype=np.int64)                         # events since the snapshot
 
     def rand(ix, slot):
@@ -1113,6 +1124,28 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         live = np.flatnonzero(phase != DONE)
         if not len(live):
             break
+        # Overtime, as the feed shows it played: each side has the ball once;
+        # after that the game is over as soon as one side leads (a score, or
+        # the other side's possession ending without one). A possession ends
+        # when the other side snaps, or at a kick after a score.
+        ot = live[period[live] >= 5]
+        if len(ot):
+            ph_ot = phase[ot]
+            snap = ot[ph_ot == SCRIM]
+            ended = snap[(ot_cur[snap] >= 0) & (ot_cur[snap] != team[snap])]
+            ot_done[ended, ot_cur[ended]] = True
+            ot_cur[snap] = team[snap]
+            kick = ot[ph_ot == KICK]
+            ended = kick[ot_cur[kick] >= 0]
+            ot_done[ended, ot_cur[ended]] = True
+            ot_cur[kick] = -1
+            over = ot[(ph_ot != CONV) & ot_done[ot, 0] & ot_done[ot, 1]
+                      & (score[ot, 0] != score[ot, 1])]
+            phase[over] = DONE
+            tally("ot_decided", len(over))
+            live = np.flatnonzero(phase != DONE)
+            if not len(live):
+                break
         step[live] += 1
         ph = phase[live]
 
@@ -1125,6 +1158,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             cp = np.where(period[ix] <= 2, 0, np.where(period[ix] == 3, 1,
                           np.where((period[ix] >= 5) | (clock[ix] <= 180), 3, 2)))
             two = rand(ix, 2) < tables.go_for_two[cp, margin + CONV_MARGIN]
+            # in overtime, once the other side has had the ball: one or two
+            # behind after the six, go for two (to win, or to stay alive)
+            two |= (period[ix] >= 5) & ot_done[ix, 1 - s_] & ((margin == -1) | (margin == -2))
             good = rand(ix, 3) < np.where(two, tables.two_good, tables.kick_good)
             score[ix, s_] += np.where(good, np.where(two, 2, 1), 0)
             tally("two_point_tries", two.sum())
@@ -1225,6 +1261,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         mbk = _margin_bucket_np(margin)
         pgo = _sigmoid(z + agg[ix, o] + tables.go_shift[dph, mbk])
         late_trail = (p >= 4) & (hl <= desperate_seconds) & (margin < 0)
+        # overtime, behind once the other side has had the ball: a stop ends it
+        late_trail |= (p >= 5) & (margin < 0) & ot_done[ix, 1 - o]
         r1, r2 = rand(ix, 6), rand(ix, 7)
         # behind late: go for it, except that within a field goal the
         # players kick to tie as often as they really do

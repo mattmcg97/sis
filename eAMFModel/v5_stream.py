@@ -62,16 +62,10 @@ def _as_text(row):
 def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, means=None):
     """[(message, margin pmf, total pmf)] at every priceable PLAY_OVER of one
     match (export-shaped rows, message order). `means`: (home, away)
-    expected points from our pre-match model (NB2); without them the prior
-    falls back to prod's pre-match quotes (a model built without history)."""
+    expected points from our pre-match model (NB2); without them league-
+    average offenses. Prod's quotes never set the prior."""
     rows = v5.resolve_sides([_as_text(r) for r in match_rows])
-    if means is not None:
-        theta0 = v5.fit_means(grid, *means)
-    else:
-        lines = v5.prior_lines(rows)
-        if lines is None:
-            return []
-        theta0 = grid.fit(*lines)
+    theta0 = v5.prior_theta(grid, means)
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
@@ -184,7 +178,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         book = v5.players_book(tables_path)
     # the prior: our NB2 pre-match model when the model has one, for the
     # matches whose players, teams and stream are known (match_info:
-    # AMFELO-shaped rows); prod's pre-match quotes only for an old model
+    # AMFELO-shaped rows); league-average offenses for a model without one
     pre = v5.prematch_model(tables_path)
     means = {}
     if pre is not None:

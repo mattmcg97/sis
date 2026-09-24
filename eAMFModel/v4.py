@@ -79,6 +79,9 @@ def even_line(pmf, offset):
     mean."""
     cdf = np.cumsum(pmf)[:-1]
     gap = np.abs(cdf - 0.5)
+    # never a line below everything left to happen (an over already won):
+    # a dead game -- no more points -- is quoted just above the score
+    gap = np.where(cdf <= 1e-12, np.inf, gap) if (cdf > 1e-12).any() else gap
     best = np.flatnonzero(gap <= gap.min() + 1e-12)
     x = np.arange(len(pmf)) - offset
     mean = float((pmf * x).sum() / max(1e-300, pmf.sum()))

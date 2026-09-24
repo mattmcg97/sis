@@ -611,15 +611,20 @@ def _totals_reach_block(sides):
                     f"<td>{_pct(per[0]['prod'][key])}</td>{cells}</tr>")
     rows.append(f"<tr><th>Snapshots</th><td colspan=\"{2 + len(sides)}\">{per[0]['real']['n']:,}</td></tr>")
 
-    def over(rate_n):
-        rate, n = rate_n
-        return f"<td>{_pct(rate)} <span class=\"dim\">({n:,})</span></td>" if n else "<td>&mdash;</td>"
+    def over(stream, key):
+        rate, n = stream["over"][key]
+        if not n:
+            return "<td>&mdash;</td><td>&mdash;</td>"
+        return (f"<td>{_pct(rate)} <span class=\"dim\">({n:,})</span></td>"
+                f"<td>{_pct(stream['priced'][key])}</td>")
     over_rows = []
     for label, key in (("Within 1 score", totals_reach.WITHIN_ONE),
                        ("1 to 2 scores", totals_reach.WITHIN_TWO),
                        ("More than 2 scores", totals_reach.BEYOND)):
-        cells = "".join(over(r["candidate"]["over"][key]) for r in per)
-        over_rows.append(f"<tr><th>{label}</th>{over(per[0]['prod']['over'][key])}{cells}</tr>")
+        cells = "".join(over(r["candidate"], key) for r in per)
+        over_rows.append(f"<tr><th>{label}</th>{over(per[0]['prod'], key)}{cells}</tr>")
+    over_head = "".join(f'<th colspan="2">{n}</th>' for n in ["Prod"] + [_name(s) for s in sides])
+    over_sub = "<th>Over</th><th>Priced</th>" * (1 + len(sides))
     return f"""
     <section class="panel">
       <h2>Totals line within 1 and 2 scores</h2>
@@ -629,10 +634,42 @@ def _totals_reach_block(sides):
       </table>
       <h3>Over at the line, by where the line sits</h3>
       <table>
-        <thead><tr><th>Line above the score</th><th>Prod</th>{head}</tr></thead>
+        <thead><tr><th rowspan="2">Line above the score</th>{over_head}</tr>
+          <tr>{over_sub}</tr></thead>
         <tbody>{''.join(over_rows)}</tbody>
       </table>
+      {_totals_reach_breakdown(sides)}
     </section>"""
+
+
+def _totals_reach_breakdown(sides):
+    """The same by quarter and game state: real's shares, then each
+    stream's line shares and how often the game went over its line."""
+    per = [totals_reach.breakdown(s["line_pairs"]) for s in sides]
+    keys = sorted(per[0], key=lambda k: (k[0], totals_reach.STATES.index(k[1])))
+    if not keys:
+        return ""
+    names = ["Prod"] + [_name(s) for s in sides]
+    group = "".join(f'<th colspan="4">{n}</th>' for n in names)
+    sub = "<th>&le;1</th><th>&le;2</th><th>Over</th><th>Priced</th>" * len(names)
+    rows = []
+    for key in keys:
+        first = per[0][key]
+        cells = "".join(f"<td>{_pct(a, '.0f')}</td><td>{_pct(b, '.0f')}</td><td>{_pct(o, '.0f')}</td>"
+                        f"<td>{_pct(q, '.0f')}</td>"
+                        for a, b, o, q in [first["prod"]] + [p.get(key, {}).get("candidate", (None,) * 4)
+                                                              for p in per])
+        rows.append(f"<tr><th>{key[0]}</th><td>{html.escape(key[1])}</td><td>{first['n']:,}</td>"
+                    f"<td>{_pct(first['real'][0], '.0f')}</td><td>{_pct(first['real'][1], '.0f')}</td>"
+                    f"{cells}</tr>")
+    return f"""
+      <h3>By quarter and game state</h3>
+      <table>
+        <thead><tr><th rowspan="2">Quarter</th><th rowspan="2">State</th><th rowspan="2">N</th>
+          <th colspan="2">Real</th>{group}</tr>
+          <tr><th>&le;1</th><th>&le;2</th>{sub}</tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>"""
 
 
 def _checks_summary(report, scan=None):

@@ -196,6 +196,9 @@ def cmd_v4_build(args):
         if args.before:
             import datetime as dt
             before = dt.datetime.fromisoformat(args.before)
+    if name == "v5" and history is None:
+        raise SystemExit("v5-build needs --history: v5 takes every match's prior from its own NB2 "
+                         "pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
         v4.IN_PLAY_FIT = True
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
