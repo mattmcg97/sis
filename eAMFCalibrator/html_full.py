@@ -13,7 +13,7 @@ at its own line for the line tables (see multi.py).
 import html
 import os
 
-from . import buckets, config, drives, handles, html_style, markets
+from . import buckets, config, drives, handles, html_style, markets, totals_reach
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -594,6 +594,32 @@ def _run_block(sides, dropped):
     </section>"""
 
 
+def _totals_reach_block(sides):
+    """How often each total line sits within one and two scores of the
+    points already scored (totals_reach), against how often the rest of
+    the game really produced that little."""
+    per = [totals_reach.summarise(s["line_pairs"]) for s in sides]
+    if not per or not per[0]["real"]["n"]:
+        return ""
+    head = "".join(f"<th>{_name(s)}</th>" for s in sides)
+    rows = []
+    for label, key in (("Within 1 score", totals_reach.WITHIN_ONE),
+                       ("Within 2 scores", totals_reach.WITHIN_TWO + "_or_less"),
+                       ("More than 2 scores", totals_reach.BEYOND)):
+        cells = "".join(f"<td>{_pct(r['candidate'][key])}</td>" for r in per)
+        rows.append(f"<tr><th>{label}</th><td>{_pct(per[0]['real'][key])}</td>"
+                    f"<td>{_pct(per[0]['prod'][key])}</td>{cells}</tr>")
+    rows.append(f"<tr><th>Snapshots</th><td colspan=\"{2 + len(sides)}\">{per[0]['real']['n']:,}</td></tr>")
+    return f"""
+    <section class="panel">
+      <h2>Totals line within 1 and 2 scores</h2>
+      <table>
+        <thead><tr><th>Line above the score</th><th>Real</th><th>Prod</th>{head}</tr></thead>
+        <tbody>{''.join(rows)}</tbody>
+      </table>
+    </section>"""
+
+
 def _checks_summary(report, scan=None):
     """Whether the diagnostics passed, in a few words."""
     issues = []
@@ -1122,6 +1148,7 @@ def render_sides(sides, dropped=None):
   <details class="panel" id="checks">
     <summary>Additional checks</summary>
     {_run_block(sides, dropped)}
+    {_totals_reach_block(sides)}
     {_handle_block(first['line']['scan'])}
     {_anchor_block(first['line_full'])}
     {_market_state_block(sides)}

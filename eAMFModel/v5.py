@@ -340,7 +340,7 @@ def start_from(state):
         down, dist, y = state.down, max(1, state.distance), state.field_position
     return dict(period=state.period, clock=state.clock_seconds, phase=phase, team=team, down=down,
                 dist=dist, y=min(99, max(1, y)), home=state.home_score, away=state.away_score,
-                kicks_second_half=side(state.opening_receiver) if state.opening_receiver else 0)
+                kicks_second_half=side(state.opening_receiver) if state.opening_receiver else -1)
 
 
 def _fill(start, i, fields):
@@ -717,6 +717,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated "
               + " / ".join(f"{x:.2f}" for x in got))
+        if tables.backed is not None:
+            print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
+                  + "; ".join(f"{name.replace('_', ' ')} "
+                              + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
+                              for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
         if n and history is None:
             print(f"  pre-match total, last {shade_days} days: {n} matches went over prod's line "
                   f"{rate:.1%} of the time at a priced {prod:.1%} -> P(over) shaded {shade:+.3f}")

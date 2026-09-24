@@ -522,6 +522,63 @@ already carry most of this behaviour, because they split plays by
 situation (the leader milking, the trailer hurrying, the last two
 minutes).
 
+### Backed up: safeties, turnovers and touchdowns from the own 1–10
+
+A snap's yards come from its bin, and the first field zone runs from the
+1 to the 39. So a one-yard loss seen at the 30, drawn at the 1, became a
+safety. Also, the snaps that really went for a safety never reached the
+bins, because the feed shows them as the free kick that follows. Per snap,
+on real states from SCOUTING_FULL (Aug 24 to Sep 22):
+
+| ball on own | snaps | safety real / v5 before / now | defensive TD real / before / now | TD real / before / now |
+|---|---|---|---|---|
+| 1 | 136 | 5.1% / 12.4% / 5.1% | 0.7% / 0.1% / 1.1% | 3.0% / 1.2% / 3.2% |
+| 2 | 84 | 4.8% / 7.4% / 4.5% | 1.2% / 0.2% / 1.4% | 3.7% / 1.1% / 3.7% |
+| 3 | 108 | 3.7% / 5.2% / 3.5% | 2.8% / 0.2% / 2.4% | 3.7% / 1.3% / 3.7% |
+| 4 | 99 | 1.0% / 3.5% / 1.6% | 2.0% / 0.3% / 1.9% | 3.2% / 1.3% / 3.3% |
+| 5 | 130 | 1.5% / 2.9% / 1.7% | 2.3% / 0.2% / 2.1% | 4.0% / 1.3% / 3.9% |
+| 6–10 | 667 | 0.9% / 2.1% / 1.0% | 0.9% / 0.3% / 1.0% | 3.4% / 1.3% / 3.3% |
+
+Before this, v5 made twice the real safeties on the 1 and 2, a tenth of the
+defensive touchdowns (a fumble in the end zone), and under half the
+long touchdowns. Turnovers that stay in the field of play were about right
+(3.5% real against 3.8% simulated on the 1–5). The "now" rates are the
+fitted ones, which the simulation draws exactly. They're fitted on the
+same games, so they're in-sample.
+
+Now, inside the 10 each snap first draws one of these outcomes from that
+yard line's own rate:
+- a safety;
+- a defensive touchdown;
+- a turnover;
+- a touchdown;
+- none of these.
+
+Only a snap that comes to none of them takes its yards from the bin, and
+it stays in the field of play. Each yard line's rate is pulled toward a
+logistic curve in the yard line by 60 snaps' worth, since a yard line sees
+about 100 snaps a month. A turnover's new spot comes from real backed-up
+turnovers. `v5-build` prints the rates on the 1 to 5.
+
+After a safety, v5 adds 2 points to the defence. The conceding side then
+free-kicks from its 20, and the side that scored the safety starts from
+real post-safety spots, about its own 43. That's the chance of a second
+score: in the 31 real safeties, the receiving side scored a touchdown on
+the next drive in about 3 in 10.
+
+Held out on Sep 3–9 (583 matches, NB2 pre-match), overall Brier moved by
+less than 0.0002 in every market. On snapshots with the ball on the own
+6–10, spread improved by 0.0034 (95% interval +0.0008 to +0.0059).
+Moneyline improved by 0.0011 and total by 0.0014, both within the noise.
+On the own 1–5 (about 120–160 snapshots per market) every change is within
+the noise. A leader in the last three minutes on their own 1–5 now wins
+94.2% of the time (was 94.8%, real 93.2%, 44 cases).
+
+**The second-half kick.** The opening receiver kicks off the second half.
+That holds in 2,294 of the 2,320 matches in SCOUTING_FULL, and v5 already
+did it. Where a snapshot doesn't know who received the opening kick, v5
+used to have home kick. Now each path tosses a coin.
+
 ```bash
 python -m eAMFModel v5-build eAMFCalibrator/out/scouting_playover.csv --half all --out v5_model --history eAMFCalibrator/out/match_history.csv
 python -m eAMFCalibrator report --candidate v5 --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v5
