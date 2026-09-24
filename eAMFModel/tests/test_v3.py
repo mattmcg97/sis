@@ -287,5 +287,104 @@ class TestV3Pricing(unittest.TestCase):
             self.assertTrue(0 < probs["v3"] < 1 and 0 < probs["react"] < 1)
 
 
+def _one_record_tables(gain, td_from, seconds=5.0):
+    """Tables whose every situation holds one snap result."""
+    t = sim.Tables()
+    t.start = np.zeros(sim.N_KEYS, dtype=np.int64)
+    t.count = np.ones(sim.N_KEYS, dtype=np.int64)
+    t.success = np.full(sim.N_KEYS, 0.4)
+    t.kind = np.array([sim.GAIN], dtype=np.int8)
+    t.gain = np.array([gain], dtype=np.int32)
+    t.new_field = np.zeros(1, dtype=np.int32)
+    t.seconds = np.array([seconds])
+    t.replay = np.zeros(1, dtype=bool)
+    t.td_from = np.array([td_from], dtype=np.int32)
+    for flag in (False, True):
+        t.kick[flag] = (np.zeros(1, dtype=bool), np.array([25], dtype=np.int32), np.array([4.0]))
+    for b in range(3):
+        t.punt[b] = (np.array([40], dtype=np.int32), np.array([10.0]))
+    t.fg_seconds = np.array([5.0])
+    t.fg_after = 7.0
+    t.go_for_two = np.zeros((4, 2 * sim.CONV_MARGIN + 1))
+    return t
+
+
+class TestFixes(unittest.TestCase):
+    """Each bug the full v3 verification turned up, pinned."""
+
+    def test_a_cut_off_touchdown_run_counts_the_yards_it_made(self):
+        # the only result anywhere: a 3-yard touchdown from the 97. Run from
+        # the 80 on 3rd and 10 it scores or stops short at the 83..99, and
+        # every stop from the 90 on is a first down.
+        tables = _one_record_tables(gain=3, td_from=97)
+        st = sim.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 2, 200.0, sim.SCRIM
+        st.down[:], st.dist[:], st.y[:] = 3, 10, 80
+        stats = {}
+        sim.simulate(tables, st, 4000, np.random.default_rng(0), max_steps=1, stats=stats)
+        self.assertGreater(stats["first_downs"] / 4000, 0.25)
+
+    def test_no_prices_to_fit_gives_the_league_average(self):
+        tables = sim.Tables.build(_matches(40), min_records=20)
+        grid = v3.PriorGrid.build(tables, n_paths=100, grid=np.round(np.linspace(-0.4, 0.4, 5), 3))
+        self.assertEqual(grid.fit(2.5, None, 30.5, None, None), (0.0, 0.0))
+
+    def test_prior_needs_a_price_and_looks_past_the_first_row(self):
+        rows = [{"prematch_line_52": "2.5", "prematch_line_54": "30.5"},
+                {"line_52": "1.5", "prob_52": "0.48", "line_54": "31.5", "prob_54": "0.51",
+                 "prob_50": "0.55"}]
+        self.assertEqual(v3.prior_lines(rows), (1.5, 0.48, 31.5, 0.51, 0.55))
+        self.assertIsNone(v3.prior_lines(rows[:1]))
+
+    def test_an_unconfirmed_side_is_home(self):
+        rows = [{"team_a_side": ""}, {"team_a_side": None}]
+        self.assertEqual([r["team_a_side"] for r in v3.resolve_sides(rows)], ["home", "home"])
+        kept = [{"team_a_side": "away"}]
+        self.assertIs(v3.resolve_sides(kept), kept)
+
+    def test_efficiency_expects_what_the_simulation_plays(self):
+        tables = sim.Tables.build(_matches(30), min_records=20)
+        tables.period_theta[:] = 0.0
+        tables.period_theta[1] = -0.2
+        eff = v3.Efficiency(tables, (0.0, 0.0), 50)
+        key = sim.key_index(0, 1, 10, 30)
+        self.assertLess(eff.expected(0, key, 1), eff.expected(0, key, 2))
+        self.assertAlmostEqual(eff.expected(0, key, 2), eff.expected(0, key))
+
+    def test_a_certain_push_prices_even(self):
+        pmf = np.zeros(2 * v3.MARGIN_MAX + 1)
+        pmf[v3.MARGIN_MAX - 3] = 1.0
+        self.assertEqual(float(v3.prob_above(pmf, v3.MARGIN_MAX, -3.0)), 0.5)
+        self.assertEqual(float(v3.prob_below(pmf, v3.MARGIN_MAX, -3.0)), 0.5)
+
+    def test_vectorised_situations_match_the_tables(self):
+        periods, clocks, margins = np.meshgrid(np.arange(1, 8), np.arange(0, 241, 7.5),
+                                               np.arange(-12, 13), indexing="ij")
+        p, c, m = periods.ravel(), clocks.ravel(), margins.ravel()
+        self.assertTrue((sim._modes_np(p, c, m) ==
+                         [sim.mode_of(*x) for x in zip(p, c, m)]).all())
+        self.assertTrue((sim._margin_bucket_np(m) == [sim.margin_bucket(x) for x in m]).all())
+        d, t, y = np.meshgrid(np.arange(1, 5), np.arange(1, 25), np.arange(1, 100, 3), indexing="ij")
+        d, t, y = d.ravel(), t.ravel(), y.ravel()
+        for mode in range(len(sim.MODES)):
+            self.assertTrue((sim._keys_np(np.full(len(d), mode), d, t, y) ==
+                             [sim.key_index(mode, *x) for x in zip(d, t, y)]).all())
+
+    def test_punts_are_fourth_down_punts_not_safeties(self):
+        base = dict(period="2", clock_seconds="100", team_a_side="home", play_messages="")
+        rows = [dict(base, play_kind="SCRIMMAGE", offense="TEAM_A", down="4", distance="8",
+                     field_position="30", message="1"),
+                dict(base, play_kind="PUNT", offense="TEAM_B", down="1", distance="10",
+                     field_position="25", message="2", clock_seconds="90",
+                     play_messages="PUNT_TEAM_A|POSSESSION_TEAM_B"),
+                dict(base, play_kind="SCRIMMAGE", offense="TEAM_B", down="3", distance="10",
+                     field_position="1", message="3", clock_seconds="80"),
+                dict(base, play_kind="PUNT", offense="TEAM_A", down="1", distance="10",
+                     field_position="40", message="4", clock_seconds="70",
+                     play_messages="PUNT_TEAM_B|SAFETY_AWARDED_TEAM_A|POSSESSION_TEAM_A")]
+        punts = [d for d in sim.kick_decisions(rows) if d[0] == "punt"]
+        self.assertEqual(punts, [("punt", 30, 45, 10.0)])
+
+
 if __name__ == "__main__":
     unittest.main()

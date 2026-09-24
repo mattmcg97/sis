@@ -47,19 +47,25 @@ def _distributions(home, away):
     return mp_, tp
 
 
+def _graded(side, at):
+    """P(side | not a push); an even 0.5 when a push is all that is left."""
+    rest = 1 - at
+    return np.where(rest > 1e-12, side / np.maximum(1e-12, rest), 0.5)
+
+
 def prob_above(pmf, offset, line):
     """P(X > line) with a push graded out, off a pmf whose index i is X = i - offset."""
     x = np.arange(pmf.shape[-1]) - offset
     above = pmf[..., x > line].sum(-1)
     at = pmf[..., x == line].sum(-1) if float(line).is_integer() else 0.0
-    return above / np.maximum(1e-12, 1 - at)
+    return _graded(above, at)
 
 
 def prob_below(pmf, offset, line):
     x = np.arange(pmf.shape[-1]) - offset
     below = pmf[..., x < line].sum(-1)
     at = pmf[..., x == line].sum(-1) if float(line).is_integer() else 0.0
-    return below / np.maximum(1e-12, 1 - at)
+    return _graded(below, at)
 
 
 def market_prob(market, line, margin_pmf, total_pmf):
@@ -130,26 +136,47 @@ class PriorGrid:
 
         logit = lambda p: np.log(np.clip(p, 1e-4, 1 - 1e-4) / (1 - np.clip(p, 1e-4, 1 - 1e-4)))
         err = np.zeros((len(fine), len(fine)))
+        used = 0
         for market, line, prob in ((52, line52, prob52), (54, line54, prob54), (50, 0.0, prob50)):
             if prob is None or line is None:
                 continue
             p = surface(market_prob(market, line, self.margin, self.total))
             err += (logit(p) - logit(prob)) ** 2
+            used += 1
+        if not used:
+            return 0.0, 0.0                   # nothing to fit to: the league average
         i, j = np.unravel_index(np.argmin(err), err.shape)
         return float(fine[i]), float(fine[j])
 
 
 def prior_lines(match_rows):
-    r = match_rows[0]
+    """Prod's pre-match (spread line, P, total line, P, P(home wins)), or its
+    first in-play quote on both lines when it never quoted pre-match. None
+    when there is no spread or total price to fit to."""
     f = playover._float
+    r = match_rows[0]
     line52, line54 = f(r.get("prematch_line_52")), f(r.get("prematch_line_54"))
-    if line52 is not None and line54 is not None:
-        return line52, f(r.get("prematch_prob_52")), line54, f(r.get("prematch_prob_54")), \
-            f(r.get("prematch_prob_50"))
-    line52, line54 = f(r.get("line_52")), f(r.get("line_54"))
-    if line52 is None or line54 is None:
-        return None
-    return line52, f(r.get("prob_52")), line54, f(r.get("prob_54")), f(r.get("prob_50"))
+    p52, p54 = f(r.get("prematch_prob_52")), f(r.get("prematch_prob_54"))
+    if line52 is not None and line54 is not None and (p52 is not None or p54 is not None):
+        return line52, p52, line54, p54, f(r.get("prematch_prob_50"))
+    for r in match_rows:
+        line52, line54 = f(r.get("line_52")), f(r.get("line_54"))
+        p52, p54 = f(r.get("prob_52")), f(r.get("prob_54"))
+        if line52 is not None and line54 is not None and p52 is not None and p54 is not None:
+            return line52, p52, line54, p54, f(r.get("prob_50"))
+    return None
+
+
+def resolve_sides(match_rows):
+    """The rows with TEAM_A's side filled in. SCOUTING_FULL's TEAM_A is
+    PLAYER_1, the home side, on every row the probe has seen (142,000 of
+    142,000), so a match whose side the scores could not confirm -- no
+    scoring message to check it against yet -- is taken as home rather
+    than dropped."""
+    if match_rows and all(r.get("team_a_side") in ("home", "away") for r in match_rows):
+        return match_rows
+    return [r if r.get("team_a_side") in ("home", "away") else dict(r, team_a_side="home")
+            for r in match_rows]
 
 
 # --------------------------------------------------------------------------
@@ -173,12 +200,15 @@ class Efficiency:
         self.score = np.zeros(2)
         self.info = np.zeros(2)
 
-    def expected(self, side, key):
+    def expected(self, side, key, period=None):
+        """P(first down) for this side's prior theta, with the league's
+        offset for the quarter as the simulation applies it."""
         f = min(0.995, max(0.005, self.tables.success_of(key)))
-        return f ** math.exp(-self.theta0[side])
+        offset = self.tables.period_theta[min(int(period), 5)] if period else 0.0
+        return f ** math.exp(-(self.theta0[side] + offset))
 
-    def add(self, side, key, success):
-        p = min(0.995, max(0.005, self.expected(side, key)))
+    def add(self, side, key, success, period=None):
+        p = min(0.995, max(0.005, self.expected(side, key, period)))
         lp = math.log(p)
         self.score[side] += -lp * (success - p) / (1 - p)
         self.info[side] += lp * lp * p / (1 - p)
@@ -196,25 +226,26 @@ def fit_kappa(tables, grid, matches, kappas=(5, 10, 20, 40, 80, 160, 320, 1e9)):
     out = {}
     per_match = []
     for code, rows in matches.items():
+        rows = resolve_sides(rows)
         lines = prior_lines(rows)
-        if lines is None or rows[0]["team_a_side"] not in ("home", "away"):
+        if lines is None:
             continue
         theta0 = grid.fit(*lines)
         a_home = rows[0]["team_a_side"] == "home"
-        recs = [(0 if (r["offense"] == "TEAM_A") == a_home else 1, r["key"], r["success"])
-                for r in sim.snap_records(rows)]
+        recs = [(0 if (r["offense"] == "TEAM_A") == a_home else 1, r["key"], r["success"],
+                 r["period"]) for r in sim.snap_records(rows)]
         per_match.append((theta0, recs))
     for k in kappas:
         ll, n = 0.0, 0
         for theta0, recs in per_match:
             eff = Efficiency(tables, theta0, k)
-            for side, key, success in recs:
-                th = eff.theta()[side]
+            for side, key, success, period in recs:
+                th = eff.theta()[side] + tables.period_theta[min(period, 5)]
                 f = min(0.995, max(0.005, tables.success_of(key)))
                 p = min(0.995, max(0.005, f ** math.exp(-th)))
                 ll += math.log(p if success else 1 - p)
                 n += 1
-                eff.add(side, key, success)
+                eff.add(side, key, success, period)
         out[k] = ll / max(1, n)
     return out
 
@@ -270,7 +301,8 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
     for i, msg in enumerate(messages):
         while k < len(snaps) and snaps[k]["message"] <= msg:
             s = snaps[k]
-            eff.add(0 if (s["offense"] == "TEAM_A") == a_home else 1, s["key"], s["success"])
+            eff.add(0 if (s["offense"] == "TEAM_A") == a_home else 1, s["key"], s["success"],
+                    s["period"])
             k += 1
         _fill(start, i, start_from(states[i]))
         start.theta[i] = eff.theta() if v.react else theta0
@@ -300,6 +332,7 @@ def _grade_matches(job):
     graded, skipped = [], Counter()
     rng = np.random.default_rng(seed)
     for code, match_rows in matches:
+        match_rows = resolve_sides(match_rows)
         lines = prior_lines(match_rows)
         if lines is None:
             skipped["no_prior"] += 1

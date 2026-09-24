@@ -323,6 +323,9 @@ def _model_quotes(cur, stream_table, match_codes):
                                            plays, scores, prod)
 
 
+_SCOUTING_TABLE = {}                      # located once per run
+
+
 def _v3_quotes(cur, match_codes):
     """eAMFModel v3, GAMEPLAI-shaped: PLAY_OVER snapshots off SCOUTING_FULL
     (built exactly as `scouting` exports them), priced by simulation and
@@ -335,12 +338,15 @@ def _v3_quotes(cur, match_codes):
     from eAMFModel import v3_stream
     from . import directional, scouting
     v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions
-    table = scouting.locate(cur, config.SCOUTING_TABLE)
+    table = _SCOUTING_TABLE.get(config.SCOUTING_TABLE) or scouting.locate(cur, config.SCOUTING_TABLE)
+    _SCOUTING_TABLE[config.SCOUTING_TABLE] = table
     snapshots, prod_all = {}, []
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(match_codes), chunk):
         batch = list(match_codes[start:start + chunk])
-        rows = scouting.fetch_scouting(cur, table, batch)
+        # every row of each match, including any before the window opened:
+        # the opening kickoff decides who receives the second half
+        rows = scouting.fetch_scouting(cur, table, batch, windowed=False)
         scores = fetch_scores(cur, batch)
         finals = fetch_final_scores(cur, batch)
         prod = fetch_quotes(cur, config.STREAMS["prod"], batch)
@@ -361,7 +367,8 @@ def _v3_quotes(cur, match_codes):
                                if scouting._text(r[4]) == "PLAY_STARTED"), None)
             snaps, _ = scouting.snapshots_for_match(
                 match_code, match_rows, scores_by.get(match_code, []), finals.get(match_code),
-                index, scouting._prematch(prod_by.get(match_code, []), first_play))
+                index, scouting._prematch(prod_by.get(match_code, []), first_play),
+                require_quote=False)
             if snaps:
                 snapshots[match_code] = snaps
     print(f"  v3: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "

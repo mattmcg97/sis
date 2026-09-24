@@ -24,7 +24,7 @@ import numpy as np
 
 from . import playover, players, sim, v3
 from .pricer import ML_AWAY, ML_HOME, MARKET_IDS
-from .stream import OPEN, ProdView, description
+from .stream import OPEN, _parse_line, description
 
 DEFAULT_MODEL_DIR = "v3_model"
 DEFAULT_PATHS = 2000
@@ -57,9 +57,9 @@ def _as_text(row):
 def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None):
     """[(message, margin pmf, total pmf)] at every priceable PLAY_OVER of one
     match (export-shaped rows, message order)."""
-    rows = [_as_text(r) for r in match_rows]
+    rows = v3.resolve_sides([_as_text(r) for r in match_rows])
     lines = v3.prior_lines(rows)
-    if lines is None or rows[0]["team_a_side"] not in ("home", "away"):
+    if lines is None:
         return []
     theta0 = grid.fit(*lines)
     a_home = rows[0]["team_a_side"] == "home"
@@ -77,39 +77,55 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None):
     return [(m, mp_, tp) for m, (mp_, tp) in zip(messages, dists)]
 
 
+def paired_prod_rows(prod_quote_rows):
+    """(market, message) -> the prod row the calibrator pairs a candidate
+    quote with: the first live row on that message, else the first row --
+    eAMFCalibrator.directional.index_by_message's rule, applied to rows in
+    the order they were fetched (publish time). v3 quotes at that row's
+    line, so the pair always answers one question."""
+    chosen = {}
+    for r in prod_quote_rows:
+        if r[6] is None or r[3] is None:
+            continue
+        live = str(r[8]).strip().lower() == "true"
+        key = (r[1], r[6])
+        held = chosen.get(key)
+        if held is None or (live and not held[1]):
+            chosen[key] = (r, live)
+    return {key: row for key, (row, _) in chosen.items()}
+
+
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None):
-    """GAMEPLAI-shaped rows: v3's latest book at every prod message from the
-    first snapshot on, at prod's line there."""
+    """GAMEPLAI-shaped rows: at every (market, message) prod quoted from
+    v3's first snapshot on, v3's latest book read at the line of the prod
+    row the calibrator pairs with there.
+
+    `first_play_message` is kept for callers; pre-match messages carry no
+    book and so no quote."""
     if not books:
         return []
-    prod = ProdView(prod_quote_rows, first_play_message)
-    # lines off prod's live quotes: a message can also carry the settlement
-    # of the line prod just moved off
-    live = ProdView([r for r in prod_quote_rows if str(r[8]).strip().lower() == "true"],
-                    first_play_message)
     keys = [b[0] for b in books]
     out = []
-    for message in prod.messages():
+    for (market_id, message), prod_row in sorted(paired_prod_rows(prod_quote_rows).items(),
+                                                 key=lambda kv: (kv[0][1], kv[0][0])):
+        if market_id not in MARKET_IDS:
+            continue
         i = bisect_right(keys, message) - 1
         if i < 0:
             continue
         _, mpmf, tpmf = books[i]
-        publish_time = prod.time_at(message)
-        for market_id in MARKET_IDS:
-            if market_id in (ML_HOME, ML_AWAY):
-                line = None
-            else:
-                line = live.line_at(market_id, message)
-                if line is None:
-                    line = prod.line_at(market_id, message)
-                if line is None:
-                    continue
-            p = float(v3.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
-            if not math.isfinite(p):
+        if market_id in (ML_HOME, ML_AWAY):
+            line = None
+        else:
+            line = _parse_line(prod_row[5])
+            if line is None:
                 continue
-            p = min(0.9999, max(0.0001, p))
-            out.append((match_code, market_id, publish_time, round(100.0 * p, 2),
-                        round(1.0 / p, 4), description(market_id, line), message, OPEN, "true"))
+        p = float(v3.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
+        if not math.isfinite(p):
+            continue
+        p = min(0.9999, max(0.0001, p))
+        out.append((match_code, market_id, prod_row[2], round(100.0 * p, 2),
+                    round(1.0 / p, 4), description(market_id, line), message, OPEN, "true"))
     return out
 
 

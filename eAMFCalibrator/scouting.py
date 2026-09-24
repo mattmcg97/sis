@@ -162,9 +162,13 @@ def locate(cur, name=DEFAULT_TABLE):
     return found
 
 
-def scouting_rows_sql(table, columns, extra_where=""):
-    """Deduplicated rows for AF matches inside the window."""
-    predicate, params = snowflake_io.window_predicate(table.time_expr())
+def scouting_rows_sql(table, columns, extra_where="", windowed=True):
+    """Deduplicated rows for AF matches inside the window (or, with
+    windowed=False, every row of the matches `extra_where` names)."""
+    if windowed:
+        predicate, params = snowflake_io.window_predicate(table.time_expr())
+    else:
+        predicate, params = "TRUE", []
     sql = f"""
         SELECT {", ".join(columns)}
         FROM {table.qualified}
@@ -357,7 +361,7 @@ EXPORT_FIELDS = [
     "score_p1", "score_p2", "score_p1_at_start", "score_p2_at_start", "play_messages",
     "final_p1", "final_p2",
     "first_play_message", "opening_offense", "home_handle", "away_handle",
-    "next_start_clock",
+    "next_start_clock", "quoted",
 ]
 for _m in markets.MARKET_IDS:
     EXPORT_FIELDS += [f"line_{_m}", f"prob_{_m}", f"live_{_m}", f"outcome_{_m}"]
@@ -373,12 +377,15 @@ def scouting_matches(cur, table):
     return sorted(r[0] for r in rows)
 
 
-def fetch_scouting(cur, table, match_codes):
+def fetch_scouting(cur, table, match_codes, windowed=True):
+    """Every scouting row of the matches. windowed=False keeps the rows of a
+    match that began before the window opened (its opening kickoff says
+    who receives the second half)."""
     in_clause = ", ".join(["%s"] * len(match_codes))
     sql, params = scouting_rows_sql(
         table, ["MATCH_CODE", "EVENT_MESSAGE_COUNT", CLOCK, STATUS, MESSAGE, TEAM,
                 DOWN, DIST, FIELD, "FILE_TIME"],
-        extra_where=f"AND MATCH_CODE IN ({in_clause})")
+        extra_where=f"AND MATCH_CODE IN ({in_clause})", windowed=windowed)
     _, rows = fetch_all(cur, sql + " ORDER BY MATCH_CODE, EVENT_MESSAGE_COUNT",
                         tuple(params + list(match_codes)))
     return rows
@@ -424,8 +431,13 @@ def team_a_side(rows, scores):
     return side if n >= 0.8 * sum(votes.values()) else None
 
 
-def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch):
-    """[dict] export rows for one match, and a Counter of what was dropped."""
+def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch,
+                        require_quote=True):
+    """[dict] export rows for one match, and a Counter of what was dropped.
+
+    require_quote=False keeps the PLAY_OVERs GAMEPLAI did not quote as well
+    (quoted = 0, no market columns): the play-by-play model reads each play
+    against the one before it, so a gap in the chain is a wrong play."""
     dropped = Counter()
     a_side = team_a_side(rows, scores)
     score_changes = sorted((s[1], s[5], s[6]) for s in scores if s[1] is not None)
@@ -469,7 +481,8 @@ def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch)
         quoted = {m: quotes_index.get((match_code, m), {}).get(message) for m in markets.MARKET_IDS}
         if not any(q is not None for q in quoted.values()):
             dropped["play_over_not_quoted"] += 1
-            continue
+            if require_quote:
+                continue
 
         j = bisect_right(start_msgs, message)
         nxt = rows[starts[j][1]] if j < len(starts) else None
@@ -494,6 +507,7 @@ def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch)
             "play_messages": "|".join(m for m in in_play if m not in ("PLAY_STARTED", "PLAY_OVER")),
             "final_p1": final[0] if final else None, "final_p2": final[1] if final else None,
             "first_play_message": first_play, "opening_offense": opening,
+            "quoted": int(any(q is not None for q in quoted.values())),
         }
         live_markets = 0
         for m, q in quoted.items():
@@ -602,7 +616,8 @@ def export(cur, table, path, limit=None, verbose=True):
                 first_play = next((r[1] for r in match_rows if _text(r[4]) == "PLAY_STARTED"), None)
                 snaps, dropped = snapshots_for_match(
                     match_code, match_rows, scores_by.get(match_code, []),
-                    finals.get(match_code), index, _prematch(prod_by.get(match_code, []), first_play))
+                    finals.get(match_code), index, _prematch(prod_by.get(match_code, []), first_play),
+                    require_quote=False)
                 totals.update(dropped)
                 totals["matches_with_snapshots"] += bool(snaps)
                 home, away = handles.get(match_code, (None, None))
@@ -610,12 +625,15 @@ def export(cur, table, path, limit=None, verbose=True):
                     snap["home_handle"], snap["away_handle"] = home, away
                     writer.writerow(snap)
                     written += 1
+                    totals["quoted_rows"] += snap["quoted"]
                     by_kind[snap["play_kind"]] += 1
                     totals["team_a_unresolved"] += snap["team_a_side"] is None
                     for m in markets.MARKET_IDS:
                         by_market_live[m] += bool(snap.get(f"live_{m}"))
     if verbose:
-        print(f"\n  {written:,} PLAY_OVER snapshots quoted by GAMEPLAI_STREAM -> {path}")
+        print(f"\n  {written:,} PLAY_OVER snapshots -> {path}")
+        print(f"  quoted by GAMEPLAI_STREAM on at least one market: {totals['quoted_rows']:,}"
+              " (the rest are kept for the play-by-play chain; they carry no prices)")
         print(f"  matches with a snapshot: {totals['matches_with_snapshots']:,}")
         print(f"  PLAY_OVER messages GAMEPLAI never quoted: {totals['play_over_not_quoted']:,}")
         print(f"  snapshots whose TEAM_A side is unresolved: {totals['team_a_unresolved']:,}")

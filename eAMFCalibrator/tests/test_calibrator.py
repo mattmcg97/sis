@@ -945,6 +945,46 @@ class TestV3Candidate(unittest.TestCase):
         at = {(r[1], r[6]): r[3] for r in rows}
         self.assertEqual(at[(50, 6)], at[(50, 5)])      # 6 is mid-play: 5's book stands
 
+    def test_every_v3_quote_is_on_the_line_it_is_paired_against(self):
+        # prod moves its line on a message: the dead old line and the live
+        # new one arrive together, and on another message two live rows
+        import numpy as np
+        from eAMFModel import v3_stream
+        base = self.prod_rows()
+        t = dt.datetime(2026, 9, 20, 10, 30)
+        spread = "PLAYER 1 to score over {} points more than PLAYER 2"
+        extra = [(self.MC, 52, t, 40.0, 2.0, spread.format(-3.5), 7, "SETTLED", "false"),
+                 (self.MC, 52, t, 44.0, 2.0, spread.format(-1.5), 7, "OPEN", "true"),
+                 (self.MC, 52, t, 43.0, 2.0, spread.format(-0.5), 8, "OPEN", "true"),
+                 (self.MC, 52, t, 45.0, 2.0, spread.format(-4.5), 8, "OPEN", "true")]
+        prod = sorted([r for r in base if not (r[1] == 52 and r[6] in (7, 8))] + extra,
+                      key=lambda r: (r[1], r[2]))
+        paired = directional.index_by_message(prod)
+        chosen = v3_stream.paired_prod_rows(prod)
+        for (market, message), row in chosen.items():
+            self.assertEqual(row[5], paired[(self.MC, market)][message].description)
+        self.assertEqual(markets.parse_line(chosen[(52, 7)][5]), -1.5)
+        self.assertEqual(markets.parse_line(chosen[(52, 8)][5]), -0.5)
+        book = (0, np.full(2 * 100 + 1, 1 / 201), np.full(161, 1 / 161))
+        rows = v3_stream.quote_rows(self.MC, [book], prod)
+        for r in rows:
+            if r[1] in (52, 53, 54, 55):
+                self.assertEqual(markets.parse_line(r[5]),
+                                 markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
+
+    def test_unquoted_play_overs_are_kept_for_the_chain(self):
+        snaps, dropped = TestScoutingPlayOver.build(self, require_quote=False)
+        self.assertEqual([s["message"] for s in snaps], [5, 7, 10, 13])
+        self.assertEqual([s["quoted"] for s in snaps], [1, 1, 1, 0])
+        self.assertNotIn("prob_50", snaps[-1])
+
+    def test_whole_matches_are_fetched(self):
+        table = scouting.Table("DB.S.SCOUTING_FULL", {"FILE_TIME": "TIMESTAMP_NTZ"})
+        sql, params = scouting.scouting_rows_sql(table, ["MATCH_CODE"], windowed=False)
+        self.assertNotIn(config.CUTOFF_START, params)
+        sql_w, params_w = scouting.scouting_rows_sql(table, ["MATCH_CODE"])
+        self.assertIn(config.CUTOFF_START, params_w)
+
     def test_no_model_says_how_to_build_one(self):
         import tempfile
         with tempfile.TemporaryDirectory() as empty:
@@ -990,10 +1030,12 @@ class TestScoutingPlayOver(unittest.TestCase):
                              "OPEN", "true" if m != 10 else "false"))
         return directional.index_by_message(rows)
 
-    def build(self):
+    def build(self, require_quote=True):
         scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
-        return scouting.snapshots_for_match(self.MC, self.rows(), scores, (14, 21),
-                                            self.quotes(), {"prematch_prob_50": 0.41})
+        return scouting.snapshots_for_match(self.MC, TestScoutingPlayOver.rows(self), scores,
+                                            (14, 21), TestScoutingPlayOver.quotes(self),
+                                            {"prematch_prob_50": 0.41},
+                                            require_quote=require_quote)
 
     def test_one_snapshot_per_quoted_play_over(self):
         snaps, dropped = self.build()
