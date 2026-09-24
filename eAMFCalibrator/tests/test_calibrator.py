@@ -1755,6 +1755,31 @@ class TestConversionsAreGarbage(unittest.TestCase):
         for m in (10, 36, 54, 60, 101):
             self.assertNotIn(m, garbage, m)
 
+    def test_a_late_or_moved_conversion_stays_with_its_touchdown(self):
+        # the PAT retaken from the 80 after a penalty, 14 messages after the
+        # touchdown: off the conversion spots and outside the window, it
+        # used to start a "drive" of its own that owned the extra point
+        plays = [drives.PlayRow(10, 1, self.HOME, 1, 10, 26, None),
+                 drives.PlayRow(36, 1, self.HOME, 3, 5, 90, None),
+                 drives.PlayRow(54, 1, self.HOME, 4, 15, 80, None),
+                 drives.PlayRow(60, 1, self.AWAY, 1, 10, 25, None),
+                 drives.PlayRow(66, 1, self.AWAY, 2, 4, 31, None)]
+        scores = [drives.ScoreRow(40, 1, 6, 0, 6, 0), drives.ScoreRow(56, 1, 1, 0, 7, 0)]
+        self.assertEqual(drives.classify_plays(plays, scores)[54], drives.CONVERSION)
+        built = drives.build_drives("AF1", plays, scores)
+        self.assertEqual([d.offensive_team for d in built], [self.HOME, self.AWAY])
+        outcomes = indrive.drive_outcomes("AF1", plays, scores)
+        self.assertEqual([o.outcome for o in outcomes], [indrive.TOUCHDOWN, indrive.NO_POINTS])
+        self.assertEqual(outcomes[0].points_for, 7)
+
+    def test_a_row_after_a_failed_conversion_is_left_alone(self):
+        # no conversion score to bound it: only the spot rule applies, so a
+        # real next possession is not swallowed
+        plays = [drives.PlayRow(36, 1, self.HOME, 3, 5, 90, None),
+                 drives.PlayRow(60, 1, self.AWAY, 1, 10, 25, None)]
+        scores = [drives.ScoreRow(40, 1, 6, 0, 6, 0), drives.ScoreRow(90, 1, 0, 3, 6, 3)]
+        self.assertNotEqual(drives.classify_plays(plays, scores)[60], drives.CONVERSION)
+
     def test_the_receivers_touchback_on_the_35_is_a_snap(self):
         plays = [drives.PlayRow(10, 1, self.HOME, 1, 10, 26, None),
                  drives.PlayRow(36, 1, self.HOME, 3, 5, 90, None),
@@ -2572,14 +2597,59 @@ class TestMoves(unittest.TestCase):
         # Over and Under share one number, so a good offensive play pushes
         # it up whichever selection is carrying it. Reading the line with
         # the probability's expectation would score every Under backwards.
+        touchdown = dataclasses.replace(self.transition(), outcome=indrive.TOUCHDOWN,
+                                        points=6, in_drive=False)
         for market_id in (54, 55):
             rows = [self.quote(1, market_id, 46.0, "Over 44.5"),
                     self.quote(2, market_id, 46.0, "Over 47.5")]
-            move = indrive.moves_for_transitions([self.transition()],
+            move = indrive.moves_for_transitions([touchdown],
                                                  self.index(rows))[0]
             self.assertEqual(move.basis, indrive.LINE, market_id)
             self.assertEqual(move.expected, +1, market_id)
             self.assertTrue(move.hit, market_id)
+
+    def test_an_in_drive_gain_sets_no_direction_for_a_total(self):
+        # more chance of points on this drive, less clock for the rest: the
+        # total can rightly go either way, so nothing is scored
+        t = self.transition()
+        self.assertEqual(t.outcome, indrive.FIRST_DOWN)
+        rows = [self.quote(1, 54, 46.0, "Over 44.5"), self.quote(2, 54, 44.0, "Over 44.5"),
+                self.quote(1, 50, 40.0, "PLAYER 1 to win"), self.quote(2, 50, 46.0, "PLAYER 1 to win")]
+        moves = indrive.moves_for_transitions([t], self.index(rows))
+        self.assertEqual({m.market_id for m in moves}, {50})
+        self.assertEqual(indrive.expected_sign(54, self.HOME, +1, indrive.FIRST_DOWN, True), 0)
+        self.assertEqual(indrive.expected_sign(54, self.HOME, +1, indrive.TOUCHDOWN, False), +1)
+
+    def test_a_gain_is_judged_by_expected_points_not_yards(self):
+        from .. import expected_points
+        # 5 yards on 1st and 10 at midfield: about an average play
+        before = PlayRow(1, 1, self.HOME, 1, 10, 45, None)
+        after = PlayRow(2, 1, self.HOME, 2, 5, 50, None)
+        change = expected_points.change(before, after)
+        self.assertIsNotNone(change)
+        t = indrive.transitions_for_match("AF1", [before, after], [])[0]
+        self.assertEqual(t.outcome, indrive.BIG_GAIN)
+        self.assertEqual(t.ep_change, change)
+        self.assertEqual(t.sign, 0 if abs(change) < indrive.EP_NEUTRAL else (1 if change > 0 else -1))
+        # 9 yards on 3rd and 12 deep in the opponent's half: a failure the
+        # yardage rule called good
+        bad = indrive.transitions_for_match("AF1", [PlayRow(1, 1, self.HOME, 2, 12, 60, None),
+                                                    PlayRow(2, 1, self.HOME, 3, 3, 69, None)], [])[0]
+        self.assertEqual(bad.outcome, indrive.BIG_GAIN)
+        self.assertIsNotNone(bad.ep_change)
+        # a missing cell falls back to the yardage rule
+        self.assertEqual(dataclasses.replace(bad, ep_change=None).sign, +1)
+
+    def test_material_moves_are_reported_apart(self):
+        t = self.transition()
+        rows = [self.quote(1, 50, 40.0, "PLAYER 1 to win"), self.quote(2, 50, 40.5, "PLAYER 1 to win"),
+                self.quote(1, 52, 40.0, "PLAYER 1 to win by over 2.5"),
+                self.quote(2, 52, 45.0, "PLAYER 1 to win by over 2.5")]
+        moves = indrive.moves_for_transitions([t], self.index(rows))
+        result = indrive.report(moves, n_bootstrap=10)
+        prod = result["streams"][directional.PROD]
+        self.assertEqual(prod["overall"]["n"], 2)
+        self.assertEqual(prod["material"]["n"], 1)       # the half-point move is not material
 
     def test_the_under_probability_still_opposes_the_play(self):
         # The line expectation and the probability expectation differ for
@@ -5255,6 +5325,114 @@ class TestReportShape(unittest.TestCase):
         args = build_parser().parse_args(["report"])
         self.assertFalse(args.axes)
         self.assertTrue(build_parser().parse_args(["report", "--axes"]).axes)
+
+
+class TestDriveAudit(unittest.TestCase):
+    """Every drive checked, and its end held against SCOUTING_FULL."""
+
+    H, A = "Home Team", "Away Team"
+
+    def feed(self):
+        P, S = drives.PlayRow, drives.ScoreRow
+        plays = [P(10, 1, self.H, 1, 10, 25, None), P(14, 1, self.H, 2, 4, 31, None),
+                 P(30, 1, self.H, 1, 10, 88, None),
+                 P(60, 1, self.A, 1, 10, 25, None), P(64, 1, self.A, 3, 8, 27, None),
+                 P(80, 1, self.H, 1, 10, 40, None), P(84, 1, self.H, 2, 6, 44, None),
+                 P(90, 1, self.H, 3, 6, 44, None)]
+        scores = [S(40, 1, 6, 0, 6, 0), S(46, 1, 1, 0, 7, 0)]
+        scouting_rows = [
+            {"message": "38", "play_kind": "TOUCHDOWN", "offense": "TEAM_A", "team_a_side": "home"},
+            {"message": "70", "play_kind": "PUNT", "offense": "TEAM_A", "team_a_side": "home"},
+            {"message": "95", "play_kind": "FIELD_GOAL", "offense": "TEAM_A", "team_a_side": "home",
+             "play_messages": "FIELD_GOAL_GOOD_TEAM_A"}]
+        return plays, scores, scouting_rows
+
+    def test_a_clean_match_passes_and_ends_agree(self):
+        from .. import drive_audit
+        plays, scores, rows = self.feed()
+        got, issues = drive_audit.audit_match("AF1", plays, scores, rows[:2])
+        self.assertEqual([r["outcome"] for r in got], ["touchdown", "no_points", "no_points"])
+        self.assertEqual(got[0]["points_for"], 7)
+        self.assertEqual(got[0]["scouting_end"], "touchdown")
+        self.assertEqual(got[1]["scouting_end"], "punt")
+        self.assertNotIn("scouting_disagrees", got[0]["flags"] + got[1]["flags"])
+        self.assertEqual(issues, [])
+
+    def test_a_field_goal_the_feed_never_scored_is_a_disagreement(self):
+        from .. import drive_audit
+        plays, scores, rows = self.feed()
+        got, _ = drive_audit.audit_match("AF1", plays, scores, rows)
+        self.assertEqual(got[-1]["scouting_end"], "field goal")
+        self.assertIn("scouting_disagrees", got[-1]["flags"])
+        summary = drive_audit.summarise(got, {"AF1": []}, 1)
+        self.assertEqual(summary["disagreements"][("no_points", "field goal")], 1)
+
+    def test_a_conversion_row_between_touchdown_and_its_score_stays_with_it(self):
+        from .. import drive_audit
+        P, S = drives.PlayRow, drives.ScoreRow
+        plays = [P(10, 1, self.H, 1, 10, 25, None), P(30, 1, self.H, 2, 3, 90, None),
+                 P(47, 1, self.H, 4, 15, 80, None),
+                 P(60, 1, self.A, 1, 10, 25, None)]
+        scores = [S(40, 1, 6, 0, 6, 0), S(48, 1, 1, 0, 7, 0)]
+        got, issues = drive_audit.audit_match("AF1", plays, scores)
+        self.assertEqual([r["outcome"] for r in got], ["touchdown", "no_points"])
+        self.assertFalse(any("extra_point_alone" in r["flags"] for r in got))
+        self.assertEqual(issues, [])
+
+    def test_an_extra_point_drive_is_flagged(self):
+        from .. import drive_audit
+        from unittest import mock as _mock
+        P, S = drives.PlayRow, drives.ScoreRow
+        plays = [P(10, 1, self.H, 1, 10, 25, None), P(50, 1, self.H, 1, 10, 35, None),
+                 P(60, 1, self.A, 1, 10, 25, None)]
+        scores = [S(40, 1, 6, 0, 6, 0), S(55, 1, 1, 0, 7, 0), S(56, 1, 0, 0, 7, 0)]
+        # as a feed the rules cannot untangle would leave it
+        with _mock.patch.object(drives, "_mark_conversions", lambda *a: None):
+            got, _ = drive_audit.audit_match("AF1", plays, scores)
+        lone = [r for r in got if r["outcome"] == "extra_point"]
+        self.assertTrue(lone)
+        self.assertTrue(all("extra_point_alone" in r["flags"] for r in lone))
+
+    def test_the_command_is_wired(self):
+        from ..__main__ import build_parser
+        args = build_parser().parse_args(["drive-audit", "--limit", "5", "--no-scouting"])
+        self.assertEqual((args.command, args.limit, args.no_scouting), ("drive-audit", 5, True))
+
+
+class TestExpectedPoints(unittest.TestCase):
+    """The yardstick in-drive gains are judged by."""
+
+    def test_built_from_how_real_drives_ended(self):
+        import csv as csv_mod, tempfile
+        from .. import expected_points
+        fields = ["match_code", "message", "period", "play_kind", "offense", "down", "distance",
+                  "field_position", "play_messages"]
+        rows = []
+        for m in range(30):
+            code = f"AF{m}"
+            rows += [dict(match_code=code, message=1, period=1, play_kind="SCRIMMAGE", offense="TEAM_A",
+                          down=1, distance=10, field_position=75, play_messages=""),
+                     dict(match_code=code, message=2, period=1,
+                          play_kind="TOUCHDOWN" if m % 2 else "PUNT", offense="TEAM_A",
+                          down="", distance="", field_position="", play_messages="")]
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "x.csv")
+            with open(path, "w", newline="") as fh:
+                w = csv_mod.DictWriter(fh, fields)
+                w.writeheader()
+                w.writerows(rows)
+            table, counts = expected_points.build_from_export(path)
+        k = expected_points.key(1, 10, 75)
+        self.assertEqual(counts[k], 30)
+        self.assertAlmostEqual(table[k], 3.5)          # half the drives scored seven
+
+    def test_the_shipped_table_rises_toward_the_goal(self):
+        from .. import expected_points
+        own = expected_points.value(1, 10, 25)
+        theirs = expected_points.value(1, 10, 85)
+        self.assertIsNotNone(own)
+        self.assertLess(own, theirs)
+        self.assertIsNone(expected_points.value(None, 10, 25))
 
 
 class TestSeveralCandidates(unittest.TestCase):

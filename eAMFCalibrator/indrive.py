@@ -37,7 +37,7 @@ import random
 from dataclasses import dataclass
 from typing import Optional
 
-from . import buckets, config, directional, drives, markets, metrics, snowflake_io
+from . import buckets, config, directional, drives, expected_points, markets, metrics, snowflake_io
 
 TOUCHDOWN_POINTS = 6
 FIELD_GOAL_POINTS = 3
@@ -83,6 +83,23 @@ OUTCOME_ORDER = [TOUCHDOWN, FIELD_GOAL, EXTRA_POINT, SCORE,
 
 HOME, AWAY = drives.HOME_TEAM, drives.AWAY_TEAM
 
+# A play that neither scored, converted nor failed a 3rd or 4th down is
+# judged by what it did to the offence's expected points on the drive
+# (expected_points.py), not by its yardage: five yards on 1st and 10 is
+# about an average Madden play, so it is neither good nor bad news. Within
+# EP_NEUTRAL of no change it sets no direction. The class names still
+# describe the yardage.
+YARDAGE_CLASSES = (BIG_GAIN, SHORT_GAIN, NO_GAIN, LOSS)
+EP_NEUTRAL = 0.15
+# A move this big in probability (or any move of a line) is one where the
+# play clearly changed something; smaller moves are close to a coin flip on
+# direction whoever prices them, so the report shows them apart.
+MATERIAL_MOVE = 0.01
+# In-drive plays that set no direction for a TOTAL: a gain makes points on
+# this drive likelier and uses the clock the rest of the game needed, so
+# the total can rightly go either way.
+TOTAL_BLIND = (FIRST_DOWN,) + YARDAGE_CLASSES
+
 # What moved, and therefore what was scored. Where the line held, the
 # probability carries the news; where it moved, the probability is not
 # comparable across it and the line carries it instead.
@@ -107,9 +124,16 @@ class Transition:
     points: int
     outcome: str
     in_drive: bool
+    ep_change: Optional[float] = None
 
     @property
     def sign(self):
+        if self.outcome in YARDAGE_CLASSES and self.ep_change is not None:
+            if self.ep_change >= EP_NEUTRAL:
+                return +1
+            if self.ep_change <= -EP_NEUTRAL:
+                return -1
+            return 0
         return OUTCOME_SIGN.get(self.outcome, 0)
 
     @property
@@ -161,7 +185,7 @@ class Move:
         return self.delta * self.expected
 
 
-def expected_line_sign(market_id, offensive_team, outcome_sign):
+def expected_line_sign(market_id, offensive_team, outcome_sign, outcome=None, in_drive=False):
     """Which way this selection's LINE should move.
 
     Not the same question as the probability, and the difference is the
@@ -181,14 +205,14 @@ def expected_line_sign(market_id, offensive_team, outcome_sign):
         return 0
     selection = markets.selection_label(market_id)
     if selection in ("Over", "Under"):
-        return outcome_sign
+        return 0 if (in_drive and outcome in TOTAL_BLIND) else outcome_sign
     if offensive_team not in (HOME, AWAY) or selection not in ("Home", "Away"):
         return 0
     offence = "Home" if offensive_team == HOME else "Away"
     return outcome_sign if selection == offence else -outcome_sign
 
 
-def expected_sign(market_id, offensive_team, outcome_sign):
+def expected_sign(market_id, offensive_team, outcome_sign, outcome=None, in_drive=False):
     """Which way this selection's probability should move.
 
     A team-sided selection follows the side it names: the offence's own
@@ -200,6 +224,8 @@ def expected_sign(market_id, offensive_team, outcome_sign):
         return 0
     selection = markets.selection_label(market_id)
     if selection in ("Over", "Under"):
+        if in_drive and outcome in TOTAL_BLIND:
+            return 0
         return outcome_sign if selection == "Over" else -outcome_sign
     if selection not in ("Home", "Away"):
         return 0
@@ -320,6 +346,7 @@ def transitions_for_match(match_code, plays, scores):
                 outcome=classify(before, after, points, in_drive,
                                  possession_kept),
                 in_drive=in_drive,
+                ep_change=expected_points.change(before, after) if in_drive else None,
             ))
     out.sort(key=lambda t: (t.from_message, t.to_message))
     return out
@@ -365,14 +392,16 @@ def moves_for_transitions(transitions, indexes, stats=None):
                     # different question at each end and cannot be
                     # differenced. The line itself carries the news.
                     expected = expected_line_sign(
-                        market_id, transition.offensive_team, transition.sign)
+                        market_id, transition.offensive_team, transition.sign,
+                        transition.outcome, transition.in_drive)
                     basis, first, second = LINE, line_before, line_after
                 else:
                     # GAMEPLAI publishes 0-100; everything in this suite
                     # works in 0-1, so a move reads on the same scale as a
                     # Brier delta rather than a hundred times larger.
                     expected = expected_sign(
-                        market_id, transition.offensive_team, transition.sign)
+                        market_id, transition.offensive_team, transition.sign,
+                        transition.outcome, transition.in_drive)
                     basis = PROBABILITY
                     first = before.probability / 100.0
                     second = after.probability / 100.0
@@ -716,6 +745,11 @@ def head_to_head(moves, n_bootstrap=1000):
     return out
 
 
+def is_material(move):
+    """A move of a line, or of at least MATERIAL_MOVE in probability."""
+    return move.basis == LINE or abs(move.delta) >= MATERIAL_MOVE
+
+
 def report(moves, n_bootstrap=1000):
     """The whole analysis, in the shape the console and HTML both read."""
     in_drive = [m for m in moves if m.transition.in_drive]
@@ -737,6 +771,7 @@ def report(moves, n_bootstrap=1000):
                               n_bootstrap),
             "ending": block([m for m in mine if not m.transition.in_drive],
                             n_bootstrap),
+            "material": block([m for m in mine if is_material(m)], n_bootstrap),
             "by_outcome": by(mine, lambda m: m.transition.outcome, n_bootstrap),
             "by_period": by(mine, period_label, n_bootstrap),
             "by_selection": by(mine, selection_label, n_bootstrap),

@@ -19,7 +19,7 @@ import datetime as dt
 import os
 import sys
 
-from . import (buckets, config, directional, dump, html_full, html_indrive,
+from . import (buckets, config, directional, drives, dump, html_full, html_indrive,
                html_report, indrive, labels, pipeline, prematch,
                report, scouting, snowflake_io)
 
@@ -182,6 +182,65 @@ def cmd_scouting(args):
                                 limit=args.limit)
     finally:
         conn.close()
+    return 0
+
+
+def cmd_drive_audit(args):
+    """Every drive the play feed yields in the window, checked, and each
+    one's end compared with SCOUTING_FULL where it can be reached."""
+    import csv
+    from collections import defaultdict
+    from . import drive_audit
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    rows, issues = [], {}
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            time_column, _ = snowflake_io.detect_play_time_column(cur)
+            codes = sorted(snowflake_io.match_universe(cur, config.STREAMS["prod"]))
+            if args.limit:
+                codes = codes[-args.limit:]
+            print(f"  {len(codes):,} matches", flush=True)
+            scouting_by = {}
+            if not args.no_scouting:
+                try:
+                    scouting_by, _ = snowflake_io._play_over_snapshots(cur, codes)
+                except SystemExit as exc:
+                    print(f"  SCOUTING_FULL not used: {exc}")
+            chunk = config.MATCH_CHUNK_SIZE
+            for start in range(0, len(codes), chunk):
+                batch = codes[start:start + chunk]
+                plays_by, scores_by = defaultdict(list), defaultdict(list)
+                for r in snowflake_io.fetch_plays(cur, batch, time_column):
+                    plays_by[r[0]].append(drives.PlayRow(*r[1:8]))
+                for r in snowflake_io.fetch_scores(cur, batch):
+                    scores_by[r[0]].append(drives.ScoreRow(*r[1:7]))
+                for code in batch:
+                    got, problems = drive_audit.audit_match(
+                        code, plays_by.get(code, []), scores_by.get(code, []),
+                        scouting_by.get(code))
+                    rows.extend(got)
+                    issues[code] = problems
+    finally:
+        conn.close()
+    path = os.path.join(out_dir, "drive_audit.csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, drive_audit.FIELDS)
+        w.writeheader()
+        w.writerows(rows)
+    drive_audit.print_summary(drive_audit.summarise(rows, issues, len(issues)))
+    print(f"\n  every drive, with its flags -> {path}")
+    return 0
+
+
+def cmd_expected_points(args):
+    """Rebuild the in-drive analysis's expected-points table off a
+    scouting_playover.csv export."""
+    from . import expected_points
+    table, counts = expected_points.build_from_export(args.export)
+    path = expected_points.write(table, counts, f"SCOUTING_FULL PLAY_OVER export {args.export}")
+    print(f"  {len(table)} cells from {sum(counts.values()):,} scrimmage states -> {path}")
     return 0
 
 
@@ -740,6 +799,19 @@ def build_parser():
              "under the line rule")
     cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    ep_parser = sub.add_parser(
+        "expected-points",
+        help="rebuild the expected-points table the in-drive analysis judges plays by")
+    ep_parser.add_argument("export", help="scouting_playover.csv (the `scouting` export)")
+
+    da_parser = sub.add_parser(
+        "drive-audit", parents=[shared],
+        help="check every drive the play feed yields against SCOUTING_FULL")
+    da_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    da_parser.add_argument("--limit", type=int, metavar="N", help="the N most recent matches")
+    da_parser.add_argument("--no-scouting", action="store_true",
+                           help="skip the SCOUTING_FULL cross-check")
+
     hi_parser = sub.add_parser(
         "history", parents=[shared],
         help="every settled match before --until, shaped like nb2/AMFELO.csv (for v4-build --history)")
@@ -819,6 +891,10 @@ def main(argv=None):
         return cmd_compare(args)
     if args.command == "history":
         return cmd_history(args)
+    if args.command == "drive-audit":
+        return cmd_drive_audit(args)
+    if args.command == "expected-points":
+        return cmd_expected_points(args)
     return 1
 
 

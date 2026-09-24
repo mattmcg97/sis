@@ -487,10 +487,10 @@ def _indrive_block(sides):
 
     def stream_rows(label, s):
         out = []
-        for scope, key in (("Overall", "overall"), ("Inside a drive", "in_drive"),
-                           ("At a drive's end", "ending")):
-            block = s[key]
-            if not block["n"]:
+        for scope, key in (("Overall", "overall"), ("Moves of 1 point or more", "material"),
+                           ("Inside a drive", "in_drive"), ("At a drive's end", "ending")):
+            block = s.get(key)
+            if not block or not block["n"]:
                 continue
             out.append(f"""<tr>
                 <th>{label}</th><td>{scope}</td>

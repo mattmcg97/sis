@@ -197,9 +197,10 @@ def _drives_panel(census, outcomes):
 def _stream_panel(stream, s):
     scope = "".join(_row(label, s[key])
                     for label, key in (("Overall", "overall"),
+                                       ("Moves of 1 point or more", "material"),
                                        ("Inside a drive", "in_drive"),
                                        ("At a drive's end", "ending"))
-                    if s[key]["n"])
+                    if s.get(key) and s[key]["n"])
     outcomes = "".join(
         _row(TITLES.get(o, o), s["by_outcome"][o])
         for o in indrive.OUTCOME_ORDER

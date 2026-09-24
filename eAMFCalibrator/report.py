@@ -1273,9 +1273,9 @@ def print_indrive(result, stats=None):
     for stream in (directional_prod(), directional_candidate()):
         s = result["streams"][stream]
         _rate_header(stream.upper())
-        for label, key in (("overall", "overall"), ("inside a drive", "in_drive"),
-                           ("at a drive's end", "ending")):
-            if s[key]["n"]:
+        for label, key in (("overall", "overall"), ("moves of 1 pt or more", "material"),
+                           ("inside a drive", "in_drive"), ("at a drive's end", "ending")):
+            if s.get(key) and s[key]["n"]:
                 _rate_row(label, s[key])
 
     for stream in (directional_prod(), directional_candidate()):

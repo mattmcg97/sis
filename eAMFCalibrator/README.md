@@ -524,6 +524,38 @@ nobody, so it is counted and shown and scored by nothing. Points settle a
 transition before any yardage does, and they are signed to the side with
 the ball — a pick six comes back negative and cannot read as a good play.
 
+**Gains are judged by expected points, not yards.** Five yards on 1st and
+10 is about an average Madden play, not a good one, and nine yards on 3rd
+and 12 is a failure. So `big_gain`, `short_gain`, `no_gain` and `loss` take
+their direction from what the play did to the offence's expected points on
+the drive (`expected_points.py`: the points real drives went on to score
+from each down, distance and field position, 95,000 states off
+SCOUTING_FULL). A play that raised them is good, one that lowered them is
+bad, and within 0.15 points of no change it sets no direction. The class
+names still describe the yardage. Rebuild the table from a newer export
+with `py -m eAMFCalibrator expected-points out/scouting_playover.csv`.
+
+**A gain inside a drive sets no direction for a total.** It makes points on
+this drive likelier, but it uses clock the rest of the game needed. A
+30-second play is worth about 1–1.5 points of total, so the total can
+rightly go either way. Totals are scored on what ends drives: points, stops
+and turnovers.
+
+**Moves of a point or more.** How often a move goes the right way depends
+on its size. On Sep 3–9, v5's moneyline moves went the right way:
+
+| Size of move | Right |
+|---|---|
+| under 0.2 points of probability | 55% |
+| 0.5–1 point | 69% |
+| 2–5 points | 92% |
+| 5+ points | 98% |
+
+Below a point, the play barely changed anything and the direction is close
+to a coin flip for any model. So the report shows moves of a point or more
+(or any line move) as their own row. Under these rules, on those plays v5
+went the right way 89.5% of the time and prod 84.9%.
+
 ### Which way a price should move
 
 A team-sided selection follows the side it names: on a good play the
@@ -882,6 +914,36 @@ snapshots that landed off-anchor are *less* live than the ones on a
 drive's opening 1st and 10 (spread 1.5% against 9.3%, total 2.5% against
 5.9%). Liveness tracks the market and the match clock, not where in a
 drive the snapshot sits.
+
+## Checking every drive: `drive-audit`
+
+```
+py -m eAMFCalibrator drive-audit --since 2026-09-17 --until 2026-09-24
+```
+
+Goes through every drive the play feed yields in the window and writes
+`out/drive_audit.csv`, one row per drive with its flags, plus a summary:
+
+| Flag | Meaning |
+|---|---|
+| `extra_point_alone` | the drive's only points are a PAT or a two: the conversion was split off its touchdown |
+| `odd_points` | points that are no drive's score |
+| `fragment` | one row, no points, not the match's last drive |
+| `same_side_next` | the next drive is the same side's, with no score or turnover between: one possession cut in two |
+| `no_first_down_start` | the first row is not 1st and 10 |
+| `defence_scored` | the other side scored while this side had the ball |
+| `scouting_disagrees` | SCOUTING_FULL ends the drive differently (a touchdown, field goal, punt, turnover on downs, turnover or the end of a half) |
+
+A match whose drives' points don't add up to the feed's total is counted
+too. `--no-scouting` skips the SCOUTING_FULL cross-check, and `--limit N`
+takes the N most recent matches.
+
+**The `extra_point` drives.** A touchdown's conversion rows were dropped
+only when they sat on the 85 or 98 within 10 messages of the touchdown. A
+PAT retaken after a penalty, or one the feed posted late, stayed in the
+feed as a "drive" of its own that owned the extra point. Now every row
+between a touchdown and its conversion's own score row is the conversion,
+so the point stays with the touchdown.
 
 ## Inspecting drive detection: `dump`
 
