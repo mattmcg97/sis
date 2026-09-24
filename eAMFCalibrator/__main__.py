@@ -633,6 +633,10 @@ def common_options():
     tuning.add_argument("--v4-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v4 "
                              f"(default {config.V4_PATHS})")
+    tuning.add_argument("--v4-lines", choices=["own", "prod"],
+                        help="--candidate v4: quote v4's own even line, moved as the game "
+                             "moves (own), or read v4's price at prod's line (prod) "
+                             f"(default {config.V4_LINES})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -662,7 +666,8 @@ def apply_overrides(args):
                            ("candidate_label", "CANDIDATE_LABEL"),
                            ("v3_paths", "V3_PATHS"),
                            ("v4_model", "V4_MODEL_DIR"),
-                           ("v4_paths", "V4_PATHS")):
+                           ("v4_paths", "V4_PATHS"),
+                           ("v4_lines", "V4_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)

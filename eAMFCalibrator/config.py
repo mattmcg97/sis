@@ -44,6 +44,9 @@ V3_WORKERS = None
 # None: $EAMF_V4_MODEL, then ./v4_model). Workers are V3_WORKERS.
 V4_MODEL_DIR = None
 V4_PATHS = 2000
+# "own": v4 quotes its own even line, moved as the game moves; "prod": v4's
+# book read at the line prod quoted, so every pair answers one question
+V4_LINES = "own"
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.

@@ -244,6 +244,38 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(Fake.asked, [])
 
 
+    def test_the_even_line_is_the_half_point_nearest_even_money(self):
+        pmf = np.zeros(80)
+        pmf[[38, 41, 44, 47]] = [0.2, 0.25, 0.3, 0.25]
+        # P(> 38.5) = 0.8, P(> 41.5 .. 43.5) = 0.55, P(> 44.5) = 0.25: of the
+        # three 0.55 lines, the one nearest the mean (42.8)
+        self.assertEqual(v4.even_line(pmf, 0), 42.5)
+        margin = np.zeros(2 * v4.MARGIN_MAX + 1)
+        margin[v4.MARGIN_MAX + np.array([-3, 3, 7])] = [0.3, 0.45, 0.25]
+        # -2.5 .. 2.5 all give P(home by more) = 0.7: the one nearest the mean (2.2)
+        self.assertEqual(v4.even_line(margin, v4.MARGIN_MAX), 2.5)
+        line = v4.even_line(margin, v4.MARGIN_MAX)
+        self.assertLessEqual(abs(v4.market_prob(52, line, margin, pmf) - 0.5), 0.2 + 1e-9)
+
+    def test_the_stream_moves_its_own_line_with_the_game(self):
+        rows = next(iter(self.matches.values()))
+        code = rows[0]["match_code"]
+        prod = [(code, m, None, 50.0, 2.0, v4_stream.description(m, 30.5 if m in (54, 55) else 0.5),
+                 int(r["message"]), "OPEN", "true") for r in rows for m in (52, 53, 54, 55)]
+        own = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100, workers=1)
+        at_prod = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100,
+                                               workers=1, lines="prod")
+        parse = v4_stream._parse_line
+        self.assertEqual({parse(q[5]) for q in at_prod if q[1] == 54}, {30.5})
+        totals = [(q[6], parse(q[5])) for q in own if q[1] == 54]
+        self.assertGreater(len({t for _, t in totals}), 1)         # it moves with the game
+        self.assertTrue(all(t % 1 == 0.5 for _, t in totals))
+        # never below the points already on the board
+        board = {int(r["message"]): int(r["score_p1"] or 0) + int(r["score_p2"] or 0) for r in rows}
+        for message, line in totals:
+            on_board = board[max(m for m in board if m <= message)]
+            self.assertGreater(line, on_board - 1)
+
     def test_a_missing_model_says_how_to_build_it(self):
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(SystemExit) as caught:

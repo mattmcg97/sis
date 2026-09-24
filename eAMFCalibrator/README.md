@@ -79,6 +79,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
 | `--v4-model DIR` | `eAMFModel v4-build` output for `--candidate v4` (default `$EAMF_V4_MODEL`, then `./v4_model`) |
 | `--v4-paths N` | games simulated per snapshot for `--candidate v4` (default 2000) |
+| `--v4-lines own\|prod` | `--candidate v4`: quote v4's own even line, moved as the game moves (`own`, the default), or read v4's price at prod's line (`prod`) |
 | `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
@@ -1360,5 +1361,10 @@ from NB2, never from GAMEPLAI, so the report also fetches each priced
 match's players, teams and stream from `EVENT`. That needs pandas and scipy
 as well as numpy. A model built without `--history` falls back to prod's
 pre-match quotes and says so.
+
+v4 quotes its own even line on the spread and the total, so pairs split
+between the same line (compared on probability) and a different line
+(compared on whose line landed nearer the result). `--v4-lines prod`
+reads v4's price at prod's line instead, so every pair is on the same line.
 
 What v4 changes is in the eAMFModel README.

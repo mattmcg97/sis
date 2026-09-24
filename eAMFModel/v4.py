@@ -71,6 +71,21 @@ def _graded(side, at):
     return np.where(rest > 1e-12, side / np.maximum(1e-12, rest), 0.5)
 
 
+def even_line(pmf, offset):
+    """The half-point line nearest to even money: the L = k + 0.5 whose
+    P(X > L) is closest to a half (the median, rounded to a half point, so
+    a line never pushes). Where several lines are equally near -- no
+    outcome falls between them, as late in a game -- the one nearest the
+    mean."""
+    cdf = np.cumsum(pmf)[:-1]
+    gap = np.abs(cdf - 0.5)
+    best = np.flatnonzero(gap <= gap.min() + 1e-12)
+    x = np.arange(len(pmf)) - offset
+    mean = float((pmf * x).sum() / max(1e-300, pmf.sum()))
+    k = best[np.argmin(np.abs(best - offset + 0.5 - mean))]
+    return float(k - offset) + 0.5
+
+
 def prob_above(pmf, offset, line):
     """P(X > line) with a push graded out, off a pmf whose index i is X = i - offset."""
     x = np.arange(pmf.shape[-1]) - offset

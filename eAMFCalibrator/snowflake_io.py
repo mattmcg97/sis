@@ -475,10 +475,11 @@ def _v4_quotes(cur, match_codes):
     match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
     print(f"  v4: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{config.V4_PATHS:,} games each", flush=True)
+          f"{config.V4_PATHS:,} games each, on "
+          f"{'its own even lines' if config.V4_LINES == 'own' else 'prod lines'}", flush=True)
     return v4_stream.quotes_for_matches(snapshots, prod_all, config.V4_MODEL_DIR,
                                         n_paths=config.V4_PATHS, workers=config.V3_WORKERS,
-                                        match_info=match_info)
+                                        match_info=match_info, lines=config.V4_LINES)
 
 
 def status_profile(cur, stream_table):

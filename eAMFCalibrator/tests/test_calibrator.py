@@ -1028,7 +1028,7 @@ class TestV4Candidate(unittest.TestCase):
     scouting_rows = TestV3Candidate.scouting_rows
     prod_rows = TestV3Candidate.prod_rows
 
-    def quotes(self, model_dir, handles):
+    def quotes(self, model_dir, handles, lines="prod"):
         from .. import snowflake_io as sio
         prod_table = config.STREAMS["prod"]
         scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
@@ -1038,8 +1038,9 @@ class TestV4Candidate(unittest.TestCase):
                 return None, self.prod_rows()
             raise AssertionError("unexpected query")
 
-        saved = (config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS)
+        saved = (config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS, config.V4_LINES)
         config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS = model_dir, 50, 1
+        config.V4_LINES = lines
         try:
             with mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
                     mock.patch.object(sio, "fetch_scores", return_value=scores), \
@@ -1052,7 +1053,7 @@ class TestV4Candidate(unittest.TestCase):
                 self.fetched_handles = fh.called
                 return rows
         finally:
-            config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS = saved
+            config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS, config.V4_LINES = saved
 
     def test_quotes_at_the_paired_lines_with_handles_fetched(self):
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
@@ -1071,6 +1072,23 @@ class TestV4Candidate(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 self.quotes(empty, {})
         self.assertIn("v4-build", str(caught.exception))
+
+    def test_by_default_v4_quotes_its_own_even_lines(self):
+        self.assertEqual(config.V4_LINES, "own")
+        rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own")
+        by = collections.defaultdict(dict)
+        for r in rows:
+            by[r[6]][r[1]] = (markets.parse_line(r[5]), r[3])
+        self.assertTrue(by)
+        for message, quoted in by.items():
+            for market in (52, 53, 54):
+                if market in quoted:
+                    line, prob = quoted[market]
+                    self.assertAlmostEqual(line % 1, 0.5)          # half points: never a push
+                    self.assertTrue(20 < prob < 80, (message, market, prob))
+            if 52 in quoted and 53 in quoted:
+                self.assertEqual(quoted[53][0], -quoted[52][0])
+                self.assertAlmostEqual(quoted[52][1] + quoted[53][1], 100, delta=0.02)
 
     def test_a_model_with_nb2_is_given_each_matchs_players_and_teams(self):
         from eAMFModel import v4

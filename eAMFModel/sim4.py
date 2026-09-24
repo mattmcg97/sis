@@ -258,6 +258,27 @@ def kick_decisions(rows):
     return out
 
 
+def safety_kicks(rows):
+    """After each safety, the receiving side's field on its first snap: the
+    free kick comes from the conceding side's 20, not the 35, so it starts
+    well up the field (about its 42 against a kickoff's 26)."""
+    out = []
+    for i, (a, b) in enumerate(zip(rows, rows[1:])):
+        if b["play_kind"] != "PUNT" or "SAFETY" not in (b["play_messages"] or "") \
+                or a["offense"] not in ("TEAM_A", "TEAM_B"):
+            continue
+        for c in rows[i + 2:i + 6]:
+            if c["play_kind"] == "SCRIMMAGE" and c["field_position"]:
+                if c["offense"] != a["offense"]:
+                    out.append(_i(c["field_position"]))
+                break
+    return out
+
+
+SAFETY_KICK_MIN = 20       # free kicks seen before they are used as they are
+SAFETY_KICK_SHIFT = 16     # else: a kickoff's field moved on this far
+
+
 CONV_MARGIN = 16      # margins after the touchdown, clipped to +-this
 
 
@@ -454,6 +475,7 @@ class Tables:
         self.kind = self.gain = self.new_field = self.seconds = self.replay = None
         self.kick = {}        # desperate -> (onside, field, seconds) arrays
         self.punt = {}        # field bucket -> (net, seconds)
+        self.safety_kick = None   # the receiver's field after a safety's free kick
         self.fg_seconds = None
         self.fg_after = None
         self.go_for_two = None   # (phase, margin after the six) -> P(going for two)
@@ -476,9 +498,10 @@ class Tables:
     @classmethod
     def build(cls, matches, min_records=MIN_RECORDS, seed=0):
         """From {match: export rows in message order}."""
-        snaps, kicks, decisions, conv, fourths, early = [], [], [], [], [], []
+        snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
         for rows in matches.values():
             snaps += snap_records(rows)
+            free += safety_kicks(rows)
             kicks += kick_records(rows)
             decisions += kick_decisions(rows)
             conv += conversions(rows)
@@ -533,6 +556,8 @@ class Tables:
             t.kick[desperate] = (np.array([k[1] for k in ks], dtype=bool),
                                  np.array([k[2] for k in ks], dtype=np.int32),
                                  np.array([k[3] for k in ks]))
+        t.safety_kick = (np.array(free, dtype=np.int32) if len(free) >= SAFETY_KICK_MIN
+                         else _shifted_kick(t.kick[False][1]))
         punts = [d for d in decisions if d[0] == "punt"]
         for b in range(3):
             ps = [p for p in punts if _punt_bucket(p[1]) == b]
@@ -580,7 +605,8 @@ class Tables:
                       replay=self.replay, td_from=self.td_from, fg_seconds=self.fg_seconds,
                       fg_after=np.array([self.fg_after]), period_theta=self.period_theta,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
-                      late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]))
+                      late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
+                      safety_kick=self.safety_kick)
         for d, (a, b, c) in self.kick.items():
             arrays[f"kick{int(d)}_onside"], arrays[f"kick{int(d)}_field"], arrays[f"kick{int(d)}_sec"] = a, b, c
         for b, (net, s) in self.punt.items():
@@ -608,7 +634,12 @@ class Tables:
             t.kick[d] = (z[f"kick{int(d)}_onside"], z[f"kick{int(d)}_field"], z[f"kick{int(d)}_sec"])
         for b in range(3):
             t.punt[b] = (z[f"punt{b}_net"], z[f"punt{b}_sec"])
+        t.safety_kick = z["safety_kick"] if "safety_kick" in z else _shifted_kick(t.kick[False][1])
         return t
+
+
+def _shifted_kick(fields):
+    return np.clip(np.asarray(fields) + SAFETY_KICK_SHIFT, 1, 99).astype(np.int32)
 
 
 def _punt_bucket(y):
@@ -699,6 +730,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     tally = (lambda name, k: stats.__setitem__(name, stats.get(name, 0) + int(k))) \
         if stats is not None else (lambda name, k: None)
     path_no = np.tile(np.arange(n_paths, dtype=np.int64), S)   # path k of its state
+    free = np.zeros(P, dtype=bool)                             # the kick is a safety's free kick
     step = np.zeros(P, dtype=np.int64)                         # events since the snapshot
 
     def rand(ix, slot):
@@ -791,8 +823,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 margin = score[ix, k] - score[ix, 1 - k]
                 hl = clock[ix] + QUARTER * ((period[ix] == 1) | (period[ix] == 3))
                 desperate = (period[ix] >= 4) & (margin < 0) & (hl <= desperate_seconds)
+                fk = free[ix]
                 for flag in (False, True):
-                    sub = ix[desperate == flag]
+                    sub = ix[(desperate == flag) & ~fk]
                     if not len(sub):
                         continue
                     onside, field, secs = tables.kick[flag]
@@ -804,6 +837,18 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     dist[sub] = 10
                     clock[sub] -= secs[j]
                     phase[sub] = SCRIM
+                # after a safety: a free kick from the 20, no onside
+                sub = ix[fk]
+                if len(sub):
+                    _, _, secs = tables.kick[False]
+                    j = pick(sub, 4, len(secs))
+                    team[sub] = 1 - team[sub]
+                    y[sub] = tables.safety_kick[pick(sub, 14, len(tables.safety_kick))]
+                    down[sub] = 1
+                    dist[sub] = 10
+                    clock[sub] -= secs[j]
+                    phase[sub] = SCRIM
+                    free[sub] = False
 
         ix = live[ph == SCRIM]
         if not len(ix):
@@ -823,8 +868,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         dn = down[ix]
         tt = dist[ix]
 
-        # kneel: ahead in the last quarter with the downs to cover the clock
-        kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn))
+        # kneel: ahead in the last quarter with the downs to cover the clock,
+        # and the room to take them -- each kneel loses a yard, so one on the
+        # goal line is a safety (backed up, players run real plays instead)
+        kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
         tally("kneel", kneel.sum())
         if kneel.any():
             kx = ix[kneel]
@@ -964,10 +1011,12 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if td.any():
             score_td(gx[td], team[gx[td]])
         sf = y2 <= 0
+        tally("safety", sf.sum())
         if sf.any():
             s = gx[sf]
             score[s, 1 - team[s]] += 2
-            phase[s] = KICK                         # the free kick
+            phase[s] = KICK                         # the free kick, from the 20
+            free[s] = True
         rest = ~td & ~sf
         gx, gain, rp, y2 = gx[rest], gain[rest], rp[rest], y2[rest]
         # clock management as a half runs out: in range of a kick that would

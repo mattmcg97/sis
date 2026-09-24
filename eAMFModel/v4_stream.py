@@ -9,9 +9,12 @@ same rows as scouting_playover.csv), plus prod's quotes for the lines and
 publish times.
 
 Each PLAY_OVER is priced by simulation. A stream's quote stands until its
-next one, so every prod quote after a snapshot gets v4's latest book,
-re-read at prod's line at that message: the two streams always answer the
-same question. Messages before the first snapshot get no quote.
+next one, so every prod quote after a snapshot gets v4's latest book. v4
+quotes its own even line off that book, moving it as the game moves (the
+calibrator then scores whose line was nearer the result where the lines
+differ); `lines="prod"` re-reads the book at prod's line instead, so the
+two streams always answer the same question. Messages before the first
+snapshot get no quote.
 
 The model itself -- the play tables and the pre-match grid -- comes from
 `python -m eAMFModel v4-build` and is loaded from `model_dir`. It is never
@@ -25,7 +28,7 @@ from bisect import bisect_right
 import numpy as np
 
 from . import playover, players, sim4 as sim, v4
-from .pricer import ML_AWAY, ML_HOME, MARKET_IDS
+from .pricer import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
 from .stream import OPEN, _parse_line, description
 
 DEFAULT_MODEL_DIR = "v4_model"
@@ -103,10 +106,18 @@ def paired_prod_rows(prod_quote_rows):
     return {key: row for key, (row, _) in chosen.items()}
 
 
-def quote_rows(match_code, books, prod_quote_rows, first_play_message=None):
+OWN, PROD_LINES = "own", "prod"
+
+
+def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN):
     """GAMEPLAI-shaped rows: at every (market, message) prod quoted from
-    v4's first snapshot on, v4's latest book read at the line of the prod
-    row the calibrator pairs with there.
+    v4's first snapshot on, v4's latest book.
+
+    lines=OWN (the default): v4 prices its own line, the even one off its
+    own distribution for the state -- the margin's for the spread, the
+    total's for the total -- so the line moves when the game moves it.
+    lines=PROD_LINES reads the book at the line of the prod row the
+    calibrator pairs with, so every pair answers one question.
 
     `first_play_message` is kept for callers; pre-match messages carry no
     book and so no quote."""
@@ -124,6 +135,12 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None):
         _, mpmf, tpmf = books[i]
         if market_id in (ML_HOME, ML_AWAY):
             line = None
+        elif lines == OWN:
+            if market_id in (SPREAD_HOME, SPREAD_AWAY):
+                home = v4.even_line(mpmf, v4.MARGIN_MAX)
+                line = home if market_id == SPREAD_HOME else -home
+            else:
+                line = v4.even_line(tpmf, 0)
         else:
             line = _parse_line(prod_row[5])
             if line is None:
@@ -138,20 +155,20 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None):
 
 
 def _worker(job):
-    items, tables_path, grid_path, variant, n_paths, seed = job
+    items, tables_path, grid_path, variant, n_paths, seed, lines = job
     tables = sim.Tables.load(tables_path)
     grid = v4.PriorGrid.load(grid_path)
     rng = np.random.default_rng(seed)
     out = []
     for match_code, snaps, prod_rows, first_play, prof, means in items:
         books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
-        out.extend(quote_rows(match_code, books, prod_rows, first_play))
+        out.extend(quote_rows(match_code, books, prod_rows, first_play, lines))
     return out
 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, variant=None, book=None, handles=None, seed=0,
-                       match_info=None):
+                       match_info=None, lines=OWN):
     """Quote rows for many matches.
 
     `snapshots_by_match`: match -> export-shaped PLAY_OVER rows (scouting's
@@ -188,7 +205,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     if not items:
         return []
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
-    jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i)
+    jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i, lines)
             for i in range(workers)]
     if workers == 1:
         results = [_worker(j) for j in jobs]

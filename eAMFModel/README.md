@@ -405,6 +405,43 @@ python -m eAMFModel v4 eAMFCalibrator/out/scouting_playover.csv --model v4_model
 `--history` takes any CSV shaped like `nb2/AMFELO.csv`. For `v4`, it needs
 only the priced matches' players, teams and stream; the finals are not read.
 
+### Its own lines
+
+As a stream (`--candidate v4`), v4 quotes its own line on the spread and
+the total, not prod's. At every snapshot it takes the half-point line
+nearest even money off its own distribution for the state: the margin's
+for the spread, the total's for the total. The line moves when the game
+moves it. The calibrator then pairs the two streams as it pairs any two:
+where the lines are the same, it compares the probabilities; where they
+differ, it scores whose line landed nearer the result.
+`--v4-lines prod` goes back to reading v4's price at prod's line.
+
+(Results on 3–9 Sep to follow.)
+
+### Backed up on the goal line
+
+A leader late with the ball on their own 1–3 won 88.9% of the time in real
+games (27 cases), but v4 gave them 98.3%. Two things were missing:
+- **The kneel.** v4 knelt out the clock from anywhere. A kneel loses a
+  yard, so on the goal line it's a safety. v4 now only kneels with the room
+  to take the kneels it needs; backed up, it runs real plays.
+- **The free kick.** After a safety, the kick comes from the 20. Real
+  receivers start about their 42, against a kickoff's 26. v4 now draws
+  from real free kicks, or a kickoff moved on 16 yards when fewer than 20
+  have been seen.
+
+Now v4 gives the leader 94.4%. That's within the noise of 27 cases.
+Everywhere else on the field it's unchanged, and matches what happened:
+
+| ball on | cases | leader wins, v4 | real |
+|---|---|---|---|
+| own 1–3 | 27 | 0.944 (was 0.983) | 0.889 |
+| own 4–10 | 55 | 0.957 | 0.964 |
+| own 11–30 | 305 | 0.938 | 0.934 |
+| beyond | 1,175 | 0.949 | 0.941 |
+
+Rebuild the model (`v4-build`) to pick up the free-kick table.
+
 ## Run it
 
 ```bash
