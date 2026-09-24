@@ -12,7 +12,7 @@ outcome and error, and which one finished closer. Column headers sort.
 import html
 import os
 
-from . import buckets, config, drives, handles, html_style, markets
+from . import buckets, config, drives, handles, html_style, labels, markets
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -1085,11 +1085,11 @@ def _checks_summary(report, scan=None):
 
 
 def _title():
-    """Names the candidate when a model version is standing in for it."""
-    candidate = config.STREAMS.get("candidate", "")
-    if candidate.upper().startswith("MODEL:"):
-        return f"eAMF model {html.escape(candidate.split(':', 1)[1])} (as candidate) vs prod"
-    return "eAMF candidate vs prod"
+    """Names the candidate when a model version (or --candidate-label) stands in for it."""
+    label = labels.candidate_label()
+    if label.lower() == "candidate":
+        return "eAMF candidate vs prod"
+    return f"eAMF {html.escape(label)} vs prod"
 
 
 def render(report, header, stats, pairs, handle_scan,
@@ -1102,7 +1102,7 @@ def render(report, header, stats, pairs, handle_scan,
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>eAMF Model Report</title>
+<title>{_title()}</title>
 {css}
 </head>
 <body>
@@ -1263,6 +1263,6 @@ def write(path, report, header, stats, pairs, handle_scan,
           indrive_summary=None, prematch_summary=None):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(render(report, header, stats, pairs, handle_scan,
-                        indrive_summary, prematch_summary))
+        fh.write(labels.relabel(render(report, header, stats, pairs, handle_scan,
+                                       indrive_summary, prematch_summary)))
     return path

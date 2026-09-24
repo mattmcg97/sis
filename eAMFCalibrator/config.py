@@ -34,6 +34,9 @@ SPORT_CODE = "AF"
 # $EAMF_V3_MODEL, then ./v3_model). V3_PATHS games are simulated per
 # snapshot; V3_WORKERS processes (None: all cores but one).
 SCOUTING_TABLE = "SCOUTING_FULL"
+# What the HTML reports call the candidate (None: the model version when one
+# stands in, e.g. "v3"; otherwise "candidate"). --candidate-label sets it.
+CANDIDATE_LABEL = None
 V3_MODEL_DIR = None
 V3_PATHS = 2000
 V3_WORKERS = None

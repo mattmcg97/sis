@@ -8,7 +8,7 @@ same ones the console prints.
 import html
 import os
 
-from . import config, markets
+from . import config, labels, markets
 
 MARKET_TITLES = {
     markets.MONEYLINE: "Moneyline",
@@ -287,5 +287,5 @@ def render(summary, header, stats):
 def write(path, summary, header, stats):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(render(summary, header, stats))
+        fh.write(labels.relabel(render(summary, header, stats)))
     return path

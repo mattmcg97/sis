@@ -75,6 +75,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
 | `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v1`, `v2`, `v3`) |
+| `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v3`) |
 | `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
 | `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
@@ -1313,6 +1314,18 @@ prices each one by simulation (`eAMFModel.v3_stream`).
 - **Liveness:** v3's quotes are always live. The pairing's own liveness
   rule decides what counts, and prod's suspensions still apply to prod's
   side.
+
+**The reports say "v3".** With a model standing in, every "candidate" a
+reader sees in the HTML reports (headers, tooltips, verdicts, the title)
+becomes its name, and the report is written as `eamf_report_v3.html`, so
+it never overwrites a prod-vs-candidate report. `--candidate-label NAME`
+picks another name; `--html PATH` another file. The CSVs keep their
+column names and file names, so give a v3 run its own folder with
+`--out` if you want to keep both sets:
+
+```bash
+python -m eAMFCalibrator report --candidate v3 --v3-model v3_model --out out_v3
+```
 
 **The model must be built from matches before the window.** It is fitted
 to play-by-play outcomes and final scores, so building it on the matches

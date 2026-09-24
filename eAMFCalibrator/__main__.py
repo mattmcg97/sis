@@ -20,7 +20,7 @@ import os
 import sys
 
 from . import (buckets, config, directional, dump, html_full, html_indrive,
-               html_report, indrive, pipeline, prematch,
+               html_report, indrive, labels, pipeline, prematch,
                report, scouting, snowflake_io)
 
 
@@ -304,7 +304,7 @@ def cmd_directional(args):
 
     report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
 
-    html_path = args.html or os.path.join(out_dir, "directional.html")
+    html_path = args.html or os.path.join(out_dir, labels.default_report_name("directional.html"))
     html_report.write(html_path, summary, header, stats)
     print(f"  one-screen report  -> {html_path}")
     return 0
@@ -382,12 +382,12 @@ def cmd_indrive(args):
                    indrive.DRIVE_FIELDS,
                    [indrive.drive_row(o) for o in outcomes]),
     ]
-    path = args.html or os.path.join(out_dir, "indrive.html")
+    path = args.html or os.path.join(out_dir, labels.default_report_name("indrive.html"))
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(html_indrive.render(
+        fh.write(labels.relabel(html_indrive.render(
             result, indrive.outcome_census(transitions), transitions, stats,
-            findings, indrive.drive_census(outcomes), outcomes))
+            findings, indrive.drive_census(outcomes), outcomes)))
     written.append(path)
 
     print()
@@ -547,7 +547,7 @@ def cmd_report(args):
                [prematch.row(o) for o in closing.observations])
 
     ordered = directional.sorted_pairs_by_disagreement(pairs)
-    html_path = args.html or os.path.join(out_dir, "eamf_report.html")
+    html_path = args.html or os.path.join(out_dir, labels.default_report_name("eamf_report.html"))
     html_full.write(html_path, full, header, stats, ordered, handle_scan,
                     sink.summary(), closing.summary())
     size = os.path.getsize(html_path) / 1024 ** 2
@@ -598,6 +598,9 @@ def common_options():
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model) "
                              f"(default {config.STREAMS['candidate']})")
+    tuning.add_argument("--candidate-label", metavar="NAME",
+                        help="what the HTML reports call the candidate (default: the "
+                             "model version when one stands in, e.g. v3; else 'candidate')")
     tuning.add_argument("--v3-model", metavar="DIR",
                         help="eAMFModel v3-build's output, for --candidate v3 "
                              "(default $EAMF_V3_MODEL, then ./v3_model)")
@@ -627,6 +630,7 @@ def apply_overrides(args):
                            ("time_axis", "TIME_AXIS"),
                            ("chunk", "MATCH_CHUNK_SIZE"),
                            ("v3_model", "V3_MODEL_DIR"),
+                           ("candidate_label", "CANDIDATE_LABEL"),
                            ("v3_paths", "V3_PATHS")):
         value = getattr(args, attribute, None)
         if value is not None:
