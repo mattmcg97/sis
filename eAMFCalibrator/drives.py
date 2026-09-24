@@ -251,6 +251,28 @@ def _mark_conversions(ordered, reasons, scores):
                      and (s.p1_change or s.p2_change))
     if not windows:
         return
+    # A touchdown and its conversion's own score row: everything between
+    # the two is the conversion, wherever it was spotted (a penalty moves
+    # it off the 85) and however long the feed took to post it. Left in,
+    # such a row starts a "drive" of its own that owns the extra point.
+    ordered_scores = sorted((s for s in scores if s.event_message_count is not None
+                             and (s.p1_change or s.p2_change)),
+                            key=lambda s: s.event_message_count)
+    for i, s in enumerate(ordered_scores):
+        side = 1 if (s.p1_change or 0) > 0 else 2
+        points = (s.p1_change or 0) if side == 1 else (s.p2_change or 0)
+        if points != TOUCHDOWN_POINTS or i + 1 >= len(ordered_scores):
+            continue
+        nxt = ordered_scores[i + 1]
+        extra = (nxt.p1_change or 0) if side == 1 else (nxt.p2_change or 0)
+        other = (nxt.p2_change or 0) if side == 1 else (nxt.p1_change or 0)
+        if extra not in (1, 2) or other:
+            continue
+        for play in ordered:
+            m = play.event_message_count
+            if s.event_message_count < m <= nxt.event_message_count \
+                    and not was_dropped(reasons[m]):
+                reasons[m] = CONVERSION
     for scored_at in windows:
         before = [p for p in ordered if p.event_message_count <= scored_at
                   and not was_dropped(reasons[p.event_message_count])]
