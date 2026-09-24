@@ -613,7 +613,8 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
         d = np.minimum(d, -0.01)                  # more pull, more of the lead comes back
         step = np.clip((real - got1) / d, -0.3, 0.3)
         pull0, got0 = pull1, got1
-        pull1 = np.clip(pull1 + step, 0.0, 1.0)
+        # negative when the snap-level fit already brings leads back too fast
+        pull1 = np.clip(pull1 + step, -1.0, 1.0)
         got1 = simulated(pull1)
     tables.eff_shift = base + _band_shift(pull1)
     return pull1, got1, real
