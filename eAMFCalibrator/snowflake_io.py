@@ -316,6 +316,8 @@ def _model_quotes(cur, stream_table, match_codes):
     version = stream_table.split(":", 1)[1] or "v1"
     if version.lower() == "v3":
         return _v3_quotes(cur, match_codes)
+    if version.lower() == "v4":
+        return _v4_quotes(cur, match_codes)
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
     scores = fetch_scores(cur, match_codes)
@@ -326,18 +328,19 @@ def _model_quotes(cur, stream_table, match_codes):
 _SCOUTING_TABLE = {}                      # located once per run
 
 
-def _v3_quotes(cur, match_codes):
-    """eAMFModel v3, GAMEPLAI-shaped: PLAY_OVER snapshots off SCOUTING_FULL
-    (built exactly as `scouting` exports them), priced by simulation and
-    held at prod's lines until the next PLAY_OVER."""
-    from collections import defaultdict
+def _need_numpy(version):
     try:
         import numpy  # noqa: F401
     except ImportError:
-        raise SystemExit("--candidate v3 needs numpy:  py -m pip install numpy")
-    from eAMFModel import v3_stream
+        raise SystemExit(f"--candidate {version} needs numpy:  py -m pip install numpy")
+
+
+def _play_over_snapshots(cur, match_codes, with_handles=False):
+    """match -> PLAY_OVER snapshot rows off SCOUTING_FULL, built exactly as
+    `scouting` exports them, and prod's quote rows for the same matches.
+    with_handles adds each match's player handles (home_handle/away_handle)."""
+    from collections import defaultdict
     from . import directional, scouting
-    v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions
     table = _SCOUTING_TABLE.get(config.SCOUTING_TABLE) or scouting.locate(cur, config.SCOUTING_TABLE)
     _SCOUTING_TABLE[config.SCOUTING_TABLE] = table
     snapshots, prod_all = {}, []
@@ -350,6 +353,7 @@ def _v3_quotes(cur, match_codes):
         scores = fetch_scores(cur, batch)
         finals = fetch_final_scores(cur, batch)
         prod = fetch_quotes(cur, config.STREAMS["prod"], batch)
+        handles = scouting.fetch_handles(cur, batch) if with_handles else {}
         prod_all.extend(prod)
         index = directional.index_by_message(prod)
         by_match, scores_by, prod_by = defaultdict(list), defaultdict(list), defaultdict(list)
@@ -370,12 +374,41 @@ def _v3_quotes(cur, match_codes):
                 index, scouting._prematch(prod_by.get(match_code, []), first_play),
                 require_quote=False)
             if snaps:
+                home, away = handles.get(match_code, (None, None))
+                if with_handles:
+                    for snap in snaps:
+                        snap["home_handle"], snap["away_handle"] = home, away
                 snapshots[match_code] = snaps
+    return snapshots, prod_all
+
+
+def _v3_quotes(cur, match_codes):
+    """eAMFModel v3, GAMEPLAI-shaped: PLAY_OVER snapshots off SCOUTING_FULL
+    (built exactly as `scouting` exports them), priced by simulation and
+    held at prod's lines until the next PLAY_OVER."""
+    _need_numpy("v3")
+    from eAMFModel import v3_stream
+    v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions
+    snapshots, prod_all = _play_over_snapshots(cur, match_codes)
     print(f"  v3: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
           f"{config.V3_PATHS:,} games each", flush=True)
     return v3_stream.quotes_for_matches(snapshots, prod_all, config.V3_MODEL_DIR,
                                         n_paths=config.V3_PATHS, workers=config.V3_WORKERS)
+
+
+def _v4_quotes(cur, match_codes):
+    """eAMFModel v4, as v3 (same snapshots, same line pairing), with the
+    players' handles attached for v4's player profiles."""
+    _need_numpy("v4")
+    from eAMFModel import v4_stream
+    v4_stream.model_paths(config.V4_MODEL_DIR)          # fail early, with instructions
+    snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
+    print(f"  v4: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
+          f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
+          f"{config.V4_PATHS:,} games each", flush=True)
+    return v4_stream.quotes_for_matches(snapshots, prod_all, config.V4_MODEL_DIR,
+                                        n_paths=config.V4_PATHS, workers=config.V3_WORKERS)
 
 
 def status_profile(cur, stream_table):

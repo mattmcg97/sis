@@ -997,6 +997,84 @@ class TestV3Candidate(unittest.TestCase):
         self.assertEqual(sio.stream_name("v3"), "MODEL:v3")
 
 
+class TestV4Candidate(unittest.TestCase):
+    """--candidate v4: the same snapshots and line pairing as v3, with the
+    players' handles attached for v4's profiles."""
+
+    MC = "AF1"
+
+    @classmethod
+    def setUpClass(cls):
+        import tempfile
+        from eAMFModel import v4
+        from eAMFModel.tests.test_v4 import _with_handles
+        from eAMFModel.tests.test_v3 import _matches
+        cls.tmp = tempfile.TemporaryDirectory()
+        v4.build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    scouting_rows = TestV3Candidate.scouting_rows
+    prod_rows = TestV3Candidate.prod_rows
+
+    def quotes(self, model_dir, handles):
+        from .. import snowflake_io as sio
+        prod_table = config.STREAMS["prod"]
+        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
+
+        def fetch_all(cur, sql, params=None):
+            if prod_table in sql:
+                return None, self.prod_rows()
+            raise AssertionError("unexpected query")
+
+        saved = (config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS)
+        config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS = model_dir, 50, 1
+        try:
+            with mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
+                    mock.patch.object(sio, "fetch_scores", return_value=scores), \
+                    mock.patch.object(sio, "fetch_final_scores", return_value={self.MC: (14, 21)}), \
+                    mock.patch.object(scouting, "locate", return_value=None), \
+                    mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
+                    mock.patch.object(scouting, "fetch_handles", return_value=handles) as fh, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                rows = sio.fetch_quotes(RecordingCursor(), "MODEL:v4", [self.MC])
+                self.fetched_handles = fh.called
+                return rows
+        finally:
+            config.V4_MODEL_DIR, config.V4_PATHS, config.V3_WORKERS = saved
+
+    def test_quotes_at_the_paired_lines_with_handles_fetched(self):
+        rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
+        self.assertTrue(self.fetched_handles)
+        self.assertTrue(rows and all(len(r) == 9 for r in rows))
+        self.assertEqual({r[1] for r in rows}, {50, 51, 52, 54})
+        paired = directional.index_by_message(self.prod_rows())
+        for r in rows:
+            if r[1] in (52, 54):
+                self.assertEqual(markets.parse_line(r[5]),
+                                 markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
+
+    def test_no_model_says_how_to_build_one(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as empty:
+            with self.assertRaises(SystemExit) as caught:
+                self.quotes(empty, {})
+        self.assertIn("v4-build", str(caught.exception))
+
+    def test_the_reports_call_it_v4(self):
+        from .. import labels, snowflake_io as sio
+        saved = dict(config.STREAMS)
+        try:
+            config.STREAMS["candidate"] = sio.stream_name("v4")
+            self.assertEqual(labels.candidate_label(), "v4")
+            self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v4.html")
+        finally:
+            config.STREAMS.clear()
+            config.STREAMS.update(saved)
+
+
 class TestScoutingPlayOver(unittest.TestCase):
     """PLAY_OVER snapshots off SCOUTING_FULL rows."""
 

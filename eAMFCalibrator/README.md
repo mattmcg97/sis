@@ -77,6 +77,8 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v1`, `v2`, `v3`) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v3`) |
 | `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
+| `--v4-model DIR` | `eAMFModel v4-build` output for `--candidate v4` (default `$EAMF_V4_MODEL`, then `./v4_model`) |
+| `--v4-paths N` | games simulated per snapshot for `--candidate v4` (default 2000) |
 | `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
@@ -1336,3 +1338,17 @@ directory is missing, the run stops and prints the build commands.
 Cost: about a second of simulation per match on each core at 2,000 paths
 (`--v3-paths`). The work is spread over all cores but one
 (`config.V3_WORKERS`).
+
+## eAMFModel v4 as the candidate: `--candidate v4`
+
+It works exactly as v3 does: the same `PLAY_OVER` snapshots, the same line
+pairing, and the same "v4" naming in the reports (`eamf_report_v4.html`).
+It also fetches each match's player handles, for v4's player profiles.
+
+```bash
+python -m eAMFCalibrator scouting --until 2026-09-24
+python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model
+python -m eAMFCalibrator report --candidate v4 --v4-model v4_model --since 2026-09-24 --out eAMFCalibrator/out_v4
+```
+
+What v4 changes is in the eAMFModel README.
