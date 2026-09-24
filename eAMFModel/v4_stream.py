@@ -56,14 +56,19 @@ def _as_text(row):
     return {k: "" if v is None else str(v) for k, v in row.items()}
 
 
-def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None):
+def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, means=None):
     """[(message, margin pmf, total pmf)] at every priceable PLAY_OVER of one
-    match (export-shaped rows, message order)."""
+    match (export-shaped rows, message order). `means`: (home, away)
+    expected points from our pre-match model (NB2); without them the prior
+    falls back to prod's pre-match quotes (a model built without history)."""
     rows = v4.resolve_sides([_as_text(r) for r in match_rows])
-    lines = v4.prior_lines(rows)
-    if lines is None:
-        return []
-    theta0 = grid.fit(*lines)
+    if means is not None:
+        theta0 = v4.fit_means(grid, *means)
+    else:
+        lines = v4.prior_lines(rows)
+        if lines is None:
+            return []
+        theta0 = grid.fit(*lines)
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
@@ -75,7 +80,8 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None):
         return []
     prof = prof or (players.Profile(), players.Profile())
     dists = v4.price_states(tables, theta0, variant, sim.snap_records(rows), a_home, states,
-                            messages, prof, n_paths, rng)
+                            messages, prof, n_paths, rng,
+                            seed=v4.match_seed(rows[0].get("match_code", "")))
     return [(m, mp_, tp) for m, (mp_, tp) in zip(messages, dists)]
 
 
@@ -137,14 +143,15 @@ def _worker(job):
     grid = v4.PriorGrid.load(grid_path)
     rng = np.random.default_rng(seed)
     out = []
-    for match_code, snaps, prod_rows, first_play, prof in items:
-        books = match_books(tables, grid, variant, snaps, n_paths, rng, prof)
+    for match_code, snaps, prod_rows, first_play, prof, means in items:
+        books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
         out.extend(quote_rows(match_code, books, prod_rows, first_play))
     return out
 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
-                       workers=None, variant=None, book=None, handles=None, seed=0):
+                       workers=None, variant=None, book=None, handles=None, seed=0,
+                       match_info=None):
     """Quote rows for many matches.
 
     `snapshots_by_match`: match -> export-shaped PLAY_OVER rows (scouting's
@@ -154,6 +161,16 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     variant = variant or v4.Variant("v4")
     if book is None:
         book = v4.players_book(tables_path)
+    # the prior: our NB2 pre-match model when the model has one, for the
+    # matches whose players, teams and stream are known (match_info:
+    # AMFELO-shaped rows); prod's pre-match quotes only for an old model
+    pre = v4.prematch_model(tables_path)
+    means = {}
+    if pre is not None:
+        if match_info is None:
+            raise SystemExit("this v4 model prices off its NB2 pre-match model, which needs each "
+                             "match's players, teams and stream (match_info)")
+        means = pre.means([r for r in match_info if r["MATCH_CODE"] in snapshots_by_match])
     prod_by = {}
     for r in prod_quote_rows:
         prod_by.setdefault(r[0], []).append(r)
@@ -166,7 +183,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         first_play = int(first_play) if first_play not in ("", None) else None
         pair = ((handles or {}).get(code) or v4.handles_of(snaps)) if book else None
         prof = (book.profile(pair[0]), book.profile(pair[1])) if pair else None
-        items.append((code, snaps, prod_by[code], first_play, prof))
+        items.append((code, snaps, prod_by[code], first_play, prof,
+                      means.get(code, pre.league) if pre is not None else None))
     if not items:
         return []
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))

@@ -745,6 +745,9 @@ class TestGeneratedQueries(unittest.TestCase):
             ("stream_window_summary", lambda c: io.stream_window_summary(c, "S")),
             ("status_profile", lambda c: io.status_profile(c, "S")),
             ("rows_per_message", lambda c: io.rows_per_message(c, "S")),
+            ("fetch_match_info", lambda c: self._event_checked(io.fetch_match_info, c, ["A", "B"])),
+            ("fetch_history", lambda c: self._event_checked(io.fetch_history, c, "2026-09-20")),
+            ("fetch_history_all", lambda c: self._event_checked(io.fetch_history, c)),
         ]
         for name, call in cases:
             cursor = RecordingCursor()
@@ -754,6 +757,12 @@ class TestGeneratedQueries(unittest.TestCase):
                 pass    # unpacking an empty result is not what is under test
             for sql, params in cursor.calls:
                 yield name, sql, params
+
+    @staticmethod
+    def _event_checked(fetch, cursor, *args):
+        from .. import snowflake_io as io
+        with mock.patch.object(io, "_check_event_columns"):
+            return fetch(cursor, *args)
 
     def test_placeholders_match_the_bound_parameters(self):
         seen = 0
@@ -1063,6 +1072,32 @@ class TestV4Candidate(unittest.TestCase):
                 self.quotes(empty, {})
         self.assertIn("v4-build", str(caught.exception))
 
+    def test_a_model_with_nb2_is_given_each_matchs_players_and_teams(self):
+        from eAMFModel import v4
+        from .. import snowflake_io as sio
+        info = [{"MATCH_CODE": self.MC, "PLAYER_1_HANDLE": "ALPHA"}]
+
+        class Fake:
+            league = (17.0, 17.0)
+            asked = None
+
+            def means(self, schedule, n_sims=0):
+                Fake.asked = schedule
+                return {self_mc: (21.0, 14.0) for self_mc in [r["MATCH_CODE"] for r in schedule]}
+
+        with mock.patch.object(v4, "prematch_model", return_value=Fake()), \
+                mock.patch.object(sio, "fetch_match_info", return_value=info) as fetch:
+            rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
+        self.assertEqual(fetch.call_args.args[1], [self.MC])
+        self.assertEqual(Fake.asked, info)
+        self.assertTrue(rows)
+
+    def test_an_old_model_does_not_ask_for_match_info(self):
+        from .. import snowflake_io as sio
+        with mock.patch.object(sio, "fetch_match_info") as fetch:
+            self.assertTrue(self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}))
+        fetch.assert_not_called()
+
     def test_the_reports_call_it_v4(self):
         from .. import labels, snowflake_io as sio
         saved = dict(config.STREAMS)
@@ -1073,6 +1108,68 @@ class TestV4Candidate(unittest.TestCase):
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
+
+
+class TestMatchHistory(unittest.TestCase):
+    """What v4's own pre-match model (NB2) reads: the match history and each
+    priced match's players, teams and stream, off EVENT and SCORE_ENDGAME."""
+
+    INFO = ("AF1", "AF", 3, "2026-09-10 04:37:00.000", "KRAKEN", "Denver Broncos",
+            "PHOENIX", "Buffalo Bills")
+
+    def test_history_rows_are_shaped_like_amfelo(self):
+        from .. import snowflake_io as sio
+        cur = RecordingCursor([self.INFO + (28, 21), self.INFO[:3] + (None,) + self.INFO[4:] + (None, 7)])
+        with mock.patch.object(sio, "_check_event_columns"):
+            rows = sio.fetch_history(cur, until="2026-09-20")
+        self.assertEqual(rows[0], dict(zip(sio.HISTORY_COLUMNS, [
+            "AF1", "AF", "3", "2026-09-10 04:37:00.000", "KRAKEN", "Denver Broncos", "PHOENIX",
+            "Buffalo Bills", "28", "21"])))
+        self.assertEqual((rows[1]["SCHEDULED_START_TIME_UTC"], rows[1]["PLAYER_1_FINAL_SCORE"]), ("", ""))
+        sql, params = cur.calls[0]
+        self.assertIn(sio.FINAL_TABLE, sql)
+        self.assertEqual(list(params), [config.SPORT_CODE, "2026-09-20"])
+
+    def test_match_info_has_no_finals(self):
+        from .. import snowflake_io as sio
+        with mock.patch.object(sio, "_check_event_columns"):
+            rows = sio.fetch_match_info(RecordingCursor([self.INFO]), ["AF1"])
+            self.assertEqual(sio.fetch_match_info(RecordingCursor(), []), [])
+        self.assertEqual(list(rows[0]), sio.MATCH_INFO_COLUMNS)
+
+    def test_a_missing_event_column_is_named(self):
+        from .. import snowflake_io as sio
+        have = [(c,) for c in sio.MATCH_INFO_COLUMNS if c != "PLAYER_1_TEAM"]
+        with mock.patch.object(sio, "describe_columns", return_value=have):
+            with self.assertRaises(SystemExit) as caught:
+                sio.fetch_history(RecordingCursor())
+        self.assertIn("PLAYER_1_TEAM", str(caught.exception))
+
+    def test_the_history_command_writes_the_csv(self):
+        import csv as csv_mod
+        import tempfile
+        from .. import __main__ as cli, snowflake_io as sio
+        row = dict(zip(sio.HISTORY_COLUMNS, [str(v) for v in self.INFO] + ["28", "21"]))
+
+        class Conn:
+            def cursor(self):
+                return contextlib.nullcontext(RecordingCursor())
+
+            def close(self):
+                pass
+
+        saved = config.CUTOFF_END
+        with tempfile.TemporaryDirectory() as out:
+            try:
+                with mock.patch.object(sio, "get_connection", return_value=Conn()), \
+                        mock.patch.object(sio, "fetch_history", return_value=[row]) as fetch, \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(cli.main(["history", "--out", out, "--until", "2026-09-20"]), 0)
+            finally:
+                config.CUTOFF_END = saved
+            self.assertEqual(fetch.call_args.kwargs["until"], "2026-09-20")
+            with open(os.path.join(out, "match_history.csv"), newline="") as fh:
+                self.assertEqual(list(csv_mod.DictReader(fh)), [row])
 
 
 class TestScoutingPlayOver(unittest.TestCase):

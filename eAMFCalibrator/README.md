@@ -1347,8 +1347,18 @@ It also fetches each match's player handles, for v4's player profiles.
 
 ```bash
 python -m eAMFCalibrator scouting --until 2026-09-24
-python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model
+python -m eAMFCalibrator history --until 2026-09-24
+python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model --history eAMFCalibrator/out/match_history.csv
 python -m eAMFCalibrator report --candidate v4 --v4-model v4_model --since 2026-09-24 --out eAMFCalibrator/out_v4
 ```
+
+`history` writes `out/match_history.csv`, shaped like `nb2/AMFELO.csv`: every
+settled match of the sport before `--until`, with players, teams, stream
+and finals, off `EVENT` and `SCORE_ENDGAME`. It's what v4's own pre-match
+model (NB2) is fitted on. A model built with `--history` prices pre-match
+from NB2, never from GAMEPLAI, so the report also fetches each priced
+match's players, teams and stream from `EVENT`. That needs pandas and scipy
+as well as numpy. A model built without `--history` falls back to prod's
+pre-match quotes and says so.
 
 What v4 changes is in the eAMFModel README.

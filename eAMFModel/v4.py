@@ -44,7 +44,7 @@ from collections import Counter
 
 import numpy as np
 
-from . import playover, players, sim4 as sim
+from . import nb2_prior, playover, players, sim4 as sim
 from .pricer import HOME
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
@@ -171,6 +171,34 @@ class PriorGrid:
             return 0.0, 0.0                   # nothing to fit to: the league average
         i, j = np.unravel_index(np.argmin(err), err.shape)
         return float(fine[i]), float(fine[j])
+
+
+def _surface_fn(grid, step):
+    fine = np.arange(grid[0], grid[-1] + 1e-9, step)
+    gi = np.interp(fine, grid, np.arange(len(grid)))
+    lo = np.minimum(len(grid) - 2, gi.astype(int))
+    w = gi - lo
+
+    def surface(v):
+        return (v[lo][:, lo] * np.outer(1 - w, 1 - w) + v[lo + 1][:, lo] * np.outer(w, 1 - w)
+                + v[lo][:, lo + 1] * np.outer(1 - w, w) + v[lo + 1][:, lo + 1] * np.outer(w, w))
+    return fine, surface
+
+
+def fit_means(grid, home_points, away_points, step=0.01):
+    """(theta_home, theta_away) whose simulated games average these points
+    for each side -- the prior from a pre-match model's expected scores
+    (NB2's), matched on the log scale."""
+    fine, surface = _surface_fn(grid.grid, step)
+    x_m = np.arange(grid.margin.shape[-1]) - MARGIN_MAX
+    x_t = np.arange(grid.total.shape[-1])
+    e_margin = surface((grid.margin * x_m).sum(-1))
+    e_total = surface((grid.total * x_t).sum(-1))
+    e_home, e_away = (e_total + e_margin) / 2, (e_total - e_margin) / 2
+    err = (np.log(np.maximum(0.1, e_home)) - np.log(max(0.1, home_points))) ** 2 \
+        + (np.log(np.maximum(0.1, e_away)) - np.log(max(0.1, away_points))) ** 2
+    i, j = np.unravel_index(np.argmin(err), err.shape)
+    return float(fine[i]), float(fine[j])
 
 
 def prior_lines(match_rows):
@@ -312,7 +340,14 @@ class Variant:
         self.sim_kw = sim_kw or {}
 
 
-def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof, n_paths, rng):
+def match_seed(match_code):
+    """A fixed seed per match for the common random numbers."""
+    import zlib
+    return zlib.crc32(str(match_code).encode("utf-8"))
+
+
+def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof, n_paths, rng,
+                 seed=None):
     """(margin pmf, total pmf) for each state, in message order.
 
     `snaps` are the match's sim.snap_records (for the efficiency update),
@@ -337,7 +372,7 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
         if v.pace:
             start.pace[i] = (prof[0].pace, prof[1].pace)
     home, away = sim.simulate(tables, start, n_paths, rng,
-                              theta_sd=sds if v.theta_sd else None, **v.sim_kw)
+                              theta_sd=sds if v.theta_sd else None, seed=seed, **v.sim_kw)
     return [_distributions(home[i], away[i]) for i in range(len(messages))]
 
 
@@ -348,7 +383,8 @@ def pool_context():
 
 
 def _grade_matches(job):
-    (matches, tables_path, grid_path, variants, n_paths, seed, book, handles, require_live) = job
+    (matches, tables_path, grid_path, variants, n_paths, seed, book, handles, require_live,
+     priors) = job
     tables = sim.Tables.load(tables_path)
     grids = {None: PriorGrid.load(grid_path)}
     for v in variants:
@@ -358,11 +394,19 @@ def _grade_matches(job):
     rng = np.random.default_rng(seed)
     for code, match_rows in matches:
         match_rows = resolve_sides(match_rows)
-        lines = prior_lines(match_rows)
-        if lines is None:
-            skipped["no_prior"] += 1
-            continue
-        theta0s = {g: grid.fit(*lines) for g, grid in grids.items()}
+        if priors is not None:
+            # our own pre-match model (NB2): nothing of GAMEPLAI's is read
+            means = priors.get(code)
+            if means is None:
+                skipped["no_prematch_prediction"] += 1
+                continue
+            theta0s = {g: fit_means(grid, *means) for g, grid in grids.items()}
+        else:
+            lines = prior_lines(match_rows)
+            if lines is None:
+                skipped["no_prior"] += 1
+                continue
+            theta0s = {g: grid.fit(*lines) for g, grid in grids.items()}
         a_home = match_rows[0]["team_a_side"] == "home"
         snaps = sim.snap_records(match_rows)
         pair = (handles.get(code) if handles else None) or handles_of(match_rows)
@@ -390,7 +434,8 @@ def _grade_matches(job):
         for row, state in todo:
             states[row.message] = state
         dists = {v.name: price_states(tables, theta0s[v.grid], v, snaps, a_home,
-                                      [states[m] for m in messages], messages, prof, n_paths, rng)
+                                      [states[m] for m in messages], messages, prof, n_paths, rng,
+                                      seed=match_seed(code))
                  for v in variants}
         for row, state in todo:
             i = index[row.message]
@@ -530,7 +575,7 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0):
 
 
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
-          shade_days=RECENT_DAYS, shade_prior=SHADE_PRIOR):
+          shade_days=RECENT_DAYS, shade_prior=SHADE_PRIOR, history=None, before=None):
     """Tables, the league's efficiency by quarter (from kickoff, as v3), the
     prior grid with the recent pre-match total correction, and the player
     profiles from {match: export rows}; written to out_dir as v4tables.npz,
@@ -547,20 +592,37 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated "
               + " / ".join(f"{x:.2f}" for x in got))
-        if n:
+        if n and history is None:
             print(f"  pre-match total, last {shade_days} days: {n} matches went over prod's line "
                   f"{rate:.1%} of the time at a priced {prod:.1%} -> P(over) shaded {shade:+.3f}")
     tables_path = os.path.join(out_dir, "v4tables.npz")
     grid_path = os.path.join(out_dir, "v4grid.npz")
     tables.save(tables_path)
     grid = PriorGrid.build(tables, n_paths=grid_paths)
-    grid.total_shade = shade
+    # the correction to prod's pre-match total only matters when prod's
+    # pre-match is the prior -- with NB2's (history given) it is unused
+    grid.total_shade = shade if history is None else 0.0
     grid.save(grid_path)
     if verbose:
         sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches)
         print("  in-game check, points in each quarter from real quarter-start states: real "
               + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
               + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
+    if history is not None:
+        # our own pre-match model: NB2 fitted on the history before the day
+        # after the last match built on (or `before`)
+        import datetime as dt
+        if before is None:
+            days = [match_day(rows) for rows in matches.values()]
+            last = max(d for d in days if d is not None)
+            before = dt.datetime.combine(last + dt.timedelta(days=1), dt.time())
+        pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2"), before)
+        if verbose:
+            m = pre.meta
+            ratio = f"{m['scale_raw_ratio']:.3f}" if m["scale_raw_ratio"] else "n/a"
+            print(f"  pre-match: NB2 fitted on {m['fitted_on']:,} matches before {before:%Y-%m-%d};"
+                  f" its totals ran {ratio} x under the last {nb2_prior.SCALE_DAYS} days'"
+                  f" ({m['scale_matches']} matches) -> expected points scaled {m['scale']:.3f}")
     handles = dict(handles or {})
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
@@ -575,6 +637,14 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
     return tables_path, grid_path
 
 
+def prematch_model(model_dir_or_tables):
+    """The model's NB2 pre-match model, or None (built without history)."""
+    import os
+    d = model_dir_or_tables if os.path.isdir(model_dir_or_tables) else os.path.dirname(model_dir_or_tables)
+    path = os.path.join(d, "nb2")
+    return nb2_prior.Prematch(path) if nb2_prior.Prematch.exists(path) else None
+
+
 def players_book(model_dir_or_tables):
     """The model's player profiles, or None."""
     import os
@@ -584,15 +654,28 @@ def players_book(model_dir_or_tables):
 
 
 def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, workers=4,
-        seed=0, book=None, handles=None, require_live=True):
+        seed=0, book=None, handles=None, require_live=True, priors=None, history=None):
+    """Grade v4 on an export. `priors`: match -> (home points, away points)
+    from our own pre-match model; or `history` (AMFELO-shaped rows covering
+    the graded matches) to have the model's NB2 predict them. Either way the
+    prior comes only from there, never from prod's pre-match quotes."""
     if book is None:
         book = players_book(tables_path)
     by_match = playover.load(path)
+    pre = prematch_model(tables_path) if priors is None else None
+    if priors is None and history is not None:
+        if pre is None:
+            raise SystemExit("this v4 model has no NB2 pre-match model: rebuild it with --history")
+        wanted = set(by_match) if matches is None else set(matches)
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
+    elif priors is None and pre is not None:
+        raise SystemExit("this v4 model prices pre-match with NB2: pass --history (the matches'"
+                         " players, teams and streams, e.g. eAMFCalibrator history's CSV)")
     codes = sorted(by_match) if matches is None else [c for c in matches if c in by_match]
     items = [(c, by_match[c]) for c in codes]
     chunks = [items[i::workers] for i in range(workers)]
-    jobs = [(chunk, tables_path, grid_path, variants, n_paths, seed + i, book, handles, require_live)
-            for i, chunk in enumerate(chunks) if chunk]
+    jobs = [(chunk, tables_path, grid_path, variants, n_paths, seed + i, book, handles, require_live,
+             priors) for i, chunk in enumerate(chunks) if chunk]
     graded, skipped = [], Counter()
     if workers <= 1:
         results = [_grade_matches(j) for j in jobs]
