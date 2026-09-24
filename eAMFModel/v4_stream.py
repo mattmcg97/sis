@@ -159,10 +159,12 @@ def _worker(job):
     tables = sim.Tables.load(tables_path)
     grid = v4.PriorGrid.load(grid_path)
     rng = np.random.default_rng(seed)
-    out = []
+    modes = (lines,) if isinstance(lines, str) else tuple(lines)
+    out = {mode: [] for mode in modes}
     for match_code, snaps, prod_rows, first_play, prof, means in items:
         books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
-        out.extend(quote_rows(match_code, books, prod_rows, first_play, lines))
+        for mode in modes:
+            out[mode].extend(quote_rows(match_code, books, prod_rows, first_play, mode))
     return out
 
 
@@ -173,6 +175,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
 
     `snapshots_by_match`: match -> export-shaped PLAY_OVER rows (scouting's
     snapshots_for_match); `prod_quote_rows`: prod's raw quote rows.
+    `lines` is OWN or PROD_LINES; a tuple of both returns {mode: rows},
+    off one simulation of each match.
     """
     tables_path, grid_path = model_paths(model_dir)
     variant = variant or v4.Variant("v4")
@@ -202,8 +206,9 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         prof = (book.profile(pair[0]), book.profile(pair[1])) if pair else None
         items.append((code, snaps, prod_by[code], first_play, prof,
                       means.get(code, pre.league) if pre is not None else None))
+    modes = (lines,) if isinstance(lines, str) else tuple(lines)
     if not items:
-        return []
+        return [] if isinstance(lines, str) else {mode: [] for mode in modes}
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
     jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i, lines)
             for i in range(workers)]
@@ -212,4 +217,5 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     else:
         with v4.pool_context().Pool(workers) as pool:
             results = pool.map(_worker, jobs)
-    return [row for part in results for row in part]
+    out = {mode: [row for part in results for row in part[mode]] for mode in modes}
+    return out[lines] if isinstance(lines, str) else out

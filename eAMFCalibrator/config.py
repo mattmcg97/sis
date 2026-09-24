@@ -14,6 +14,14 @@ STREAMS = {
     "candidate": "GAMEPLAI_STREAM_CANDIDATE",
 }
 
+# The report can set several candidates against prod at once
+# (`--candidate v4,v5`): each is paired with prod in turn and every table
+# shows them side by side. Empty: just STREAMS["candidate"].
+CANDIDATES = []
+# Answer repeated identical queries from memory (set by a report that runs
+# more than one pairing pass over the same window).
+FETCH_CACHE = False
+
 # Candidate model was changed on the morning of 2026-09-17, so quotes from
 # before this instant came out of the OLD candidate and would pollute the
 # comparison. Both streams are cut to the same instant to keep the two

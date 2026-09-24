@@ -1033,7 +1033,7 @@ class TestV4Candidate(unittest.TestCase):
     scouting_rows = TestV3Candidate.scouting_rows
     prod_rows = TestV3Candidate.prod_rows
 
-    def quotes(self, model_dir, handles, lines="prod"):
+    def quotes(self, model_dir, handles, lines="prod", suffix=""):
         from .. import snowflake_io as sio
         prod_table = config.STREAMS["prod"]
         scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
@@ -1056,7 +1056,7 @@ class TestV4Candidate(unittest.TestCase):
                     mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
                     mock.patch.object(scouting, "fetch_handles", return_value=handles) as fh, \
                     contextlib.redirect_stdout(io.StringIO()):
-                rows = sio.fetch_quotes(RecordingCursor(), f"MODEL:{self.NAME}", [self.MC])
+                rows = sio.fetch_quotes(RecordingCursor(), f"MODEL:{self.NAME}{suffix}", [self.MC])
                 self.fetched_handles = fh.called
                 return rows
         finally:
@@ -1080,6 +1080,18 @@ class TestV4Candidate(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 self.quotes(empty, {})
         self.assertIn(f"{self.NAME}-build", str(caught.exception))
+
+    def test_at_prod_names_the_model_read_at_prods_lines(self):
+        # the report's second reading of a model: its own lines configured,
+        # but the @prod stream quotes at the line prod paired with
+        rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own",
+                           suffix="@prod")
+        paired = directional.index_by_message(self.prod_rows())
+        lined = [r for r in rows if r[1] in (52, 54)]
+        self.assertTrue(lined)
+        for r in lined:
+            self.assertEqual(markets.parse_line(r[5]),
+                             markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
 
     def test_by_default_v4_quotes_its_own_even_lines(self):
         self.assertEqual(getattr(config, f"{self.NAME.upper()}_LINES"), "own")
@@ -3730,6 +3742,33 @@ class TestMatchClock(unittest.TestCase):
         self.assertEqual(len(clocks["AF1"]), 1)
 
 
+def pair_table_spec(rendered):
+    """The pair table's column kinds and headers, as the page embeds them."""
+    import json
+    spec = json.loads(re.search(r'<script type="application/json" id="pairSpec">(.*?)</script>',
+                                rendered, re.S).group(1))
+    head = rendered[rendered.index('id="pairTable"'):]
+    head = head[:head.index("</thead>")]
+    spec["heads"] = [re.sub(r"<[^>]+>", "", h).strip()
+                     for h in re.findall(r"<th[^>]*>(.*?)</th>", head, re.S)]
+    return spec
+
+
+def pair_table_rows(rendered):
+    """The pair table's rows, header -> value (the page draws them in JS)."""
+    import json
+    spec = pair_table_spec(rendered)
+    data = re.search(r'<script type="application/json" id="pairData">(.*?)</script>',
+                     rendered, re.S).group(1)
+    rows = []
+    for row in json.loads(data):
+        named = {}
+        for head, value in zip(spec["heads"], row):
+            named.setdefault(head, value)          # the first "Closer" is the first candidate's
+        rows.append(named)
+    return rows
+
+
 def pair(prod, candidate, outcome, match="AF1", market_id=50, drive=1,
          period=1, score_diff=0, team="Home Team", message=100, gap=0,
          home=None, away=None):
@@ -4591,12 +4630,9 @@ class TestGapRamp(unittest.TestCase):
             self.assertEqual(len(cuts), 4, name)
             self.assertEqual(list(cuts), sorted(cuts), name)
 
-    def test_the_key_names_every_step_so_colour_is_never_the_only_cue(self):
-        key = self.h._gap_key(self.h.PROB_GAP, "Gap", ".2f")
-        for step in range(5):
-            self.assertIn(f'class="key g{step}"', key)
-        self.assertIn("&le;0.02", key)
-        self.assertIn("&gt;0.20", key)
+    def test_there_is_no_colour_key(self):
+        # colour descriptions were taken out of the report
+        self.assertFalse(hasattr(self.h, "_gap_key"))
 
     def test_the_ramp_is_hue_only(self):
         # It must not brighten. Every step sits at the same OKLCH
@@ -4715,26 +4751,18 @@ class TestReportRendering(unittest.TestCase):
         report = directional.build_full_report(offset, n_bootstrap=20)
         rendered = self.html_full.render(report, self.header, self.stats, offset,
                                          self.scan)
-        self.assertIn('data-v="2" class="g2"', rendered)
+        self.assertEqual(pair_table_rows(rendered)[0]["&plusmn;Msg"], 2)
+        spec = pair_table_spec(rendered)
+        self.assertEqual(spec["kinds"][spec["heads"].index("&plusmn;Msg")], "mg")
+        self.assertEqual(spec["message_gap"], list(self.html_full.MESSAGE_GAP))
+        self.assertEqual(self.html_full._gap(2, self.html_full.MESSAGE_GAP), "g2")
+        self.assertIn("gap(v, spec.message_gap)", rendered)
 
     def test_an_exact_message_match_sits_on_the_green_end(self):
-        exact = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=0)]
-        report = directional.build_full_report(exact, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats, exact,
-                                         self.scan)
-        self.assertIn('data-v="0" class="g0"', rendered)
-
-    def test_the_ramp_is_spelled_out_rather_than_left_to_colour(self):
-        rendered = self._render()
-        self.assertIn("gapkey", rendered)
-        for step in range(5):
-            self.assertIn(f'class="key g{step}"', rendered)
+        self.assertEqual(self.html_full._gap(0, self.html_full.MESSAGE_GAP), "g0")
 
     def test_every_pair_reaches_the_table(self):
-        rendered = self._render()
-        body = rendered[rendered.index('id="pairTable"'):]
-        body = body[body.index("<tbody>"):body.index("</tbody>")]
-        self.assertEqual(body.count("<tr "), len(self.pairs))
+        self.assertEqual(len(pair_table_rows(self._render())), len(self.pairs))
 
     def test_pair_rows_carry_both_totals_not_just_the_difference(self):
         # 7-7 and 21-21 are the same difference and very different games.
@@ -4742,14 +4770,8 @@ class TestReportRendering(unittest.TestCase):
         report = directional.build_full_report(pairs, n_bootstrap=20)
         rendered = self.html_full.render(report, self.header, self.stats,
                                          pairs, self.scan)
-        body = rendered[rendered.index('id="pairTable"'):]
-        head = body[:body.index("</thead>")]
-        for name in ("Home", "Away", "Diff"):
-            self.assertIn(f">{name}</th>", head)
-        row = body[body.index("<tbody>"):body.index("</tbody>")]
-        self.assertIn('data-v="21">21</td>', row)
-        self.assertIn('data-v="14">14</td>', row)
-        self.assertIn('data-v="7">+7</td>', row)
+        row = pair_table_rows(rendered)[0]
+        self.assertEqual((row["Home"], row["Away"], row["Diff"]), (21, 14, 7))
 
     def test_score_diff_cannot_drift_from_the_totals(self):
         p = pair(0.6, 0.8, True, home=24, away=10)
@@ -4762,12 +4784,10 @@ class TestReportRendering(unittest.TestCase):
         report = directional.build_full_report(pairs, n_bootstrap=20)
         rendered = self.html_full.render(report, self.header, self.stats,
                                          pairs, self.scan)
-        body = rendered[rendered.index('id="pairTable"'):]
-        body = body[body.index("<tbody>"):body.index("</tbody>")]
-        # Lower-cased on the row so the filter can compare without
-        # re-casing twenty thousand strings per keystroke.
-        self.assertIn('data-match="af-upper"', body)
-        self.assertIn('data-match="af-lower"', body)
+        matches = {r["Match"] for r in pair_table_rows(rendered)}
+        self.assertEqual(matches, {"AF-Upper", "af-lower"})
+        # the filter compares case-blind
+        self.assertIn(".toLowerCase().indexOf(needle)", rendered)
 
     def test_the_filter_box_is_wired_to_the_pair_table(self):
         rendered = self._render()
@@ -4775,31 +4795,18 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn('id="pairCount"', rendered)
         script = rendered.split("<script>")[1]
         self.assertIn("pairFilter", script)
-        self.assertIn("dataset.match", script)
-        # Filtering must not touch the sort handlers or vice versa.
+        self.assertIn("pairData", script)
         self.assertIn("pairTable", script)
 
-    def _row_for(self, pairs):
-        """The pair table's tbody for one set of pairs."""
+    def _rows_for(self, pairs):
+        """The pair table's rows, as the page embeds them: header -> value."""
         report = directional.build_full_report(pairs, n_bootstrap=20)
         rendered = self.html_full.render(report, self.header, self.stats,
                                          pairs, self.scan)
-        body = rendered[rendered.index('id="pairTable"'):]
-        return body[body.index("<tbody>"):body.index("</tbody>")]
+        return pair_table_rows(rendered)
 
     def _cells_for(self, pairs):
-        """Header -> cell text for a single-row pair table."""
-        report = directional.build_full_report(pairs, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats,
-                                         pairs, self.scan)
-        body = rendered[rendered.index('id="pairTable"'):]
-        heads = [re.sub(r"<[^>]+>", "", h).strip() for h in
-                 re.findall(r"<th[^>]*>(.*?)</th>",
-                            body[:body.index("</thead>")], re.S)]
-        row = body[body.index("<tbody>"):body.index("</tbody>")]
-        cells = [re.sub(r"<[^>]+>", "", c).strip() for c in
-                 re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", row, re.S)]
-        return dict(zip(heads, cells))
+        return self._rows_for(pairs)[0]
 
     def test_probability_columns_are_blank_when_the_lines_differ(self):
         # A probability that refers to a different line is not comparable to
@@ -4807,32 +4814,31 @@ class TestReportRendering(unittest.TestCase):
         # number here would invite exactly the wrong comparison.
         cells = self._cells_for(
             [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21, match="AF041170926")])
-        for column in ("&Delta;prob", "Prod err", "Cand err"):
-            self.assertEqual(cells[column], "&mdash;", column)
+        # the candidate's probability answers a different question, so it
+        # has none for prod's line and no difference from prod's
+        for column in ("candidate at prod&#39;s line", "candidate &Delta;prob"):
+            self.assertIsNone(cells[column], column)
         # The two lines and each stream's own probability still show -- they
-        # are facts about the row. It is only the comparisons between them
-        # that are withheld.
-        self.assertEqual(cells["Prod line"], "+44.5")
-        self.assertEqual(cells["Cand line"], "+60.5")
-        self.assertEqual(cells["Prod prob"], "0.5000")
-        self.assertEqual(cells["Cand prob"], "0.0100")
-        # And the line error in points never appears in an error column.
-        self.assertNotIn("15.5000", self._row_for(
-            [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)]))
+        # are facts about the row.
+        self.assertEqual(cells["Prod line"], 44.5)
+        self.assertEqual(cells["candidate line"], 60.5)
+        self.assertEqual(cells["Prod prob"], 0.5)
+        self.assertEqual(cells["candidate prob"], 0.01)
+        # each error is against the stream's own line, never the line error
+        self.assertEqual(cells["Prod err"], 0.5)
+        self.assertEqual(cells["candidate err"], 0.01)
 
     def test_the_closer_column_uses_the_line_when_the_lines_differ(self):
         pairs = [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)]
-        row = self._row_for(pairs)
         # Prod's line is nearer, so prod is closer -- despite the candidate
         # having much the better probability against its own outcome.
-        self.assertIn(">prod</span>", row)
-        self.assertNotIn(">cand</span>", row)
+        self.assertEqual(self._cells_for(pairs)["Closer"], ["prod", "bad"])
 
     def test_same_line_rows_keep_their_probability_columns(self):
-        row = self._row_for([line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)])
-        self.assertIn("0.0700", row)   # delta prob
-        self.assertIn("0.4500", row)   # prod error
-        self.assertIn("0.3800", row)   # candidate error
+        cells = self._cells_for([line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)])
+        self.assertAlmostEqual(cells["candidate &Delta;prob"], 0.07)
+        self.assertAlmostEqual(cells["Prod err"], 0.45)
+        self.assertAlmostEqual(cells["candidate err"], 0.38)
 
     def test_pair_rows_carry_the_game_state(self):
         p = directional.PairedObservation(
@@ -4845,58 +4851,58 @@ class TestReportRendering(unittest.TestCase):
             publish_time=dt.datetime(2026, 9, 17, 20, 5),
             field_position=55, down_number=3, distance=2)
         cells = self._cells_for([p])
-        self.assertEqual(cells["Field"], "55")
-        self.assertEqual(cells["D&amp;D"], "3&amp;2")
+        self.assertEqual(cells["Field"], 55)
+        self.assertEqual(cells["D&amp;D"][0], "3&2")
 
     def test_missing_state_shows_a_dash_not_a_zero(self):
         cells = self._cells_for([pair(0.5, 0.6, True)])
-        self.assertEqual(cells["Field"], "&mdash;")
-        self.assertEqual(cells["D&amp;D"], "&mdash;")
+        self.assertIsNone(cells["Field"])
+        self.assertIsNone(cells["D&amp;D"])
+        self.assertIn("dash(td)", self._render())
 
     def test_to_end_counts_down_to_the_match_last_quote(self):
         # No game clock exists in the feed, so this is the wall-clock proxy:
         # seconds from each snapshot to the last quote of its own match.
         base = dt.datetime(2026, 9, 17, 20, 0)
-        early = pair(0.5, 0.6, True, match="AF1", message=100)
-        late = pair(0.5, 0.6, True, match="AF1", message=428)
+        early = pair(0.5, 0.6, True, match="AF1", message=100, drive=1)
+        late = pair(0.5, 0.6, True, match="AF1", message=428, drive=2)
         early = dataclasses.replace(early, publish_time=base)
         late = dataclasses.replace(late, publish_time=base + dt.timedelta(seconds=300))
-        row = self._row_for([early, late])
-        self.assertIn(">300</td>", row)   # the early one is 300s from the end
-        self.assertIn(">0</td>", row)     # the last one is the end
+        rows = self._rows_for([early, late])
+        self.assertEqual(sorted(r["To end"] for r in rows), [0, 300])
 
     def test_the_final_snapshot_of_a_match_is_flagged_as_near_the_end(self):
         base = dt.datetime(2026, 9, 17, 20, 0)
         p = dataclasses.replace(pair(0.5, 0.6, True, match="AF1"),
                                 publish_time=base)
-        self.assertIn('class="warn"', self._row_for([p]))
+        self.assertEqual(self._cells_for([p])["To end"], 0)
+        self.assertIn("if (v <= 120) td.className = 'warn'", self._render())
 
     def test_a_non_live_pair_shows_but_compares_nothing(self):
         p = dataclasses.replace(pair(0.9, 0.1, True), prod_live=False)
         cells = self._cells_for([p])
         self.assertEqual(cells["Live"], "prod")
-        for column in ("&Delta;prob", "Prod err", "Cand err"):
-            self.assertEqual(cells[column], "&mdash;", column)
+        for column in ("candidate &Delta;prob", "candidate at prod&#39;s line", "Prod err"):
+            self.assertIsNone(cells[column], column)
+        self.assertEqual(cells["Closer"], ["level", ""])
         # The two probabilities are still facts about the row.
-        self.assertEqual(cells["Prod prob"], "0.9000")
-        self.assertIn('class="notlive"', self._row_for([p]))
+        self.assertEqual(cells["Prod prob"], 0.9)
+        self.assertIn("tr.className = 'notlive'", self._render())
 
     def test_a_live_pair_is_not_marked(self):
         cells = self._cells_for([pair(0.9, 0.1, True)])
         self.assertEqual(cells["Live"], "live")
-        self.assertNotIn('class="notlive"', self._row_for([pair(0.9, 0.1, True)]))
 
     def test_off_anchor_rows_flag_their_down_and_distance(self):
         p = dataclasses.replace(
             pair(0.5, 0.6, True), down_number=2, distance=7,
             anchor=drives.MID_DRIVE)
-        row = self._row_for([p])
-        self.assertIn('class="warn">2&amp;7</td>', row)
+        self.assertEqual(self._cells_for([p])["D&amp;D"], ["2&7", 2, 1])
 
     def test_clean_anchor_rows_are_not_flagged(self):
         p = dataclasses.replace(pair(0.5, 0.6, True), down_number=1,
                                 distance=10, anchor=drives.FIRST_DOWN)
-        self.assertIn('class="">1&amp;10</td>', self._row_for([p]))
+        self.assertEqual(self._cells_for([p])["D&amp;D"], ["1&10", 1, 0])
 
     def test_the_anchor_panel_reports_the_split(self):
         pairs = [dataclasses.replace(pair(0.5, 0.6, True, match=f"AF{i}"),
@@ -5061,14 +5067,12 @@ class TestReportShape(unittest.TestCase):
         self.assertIn("tbody tr.picked > *{background:var(--pick)", self.rendered)
         self.assertIn("box-shadow:inset", self.rendered)
         self.assertIn("--pick:", self.rendered)
-        # The affordance is still named, just not explained at length.
-        self.assertIn(">pin</span>", self.rendered)
 
     def test_handle_check_reports_clean_when_nothing_flipped(self):
         block = self.rendered[self.rendered.index("Handle check"):]
         block = block[:block.index("</section>")]
-        self.assertIn("clean", block)
-        self.assertIn("12 matches", block)
+        self.assertIn('<span class="good">clean</span>', block)
+        self.assertIn("<th>Matches scanned</th><td>12</td>", block)
         self.assertNotIn('class="bad"', block)
 
     def test_handle_check_shouts_when_a_match_flipped(self):
@@ -5080,13 +5084,13 @@ class TestReportShape(unittest.TestCase):
             self.report, {"paired_matches": 12}, {}, self.pairs, scan.summary())
         block = rendered[rendered.index("Handle check"):]
         block = block[:block.index("</section>")]
-        self.assertIn("1 of 2 matches", block)
+        self.assertIn("1 of 2 flipped", block)
         self.assertIn('class="bad"', block)
         self.assertIn("SWAP", block)
         self.assertIn("14&ndash;7 &rarr; 7&ndash;14", block)
         # The default is to report rather than drop, so the reader has to be
         # told the bad match is still in the numbers above.
-        self.assertIn("STILL IN", block)
+        self.assertIn("still in the numbers", block)
 
     def test_a_flip_stops_the_checks_line_claiming_all_pass(self):
         scan = handles.Scan()
@@ -5125,7 +5129,7 @@ class TestReportShape(unittest.TestCase):
         # body rather than deleting it.
         checks = self.rendered[self.rendered.index('id="checks"'):]
         checks = checks[:checks.index("</details>")]
-        self.assertIn('<p class="count">', checks)
+        self.assertIn('<th>Checks</th><td><span class="good">all pass</span>', checks)
 
     def test_cross_section_axes_are_three_shaded_columns(self):
         head = self.rendered[self.rendered.index('id="crossTable"'):]
@@ -5150,7 +5154,9 @@ class TestReportShape(unittest.TestCase):
         head = head[:head.index("</section>")]
         self.assertEqual(head.count("<table>"), 1)
         self.assertEqual(head.count("<dl"), 0)
-        for label in ("Overall", "Same line", "Different line"):
+        for label in ("Brier at prod's line", "Line error at own line (points)",
+                      "Same line as prod", "Matches won at prod's line",
+                      "Matches won, line first"):
             self.assertIn(f"<th>{label}</th>", head)
 
     def test_the_directional_table_carries_five_columns(self):
@@ -5159,8 +5165,7 @@ class TestReportShape(unittest.TestCase):
         columns = re.findall(r"<th[^>]*>([^<]+)</th>",
                              head[head.index("<thead>"):head.index("</thead>")])
         self.assertEqual(columns,
-                         ["Reading", "Pairs", "Matches", "Cand win",
-                          "&Delta;Brier"])
+                         ["Reading", "N", "Prod", "candidate", "&Delta;", "95% CI", "p"])
 
     def test_the_brier_delta_is_dashed_where_it_does_not_apply(self):
         # A different line is a different question, so there is no shared
@@ -5170,12 +5175,12 @@ class TestReportShape(unittest.TestCase):
         head = head[:head.index("</section>")]
         body = head[head.index("<tbody>"):head.index("</tbody>")]
         rows = body.split("<tr>")[1:]
-        overall = next(r for r in rows if "<th>Overall</th>" in r)
-        different = next(r for r in rows if "<th>Different line</th>" in r)
-        same = next(r for r in rows if "<th>Same line</th>" in r)
-        self.assertIn("&mdash;", overall)
-        self.assertIn("&mdash;", different)
-        self.assertNotIn("&mdash;", same)
+        share = next(r for r in rows if "<th>Same line as prod</th>" in r)
+        brier = next(r for r in rows if "<th>Brier at prod's line</th>" in r)
+        self.assertIn("&mdash;", share)
+        # the Brier row carries its numbers (p is dashed only where every
+        # match moved by the same amount, as in this fixture)
+        self.assertIn('<td class="good">+0.0600</td>', brier)
 
     def test_report_carries_no_explanatory_prose(self):
         # The report is a dashboard, not a write-up: headings, tables and
@@ -5183,7 +5188,10 @@ class TestReportShape(unittest.TestCase):
         # space until asked for.
         self.assertNotIn('class="note"', self.rendered)
         self.assertNotIn('class="sub"', self.rendered)
-        self.assertGreater(self.rendered.count("<th title="), 20)
+        # no descriptions under headings, on headers or of the colours
+        self.assertEqual(self.rendered.count(" title="), 0)
+        self.assertNotIn("gapkey", self.rendered)
+        self.assertEqual(self.rendered.count('<p class="count">'), 0)
 
     def test_section_headings_are_titles_and_nothing_else(self):
         import re as _re
@@ -5227,8 +5235,8 @@ class TestReportShape(unittest.TestCase):
         self.assertIn('class="thin"', self.rendered)
 
     def test_cross_table_is_sortable(self):
-        self.assertIn('id="crossTable"', self.rendered)
-        self.assertIn("crossTable", self.rendered.split("<script>")[1])
+        self.assertIn('class="sortable" id="crossTable"', self.rendered)
+        self.assertIn("querySelectorAll('table.sortable')", self.rendered.split("<script>")[1])
 
     def test_checks_summary_reports_clean_when_nothing_is_wrong(self):
         summary = self.html_full._checks_summary(self.report)
@@ -5247,6 +5255,155 @@ class TestReportShape(unittest.TestCase):
         args = build_parser().parse_args(["report"])
         self.assertFalse(args.axes)
         self.assertTrue(build_parser().parse_args(["report", "--axes"]).axes)
+
+
+class TestSeveralCandidates(unittest.TestCase):
+    """--candidate v4,v5: every candidate beside prod in one report, over
+    one population, read at prod's line and at its own."""
+
+    @staticmethod
+    def _passed(pairs):
+        return {"pairs": pairs, "stats": {"snapshots": 3}, "header": {"paired_matches": 3},
+                "scan": clean_scan(3), "indrive": None, "prematch": None, "prematch_rows": []}
+
+    def _sides(self):
+        from .. import multi
+        at_prod_a = [line_pair(0.50, 0.60, 44.5, 44.5, 24, 21, match=f"AF{i}") for i in range(3)]
+        own_a = [line_pair(0.50, 0.52, 44.5, 46.5, 24, 21, match=f"AF{i}") for i in range(3)]
+        # the second candidate missed a snapshot, and is a table (one pass)
+        b = [line_pair(0.50, 0.40, 44.5, 44.5, 24, 21, match=f"AF{i}") for i in range(2)]
+        sides = [{"name": "v4", "stream": "MODEL:v4", "line": self._passed(own_a),
+                  "prob": self._passed(at_prod_a)},
+                 {"name": "T2", "stream": "T2", "line": self._passed(b), "prob": None}]
+        sides[1]["prob"] = sides[1]["line"]
+        dropped = multi.build(sides, n_bootstrap=20)
+        return sides, dropped
+
+    def test_every_side_is_cut_to_the_snapshots_all_of_them_paired(self):
+        sides, dropped = self._sides()
+        for side in sides:
+            self.assertEqual({p.match_code for p in side["prob_pairs"]}, {"AF0", "AF1"})
+            self.assertEqual({p.match_code for p in side["line_pairs"]}, {"AF0", "AF1"})
+        self.assertEqual(dropped, {"prob": 1, "line": 1})
+        # so prod's figures are one set of numbers whichever column they sit beside
+        briers = {s["prob_full"]["summary"]["same_line"]["overall"]["prod_brier"] for s in sides}
+        self.assertEqual(len(briers), 1)
+
+    def test_a_model_is_read_at_prods_line_and_at_its_own(self):
+        sides, _ = self._sides()
+        v4 = sides[0]
+        self.assertEqual(v4["prob_full"]["summary"]["lines"]["same_rate"], 1.0)
+        self.assertEqual(v4["line_full"]["summary"]["lines"]["same_rate"], 0.0)
+        # line error over every pair: prod 44.5 against a 45 total, v4 46.5
+        cell = v4["line_full"]["line_error"]["all"]["all"]
+        self.assertAlmostEqual(cell["prod_line_error"], 0.5)
+        self.assertAlmostEqual(cell["candidate_line_error"], 1.5)
+        self.assertAlmostEqual(cell["points_delta"], -1.0)
+        self.assertEqual(cell["same_share"], 0.0)
+
+    def test_the_page_names_every_candidate_in_every_section(self):
+        from .. import html_full
+        sides, dropped = self._sides()
+        page = html_full.render_sides(sides, dropped)
+        self.assertIn("<title>eAMF prod vs v4 &middot; T2</title>", page)
+        for section in ('id="directional"', 'id="cross"', "<h2>By market</h2>",
+                        "<h2>Mirror check</h2>", "<h2>By selection</h2>"):
+            block = page[page.index(section):]
+            block = block[:block.index("</section>")]
+            self.assertIn(">v4", block, section)
+            self.assertIn(">T2", block, section)
+        rows = pair_table_rows(page)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["v4 line"], 46.5)
+        self.assertEqual(rows[0]["v4 at prod&#39;s line"], 0.6)
+        self.assertEqual(rows[0]["T2 line"], 44.5)
+
+    def test_score_quarter_and_possession_are_sections_of_their_own(self):
+        from .. import html_full
+        sides, dropped = self._sides()
+        page = html_full.render_sides(sides, dropped)
+        checks = page[page.index('id="checks"'):page.index("</details>")]
+        for name in ("Score difference", "Quarter", "Possession"):
+            self.assertIn(f"<h2>{name}</h2>", page)
+            self.assertNotIn(f"<h2>{name}</h2>", checks)
+        # and they come before the disclosure, after the cross-section
+        self.assertLess(page.index('id="cross"'), page.index("<h2>Score difference</h2>"))
+        self.assertLess(page.index("<h2>Possession</h2>"), page.index('id="checks"'))
+
+    def test_additional_checks_is_headed_like_every_other_section(self):
+        from .. import html_style
+        self.assertIn("details.panel > summary{cursor:pointer;padding:12px 14px;font-size:14px;",
+                      html_style.CSS)
+        self.assertIn("h2{font-size:14px", html_style.CSS)
+
+    def test_the_command_line_takes_a_list(self):
+        from ..__main__ import build_parser, apply_overrides
+        saved = (list(config.CANDIDATES), dict(config.STREAMS))
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                apply_overrides(build_parser().parse_args(["report", "--candidate", "v4,v5"]))
+            self.assertEqual(config.CANDIDATES, ["MODEL:v4", "MODEL:v5"])
+            self.assertEqual(config.STREAMS["candidate"], "MODEL:v4")
+        finally:
+            config.CANDIDATES = saved[0]
+            config.STREAMS.clear()
+            config.STREAMS.update(saved[1])
+
+    def test_stream_names_carry_the_line_reading(self):
+        from .. import snowflake_io as sio
+        self.assertEqual(sio.stream_name("v4@prod"), "MODEL:v4@prod")
+        self.assertEqual(sio.model_version("MODEL:v4@prod"), ("v4", "prod"))
+        self.assertEqual(sio.model_version("MODEL:v5"), ("v5", None))
+        self.assertTrue(sio.has_own_lines("MODEL:v5"))
+        self.assertFalse(sio.has_own_lines("MODEL:v3"))
+        self.assertFalse(sio.has_own_lines("GAMEPLAI_STREAM_CANDIDATE"))
+
+    def test_repeated_queries_are_answered_once_while_the_cache_is_on(self):
+        from .. import snowflake_io as sio
+        cur = RecordingCursor([("A", 1)])
+        saved = config.FETCH_CACHE
+        try:
+            config.FETCH_CACHE = True
+            sio.fetch_all(cur, "SELECT %s", ("x",))
+            sio.fetch_all(cur, "SELECT %s", ("x",))
+            sio.fetch_all(cur, "SELECT %s", ("y",))
+            self.assertEqual(len(cur.calls), 2)
+            config.FETCH_CACHE = False
+            sio.fetch_all(cur, "SELECT %s", ("x",))
+            self.assertEqual(len(cur.calls), 3)
+        finally:
+            config.FETCH_CACHE = saved
+            sio.clear_fetch_cache()
+
+    def test_the_report_command_runs_every_candidate(self):
+        import tempfile
+        from .. import __main__ as cli, multi
+        sides, _ = self._sides()
+        passes = {"MODEL:v4": sides[0]["line"], "MODEL:v4@prod": sides[0]["prob"],
+                  "T2": sides[1]["line"]}
+        seen = []
+
+        def fake_pass(stream, verbose=True):
+            seen.append(stream)
+            return dict(passes[stream], pairs=list(passes[stream]["pairs"]))
+
+        saved = (list(config.CANDIDATES), dict(config.STREAMS))
+        with tempfile.TemporaryDirectory() as out:
+            try:
+                with mock.patch.object(multi, "_pass", side_effect=fake_pass), \
+                        mock.patch.object(multi.snowflake_io, "clear_fetch_cache"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    code = cli.main(["report", "--candidate", "v4,T2", "--out", out])
+            finally:
+                config.CANDIDATES = saved[0]
+                config.STREAMS.clear()
+                config.STREAMS.update(saved[1])
+            self.assertEqual(code, 0)
+            self.assertEqual(seen, ["MODEL:v4", "MODEL:v4@prod", "T2"])
+            names = sorted(os.listdir(out))
+            self.assertIn("eamf_report_v4_T2.html", names)
+            self.assertIn("directional_pairs_v4.csv", names)
+            self.assertIn("directional_pairs_T2.csv", names)
 
 
 class TestCandidateLabel(unittest.TestCase):
@@ -5280,7 +5437,7 @@ class TestCandidateLabel(unittest.TestCase):
         seen = self._visible(page)
         self.assertIsNone(re.search(r"(?i)\bcand(idate)?\b", seen), re.search(r"(?i).{40}\bcand(idate)?\b.{40}", seen))
         self.assertIn("v3", seen)
-        self.assertIn("<title>eAMF v3 vs prod</title>", page)
+        self.assertIn("<title>eAMF prod vs v3</title>", page)
         # what the page runs on is untouched
         pick = lambda p, rx: re.findall(rx, p, re.S | re.I)
         self.assertEqual(pick(raw, r"<script\b.*?</script>"), pick(page, r"<script\b.*?</script>"))
@@ -5291,7 +5448,7 @@ class TestCandidateLabel(unittest.TestCase):
         from .. import labels
         config.STREAMS["candidate"] = "MODEL:v3"
         config.CANDIDATE_LABEL = "v3 sim"
-        self.assertIn("v3 sim win", labels.relabel(self._render()))
+        self.assertIn(">v3 sim</th>", self._render())
         self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v3_sim.html")
 
     def test_a_real_candidate_stream_keeps_its_name(self):

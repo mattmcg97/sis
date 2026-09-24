@@ -492,91 +492,91 @@ def cmd_cross(args):
 
 
 def cmd_report(args):
-    """One pairing pass, both console views, and one combined HTML file.
+    """One pairing pass per candidate, the console view of each, and one
+    combined HTML file with every candidate beside prod.
 
-    Everything is built from directional.build_full_report() so the
-    directional numbers, the cross-sectional cells and the per-pair table at
-    the bottom cannot disagree with each other.
+    Every table is built from directional.build_full_report() on a common
+    population (multi.build), so the sections, the candidates and the
+    per-pair table cannot disagree with each other.
     """
+    from . import multi
     out_dir = args.out or DEFAULT_OUT
-    print("\nPairing prod against candidate at each drive-start snapshot")
-    # The in-drive analysis rides along on the same fetch rather than
-    # paying for a second set of queries to read the same rows.
-    sink = indrive.Sink()
-    closing = prematch.Sink()
-    pairs, stats, header, handle_scan = directional.run(sink=sink,
-                                                        prematch_sink=closing)
+    candidates = config.CANDIDATES or [config.STREAMS["candidate"]]
+    sides = multi.run(candidates)
+    first = sides[0]["line"]
 
-    report.print_directional_header(header, stats)
+    report.print_directional_header(first["header"], first["stats"])
     # Before any comparison: is the PLAYER_1 frame the buckets are read in
     # the same frame all the way through each match?
-    report.print_handle_check(handle_scan)
-    if not pairs:
+    report.print_handle_check(first["scan"])
+    if not any(s["line"]["pairs"] for s in sides):
         print("\n  No paired observations. Nothing to compare.")
         return 1
 
-    full = directional.build_full_report(pairs)
-    summary = full["summary"]
+    dropped = multi.build(sides)
+    for side in sides:
+        full, prob = side["line_full"], side["prob_full"]
+        if len(sides) > 1:
+            print(f"\n{'=' * 78}\n{side['name']} against prod\n{'=' * 78}")
+        report.print_decisive(full["summary"]["decisive"])
+        report.print_prematch(side["line"]["prematch"], side["line"]["stats"])
+        report.print_block(
+            "DIRECTIONAL -- at prod's line, whose probability was closer to its own 0/1",
+            "", prob["summary"]["same_line"])
+        report.print_block(
+            "DIRECTIONAL -- different line, whose line was closer",
+            "", full["summary"]["different_line"])
+        report.print_calibration_cells(
+            "CROSS-SECTION -- score difference x quarter x possession",
+            prob["full_cell"], order=prob["full_cell_order"],
+            label_width=report.CELL_WIDTH)
+        report.print_checks_summary(full)
+        report.print_daily(prob["daily"])
+        if args.axes:
+            report.print_line_agreement(full["summary"]["lines"])
+            report.print_anchor(full["anchor"])
+            report.print_market_state(full["market_state"])
+            report.print_selections(prob["summary"])
+            report.print_complement_report(full["complement"])
+            report.print_spread_interpretation(full["spread"])
+            report.print_both_sides(prob["both_sides"])
+            for axis in prob["axes"]:
+                report.print_calibration_cells(
+                    f"{axis['name']} -- predicted vs realized",
+                    axis["probability"], order=axis["order"])
+            for axis in full["axes"]:
+                report.print_line_cells(
+                    f"{axis['name']} -- whose line was closer",
+                    axis["line"], order=axis["order"])
 
-    # --- 0. the combined verdict, before either half of it ---
-    report.print_decisive(summary["decisive"])
-    report.print_prematch(closing.summary(), stats)
-
-    # --- 1. directional calibration ---
-    report.print_block(
-        "DIRECTIONAL -- same line, whose probability was closer to its own 0/1",
-        "Both streams quoted the same line, so the probabilities answer the "
-        "same question. This is the clean comparison.",
-        summary["same_line"])
-    report.print_block(
-        "DIRECTIONAL -- different line, whose line was closer",
-        "Lines differ, so the probabilities are not comparable. Scored on "
-        "which line landed nearer the actual margin or total.",
-        summary["different_line"])
-
-    # --- 2. cross-section calibration: the three axes as one bucket ---
-    report.print_calibration_cells(
-        "CROSS-SECTION -- score difference x quarter x possession",
-        full["full_cell"], order=full["full_cell_order"],
-        label_width=report.CELL_WIDTH)
-
-    csv_rows = report.cross_rows("full cell", full["full_cell"])
-    for axis in full["axes"]:
-        csv_rows.extend(report.cross_rows(axis["name"], axis["probability"]))
-
-    # --- 3. checks, compact unless asked for in full ---
-    report.print_checks_summary(full)
-    report.print_daily(full["daily"])
-    if args.axes:
-        report.print_line_agreement(summary["lines"])
-        report.print_anchor(full["anchor"])
-        report.print_market_state(full["market_state"])
-        report.print_selections(summary)
-        report.print_complement_report(full["complement"])
-        report.print_spread_interpretation(full["spread"])
-        report.print_both_sides(full["both_sides"])
-        for axis in full["axes"]:
-            report.print_calibration_cells(
-                f"{axis['name']} -- predicted vs realized",
-                axis["probability"], order=axis["order"])
-            report.print_line_cells(
-                f"{axis['name']} -- whose line was closer",
-                axis["line"], order=axis["order"])
-
-    # --- outputs ---
-    report.write_cross_csv(os.path.join(out_dir, "cross_cells.csv"), csv_rows)
-    report.write_pairs_csv(os.path.join(out_dir, "directional_pairs.csv"), pairs)
-    _write_csv(os.path.join(out_dir, "prematch_closing.csv"), prematch.FIELDS,
-               [prematch.row(o) for o in closing.observations])
-
-    ordered = directional.sorted_pairs_by_disagreement(pairs)
-    html_path = args.html or os.path.join(out_dir, labels.default_report_name("eamf_report.html"))
-    html_full.write(html_path, full, header, stats, ordered, handle_scan,
-                    sink.summary(), closing.summary())
+        # --- outputs, one set per candidate ---
+        suffix = "" if len(sides) == 1 else f"_{_safe(side['name'])}"
+        csv_rows = report.cross_rows("full cell", prob["full_cell"])
+        for axis in prob["axes"]:
+            csv_rows.extend(report.cross_rows(axis["name"], axis["probability"]))
+        report.write_cross_csv(os.path.join(out_dir, f"cross_cells{suffix}.csv"), csv_rows)
+        report.write_pairs_csv(os.path.join(out_dir, f"directional_pairs{suffix}.csv"),
+                               side["line_pairs"])
+        _write_csv(os.path.join(out_dir, f"prematch_closing{suffix}.csv"), prematch.FIELDS,
+                   side["line"]["prematch_rows"])
+    html_path = args.html or os.path.join(out_dir, _report_name(sides))
+    html_full.write_sides(html_path, sides, dropped)
     size = os.path.getsize(html_path) / 1024 ** 2
     print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
-          f"{len(ordered):,} pair rows)")
+          f"{len(sides[0]['line_pairs']):,} pair rows)")
     return 0
+
+
+def _safe(name):
+    import re
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", name)
+
+
+def _report_name(sides):
+    """eamf_report.html, or eamf_report_v4_v5.html when named models stand in."""
+    if len(sides) == 1:
+        return labels.default_report_name("eamf_report.html")
+    return "eamf_report_" + "_".join(_safe(s["name"]) for s in sides) + ".html"
 
 
 def common_options():
@@ -619,8 +619,9 @@ def common_options():
                         help="what stands in the candidate's place: a table name, "
                              "or a model version (v1, v2, v3, v4, v5 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
-                             "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model) "
-                             f"(default {config.STREAMS['candidate']})")
+                             "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
+                             "several, comma-separated (v4,v5), set each against prod "
+                             f"side by side in the report (default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
                              "model version when one stands in, e.g. v3; else 'candidate')")
@@ -688,7 +689,9 @@ def apply_overrides(args):
 
     candidate = getattr(args, "candidate", None)
     if candidate:
-        config.STREAMS["candidate"] = snowflake_io.stream_name(candidate)
+        names = [snowflake_io.stream_name(c.strip()) for c in candidate.split(",") if c.strip()]
+        config.CANDIDATES = names
+        config.STREAMS["candidate"] = names[0]
 
     clock = getattr(args, "clock", None)
     if clock is not None:
@@ -700,7 +703,7 @@ def apply_overrides(args):
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
           f"   sport {config.SPORT_CODE}"
           f"   spread {config.SPREAD_RESOLUTION}"
-          f"   candidate {config.STREAMS['candidate']}")
+          f"   candidate {', '.join(config.CANDIDATES or [config.STREAMS['candidate']])}")
 
 
 def build_parser():
