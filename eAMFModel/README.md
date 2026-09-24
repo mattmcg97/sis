@@ -341,6 +341,70 @@ The correction is read from the last 7 days of whatever the model is
 built on, so rebuild weekly for it to track. Build on an export that ends
 where the report window starts.
 
+### Our own pre-match: NB2 (`--history`)
+
+Built with `--history`, v4 takes each match's scoring level from our own
+pre-match model, the NB2 player + team model in `nb2/` (`nb2_prior.py`),
+and never reads GAMEPLAI's pre-match quotes. NB2 prices the kickoff and
+the simulation takes over from the first `PLAY_OVER`.
+
+- **Fit.** `nb2/NBRatingTrial.py` runs on the match history before the
+  build's cut-off: every settled match up to the day after the last one
+  the tables are built on, or `--before`. It fits recency-weighted player
+  and team attack/defence, stream effects and the score correlation, with
+  a 60-day half-life.
+- **Level.** NB2's totals ran about 3% under the real ones, week after
+  week. Each week was fitted only on what came before: ratios 1.027,
+  1.028, 1.035. The build measures that on the last 7 days, walk-forward,
+  shrinks it toward 1 by 200 matches, and scales both sides' expected
+  points by it. The build prints the figure.
+- **Prior.** `nb2/NB2_schedule_predict.py` gives each side's expected
+  points. v4 picks the home and away efficiencies whose simulated games
+  average those points (`fit_means`). A match NB2 can't price (an unknown
+  player or team) gets the league's average of the last 30 days.
+
+Everything lands in `v4_model/nb2/`, and `nb2/` itself is never written to.
+The two scripts need pandas and scipy (`py -m pip install pandas scipy`).
+
+**The seed.** Each match simulates off a fixed seed, a hash of its match
+code, on top of the common random numbers above. Re-pricing a match gives
+the same prices every time, and the same state always gets the same price.
+Two neighbouring states differ only by what happened between them. A fixed
+seed alone would not do this: without common random numbers, one extra
+play would shift every path's draws, and prices would jump just the same.
+
+**What still touches GAMEPLAI.** For an NB2 model, nothing in the prices:
+- the simulation tables come from `SCOUTING_FULL` alone;
+- the prior comes from NB2;
+- the pre-match correction above is set to 0.
+Only the comparison reads prod. The calibrator quotes v4 at the line and
+message of the prod quote it pairs with, and grades on the same matches, so
+both answer the same question. A model built without `--history` still
+falls back to prod's pre-match quotes, as before.
+
+**Results** (walk-forward: built on everything before 3 Sep, scored on
+every `PLAY_OVER` of 3–9 Sep; Brier, prod − version):
+
+| market | v4, prod's pre-match | v4, NB2 |
+|---|---|---|
+| moneyline | +0.0027 | +0.0056 |
+| spread | +0.0114 | +0.0148 |
+| total | +0.0125 | +0.0103 |
+| all (202,520 quotes, 583 matches) | +0.0087 | +0.0101 |
+
+NB2's level was scaled 1.021 for that week. It gains on moneyline and
+spread, where prod's pre-match had no edge to give. It gives back a little
+on totals, where the prod version carried the pre-match correction.
+
+```bash
+python -m eAMFCalibrator history --until 2026-09-24          # out/match_history.csv
+python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model --history eAMFCalibrator/out/match_history.csv
+python -m eAMFModel v4 eAMFCalibrator/out/scouting_playover.csv --model v4_model --half test --history eAMFCalibrator/out/match_history.csv
+```
+
+`--history` takes any CSV shaped like `nb2/AMFELO.csv`. For `v4`, it needs
+only the priced matches' players, teams and stream; the finals are not read.
+
 ## Run it
 
 ```bash

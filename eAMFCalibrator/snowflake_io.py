@@ -328,6 +328,69 @@ def _model_quotes(cur, stream_table, match_codes):
 _SCOUTING_TABLE = {}                      # located once per run
 
 
+# The columns v4's own pre-match model (nb2/, the NB2 player + team model)
+# reads for each match, as nb2/AMFELO.csv carries them. EVENT has them all.
+MATCH_INFO_COLUMNS = ["MATCH_CODE", "SPORT_CODE", "STREAM_NUMBER", "SCHEDULED_START_TIME_UTC",
+                      "PLAYER_1_HANDLE", "PLAYER_1_TEAM", "PLAYER_2_HANDLE", "PLAYER_2_TEAM"]
+HISTORY_COLUMNS = MATCH_INFO_COLUMNS + ["PLAYER_1_FINAL_SCORE", "PLAYER_2_FINAL_SCORE"]
+
+
+def _check_event_columns(cur):
+    have = {str(r[0]).upper() for r in describe_columns(cur, EVENT_TABLE)}
+    missing = [c for c in MATCH_INFO_COLUMNS if c not in have]
+    if missing:
+        raise SystemExit(f"{qualified(EVENT_TABLE)} has no {', '.join(missing)}; its columns are "
+                         f"{', '.join(sorted(have))}. The NB2 pre-match model needs them.")
+
+
+def _info_rows(rows, with_finals):
+    out = []
+    for r in rows:
+        d = {c: ("" if v is None else str(v)) for c, v in zip(MATCH_INFO_COLUMNS, r)}
+        if with_finals:
+            d["PLAYER_1_FINAL_SCORE"] = "" if r[-2] is None else str(int(r[-2]))
+            d["PLAYER_2_FINAL_SCORE"] = "" if r[-1] is None else str(int(r[-1]))
+        out.append(d)
+    return out
+
+
+def fetch_match_info(cur, match_codes):
+    """AMFELO-shaped rows (no finals) for these matches: players, teams,
+    stream and start time, off EVENT."""
+    if not match_codes:
+        return []
+    _check_event_columns(cur)
+    _, rows = fetch_all(cur, f"""
+        SELECT {", ".join(MATCH_INFO_COLUMNS)}
+        FROM {qualified(EVENT_TABLE)}
+        WHERE MATCH_CODE IN ({_in_clause(match_codes)})
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY MATCH_CODE ORDER BY MATCH_CODE) = 1
+    """, tuple(match_codes))
+    return _info_rows(rows, with_finals=False)
+
+
+def fetch_history(cur, until=None, sport=None):
+    """Every settled match of the sport that started before `until` (None:
+    all), AMFELO-shaped: what the NB2 pre-match model is fitted on."""
+    _check_event_columns(cur)
+    params = [sport or config.SPORT_CODE]
+    when = ""
+    if until:
+        when = "AND e.SCHEDULED_START_TIME_UTC < %s"
+        params.append(until)
+    cols = ", ".join(f"e.{c}" for c in MATCH_INFO_COLUMNS)
+    _, rows = fetch_all(cur, f"""
+        SELECT {cols}, f.PLAYER_1_SCORE, f.PLAYER_2_SCORE
+        FROM {qualified(EVENT_TABLE)} e
+        JOIN {qualified(FINAL_TABLE)} f ON f.MATCH_CODE = e.MATCH_CODE
+        WHERE e.SPORT_CODE = %s {when}
+          AND f.PLAYER_1_SCORE IS NOT NULL AND f.PLAYER_2_SCORE IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY e.MATCH_CODE ORDER BY e.MATCH_CODE) = 1
+        ORDER BY e.SCHEDULED_START_TIME_UTC
+    """, tuple(params))
+    return _info_rows(rows, with_finals=True)
+
+
 def _need_numpy(version):
     try:
         import numpy  # noqa: F401
@@ -401,14 +464,21 @@ def _v4_quotes(cur, match_codes):
     """eAMFModel v4, as v3 (same snapshots, same line pairing), with the
     players' handles attached for v4's player profiles."""
     _need_numpy("v4")
-    from eAMFModel import v4_stream
-    v4_stream.model_paths(config.V4_MODEL_DIR)          # fail early, with instructions
+    from eAMFModel import v4, v4_stream
+    tables, _ = v4_stream.model_paths(config.V4_MODEL_DIR)   # fail early, with instructions
+    nb2 = v4.prematch_model(tables) is not None
+    if not nb2:
+        print("  v4: this model was built without --history, so its pre-match comes from prod's"
+              " quotes; rebuild it with --history for our own (NB2)", flush=True)
     snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
+    # players, teams and stream for v4's own pre-match model (NB2)
+    match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
     print(f"  v4: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
           f"{config.V4_PATHS:,} games each", flush=True)
     return v4_stream.quotes_for_matches(snapshots, prod_all, config.V4_MODEL_DIR,
-                                        n_paths=config.V4_PATHS, workers=config.V3_WORKERS)
+                                        n_paths=config.V4_PATHS, workers=config.V3_WORKERS,
+                                        match_info=match_info)
 
 
 def status_profile(cur, stream_table):

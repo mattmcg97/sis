@@ -660,7 +660,7 @@ def _uniform(seed, path, step, slot):
 
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
-             desperate_seconds=180.0, max_steps=400, stats=None, common=True):
+             desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None):
     """Play every starting state `n_paths` times to the end.
 
     Returns (home, away) final scores, arrays of shape (states, n_paths).
@@ -672,7 +672,11 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     priced together differ only by what differs between them.
     """
     rng = rng or np.random.default_rng()
-    seed = int(rng.integers(0, 2 ** 62))
+    # `seed` fixes the common random numbers: the same seed for every
+    # snapshot of a match means path k plays the same luck whichever call
+    # prices it, so a match priced one PLAY_OVER at a time moves only when
+    # the game does. None: a fresh seed from rng.
+    seed = int(rng.integers(0, 2 ** 62)) if seed is None else int(seed) % (2 ** 62)
     S = len(start.period)
     P = S * n_paths
     rep = lambda a: np.repeat(a, n_paths, axis=0)

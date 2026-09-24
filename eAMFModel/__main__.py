@@ -13,8 +13,8 @@
   fit-finals             refit the possession structure to nb2/AMFELO.csv
   v3-build SNAPS.csv     v3's play tables and pre-match grid off PLAY_OVER snapshots
   v3 SNAPS.csv           score v3 -- the play-by-play simulation -- against prod
-  v4-build / v4          the same for v4 (v3 plus in-game quarter fit, common
-                         random numbers and player profiles)
+  v4-build / v4          the same for v4 (v3 plus common random numbers, player
+                         profiles and, with --history, our own NB2 pre-match)
 
 The calibrator runs a version as a stream in its own right:
   python -m eAMFCalibrator report --candidate v1
@@ -186,7 +186,15 @@ def cmd_v4_build(args):
     data = playover.load(args.snapshots)
     keep = set(_half(args.snapshots, args.half))
     handles = players.load_handles(args.handles) if args.handles else None
-    v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles)
+    history = before = None
+    if args.history:
+        from . import nb2_prior
+        history = nb2_prior.load_history(args.history)
+        if args.before:
+            import datetime as dt
+            before = dt.datetime.fromisoformat(args.before)
+    v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
+             history=history, before=before)
     print(f"  wrote {args.out}/v4tables.npz, {args.out}/v4grid.npz"
           f"{' and v4players.json' if os.path.exists(os.path.join(args.out, 'v4players.json')) else ''}")
 
@@ -200,9 +208,14 @@ def cmd_v4(args):
     matches = _half(args.snapshots, args.half)
     if args.limit:
         matches = matches[:args.limit]
+    history = None
+    if args.history:
+        from . import nb2_prior
+        history = nb2_prior.load_history(args.history)
     graded, skipped = v4.run(args.snapshots, os.path.join(args.model, "v4tables.npz"),
                              os.path.join(args.model, "v4grid.npz"), variants, matches=matches,
-                             n_paths=args.paths, workers=args.workers, handles=handles)
+                             n_paths=args.paths, workers=args.workers, handles=handles,
+                             history=history)
     names = [v.name for v in variants]
     print(f"\n  {len(graded):,} graded PLAY_OVER quotes across {len({g[0] for g in graded}):,} matches")
     for reason, n in skipped.most_common():
@@ -412,6 +425,11 @@ def main(argv=None):
     p.add_argument("--out", default="v4_model")
     p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
                                      "(default: the export's own handle columns)")
+    p.add_argument("--history", help="match history (eAMFCalibrator history's CSV, shaped like "
+                                     "nb2/AMFELO.csv): fits NB2 as the pre-match model instead "
+                                     "of reading prod's pre-match quotes")
+    p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
+                                    "after the last match built on)")
     p.set_defaults(func=cmd_v4_build)
 
     p = sub.add_parser("v4", help="score v4 against prod on PLAY_OVER snapshots")
@@ -422,6 +440,8 @@ def main(argv=None):
     p.add_argument("--without-profiles", action="store_true",
                    help="also a variant without the player profiles")
     p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
+    p.add_argument("--history", help="the graded matches' players, teams and streams (eAMFCalibrator"
+                                     " history's CSV): needed when the model has NB2's pre-match")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
     p.add_argument("--limit", type=int, help="first N matches only")
     p.add_argument("--boot", type=int, default=300)

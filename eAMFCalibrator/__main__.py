@@ -185,6 +185,29 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_history(args):
+    """Every settled match before --until (default: now), shaped like
+    nb2/AMFELO.csv: what v4's own pre-match model (NB2) is fitted on."""
+    import csv
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            rows = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+    finally:
+        conn.close()
+    path = os.path.join(out_dir, "match_history.csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, snowflake_io.HISTORY_COLUMNS)
+        w.writeheader()
+        w.writerows(rows)
+    first = rows[0]["SCHEDULED_START_TIME_UTC"] if rows else "-"
+    last = rows[-1]["SCHEDULED_START_TIME_UTC"] if rows else "-"
+    print(f"\n  {len(rows):,} settled {config.SPORT_CODE} matches, {first} -> {last}: {path}")
+    return 0
+
+
 def run_one(stream_key, out_dir):
     print(f"\nRunning calibration for stream: {stream_key}")
     observations, stats, header, handle_scan = pipeline.run(stream_key)
@@ -698,6 +721,11 @@ def build_parser():
              "under the line rule")
     cross_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    hi_parser = sub.add_parser(
+        "history", parents=[shared],
+        help="every settled match before --until, shaped like nb2/AMFELO.csv (for v4-build --history)")
+    hi_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     sc_parser = sub.add_parser(
         "scouting", parents=[shared],
         help="SCOUTING_FULL: probe it against GAMEPLAI_STREAM and export every "
@@ -770,6 +798,8 @@ def main(argv=None):
         return cmd_indrive(args)
     if args.command == "compare":
         return cmd_compare(args)
+    if args.command == "history":
+        return cmd_history(args)
     return 1
 
 
