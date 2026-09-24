@@ -416,7 +416,21 @@ where the lines are the same, it compares the probabilities; where they
 differ, it scores whose line landed nearer the result.
 `--v4-lines prod` goes back to reading v4's price at prod's line.
 
-(Results on 3–9 Sep to follow.)
+On 3–9 Sep (built before 3 Sep, NB2 prior, 583 matches, live quotes):
+
+| | spread | total |
+|---|---|---|
+| v4's line same as prod's | 38% | 23% |
+| mean distance from the final result, v4 / prod | 5.09 / 5.22 | 6.46 / 6.49 |
+| different-line pairs won by v4 | 53.7% | 49.9% |
+| Brier at each stream's own line, v4 / prod | 0.2386 / 0.2473 | 0.2384 / 0.2474 |
+| Brier at prod's line, prod − v4 | +0.0144 | +0.0108 |
+
+v4's lines are nearer the result on the spread in every quarter, and most
+of all in Q4 (2.83 against 3.09). Totals are level with prod's: slightly
+better in Q1, Q3 and Q4, slightly worse in Q2 (7.60 against 7.52). The
+last row is the old same-line comparison, unchanged by the goal-line fixes
+below.
 
 ### Backed up on the goal line
 
