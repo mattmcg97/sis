@@ -1263,7 +1263,7 @@ It writes three files to `--out`:
 |---|---|
 | `scouting_probe.txt` | the investigation: columns (and any that look like markets or prices), message and status counts, how often GAMEPLAI quotes on the same message as each kind of scouting message (any market / at least one live / all six live), `PLAY_OVER` coverage by market and at nearby offsets, the clock at `PLAY_OVER`, the scouting state against the play table on the same message (team labels, same and mirrored field), and `TEAM_A` / `TEAM_B` against the scoreboard's `PLAYER_1` / `PLAYER_2` |
 | `scouting_sample.csv` | every column for the two most recent matches, with prod's line, probability and liveness on all six markets beside each message |
-| `scouting_playover.csv` | one row per `PLAY_OVER` that GAMEPLAI quoted on at least one market (see below) |
+| `scouting_playover.csv` | one row per `PLAY_OVER`; `quoted` is 1 where GAMEPLAI quoted it on at least one market (see below) |
 
 Each `scouting_playover.csv` row carries:
 - the clock and quarter, and the betting state;
@@ -1276,7 +1276,12 @@ Each `scouting_playover.csv` row carries:
 - prod's pre-match quotes;
 - on each market, prod's line, probability, liveness and outcome.
 
-It is the input to `python -m eAMFModel playover`.
+`PLAY_OVER`s that GAMEPLAI never quoted (about 1.7%) are kept with
+`quoted = 0` and no market columns. The play-by-play model (v3) reads each
+play against the one before it, so dropping one would join two plays into
+a single wrong one. Everything that scores prices skips them.
+
+It is the input to `python -m eAMFModel playover` and `v3-build`.
 
 ## eAMFModel v3 as the candidate: `--candidate v3`
 
@@ -1294,11 +1299,17 @@ match in the window, the calibrator builds the same `PLAY_OVER` snapshots
 the `scouting` export writes (`snowflake_io._v3_quotes`), and the model
 prices each one by simulation (`eAMFModel.v3_stream`).
 - **Prices between snapshots:** like any stream, v3's quote stands until
-  its next one. Every prod message after a `PLAY_OVER` gets that snapshot's
-  book, re-read at prod's live line on that message. Messages before the
-  first `PLAY_OVER` get no v3 quote.
-- **Lines:** spreads and totals are only quoted where prod had a line, so
-  both streams answer the same question.
+  its next one. At every message and market prod quoted after a
+  `PLAY_OVER`, v3 quotes that snapshot's book. Messages before the first
+  `PLAY_OVER` get no v3 quote.
+- **Lines:** v3 prices at the line of the exact prod row the pairing uses
+  there: the first live row on the message, otherwise the first row (the
+  rule in `directional.index_by_message`). So every pair is on the same
+  line, including on messages where prod moved its line and carries both
+  the old and the new one.
+- **Whole matches:** v3 reads every `SCOUTING_FULL` row of each match,
+  including rows before the window opened, so a match already under way
+  at the window start still knows who received the opening kickoff.
 - **Liveness:** v3's quotes are always live. The pairing's own liveness
   rule decides what counts, and prod's suspensions still apply to prod's
   side.

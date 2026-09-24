@@ -48,6 +48,7 @@ MODES = ("q1", "first", "late1", "lead", "lead_late", "even", "trail_late", "tie
 N_KEYS = len(MODES) * 4 * 4 * 4
 MIN_RECORDS = 60
 MANAGED_SECONDS = 3.0
+MIN_PUNTS = 30
 CONV_PRIOR = 4.0
 DECISION_PRIOR = 3.0  # information units shrinking each situation's 4th-down shift to 0
 QUARTER = 240.0
@@ -232,7 +233,9 @@ def kick_decisions(rows):
         if not 0 <= seconds <= 60:
             continue
         y = _i(a["field_position"])
-        if b["play_kind"] == "PUNT" and b["offense"] != a["offense"]:
+        if b["play_kind"] == "PUNT" and b["offense"] != a["offense"] and a["down"] == "4" \
+                and "SAFETY" not in (b["play_messages"] or ""):
+            # (a safety comes through as a PUNT row: the free kick that follows it)
             out.append(("punt", y, (100 - _i(b["field_position"])) - y, seconds))
         elif b["play_kind"] == "FIELD_GOAL":
             made = "FIELD_GOAL_GOOD" in b["play_messages"]
@@ -378,8 +381,6 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
     for phase, mb, y, t, choice, clock in decisions:
         if phase == 3 and mb < 3:
             continue
-        if (phase == 0 and clock <= 10) or 100 - y + 17 > dp.fg_max_distance + 30:
-            pass
         cells[(phase, mb)].append((y, t, choice))
     for (phase, mb), items in cells.items():
         a = 0.0
@@ -520,7 +521,9 @@ class Tables:
                                  np.array([k[3] for k in ks]))
         punts = [d for d in decisions if d[0] == "punt"]
         for b in range(3):
-            ps = [p for p in punts if _punt_bucket(p[1]) == b] or punts
+            ps = [p for p in punts if _punt_bucket(p[1]) == b]
+            if len(ps) < MIN_PUNTS:
+                ps = punts                            # too few from here: the league's
             t.punt[b] = (np.array([p[2] for p in ps], dtype=np.int32), np.array([p[3] for p in ps]))
         fgs = [d for d in decisions if d[0] == "fg"]
         t.fg_seconds = np.array([d[3] for d in fgs]) if fgs else np.array([5.0])
@@ -899,6 +902,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             extra = tdf[short] - y[gx][short]
             runs_on = rng.random(len(extra)) < np.exp(-extra / TD_TAIL)
             y2[short] = np.where(runs_on, 100, y2[short] + (rng.random(len(extra)) * extra).astype(np.int32))
+        gain = y2 - y[gx]                           # the yards actually made
         td = y2 >= 100
         tally("td", td.sum())
         if stats is not None:
