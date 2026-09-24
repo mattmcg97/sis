@@ -148,6 +148,9 @@ EFF_PRIOR = 40.0      # information units shrinking the rubber band to 0
 # fitted on snaps with at least this much of the quarter left.
 UNCUT_SECONDS = 60.0
 STOP, RUNNING = 0, 1
+# which parts of the play-calling fit are used ("stop", "seconds", "band"):
+# each can be switched off to see what it is worth on its own
+PLAY_CALLING = {"stop", "seconds", "band"}
 
 
 def lead_cell(lead):
@@ -218,7 +221,9 @@ def fit_play_calling(tables, snaps):
         pa = np.exp(np.outer(np.exp(-grid), lf))                  # grid x snaps
         ll = np.where(s_, np.log(np.clip(pa, 1e-12, 1)), np.log(np.clip(1 - pa, 1e-12, 1))).sum(1)
         eff_shift[c_] = grid[np.argmax(ll - 0.5 * EFF_PRIOR * grid ** 2)]
-    tables.stop_shift, tables.sec_shift, tables.eff_shift = stop_shift, sec_shift, eff_shift
+    tables.stop_shift = stop_shift if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
+    tables.sec_shift = sec_shift if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
+    tables.eff_shift = eff_shift if "band" in PLAY_CALLING else np.zeros(N_CELLS)
     return n
 
 

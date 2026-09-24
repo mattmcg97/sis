@@ -669,7 +669,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
     # the rubber band, from real in-game states (with a quick grid for
     # each match's prior), then the quarters again
     items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)))
-    if len(items) >= 200:
+    if len(items) >= 200 and "band" in sim.PLAY_CALLING:
         band, band_got, band_real = fit_rubber_band(tables, items)
         offsets, got = sim.fit_period_theta(tables, real)
         if verbose:
