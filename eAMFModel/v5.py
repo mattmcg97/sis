@@ -524,6 +524,70 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
     return tables.period_theta.copy(), got, real
 
 
+def in_game_states(matches, grid, every=5):
+    """Every `every`-th scrimmage PLAY_OVER of each match, with the match's
+    prior (off prod's pre-match lines: this only fits in-game behaviour, on
+    the matches the tables are built from) and how far the offense's lead
+    really moved from there to the final whistle:
+    [(GameState, theta0, offense's lead, real change in it)]."""
+    out = []
+    for rows in matches.values():
+        rows = resolve_sides(rows)
+        lines = prior_lines(rows)
+        if lines is None or rows[0].get("final_p1") in ("", None):
+            continue
+        theta0 = grid.fit(*lines)
+        final = int(float(rows[0]["final_p1"])) - int(float(rows[0]["final_p2"]))
+        for r in rows[::every]:
+            state, _ = playover.state_for(r)
+            if state is None or state.down is None or state.pending_conversion is not None \
+                    or not 1 <= state.period <= 4:
+                continue
+            sign = 1 if state.offense == HOME else -1
+            lead = sign * (state.home_score - state.away_score)
+            out.append((state, theta0, lead, sign * final - lead))
+    return out
+
+
+BAND_SLOPE = 3.0         # points of margin a unit of efficiency moves, roughly
+
+
+def fit_rubber_band(tables, items, rounds=5, n_paths=200, seed=0, verbose=False):
+    """The rubber band, fitted where it shows: from real in-game states,
+    how far the offense's lead moves by the end, simulated against real,
+    by half and by the offense's lead (sim.LEAD_CELLS). Each bucket's
+    efficiency shift is added to every cell of that half and lead, on top
+    of the snap-level fit, until the two agree. Returns (band, sim, real)."""
+    base = tables.eff_shift.copy()
+    cells = np.arange(sim.N_CELLS)
+    half = (cells // (sim.CLOCK_CELLS * sim.LEAD_CELLS)) // 2
+    lc = cells % sim.LEAD_CELLS
+    bucket = np.array([(0 if st.period <= 2 else 1) * sim.LEAD_CELLS + sim.lead_cell(lead)
+                       for st, _, lead, _ in items])
+    real_change = np.array([ch for *_, ch in items], dtype=float)
+    n_b = 2 * sim.LEAD_CELLS
+    real = np.bincount(bucket, real_change, n_b) / np.maximum(1, np.bincount(bucket, minlength=n_b))
+    band = np.zeros(n_b)
+    start = sim.Start(len(items))
+    offense_home = np.zeros(len(items), dtype=bool)
+    for i, (st, theta0, lead, _) in enumerate(items):
+        _fill(start, i, start_from(st))
+        start.theta[i] = theta0
+        offense_home[i] = st.offense == HOME
+    now = np.where(offense_home, 1, -1) * (start.home - start.away)
+    got = real
+    for rnd in range(rounds):
+        tables.eff_shift = base + band[half * sim.LEAD_CELLS + lc]
+        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1)
+        change = np.where(offense_home, 1, -1) * (home - away).mean(1) - now
+        got = np.bincount(bucket, change, n_b) / np.maximum(1, np.bincount(bucket, minlength=n_b))
+        if verbose:
+            print(f"    round {rnd}: " + " ".join(f"{r_:+.2f}/{g_:+.2f}" for r_, g_ in zip(real, got)))
+        band += np.clip((real - got) / BAND_SLOPE, -0.25, 0.25) * (np.bincount(bucket, minlength=n_b) >= 100)
+    tables.eff_shift = base + band[half * sim.LEAD_CELLS + lc]
+    return band, got, real
+
+
 RECENT_DAYS = 7          # the window the pre-match total correction is read over
 SHADE_PRIOR = 200        # matches' worth of evidence that the correction is zero
 
@@ -602,6 +666,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
     tables = sim.Tables.build(matches)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
+    # the rubber band, from real in-game states (with a quick grid for
+    # each match's prior), then the quarters again
+    items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)))
+    if len(items) >= 200:
+        band, band_got, band_real = fit_rubber_band(tables, items)
+        offsets, got = sim.fit_period_theta(tables, real)
+        if verbose:
+            print("  rubber band, the offense's lead from here to the end, real / simulated "
+                  "(first half, then second; offense trailing 9+ .. leading 9+):\n    "
+                  + "  ".join(f"{r_:+.2f}/{g_:+.2f}" for r_, g_ in zip(band_real, band_got))
+                  + "\n    efficiency shifts " + " ".join(f"{b:+.2f}" for b in band))
     shade, n, rate, prod = recent_total_shade(matches, shade_days, shade_prior)
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
