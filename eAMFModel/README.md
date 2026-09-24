@@ -456,6 +456,78 @@ Everywhere else on the field it's unchanged, and matches what happened:
 
 Rebuild the model (`v4-build`) to pick up the free-kick table.
 
+## v5: v4 plus play calling by game state
+
+v5 is a copy of v4 (`sim5.py`, `v5.py`, `v5_stream.py`; v4 untouched). It
+tests three ideas about how players really play:
+- run and pass;
+- clock bleed;
+- the rubber band.
+
+**What the games say.** These are real games only, from Aug 24 to Sep 22.
+In the last 1:20–2:40 of Q4, a leader by 1–8 with the ball leaves 4.2
+points to be scored; with the trailer on the ball it's 7.2. In Q3 the
+leader with the ball scores less in the rest of the quarter, but the
+rest-of-game totals are almost the same (15.8 against 16.0 early in Q3).
+Leaders use 24–26 s a snap in Q3, and teams trailing by 9+ use 18 s.
+
+**Run or pass.** The feed doesn't say which, but it does say what a play
+did to the clock. From one snap to the next, a play that stopped the clock
+(an incompletion, out of bounds: mostly passes) takes about 4–10 s. One
+that kept it running (runs, completions in bounds) takes about 30–40 s,
+the play plus the time to pick the next one. v5 splits every bin's plays
+that way and decides the call from the game state: the quarter, which
+40-second slice of it, and the offense's lead. It then draws the yards
+from real plays of that kind.
+
+**Clock bleed.** Within v4's bins, real snaps used 2–4 s more or less
+clock than the bin by state. Examples: Q3 mid-quarter level or ahead by
+1–8, +2.6 to +3.9 s; the last minute of Q2, about −2 s. v5 shifts each
+kind of play's clock by state. The shifts are fitted on snaps with at
+least 60 s left in the quarter. Nearer the buzzer, the data only keeps
+plays whose next snap came before it, so their clock looks short.
+
+**The rubber band.** v5 gives each state an efficiency shift from real
+first-down success. It also fits a pull per half, so that from real
+in-game states the simulated share of a lead that comes back by the end
+matches the real one. v4 brought back 12.2% of each point of second-half
+lead against a real 14.8% (held out, Sep 10–22); v5 matches it. The
+pull came out at −0.09 per score in the first half, where the state
+shifts already pulled too hard, and +0.09 in the second.
+
+**The fourth quarter** is left to v4's end-game tables. On held-out games
+every shift cost a little there, and all three together cost
+significantly: spread −0.0017 and total −0.0024 Brier.
+
+**Results.** v5 was built on games before Sep 3 and scored on held-out
+games; Brier, v5 − v4:
+
+| held-out games | moneyline | spread | total |
+|---|---|---|---|
+| Sep 3–9, 583 matches, NB2 pre-match | −0.0001 | +0.0000 | +0.0003 |
+| Sep 10–22, 453 matches, prod's pre-match | −0.0006 | −0.0005 | +0.0001 |
+
+All within the noise (95% intervals by match span about ±0.001). By
+quarter, nothing is significant beyond Q4 spread on Sep 3–9 (+0.0005).
+Across the states, v5 has:
+- a 15.4% / 12.7% rubber band, matching real games in both halves;
+- Q3 totals from level scores closer to real (+1.04 against v4's +1.37
+  points too many);
+- a big lead's movement in Q3 fixed (trailing by 17+: −1.21 to −0.01);
+- but it over-reverts some middle buckets (Q3 leading by 9–16: −0.85).
+
+v5 does what it was built to do in the states it targets. It's level with
+v4 overall: no quarter or market moves beyond the noise. v4's bins
+already carry most of this behaviour, because they split plays by
+situation (the leader milking, the trailer hurrying, the last two
+minutes).
+
+```bash
+python -m eAMFModel v5-build eAMFCalibrator/out/scouting_playover.csv --half all --out v5_model --history eAMFCalibrator/out/match_history.csv
+python -m eAMFCalibrator report --candidate v5 --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v5
+python -m unittest eAMFModel.tests.test_v5
+```
+
 ## Run it
 
 ```bash

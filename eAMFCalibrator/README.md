@@ -80,6 +80,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v4-model DIR` | `eAMFModel v4-build` output for `--candidate v4` (default `$EAMF_V4_MODEL`, then `./v4_model`) |
 | `--v4-paths N` | games simulated per snapshot for `--candidate v4` (default 2000) |
 | `--v4-lines own\|prod` | `--candidate v4`: quote v4's own even line, moved as the game moves (`own`, the default), or read v4's price at prod's line (`prod`) |
+| `--v5-model DIR`, `--v5-paths N`, `--v5-lines own\|prod` | the same for `--candidate v5` (`eAMFModel v5-build`; default `$EAMF_V5_MODEL`, then `./v5_model`) |
 | `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
@@ -1368,3 +1369,6 @@ between the same line (compared on probability) and a different line
 reads v4's price at prod's line instead, so every pair is on the same line.
 
 What v4 changes is in the eAMFModel README.
+
+`--candidate v5` works the same way off `eAMFModel v5-build`'s model
+(`--v5-model`), and the reports call it v5 (`eamf_report_v5.html`).
