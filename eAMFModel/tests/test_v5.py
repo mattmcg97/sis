@@ -156,6 +156,120 @@ class TestPlayCalling(unittest.TestCase):
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
 
+class TestBackedUp(unittest.TestCase):
+    """Inside the own 10 each snap draws a safety, a defensive touchdown, a
+    turnover or a touchdown from its yard line's own rates; after a safety
+    the scorer gets two points and the free kick."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim5.Tables.build(_matches(60), min_records=20)
+
+    def _table(self, **at_the_one):
+        import copy
+        t = copy.deepcopy(self.tables)
+        t.backed = np.zeros((sim5.BACKED_UP + 1, len(sim5.BACKED_OUTCOMES)))
+        for name, p in at_the_one.items():
+            t.backed[1, sim5.BACKED_OUTCOMES.index(name)] = p
+        t.backed_return = None
+        return t
+
+    @staticmethod
+    def _on_the_one(n=1):
+        st = sim5.Start(n)
+        st.period[:], st.clock[:], st.phase[:] = 2, 200.0, sim5.SCRIM
+        st.team[:], st.y[:], st.down[:], st.dist[:] = 0, 1, 1, 10
+        return st
+
+    def test_each_yard_line_keeps_its_own_rate_pulled_toward_the_curve(self):
+        records = ([(1, sim5.B_SAFETY, None)] * 12 + [(1, None, None)] * 188
+                   + [(5, sim5.B_SAFETY, None)] * 2 + [(5, None, None)] * 198
+                   + [(3, sim5.B_TURNOVER, -10)] * 30 + [(3, None, None)] * 170)
+        hazard, returns = sim5.fit_backed_up(records)
+        self.assertAlmostEqual(hazard[1, sim5.B_SAFETY], 0.06, delta=0.012)
+        self.assertAlmostEqual(hazard[5, sim5.B_SAFETY], 0.01, delta=0.008)
+        # the 2, never seen, sits on the curve between them
+        self.assertGreater(hazard[1, sim5.B_SAFETY], hazard[2, sim5.B_SAFETY])
+        self.assertGreater(hazard[2, sim5.B_SAFETY], hazard[5, sim5.B_SAFETY])
+        self.assertAlmostEqual(hazard[3, sim5.B_TURNOVER], 0.15, delta=0.03)
+        self.assertEqual(list(returns), [-10] * 30)
+
+    def test_the_real_safety_rows_are_found(self):
+        rows = [dict(play_kind="SCRIMMAGE", down="2", field_position="2", period="2", offense="TEAM_A",
+                     play_messages=""),
+                dict(play_kind="PUNT", down="1", field_position="20", period="2", offense="TEAM_A",
+                     play_messages="SAFETY_TEAM_B"),
+                dict(play_kind="SCRIMMAGE", down="1", field_position="40", period="2", offense="TEAM_B",
+                     play_messages="")]
+        self.assertEqual(sim5.backed_up_snaps(rows), [(2, sim5.B_SAFETY, None)])
+
+    def test_a_snap_on_the_one_comes_to_its_yard_lines_outcomes(self):
+        t = self._table(safety=0.2, def_td=0.1, td=0.1)
+        n = 20000
+        h, a = sim5.simulate(t, self._on_the_one(), n, np.random.default_rng(1), max_steps=1, seed=9)
+        self.assertAlmostEqual(float((a == 2).mean()), 0.2, delta=0.015)
+        self.assertAlmostEqual(float((a == 6).mean()), 0.1, delta=0.01)
+        self.assertAlmostEqual(float((h == 6).mean()), 0.1, delta=0.01)
+        # and nothing else scores: the other snaps stay in the field of play
+        self.assertAlmostEqual(float(((h == 0) & (a == 0)).mean()), 0.6, delta=0.015)
+
+    def test_after_a_safety_the_scorer_receives_the_free_kick(self):
+        t = self._table(safety=1.0)
+        t.safety_kick = np.array([99], dtype=np.int32)     # the free kick lands on the kicker's 1
+        stats = {}
+        h, a = sim5.simulate(t, self._on_the_one(), 2000, np.random.default_rng(1), max_steps=6,
+                             seed=9, stats=stats)
+        self.assertTrue((a >= 2).all())
+        self.assertTrue((h == 0).all())
+        # from the 1 the scorer of the safety scores again, often
+        self.assertGreater(float((a >= 8).mean()), 0.3)
+
+    def test_old_tables_have_no_backed_up_outcomes(self):
+        t = self._table()
+        path = os.path.join(tempfile.mkdtemp(), "t.npz")
+        t.backed = None
+        t.save(path)
+        self.assertIsNone(sim5.Tables.load(path).backed)
+        t = self._table(safety=0.3)
+        t.save(path)
+        self.assertAlmostEqual(float(sim5.Tables.load(path).backed[1, sim5.B_SAFETY]), 0.3)
+
+
+class TestSecondHalfKick(unittest.TestCase):
+    """The opening receiver kicks the second half; where the feed did not
+    say who received, a coin per path."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim5.Tables.build(_matches(60), min_records=20)
+
+    def _margin(self, kicks):
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 2, 0.0, sim5.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 30, 10, 10
+        st.kicks_second_half[:] = kicks
+        h, a = sim5.simulate(self.tables, st, 4000, np.random.default_rng(1), seed=21)
+        return float((h - a).mean())
+
+    def test_an_unknown_opening_is_a_coin(self):
+        home_kicks, away_kicks, unknown = self._margin(0), self._margin(1), self._margin(-1)
+        self.assertLess(home_kicks, away_kicks)             # receiving the half is worth points
+        self.assertLess(home_kicks, unknown)
+        self.assertLess(unknown, away_kicks)
+        self.assertEqual(int(sim5.Start(1).kicks_second_half[0]), -1)
+
+    def test_a_snapshot_without_the_opening_says_so(self):
+        state = mock.Mock(pending_conversion=None, down=None, offense=sim5_home(), period=1,
+                          clock_seconds=200.0, home_score=0, away_score=0, opening_receiver=None)
+        self.assertEqual(v5.start_from(state)["kicks_second_half"], -1)
+        state.opening_receiver = sim5_home()
+        self.assertEqual(v5.start_from(state)["kicks_second_half"], 0)
+
+
+def sim5_home():
+    return v5.HOME
+
+
 class TestBuild(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

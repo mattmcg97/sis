@@ -5435,6 +5435,47 @@ class TestExpectedPoints(unittest.TestCase):
         self.assertIsNone(expected_points.value(None, 10, 25))
 
 
+class TestTotalsReach(unittest.TestCase):
+    """How often a total line sits within one and two scores of the points
+    already scored: 7 a score, 8 where the trailer would go for two."""
+
+    @staticmethod
+    def _at(p1, p2, prod_line, candidate_line, final_p1, final_p2, drive=1, market_id=54):
+        pair = line_pair(0.5, 0.5, prod_line, candidate_line, final_p1, final_p2, market_id=market_id)
+        return dataclasses.replace(pair, score_p1=p1, score_p2=p2, drive_number=drive)
+
+    def test_a_score_is_eight_where_the_trailer_goes_for_two(self):
+        from .. import totals_reach
+        self.assertEqual(totals_reach.one_score(14, 14), 7)
+        self.assertEqual(totals_reach.one_score(21, 13), 8)     # behind by 8
+        self.assertEqual(totals_reach.one_score(3, 4), 8)       # behind by 1
+        self.assertEqual(totals_reach.one_score(10, 0), 7)
+
+    def test_lines_are_counted_by_the_scores_they_need(self):
+        from .. import totals_reach
+        pairs = [
+            # 14-14: prod needs 6.5 (one score), the candidate 7.5 (two);
+            # the game produced 7 more
+            self._at(14, 14, 34.5, 35.5, 21, 14, drive=1),
+            # 21-13 (behind by 8, so a score is 8): 7.5 and 8.5 away, 16 came
+            self._at(21, 13, 41.5, 42.5, 29, 21, drive=2),
+            # the under of the same snapshot is not counted twice
+            self._at(21, 13, 41.5, 42.5, 29, 21, drive=2, market_id=55),
+        ]
+        r = totals_reach.summarise(pairs)
+        self.assertEqual(r["real"]["n"], 2)
+        self.assertEqual(r["prod"][totals_reach.WITHIN_ONE], 1.0)
+        self.assertEqual(r["candidate"][totals_reach.WITHIN_ONE], 0.0)
+        self.assertEqual(r["candidate"][totals_reach.WITHIN_TWO], 1.0)
+        self.assertEqual(r["real"][totals_reach.WITHIN_ONE], 0.5)
+        self.assertEqual(r["real"][totals_reach.WITHIN_TWO + "_or_less"], 1.0)
+
+    def test_other_markets_are_left_out(self):
+        from .. import totals_reach
+        spread = self._at(14, 14, -2.5, -2.5, 21, 14, market_id=52)
+        self.assertEqual(totals_reach.summarise([spread])["real"]["n"], 0)
+
+
 class TestSeveralCandidates(unittest.TestCase):
     """--candidate v4,v5: every candidate beside prod in one report, over
     one population, read at prod's line and at its own."""
@@ -5507,6 +5548,19 @@ class TestSeveralCandidates(unittest.TestCase):
         # and they come before the disclosure, after the cross-section
         self.assertLess(page.index('id="cross"'), page.index("<h2>Score difference</h2>"))
         self.assertLess(page.index("<h2>Possession</h2>"), page.index('id="checks"'))
+
+    def test_the_totals_reach_table_sits_in_additional_checks(self):
+        from .. import html_full
+        sides, dropped = self._sides()
+        page = html_full.render_sides(sides, dropped)
+        checks = page[page.index('id="checks"'):page.index("</details>")]
+        block = checks[checks.index("<h2>Totals line within 1 and 2 scores</h2>"):]
+        block = block[:block.index("</section>")]
+        for column in ("<th>Real</th>", "<th>Prod</th>", "<th>v4</th>", "<th>T2</th>"):
+            self.assertIn(column, block)
+        # 0-0, lines of 44.5 and 46.5, 45 scored: all beyond two scores
+        self.assertIn("<tr><th>More than 2 scores</th><td>100.0%</td><td>100.0%</td>"
+                      "<td>100.0%</td><td>100.0%</td></tr>", block)
 
     def test_additional_checks_is_headed_like_every_other_section(self):
         from .. import html_style

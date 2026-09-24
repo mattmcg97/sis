@@ -3,6 +3,9 @@ untouched there) with play calling by game state -- see "Game states for
 play calling" below: each bin's plays are split by what they did to the
 clock, and the state (quarter, 40-second slice, the offense's lead)
 decides which kind is called, how long it takes and how well offenses do.
+Inside its own 10 an offense's snaps come to a safety, a defensive
+touchdown, a turnover or a touchdown at that yard line's own real rates
+(see "Backed up" below).
 
 v4's simulation, in turn, is v3's with
 
@@ -398,6 +401,105 @@ SAFETY_KICK_MIN = 20       # free kicks seen before they are used as they are
 SAFETY_KICK_SHIFT = 16     # else: a kickoff's field moved on this far
 
 
+# --------------------------------------------------------------------------
+# Backed up: the ball inside the offense's own 10
+#
+# A snap's yards come from its bin, and the bins are wide: the first zone
+# runs from the 1 to the 39. Drawn at the 1, a one-yard loss seen at the 30
+# is a safety -- but offenses on their own goal line do not play as they do
+# at the 30, and the snaps that really went for a safety are the ones the
+# bins never see (the feed shows them as the free kick that follows). In
+# SCOUTING_FULL the bins made twice the safeties that really happened on
+# the 1 and 2, a tenth of the defensive touchdowns (a fumble in the end
+# zone) and under half the 90-plus-yard touchdowns.
+#
+# So inside the 10 each snap first draws what it came to from that yard
+# line's own counts -- a safety, a defensive touchdown, a turnover, a
+# touchdown, or none of these -- and only a snap that came to none of them
+# takes its yards from the bin, kept in the field of play.
+
+BACKED_UP = 10             # yard lines 1..BACKED_UP draw their own outcomes
+BACKED_PRIOR = 60.0        # snaps' worth of pull toward the smooth curve
+BACKED_OUTCOMES = ("safety", "def_td", "turnover", "td")
+B_SAFETY, B_DEF_TD, B_TURNOVER, B_TD = range(4)
+BACKED_RETURNS_MIN = 20    # turnovers seen before their returns are used
+
+
+def backed_up_snaps(rows):
+    """Snaps on downs 1-3 from the offense's own 1 to its BACKED_UP:
+    (field, outcome index or None, the new offense's field after a
+    turnover relative to the spot, or None)."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["play_kind"] not in SNAP_KINDS or a["down"] not in ("1", "2", "3") \
+                or not a["field_position"] or a["period"] != b["period"]:
+            continue
+        y = _i(a["field_position"])
+        if not 1 <= y <= BACKED_UP:
+            continue
+        messages = b["play_messages"] or ""
+        bk = b["play_kind"]
+        back = None
+        if "SAFETY" in messages:
+            outcome = B_SAFETY
+        elif bk == "TOUCHDOWN":
+            scorer = _scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
+            outcome = B_TD if scorer == a["offense"] else B_DEF_TD
+        elif bk in ("SCRIMMAGE", "TURNOVER_ON_DOWNS") and b["field_position"]:
+            if b["offense"] != a["offense"] and bk == "SCRIMMAGE" \
+                    and "TURNOVER_ON_DOWNS" not in messages:
+                outcome = B_TURNOVER
+                back = _i(b["field_position"]) - (100 - y)
+            else:
+                outcome = None
+        else:
+            continue                              # a kick, or a row the feed cut short
+        out.append((y, outcome, back))
+    return out
+
+
+def fit_backed_up(records, prior=BACKED_PRIOR):
+    """(hazard, returns): hazard[y, outcome] the chance a snap on the own
+    y (1..BACKED_UP; row 0 unused) comes to that outcome, and the turnover
+    returns (the new offense's field against the spot). Each yard line's
+    own rate is pulled toward a logistic curve in the yard line by `prior`
+    snaps, since a yard line sees a hundred snaps or so a month."""
+    n = np.zeros(BACKED_UP + 1)
+    k = np.zeros((BACKED_UP + 1, len(BACKED_OUTCOMES)))
+    for y, outcome, _ in records:
+        n[y] += 1
+        if outcome is not None:
+            k[y, outcome] += 1
+    ys = np.arange(1, BACKED_UP + 1, dtype=float)
+    hazard = np.zeros_like(k)
+    for o in range(len(BACKED_OUTCOMES)):
+        curve = _logistic_in_y(ys, n[1:], k[1:, o])
+        hazard[1:, o] = (k[1:, o] + prior * curve) / (n[1:] + prior)
+    returns = np.array([b for _, o, b in records if o == B_TURNOVER and b is not None], dtype=np.int32)
+    return hazard, returns
+
+
+def _logistic_in_y(ys, n, k, iterations=25, ridge=1.0):
+    """P(outcome) = sigmoid(a + b * (y - mean)) fitted to k of n by Newton
+    steps (a light ridge on b); the pooled rate when there are no events."""
+    if n.sum() == 0:
+        return np.zeros_like(ys)
+    if k.sum() == 0:
+        return np.full_like(ys, 0.5 / (n.sum() + 1))
+    x = ys - ys.mean()
+    pooled = k.sum() / n.sum()
+    a, b = math.log(pooled / (1 - pooled)), 0.0
+    for _ in range(iterations):
+        p = 1.0 / (1.0 + np.exp(-(a + b * x)))
+        w = n * p * (1 - p)
+        ga, gb = (k - n * p).sum(), (x * (k - n * p)).sum() - ridge * b
+        haa, hab, hbb = w.sum() + 1e-9, (w * x).sum(), (w * x * x).sum() + ridge
+        det = haa * hbb - hab * hab
+        a += (hbb * ga - hab * gb) / det
+        b += (haa * gb - hab * ga) / det
+    return 1.0 / (1.0 + np.exp(-(a + b * x)))
+
+
 CONV_MARGIN = 16      # margins after the touchdown, clipped to +-this
 
 
@@ -595,6 +697,10 @@ class Tables:
         self.kick = {}        # desperate -> (onside, field, seconds) arrays
         self.punt = {}        # field bucket -> (net, seconds)
         self.safety_kick = None   # the receiver's field after a safety's free kick
+        # inside the own 10: [yard line, outcome] chances (fit_backed_up) and
+        # the returns after a turnover there; None: the bins alone, as v4
+        self.backed = None
+        self.backed_return = None
         # v5's play calling (fit_play_calling): each bin lays out its
         # clock-stopping plays first, n_stop of them, then the rest
         self.n_stop = None
@@ -625,8 +731,10 @@ class Tables:
     def build(cls, matches, min_records=MIN_RECORDS, seed=0):
         """From {match: export rows in message order}."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
+        backed = []
         for rows in matches.values():
             snaps += snap_records(rows)
+            backed += backed_up_snaps(rows)
             free += safety_kicks(rows)
             kicks += kick_records(rows)
             decisions += kick_decisions(rows)
@@ -730,6 +838,9 @@ class Tables:
             if ch:
                 t.late_fg[i] = (sum(c == "fg" for c in ch) + 1) / (len(ch) + 2)
         t.n_snaps = len(snaps)
+        if backed:
+            t.backed, returns = fit_backed_up(backed)
+            t.backed_return = returns if len(returns) >= BACKED_RETURNS_MIN else None
         fit_play_calling(t, snaps)
         return t
 
@@ -746,6 +857,10 @@ class Tables:
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift)
+        if self.backed is not None:
+            arrays["backed"] = self.backed
+            if self.backed_return is not None:
+                arrays["backed_return"] = self.backed_return
         for d, (a, b, c) in self.kick.items():
             arrays[f"kick{int(d)}_onside"], arrays[f"kick{int(d)}_field"], arrays[f"kick{int(d)}_sec"] = a, b, c
         for b, (net, s) in self.punt.items():
@@ -774,6 +889,9 @@ class Tables:
         for b in range(3):
             t.punt[b] = (z[f"punt{b}_net"], z[f"punt{b}_sec"])
         t.safety_kick = z["safety_kick"] if "safety_kick" in z else _shifted_kick(t.kick[False][1])
+        if "backed" in z:
+            t.backed = z["backed"]
+            t.backed_return = z["backed_return"] if "backed_return" in z else None
         if "n_stop" in z:
             t.n_stop, t.stop_success, t.run_success = z["n_stop"], z["stop_success"], z["run_success"]
             t.stop_shift, t.sec_shift, t.eff_shift = z["stop_shift"], z["sec_shift"], z["eff_shift"]
@@ -807,7 +925,8 @@ class Start:
         self.y = np.full(n, 25, dtype=np.int32)
         self.home = np.zeros(n, dtype=np.int32)
         self.away = np.zeros(n, dtype=np.int32)
-        self.kicks_second_half = np.zeros(n, dtype=np.int8)   # the opening receiver
+        # who kicks the second half: the opening receiver; -1 not known (a coin)
+        self.kicks_second_half = np.full(n, -1, dtype=np.int8)
         self.theta = np.zeros((n, 2))
         self.aggression = np.zeros((n, 2))
         self.pace = np.ones((n, 2))
@@ -907,12 +1026,13 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         c = ix[carry]
         period[c] += 1
         clock[c] = QUARTER
-        # half time: the opening receiver kicks
+        # half time: the opening receiver kicks (a coin when the feed did
+        # not say who received)
         h = ix[p == 2]
         period[h] = 3
         clock[h] = QUARTER
         phase[h] = KICK
-        team[h] = kick2[h]
+        team[h] = np.where(kick2[h] >= 0, kick2[h], pick(h, 18, 2))
         # end of regulation / an overtime
         e = ix[p >= 4]
         level = score[e, 0] == score[e, 1]
@@ -1128,6 +1248,40 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             * pace[sx, so]
         clock[sx] -= used
         kd = tables.kind[j]
+        # inside the own 10 the yard line's own chances come first; a snap
+        # that comes to none of them ("held") takes the bin's yards, kept in
+        # the field of play
+        held = np.zeros(len(sx), dtype=bool)
+        if tables.backed is not None:
+            inside = np.flatnonzero(y[sx] <= BACKED_UP)
+            if len(inside):
+                bx = sx[inside]
+                cum = np.cumsum(tables.backed[np.clip(y[bx], 1, BACKED_UP)], axis=1)
+                got = (rand(bx, 16)[:, None] >= cum).sum(1)
+                tally("backed_snaps", len(bx))
+                kd = kd.copy()
+                kd[inside] = np.where(got < len(BACKED_OUTCOMES), -1, GAIN)
+                held[inside[got == len(BACKED_OUTCOMES)]] = True
+                s_ = bx[got == B_SAFETY]
+                if len(s_):
+                    score[s_, 1 - team[s_]] += 2
+                    phase[s_] = KICK                # the free kick, from the 20
+                    free[s_] = True
+                tally("safety", len(s_))
+                d_ = bx[got == B_DEF_TD]
+                if len(d_):
+                    score_td(d_, 1 - team[d_])
+                tally("def_td", len(d_))
+                t_ = bx[got == B_TURNOVER]
+                if len(t_):
+                    back = (tables.backed_return[pick(t_, 17, len(tables.backed_return))]
+                            if tables.backed_return is not None else 0)
+                    turnover(t_, 100 - y[t_] + back)
+                tally("turnover", len(t_))
+                o_ = bx[got == B_TD]
+                if len(o_):
+                    score_td(o_, team[o_])
+                tally("td", len(o_))
         tally("snaps", len(sx))
         tally("stop_calls", stops.sum())
         if stats is not None:
@@ -1159,12 +1313,14 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         # Madden's long gains have a heavy tail (a 30-yard gain goes 10 more
         # 62% of the time), taken here as exp(-extra / TD_TAIL).
         tdf = tables.td_from[j[gsel]]
-        short = (tdf >= 0) & (y[gx] < tdf)
+        hg = held[gsel]
+        short = (tdf >= 0) & (y[gx] < tdf) & ~hg
         if short.any():
             extra = tdf[short] - y[gx][short]
             gs = gx[short]
             runs_on = rand(gs, 12) < np.exp(-extra / TD_TAIL)
             y2[short] = np.where(runs_on, 100, y2[short] + (rand(gs, 13) * extra).astype(np.int32))
+        y2 = np.where(hg, np.clip(y2, 1, 99), y2)   # backed up: its outcomes were drawn above
         gain = y2 - y[gx]                           # the yards actually made
         td = y2 >= 100
         tally("td", td.sum())

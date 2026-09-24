@@ -1466,7 +1466,8 @@ version, change the names on the command line.
     calibration at prod's line and each side's line error.
   - Pre-match.
   - In-drive.
-  - Additional checks.
+  - Additional checks, starting with the run and then **Totals line
+    within 1 and 2 scores** (below).
   - Every pair.
 - **Every pair** carries prod's line, probability, result and error, and
   for each candidate its own line and probability, its probability at
@@ -1476,3 +1477,21 @@ version, change the names on the command line.
   match filter searches all of them.
 
 With one candidate the page is the same with one group of columns.
+
+### Totals line within 1 and 2 scores
+
+At each drive snapshot a total line needs (line − points already scored)
+more points. The table counts how often that is:
+- within 1 score, where a single touchdown takes the game over;
+- within 2 scores;
+- more than 2 scores.
+
+It does this for prod's line and for each candidate's own line. Real is
+the same count for the points the rest of the game really produced.
+
+A score counts as 7, except at a scoreline where the trailing player goes
+for two after a touchdown. There it counts as 8. Those scorelines are the
+margins where most players in SCOUTING_FULL went for two: behind by 1, 5,
+8, 11 or 16. The table isn't split by quarter, because every column is
+read on the same snapshots. It counts one row per snapshot: the over and
+the under share a line.
