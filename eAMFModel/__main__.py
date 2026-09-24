@@ -196,6 +196,8 @@ def cmd_v4_build(args):
         if args.before:
             import datetime as dt
             before = dt.datetime.fromisoformat(args.before)
+    if getattr(args, "in_play", False):
+        v4.IN_PLAY_FIT = True
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
              history=history, before=before)
     players_file = f"{name}players.json"
@@ -437,6 +439,10 @@ def main(argv=None):
                                          "of reading prod's pre-match quotes")
         p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
                                         "after the last match built on)")
+        if name == "v5":
+            p.add_argument("--in-play", action="store_true",
+                           help="also fit the in-play total shift by segment of the game "
+                                "(see README: off by default, it has not held up out of sample)")
         p.set_defaults(func=cmd_v4_build, version=name)
 
         p = sub.add_parser(name, help=f"score {name} against prod on PLAY_OVER snapshots")

@@ -58,8 +58,17 @@ def _shares(counts, n):
 
 def summarise(pairs):
     """{"real", "prod", "candidate"} -> shares of the snapshots in each
-    class, over the total snapshots where all three are known."""
+    class, over the total snapshots where all three are known; and for
+    "prod" and "candidate", under "over", how often the game went over that
+    stream's line when the line sat in each class ({class: (over rate, n)}).
+
+    The shares cannot match real's even for a perfect model: a line sits
+    in the middle of the points still to come, so it is more than a score
+    away more often than the result is. The over rates can: wherever a
+    line sits, a line in the middle goes over half the time. A line held
+    a score too far out shows as an over rate well under a half."""
     counts = {k: dict.fromkeys(CLASSES, 0) for k in ("real", "prod", "candidate")}
+    overs = {k: {c: [0, 0] for c in CLASSES} for k in ("prod", "candidate")}
     n = 0
     for p in snapshots(pairs):
         if p.prod_line is None or p.candidate_line is None or p.realized is None:
@@ -68,6 +77,13 @@ def summarise(pairs):
         score = one_score(p.score_p1, p.score_p2)
         n += 1
         counts["real"][reach(p.realized - on_board, score)] += 1
-        counts["prod"][reach(p.prod_line - on_board, score)] += 1
-        counts["candidate"][reach(p.candidate_line - on_board, score)] += 1
-    return {k: _shares(c, n) for k, c in counts.items()}
+        for stream, line in (("prod", p.prod_line), ("candidate", p.candidate_line)):
+            where = reach(line - on_board, score)
+            counts[stream][where] += 1
+            if p.realized != line:
+                overs[stream][where][0] += p.realized > line
+                overs[stream][where][1] += 1
+    out = {k: _shares(c, n) for k, c in counts.items()}
+    for stream, by_class in overs.items():
+        out[stream]["over"] = {c: ((k / m) if m else None, m) for c, (k, m) in by_class.items()}
+    return out

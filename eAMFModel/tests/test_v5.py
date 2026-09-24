@@ -270,12 +270,22 @@ def sim5_home():
     return v5.HOME
 
 
+def sim5_profile():
+    from .. import players
+    return players.Profile()
+
+
 class TestBuild(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.matches = _with_handles(_matches(40))
-        v5.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
+        # the in-play shift is off by default; the build is tested with it on
+        saved, v5.IN_PLAY_FIT = v5.IN_PLAY_FIT, True
+        try:
+            v5.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
+        finally:
+            v5.IN_PLAY_FIT = saved
         cls.tables = sim5.Tables.load(os.path.join(cls.tmp.name, "v5tables.npz"))
         cls.grid = v5.PriorGrid.load(os.path.join(cls.tmp.name, "v5grid.npz"))
 
@@ -299,6 +309,61 @@ class TestBuild(unittest.TestCase):
         _, got, real = v5.fit_period_theta_states(tables, items, rounds=1, n_paths=300)
         for q in real:
             self.assertAlmostEqual(got[q], real[q], delta=max(0.4, 0.08 * real[q]))
+
+    def test_the_rest_of_game_fit_leaves_what_games_really_left(self):
+        import copy
+        tables = copy.deepcopy(self.tables)
+        items = v5.rest_of_game_states(self.matches, self.grid, every=3)
+        q3 = sim5.SEGMENTS.index("Q3")
+        self.assertTrue({it[0][0] for it in items} >= {1, 2, 3, q3, 5, 6})
+        # games that left a point fewer than they did from every state in
+        # the third quarter: its in-play scoring comes down, most of the way
+        lower = [(c, st, th, pts - 1 if c[0] == q3 else pts) for c, st, th, pts in items]
+        before = tables.inplay_theta.copy()
+        segs, bands = v5.fit_rest_of_game(tables, lower, n_paths=60, rounds=4, max_states=600)
+        real, simulated_before, after = segs[q3]
+        self.assertLess(abs(after - real), 0.5 * abs(simulated_before - real))
+        self.assertLess(tables.inplay_theta[q3].mean(), before[q3].mean() - 0.02)
+        for (g, band), (r, b, a) in bands.items():
+            self.assertIn(band, range(sim5.N_BANDS))
+        # and the kickoff scoring, the pre-match's, is untouched
+        self.assertTrue((tables.period_theta == self.tables.period_theta).all())
+
+    def test_the_in_play_shift_is_only_in_play(self):
+        import copy
+        tables = copy.deepcopy(self.tables)
+        tables.inplay_theta[:] = -0.5
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:], st.y[:] = 3, 200.0, sim5.SCRIM, 30
+        runs = {flag: sim5.simulate(tables, st, 3000, np.random.default_rng(1), seed=3, in_play=flag)
+                for flag in (False, True)}
+        total = {flag: float((h + a).mean()) for flag, (h, a) in runs.items()}
+        self.assertLess(total[True], total[False] - 1.0)
+        self.assertFalse(v5.IN_PLAY_FIT)
+        # a build with it on fitted it and saved it
+        self.assertTrue(np.abs(self.tables.inplay_theta[1:7]).sum() > 0)
+
+    def test_the_in_play_shift_moves_the_total_and_not_the_margin(self):
+        import copy
+        from .. import playover
+        rows = v5.resolve_sides(list(self.matches.values())[0])
+        states, messages = [], []
+        for r in rows[10:40:5]:
+            st, _ = playover.state_for(r)
+            if st is not None:
+                states.append(st)
+                messages.append(int(r["message"]))
+        prof = (sim5_profile(), sim5_profile())
+        books = {}
+        for name, shift in (("plain", 0.0), ("shifted", -0.6)):
+            tables = copy.deepcopy(self.tables)
+            tables.inplay_theta[:] = shift
+            books[name] = v5.price_states(tables, (0.0, 0.0), v5.Variant("v5"), [], True, states,
+                                          messages, prof, 400, np.random.default_rng(2), seed=11)
+        x = np.arange(len(books["plain"][0][1]))
+        for (mp0, tp0), (mp1, tp1) in zip(books["plain"], books["shifted"]):
+            self.assertTrue(np.allclose(mp0, mp1))
+            self.assertLess((tp1 * x).sum(), (tp0 * x).sum())
 
     def test_the_recent_total_shade(self):
         import datetime as dt

@@ -130,6 +130,44 @@ def _keys_np(mode, down, dist, y):
     return ((mode * 4 + d) * 4 + db) * 4 + z
 
 
+
+# --------------------------------------------------------------------------
+# Segments of a game for the in-play scoring shift (v5.fit_rest_of_game):
+# the quarters, with the last two minutes of each half apart -- the end of
+# the first half scores more than the rest of the second quarter says, and
+# the end of the game is its own game -- each split by the scoreline's
+# margin: close games bleed the clock, blowouts score in garbage time.
+
+SEGMENTS = ("", "Q1", "Q2", "Q2 last 2:00", "Q3", "Q4", "Q4 last 2:00", "OT")
+N_SEGMENTS = len(SEGMENTS)
+
+
+def inplay_segment(period, clock):
+    if period >= 5:
+        return 7
+    late = clock <= LATE
+    return {1: 1, 2: 3 if late else 2, 3: 4, 4: 6 if late else 5}[period]
+
+
+MARGIN_BANDS = ("0-3", "4-8", "9-16", "17+")   # the scoreline's margin, either way
+N_BANDS = len(MARGIN_BANDS)
+
+
+def margin_band(margin):
+    m = abs(margin)
+    return 0 if m <= 3 else 1 if m <= 8 else 2 if m <= 16 else 3
+
+
+def _bands_np(margin):
+    m = np.abs(margin)
+    return np.where(m <= 3, 0, np.where(m <= 8, 1, np.where(m <= 16, 2, 3)))
+
+
+def _segments_np(period, clock):
+    late = clock <= LATE
+    return np.where(period >= 5, 7, np.where(period == 1, 1, np.where(period == 3, 4, np.where(
+        period == 2, np.where(late, 3, 2), np.where(late, 6, 5)))))
+
 # --------------------------------------------------------------------------
 # Game states for play calling (v5)
 #
@@ -718,6 +756,11 @@ class Tables:
         # of each offense's own, fitted so that the simulation scores what
         # the league scores in each quarter (fit_period_theta).
         self.period_theta = np.zeros(6)
+        # On top of it when pricing a total from inside a game (simulate's
+        # in_play), by segment of the game and margin band:
+        # v5.fit_rest_of_game, so that from real in-game states the
+        # simulation leaves the points really still to come.
+        self.inplay_theta = np.zeros((N_SEGMENTS, N_BANDS))
         # 4th-down log-odds shifts by (decision phase, margin bucket)
         self.go_shift = np.zeros((4, 7))
         # behind by 1-3 in the last three minutes and in range: P(kicking to
@@ -856,7 +899,8 @@ class Tables:
                       late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
-                      stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift)
+                      stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
+                      inplay_theta=self.inplay_theta)
         if self.backed is not None:
             arrays["backed"] = self.backed
             if self.backed_return is not None:
@@ -889,6 +933,8 @@ class Tables:
         for b in range(3):
             t.punt[b] = (z[f"punt{b}_net"], z[f"punt{b}_sec"])
         t.safety_kick = z["safety_kick"] if "safety_kick" in z else _shifted_kick(t.kick[False][1])
+        if "inplay_theta" in z and z["inplay_theta"].shape == (N_SEGMENTS, N_BANDS):
+            t.inplay_theta = z["inplay_theta"]
         if "backed" in z:
             t.backed = z["backed"]
             t.backed_return = z["backed_return"] if "backed_return" in z else None
@@ -955,7 +1001,8 @@ def _uniform(seed, path, step, slot):
 
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
-             desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None):
+             desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
+             in_play=False):
     """Play every starting state `n_paths` times to the end.
 
     Returns (home, away) final scores, arrays of shape (states, n_paths).
@@ -964,7 +1011,13 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
 
     `common` (default): path k of every state in this call draws the same
     random numbers event for event (common random numbers), so states
-    priced together differ only by what differs between them.
+    priced together differ only by what differs between them. Averaging
+    over the states of many matches wants `common=False`: with it on, a
+    thousand states on 100 paths are 100 games' worth of luck.
+
+    `in_play`: price the rest of the game's points as they really come --
+    each snap's efficiency takes tables.inplay_theta for its segment of the
+    game and margin band (v5 reads only its totals off such a run).
     """
     rng = rng or np.random.default_rng()
     # `seed` fixes the common random numbers: the same seed for every
@@ -984,6 +1037,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         theta = theta + rep(theta_sd) * rng.standard_normal((P, 2))
     exp_theta = np.exp(theta)
     period_exp = np.exp(tables.period_theta)
+    inplay_exp = np.exp(tables.inplay_theta) if in_play else None
     agg = rep(start.aggression)
     pace = rep(start.pace)
     dp = tables.drive
@@ -1240,6 +1294,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         # offense's efficiency and by how offenses really do in this state
         uu = rand(sx, 11)
         tilt = exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
+        if inplay_exp is not None:
+            tilt = tilt * inplay_exp[_segments_np(period[sx], clock[sx]),
+                                     _bands_np(score[sx, 0] - score[sx, 1])]
         uu = 1.0 - (1.0 - uu) ** tilt
         j = seg0 + np.minimum(seg_n - 1, (uu * seg_n).astype(np.int64))
         # the clock: that play's, plus how much longer (or shorter) offenses
@@ -1373,17 +1430,23 @@ def fit_period_theta(tables, real_points, n_paths=30000, rounds=6, seed=1):
     """tables.period_theta so that the simulation from kickoff scores `real_points`
     (the league's mean points in each of quarters 1-4). A point of scoring
     moves with theta at about 1.8 x the quarter's points per unit."""
-    start = Start(1)
-    start.team[:] = 1
     for _ in range(rounds):
-        stats = {}
-        simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats)
-        cum = [stats[f"points_by_q{q}"] / stats[f"ended_q{q}"] for q in (1, 2, 3, 4)]
-        got = np.diff([0.0] + cum)
+        got = kickoff_quarter_points(tables, n_paths, seed)
         for q in range(4):
             tables.period_theta[q + 1] += (real_points[q] - got[q]) / (1.8 * max(1.0, real_points[q]))
         tables.period_theta[5] = tables.period_theta[4]
     return tables.period_theta.copy(), got
+
+
+def kickoff_quarter_points(tables, n_paths=30000, seed=1):
+    """The simulation's mean points in each of quarters 1-4 from kickoff,
+    league-average offenses."""
+    start = Start(1)
+    start.team[:] = 1
+    stats = {}
+    simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats)
+    cum = [stats[f"points_by_q{q}"] / stats[f"ended_q{q}"] for q in (1, 2, 3, 4)]
+    return np.diff([0.0] + cum)
 
 
 def quarter_points(matches):

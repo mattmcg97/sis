@@ -5463,6 +5463,11 @@ class TestTotalsReach(unittest.TestCase):
             self._at(21, 13, 41.5, 42.5, 29, 21, drive=2, market_id=55),
         ]
         r = totals_reach.summarise(pairs)
+        # over at each stream's line, by where it sat: prod's two lines were
+        # within one score and both went over; the candidate's two sat 1-2
+        # scores out, one under (35.5 against 35) and one over
+        self.assertEqual(r["prod"]["over"][totals_reach.WITHIN_ONE], (1.0, 2))
+        self.assertEqual(r["candidate"]["over"][totals_reach.WITHIN_TWO], (0.5, 2))
         self.assertEqual(r["real"]["n"], 2)
         self.assertEqual(r["prod"][totals_reach.WITHIN_ONE], 1.0)
         self.assertEqual(r["candidate"][totals_reach.WITHIN_ONE], 0.0)
@@ -5561,6 +5566,11 @@ class TestSeveralCandidates(unittest.TestCase):
         # 0-0, lines of 44.5 and 46.5, 45 scored: all beyond two scores
         self.assertIn("<tr><th>More than 2 scores</th><td>100.0%</td><td>100.0%</td>"
                       "<td>100.0%</td><td>100.0%</td></tr>", block)
+        # and how often the game went over each line: 45 over 44.5, under 46.5
+        self.assertIn("<h3>Over at the line, by where the line sits</h3>", block)
+        self.assertIn('<tr><th>More than 2 scores</th><td>100.0% <span class="dim">(2)</span></td>'
+                      '<td>0.0% <span class="dim">(2)</span></td>'
+                      '<td>100.0% <span class="dim">(2)</span></td></tr>', block)
 
     def test_additional_checks_is_headed_like_every_other_section(self):
         from .. import html_style

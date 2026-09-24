@@ -610,12 +610,27 @@ def _totals_reach_block(sides):
         rows.append(f"<tr><th>{label}</th><td>{_pct(per[0]['real'][key])}</td>"
                     f"<td>{_pct(per[0]['prod'][key])}</td>{cells}</tr>")
     rows.append(f"<tr><th>Snapshots</th><td colspan=\"{2 + len(sides)}\">{per[0]['real']['n']:,}</td></tr>")
+
+    def over(rate_n):
+        rate, n = rate_n
+        return f"<td>{_pct(rate)} <span class=\"dim\">({n:,})</span></td>" if n else "<td>&mdash;</td>"
+    over_rows = []
+    for label, key in (("Within 1 score", totals_reach.WITHIN_ONE),
+                       ("1 to 2 scores", totals_reach.WITHIN_TWO),
+                       ("More than 2 scores", totals_reach.BEYOND)):
+        cells = "".join(over(r["candidate"]["over"][key]) for r in per)
+        over_rows.append(f"<tr><th>{label}</th>{over(per[0]['prod']['over'][key])}{cells}</tr>")
     return f"""
     <section class="panel">
       <h2>Totals line within 1 and 2 scores</h2>
       <table>
         <thead><tr><th>Line above the score</th><th>Real</th><th>Prod</th>{head}</tr></thead>
         <tbody>{''.join(rows)}</tbody>
+      </table>
+      <h3>Over at the line, by where the line sits</h3>
+      <table>
+        <thead><tr><th>Line above the score</th><th>Prod</th>{head}</tr></thead>
+        <tbody>{''.join(over_rows)}</tbody>
       </table>
     </section>"""
 
