@@ -27,8 +27,10 @@ v3: price PLAY_OVER snapshots with the play-by-play simulation (sim.py).
 What a v3 price knows about the two players:
 
   prior       each offense's efficiency theta, set so that the simulation
-              played from kickoff reproduces prod's pre-match spread, total
-              and moneyline (`PriorGrid`);
+              played from kickoff scores each side's expected points from
+              our own pre-match model, NB2 (`PriorGrid`, `fit_means`). v5
+              reads nothing of GAMEPLAI's: its prices are only what v5 is
+              compared with;
   efficiency  how the offense has actually done at moving the chains --
               first-down success on each snap against the league's rate in
               the same situation -- which moves its theta (`Efficiency`).
@@ -60,7 +62,7 @@ KAPPA = 40.0          # prior precision on theta, in Fisher information (fitted:
 
 
 # --------------------------------------------------------------------------
-# The prior: theta from prod's pre-match prices
+# The prior: theta from NB2's expected points (prior_theta)
 
 def _distributions(home, away):
     """(margin pmf over -MARGIN_MAX..MARGIN_MAX, total pmf over 0..TOTAL_MAX)."""
@@ -85,6 +87,9 @@ def even_line(pmf, offset):
     mean."""
     cdf = np.cumsum(pmf)[:-1]
     gap = np.abs(cdf - 0.5)
+    # never a line below everything left to happen (an over already won):
+    # a dead game -- no more points -- is quoted just above the score
+    gap = np.where(cdf <= 1e-12, np.inf, gap) if (cdf > 1e-12).any() else gap
     best = np.flatnonzero(gap <= gap.min() + 1e-12)
     x = np.arange(len(pmf)) - offset
     mean = float((pmf * x).sum() / max(1e-300, pmf.sum()))
@@ -127,10 +132,8 @@ class PriorGrid:
     """The simulation from kickoff on a grid of (theta_home, theta_away):
     margin and total distributions at each point, interpolated between."""
 
-    def __init__(self, margin, total, grid=GRID, total_shade=0.0):
+    def __init__(self, margin, total, grid=GRID):
         self.margin, self.total, self.grid = margin, total, grid
-        # added to prod's pre-match P(over) before fitting (see build)
-        self.total_shade = total_shade
 
     @classmethod
     def build(cls, tables, n_paths=6000, seed=0, grid=GRID, theta_sd=0.0, **sim_kw):
@@ -153,45 +156,12 @@ class PriorGrid:
         return cls(margin, total, grid)
 
     def save(self, path):
-        np.savez_compressed(path, margin=self.margin, total=self.total, grid=self.grid,
-                            total_shade=np.array([self.total_shade]))
+        np.savez_compressed(path, margin=self.margin, total=self.total, grid=self.grid)
 
     @classmethod
     def load(cls, path):
         z = np.load(path)
-        shade = float(z["total_shade"][0]) if "total_shade" in z else 0.0
-        return cls(z["margin"], z["total"], z["grid"], shade)
-
-    def fit(self, line52, prob52, line54, prob54, prob50=None, step=0.01):
-        """(theta_home, theta_away) whose pre-match prices come closest to
-        prod's, in log odds -- prod's P(over) moved by total_shade first."""
-        if prob54 is not None and self.total_shade:
-            prob54 = min(0.99, max(0.01, prob54 + self.total_shade))
-        fine = np.arange(self.grid[0], self.grid[-1] + 1e-9, step)
-        gi = np.interp(fine, self.grid, np.arange(len(self.grid)))
-        lo = np.minimum(len(self.grid) - 2, gi.astype(int))
-        w = gi - lo
-
-        def surface(values):
-            # bilinear, values: (g, g) -> (f, f)
-            v = values
-            a = v[lo][:, lo] * np.outer(1 - w, 1 - w) + v[lo + 1][:, lo] * np.outer(w, 1 - w) \
-                + v[lo][:, lo + 1] * np.outer(1 - w, w) + v[lo + 1][:, lo + 1] * np.outer(w, w)
-            return a
-
-        logit = lambda p: np.log(np.clip(p, 1e-4, 1 - 1e-4) / (1 - np.clip(p, 1e-4, 1 - 1e-4)))
-        err = np.zeros((len(fine), len(fine)))
-        used = 0
-        for market, line, prob in ((52, line52, prob52), (54, line54, prob54), (50, 0.0, prob50)):
-            if prob is None or line is None:
-                continue
-            p = surface(market_prob(market, line, self.margin, self.total))
-            err += (logit(p) - logit(prob)) ** 2
-            used += 1
-        if not used:
-            return 0.0, 0.0                   # nothing to fit to: the league average
-        i, j = np.unravel_index(np.argmin(err), err.shape)
-        return float(fine[i]), float(fine[j])
+        return cls(z["margin"], z["total"], z["grid"])
 
 
 def _surface_fn(grid, step):
@@ -222,22 +192,15 @@ def fit_means(grid, home_points, away_points, step=0.01):
     return float(fine[i]), float(fine[j])
 
 
-def prior_lines(match_rows):
-    """Prod's pre-match (spread line, P, total line, P, P(home wins)), or its
-    first in-play quote on both lines when it never quoted pre-match. None
-    when there is no spread or total price to fit to."""
-    f = playover._float
-    r = match_rows[0]
-    line52, line54 = f(r.get("prematch_line_52")), f(r.get("prematch_line_54"))
-    p52, p54 = f(r.get("prematch_prob_52")), f(r.get("prematch_prob_54"))
-    if line52 is not None and line54 is not None and (p52 is not None or p54 is not None):
-        return line52, p52, line54, p54, f(r.get("prematch_prob_50"))
-    for r in match_rows:
-        line52, line54 = f(r.get("line_52")), f(r.get("line_54"))
-        p52, p54 = f(r.get("prob_52")), f(r.get("prob_54"))
-        if line52 is not None and line54 is not None and p52 is not None and p54 is not None:
-            return line52, p52, line54, p54, f(r.get("prob_50"))
-    return None
+LEAGUE_THETA = (0.0, 0.0)
+
+
+def prior_theta(grid, means):
+    """A match's (theta_home, theta_away): off our pre-match model's
+    expected points (NB2's) when given, else league-average offenses.
+    Nothing of GAMEPLAI's is ever read -- its prices are only what v5 is
+    compared with."""
+    return LEAGUE_THETA if means is None else fit_means(grid, *means)
 
 
 def resolve_sides(match_rows):
@@ -300,10 +263,7 @@ def fit_kappa(tables, grid, matches, kappas=(5, 10, 20, 40, 80, 160, 320, 1e9)):
     per_match = []
     for code, rows in matches.items():
         rows = resolve_sides(rows)
-        lines = prior_lines(rows)
-        if lines is None:
-            continue
-        theta0 = grid.fit(*lines)
+        theta0 = LEAGUE_THETA
         a_home = rows[0]["team_a_side"] == "home"
         recs = [(0 if (r["offense"] == "TEAM_A") == a_home else 1, r["key"], r["success"],
                  r["period"]) for r in sim.snap_records(rows)]
@@ -392,9 +352,17 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
             start.aggression[i] = (prof[0].aggression, prof[1].aggression)
         if v.pace:
             start.pace[i] = (prof[0].pace, prof[1].pace)
-    home, away = sim.simulate(tables, start, n_paths, rng,
-                              theta_sd=sds if v.theta_sd else None, seed=seed, **v.sim_kw)
-    return [_distributions(home[i], away[i]) for i in range(len(messages))]
+    kw = dict(theta_sd=sds if v.theta_sd else None, seed=seed, **v.sim_kw)
+    home, away = sim.simulate(tables, start, n_paths, rng, **kw)
+    books = [_distributions(home[i], away[i]) for i in range(len(messages))]
+    if not np.any(tables.inplay_theta):
+        return books
+    # the total from the in-play run (fit_rest_of_game), on the same luck:
+    # scoring shifted to what really comes from inside a game moves the
+    # total's line and leaves the margin -- moneyline and spread -- as they
+    # were, where the shift had cost a little
+    home, away = sim.simulate(tables, start, n_paths, rng, in_play=True, **kw)
+    return [(mp_, _distributions(home[i], away[i])[1]) for i, (mp_, _) in enumerate(books)]
 
 
 def pool_context():
@@ -423,11 +391,8 @@ def _grade_matches(job):
                 continue
             theta0s = {g: fit_means(grid, *means) for g, grid in grids.items()}
         else:
-            lines = prior_lines(match_rows)
-            if lines is None:
-                skipped["no_prior"] += 1
-                continue
-            theta0s = {g: grid.fit(*lines) for g, grid in grids.items()}
+            # a model without NB2: league-average offenses, never prod's quotes
+            theta0s = {g: LEAGUE_THETA for g in grids}
         a_home = match_rows[0]["team_a_side"] == "home"
         snaps = sim.snap_records(match_rows)
         pair = (handles.get(code) if handles else None) or handles_of(match_rows)
@@ -479,16 +444,17 @@ def handles_of(match_rows):
     return (home.upper(), away.upper()) if home and away else None
 
 
-def quarter_start_states(matches, grid):
+def quarter_start_states(matches, grid, priors=None):
     """(quarter, GameState, theta0, points really scored in the rest of that
-    quarter) at the first PLAY_OVER of every quarter 1-4 of every match."""
+    quarter) at the first PLAY_OVER of every quarter 1-4 of every match.
+    theta0: prior_theta off `priors` (match -> NB2's expected points; a
+    match missing from them is left out), league average without."""
     out = []
-    for rows in matches.values():
-        rows = resolve_sides(rows)
-        lines = prior_lines(rows)
-        if lines is None:
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
             continue
-        theta0 = grid.fit(*lines)
+        rows = resolve_sides(rows)
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
         for q in (1, 2, 3, 4):
             in_q = [r for r in rows if r["period"] == str(q)]
             later = [r for r in rows if r["period"] and r["period"].isdigit() and int(r["period"]) > q]
@@ -517,7 +483,8 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
                 _fill(start, i, start_from(state))
                 start.theta[i] = theta0
             stats = {}
-            sim.simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats)
+            sim.simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats,
+                         common=False, in_play=True)
             began = sum(st.home_score + st.away_score for _, st, _, _ in its) * n_paths
             got[q] = (stats[f"points_by_q{q}"] - began) / (len(its) * n_paths)
             real[q] = float(np.mean([it[3] for it in its]))
@@ -530,19 +497,20 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
     return tables.period_theta.copy(), got, real
 
 
-def in_game_states(matches, grid, every=5):
+def in_game_states(matches, grid, every=5, priors=None):
     """Every `every`-th scrimmage PLAY_OVER of each match, with the match's
-    prior (off prod's pre-match lines: this only fits in-game behaviour, on
-    the matches the tables are built from) and how far the offense's lead
+    prior (prior_theta: NB2's when `priors` are given, a match missing from
+    them left out; league average without) and how far the offense's lead
     really moved from there to the final whistle:
     [(GameState, theta0, offense's lead, real change in it)]."""
     out = []
-    for rows in matches.values():
-        rows = resolve_sides(rows)
-        lines = prior_lines(rows)
-        if lines is None or rows[0].get("final_p1") in ("", None):
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
             continue
-        theta0 = grid.fit(*lines)
+        rows = resolve_sides(rows)
+        if rows[0].get("final_p1") in ("", None):
+            continue
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
         final = int(float(rows[0]["final_p1"])) - int(float(rows[0]["final_p2"]))
         for r in rows[::every]:
             state, _ = playover.state_for(r)
@@ -620,9 +588,141 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
     return pull1, got1, real
 
 
-RECENT_DAYS = 7          # the window the pre-match total correction is read over
-SHADE_PRIOR = 200        # matches' worth of evidence that the correction is zero
 
+# --------------------------------------------------------------------------
+# Points still to come, from real in-game states
+#
+# fit_period_theta sets each quarter's scoring from kickoff, with league-
+# average offenses: the simulation from kickoff scores what the league
+# scores in each quarter. Priced from inside a game it did not quite. From
+# real states, with each match's prior as pricing gives it, v5 left too few
+# points from the second quarter (the last two minutes of the half score
+# more than the tables give them) and too many from the third (0.3-0.9),
+# in the games it was built on and in the next week's alike, and about two
+# too many from overtime. So on top of the kickoff fit each segment of the
+# game (sim.SEGMENTS: the quarters, the last two minutes of each half
+# apart, overtime) gets an in-play shift, tables.inplay_theta, used only
+# when pricing from inside a game: from real states in a segment the
+# simulation must leave, on average, the points really still to come --
+# first by segment, then by the scoreline's margin within it (close games
+# bleed the clock; blowouts score in garbage time). The last segments go
+# first, since every earlier state's rest of the game runs through them.
+# Only the total is priced off the shifted run (price_states): moneyline
+# and spread keep the plain one, where the shift cost a little. The
+# pre-match is left alone -- the prior grid is simulated from kickoff
+# without the shift -- so a match's prior cannot chase the fit.
+#
+# Off by default (v5-build --in-play): the mean moved the right way in
+# every held-out test, but the total's Brier gained in one week and lost
+# in the next, as the pre-match level was right or not (README).
+
+IN_PLAY_FIT = False      # fit tables.inplay_theta in the build (v5-build --in-play)
+REST_EVERY = 4           # every 4th PLAY_OVER of each match
+REST_PATHS = 60
+REST_MAX_STATES = 4000   # per segment, spread across the matches
+REST_MIN_STATES = 100    # fewer states than this in a segment: no shift
+REST_MIN_CELL = 150      # ... in a segment's margin band: the segment's shift
+REST_BY_BAND = False     # fit each margin band after its segment (overfits: see README)
+REST_SEGMENTS = tuple(range(1, sim.N_SEGMENTS))   # the segments fitted; the rest keep 0
+REST_ROUNDS = 3
+
+
+def rest_of_game_states(matches, grid, priors=None, every=REST_EVERY):
+    """[((segment, margin band), GameState, theta0, real points still to
+    come)] from every `every`-th PLAY_OVER of each match. theta0 is the
+    match's prior as pricing sets it (prior_theta: NB2's expected points,
+    `priors`, match -> (home, away), when given; league average without)."""
+    out = []
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
+            continue
+        rows = resolve_sides(rows)
+        if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
+            continue
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
+        for r in rows[::every]:
+            state, _ = playover.state_for(r)
+            if state is None or state.period < 1:
+                continue
+            cell = (sim.inplay_segment(state.period, state.clock_seconds),
+                    sim.margin_band(state.home_score - state.away_score))
+            out.append((cell, state, theta0, final - state.home_score - state.away_score))
+    return out
+
+
+def fit_rest_of_game(tables, items, n_paths=REST_PATHS, rounds=REST_ROUNDS, seed=0,
+                     max_states=REST_MAX_STATES, verbose=False):
+    """tables.inplay_theta so that from real states the simulation (in
+    play) leaves the points really still to come: first by segment of the
+    game, then each margin band within it. Returns {segment: (real,
+    simulated before, simulated after)} and {(segment, band): the same}."""
+
+    def prepare(groups, least):
+        out = {}
+        for key, its in groups.items():
+            if len(its) < least:
+                continue
+            if len(its) > max_states:
+                its = [its[i] for i in np.linspace(0, len(its) - 1, max_states).astype(int)]
+            start = sim.Start(len(its))
+            for i, (_, state, theta0, _) in enumerate(its):
+                _fill(start, i, start_from(state))
+                start.theta[i] = theta0
+            out[key] = (start, float(np.mean(start.home + start.away)),
+                        float(np.mean([it[3] for it in its])))
+        return out
+
+    def rest(prepared, key):
+        # independent paths: the mean over thousands of states wants
+        # thousands of games' luck, not n_paths'
+        start, began, _ = prepared[key]
+        home, away = sim.simulate(tables, start, n_paths,
+                                  np.random.default_rng(seed + hash(key) % 1000),
+                                  common=False, in_play=True)
+        return float((home + away).mean()) - began
+
+    by_seg, by_cell = {}, {}
+    for it in items:
+        by_seg.setdefault(it[0][0], []).append(it)
+        if it[0][0] in REST_SEGMENTS:
+            by_cell.setdefault(it[0], []).append(it)
+    segs = prepare(by_seg, REST_MIN_STATES)
+    cells = prepare(by_cell, REST_MIN_CELL)
+    order = sorted(segs, reverse=True)
+    real_after = {g: segs[g][2] for g in segs}
+
+    def fit(prepared, keys, apply):
+        first = {}
+        for rnd in range(rounds):
+            for key in keys:
+                got = rest(prepared, key)
+                first.setdefault(key, got)
+                g = key if isinstance(key, int) else key[0]
+                k = order.index(g)
+                # the segment's own points, roughly: what is left from it
+                # less what is left from the next; a point of scoring moves
+                # with theta at about 1.8 x them
+                own = got - (real_after[order[k - 1]] if k else 0.0)
+                step = float(np.clip((prepared[key][2] - got) / (1.8 * max(1.0, own)), -0.3, 0.3))
+                apply(key, step)
+                if verbose:
+                    print(f"    round {rnd} {key}: real {prepared[key][2]:.2f} simulated {got:.2f}")
+        return first
+
+    def by_segment(g, step):
+        tables.inplay_theta[g, :] += step
+
+    def by_cell_(key, step):
+        tables.inplay_theta[key[0], key[1]] += step
+
+    seg_before = fit(segs, [g for g in order if g in REST_SEGMENTS], by_segment)
+    cell_keys = sorted(cells, key=lambda c: (-c[0], c[1])) if REST_BY_BAND else []
+    cell_before = fit(cells, cell_keys, by_cell_)
+    if 7 not in segs and 7 in REST_SEGMENTS:
+        tables.inplay_theta[7] = tables.inplay_theta[5]        # overtime plays like the 4th
+    return ({g: (segs[g][2], seg_before[g], rest(segs, g)) for g in sorted(segs) if g in seg_before},
+            {c: (cells[c][2], cell_before[c], rest(cells, c)) for c in cell_keys})
 
 def match_day(match_rows):
     """The match's date: its first row's file time, else the code's DDMMYY."""
@@ -639,43 +739,8 @@ def match_day(match_rows):
         return None
 
 
-def recent_total_shade(matches, days=RECENT_DAYS, prior_n=SHADE_PRIOR):
-    """How far games have really gone over prod's pre-match total, against
-    the P(over) prod priced them at, over the last `days` days of these
-    matches -- shrunk toward 0 by `prior_n` matches' worth of evidence.
-    Returns (shade, matches used, raw over rate, prod's mean P(over)).
 
-    Prod's pre-match total is what v3 and v5 take a match's scoring level
-    from. Through September its lines fell behind the scoring: games that
-    prod priced 50% to go over went over 50% of the time in late August and
-    45-47% by mid September. The shade carries the latest week's miss into
-    the prior, as far as a week of matches can be trusted."""
-    import datetime as dt
-    dated = [(match_day(rows), rows) for rows in matches.values()]
-    dated = [(d, rows) for d, rows in dated if d is not None]
-    if not dated:
-        return 0.0, 0, None, None
-    last = max(d for d, _ in dated)
-    over, priced = [], []
-    for d, rows in dated:
-        if d <= last - dt.timedelta(days=days) or not rows[0].get("final_p1"):
-            continue
-        lines = prior_lines(rows)
-        if lines is None or lines[3] is None:
-            continue
-        total = float(rows[0]["final_p1"]) + float(rows[0]["final_p2"])
-        if total == lines[2]:
-            continue
-        over.append(total > lines[2])
-        priced.append(lines[3])
-    n = len(over)
-    if not n:
-        return 0.0, 0, None, None
-    rate, prod = float(np.mean(over)), float(np.mean(priced))
-    return (rate - prod) * n / (n + prior_n), n, rate, prod
-
-
-def in_game_check(tables, grid, matches, n_paths=300, seed=0):
+def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
     """From the first PLAY_OVER of each quarter of these matches: the points
     real games scored in the rest of that quarter against what the
     simulation expects. A check printed by the build, not fitted -- and it
@@ -683,61 +748,26 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0):
     show the points of its last scoring play (they appear on the next
     quarter's first row), so "real" misses 0.4-0.7 a quarter. Judge the
     model on final scores (the calibrator, `v5`), not on this."""
-    items = quarter_start_states(matches, grid)
+    items = quarter_start_states(matches, grid, priors)
     _, got, real = fit_period_theta_states(tables, items, rounds=1, n_paths=n_paths, seed=seed)
     return got, real
 
 
-def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
-          shade_days=RECENT_DAYS, shade_prior=SHADE_PRIOR, history=None, before=None):
+def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
+          before=None):
     """Tables, the league's efficiency by quarter (from kickoff, as v3), the
-    prior grid with the recent pre-match total correction, and the player
+    prior grid, our own pre-match model (NB2, off `history`) and the player
     profiles from {match: export rows}; written to out_dir as v5tables.npz,
-    v5grid.npz and v5players.json (when any handles are known).
+    v5grid.npz, nb2/ and v5players.json (when any handles are known).
+
+    Nothing of GAMEPLAI's is read: every fit that needs a match's prior
+    takes NB2's expected points for it, or league-average offenses when
+    there is no history (a model for tests; v5-build insists on one).
     Returns (tables path, grid path)."""
     import copy
     import os
     os.makedirs(out_dir, exist_ok=True)
-    tables = sim.Tables.build(matches)
-    real = sim.quarter_points(matches)
-    offsets, got = sim.fit_period_theta(tables, real)
-    # the rubber band, from real in-game states (with a quick grid for
-    # each match's prior), then the quarters again
-    items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)))
-    if len(items) >= 200 and "band" in sim.PLAY_CALLING:
-        pull, band_got, band_real = fit_rubber_band(tables, items)
-        offsets, got = sim.fit_period_theta(tables, real)
-        if verbose:
-            print("  rubber band: of every point of lead, how much comes back by the end, "
-                  f"real / simulated -- first half {-band_real[0]:.3f} / {-band_got[0]:.3f}, "
-                  f"second half {-band_real[1]:.3f} / {-band_got[1]:.3f}; pull per score "
-                  f"{pull[0]:.2f} / {pull[1]:.2f}")
-    shade, n, rate, prod = recent_total_shade(matches, shade_days, shade_prior)
-    if verbose:
-        print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
-              + " / ".join(f"{x:.2f}" for x in real) + ", simulated "
-              + " / ".join(f"{x:.2f}" for x in got))
-        if tables.backed is not None:
-            print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
-                  + "; ".join(f"{name.replace('_', ' ')} "
-                              + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
-                              for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
-        if n and history is None:
-            print(f"  pre-match total, last {shade_days} days: {n} matches went over prod's line "
-                  f"{rate:.1%} of the time at a priced {prod:.1%} -> P(over) shaded {shade:+.3f}")
-    tables_path = os.path.join(out_dir, "v5tables.npz")
-    grid_path = os.path.join(out_dir, "v5grid.npz")
-    tables.save(tables_path)
-    grid = PriorGrid.build(tables, n_paths=grid_paths)
-    # the correction to prod's pre-match total only matters when prod's
-    # pre-match is the prior -- with NB2's (history given) it is unused
-    grid.total_shade = shade if history is None else 0.0
-    grid.save(grid_path)
-    if verbose:
-        sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches)
-        print("  in-game check, points in each quarter from real quarter-start states: real "
-              + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
-              + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
+    pre = priors = None
     if history is not None:
         # our own pre-match model: NB2 fitted on the history before the day
         # after the last match built on (or `before`)
@@ -747,6 +777,55 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
             last = max(d for d in days if d is not None)
             before = dt.datetime.combine(last + dt.timedelta(days=1), dt.time())
         pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2"), before)
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
+    tables = sim.Tables.build(matches)
+    real = sim.quarter_points(matches)
+    offsets, got = sim.fit_period_theta(tables, real)
+    # the rubber band, from real in-game states (with a quick grid for
+    # each match's prior), then the quarters again
+    items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)),
+                           priors=priors)
+    if len(items) >= 200 and "band" in sim.PLAY_CALLING:
+        pull, band_got, band_real = fit_rubber_band(tables, items)
+        offsets, got = sim.fit_period_theta(tables, real)
+        if verbose:
+            print("  rubber band: of every point of lead, how much comes back by the end, "
+                  f"real / simulated -- first half {-band_real[0]:.3f} / {-band_got[0]:.3f}, "
+                  f"second half {-band_real[1]:.3f} / {-band_got[1]:.3f}; pull per score "
+                  f"{pull[0]:.2f} / {pull[1]:.2f}")
+    if verbose:
+        print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
+              + " / ".join(f"{x:.2f}" for x in real) + ", simulated "
+              + " / ".join(f"{x:.2f}" for x in got))
+        if tables.backed is not None:
+            print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
+                  + "; ".join(f"{name.replace('_', ' ')} "
+                              + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
+                              for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
+    tables_path = os.path.join(out_dir, "v5tables.npz")
+    grid_path = os.path.join(out_dir, "v5grid.npz")
+    grid = PriorGrid.build(tables, n_paths=grid_paths)
+    grid.save(grid_path)
+    if IN_PLAY_FIT:
+        # the in-play shift by segment (see fit_rest_of_game), off each
+        # match's prior as pricing will set it
+        rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors))
+        if verbose and rest:
+            print("  points still to come from real in-game states, real / simulated before -> "
+                  "after the in-play shift: "
+                  + "; ".join(f"{sim.SEGMENTS[g]} {r:.2f} / {b:.2f} -> {a:.2f}"
+                              for g, (r, b, a) in rest.items()))
+            if bands:
+                print("    by margin: " + "; ".join(
+                    f"{sim.SEGMENTS[g]} {sim.MARGIN_BANDS[m]} {r:.2f} / {b:.2f} -> {a:.2f}"
+                    for (g, m), (r, b, a) in sorted(bands.items())))
+    tables.save(tables_path)
+    if verbose:
+        sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches, priors=priors)
+        print("  in-game check, points in each quarter from real quarter-start states: real "
+              + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
+              + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
+    if pre is not None:
         if verbose:
             m = pre.meta
             ratio = f"{m['scale_raw_ratio']:.3f}" if m["scale_raw_ratio"] else "n/a"

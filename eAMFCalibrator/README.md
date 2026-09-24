@@ -1495,3 +1495,29 @@ margins where most players in SCOUTING_FULL went for two: behind by 1, 5,
 8, 11 or 16. The table isn't split by quarter, because every column is
 read on the same snapshots. It counts one row per snapshot: the over and
 the under share a line.
+
+These shares can't match Real's, even for a perfect model. A line sits in
+the middle of the points still to come, so it is more than a score away
+more often than the result is. For example, on Sep 3–9:
+- 29.4% of snapshots really had one score or less still to come;
+- v5 put its line within one score on 22.0% of them;
+- yet v5's own distributions gave one score or less a 30.1% chance.
+
+The second table, **Over at the line, by where the line sits**, is the
+fair test. Next to each Over rate is the stream's own P(over) at its line
+(**Priced**), read off whichever side of the total the pair is. A middle
+line prices about 50%, but late in a game the points still to come are
+lumpy (0, 3 or 7), and the line nearest even money can price well off
+it. The test is Over against Priced, not Over against 50%. The third
+table, **By quarter and game state**, splits all of it by quarter and by:
+- level;
+- one score or two+ apart, with the leader or the trailer on the ball;
+- no ball.
+
+It shows real's shares, then each stream's line shares, Over and Priced.
+Early in a game, a line in the middle goes over half the
+time. A line held a score too far out shows as an Over rate well under
+50%. On Sep 3–9 prod's lines went over:
+- 45% of the time when within 1 score;
+- 44% when 1–2 scores out;
+- 34% when 1–2 scores out in Q4.

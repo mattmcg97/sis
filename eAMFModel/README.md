@@ -579,6 +579,160 @@ That holds in 2,294 of the 2,320 matches in SCOUTING_FULL, and v5 already
 did it. Where a snapshot doesn't know who received the opening kick, v5
 used to have home kick. Now each path tosses a coin.
 
+### v5 reads nothing of GAMEPLAI's
+
+v5's prices are only ever compared with GAMEPLAI's, never trained on them.
+Every match's prior comes from our own pre-match model, NB2, which is
+fitted on match results. That covers pricing, the rubber-band fit, the
+in-play fit and the build's checks. `v5-build` refuses to run without
+`--history`. A model without NB2 (only in tests) takes league-average
+offenses. Removed from v5:
+- the prior read off prod's pre-match lines (`prior_lines`,
+  `PriorGrid.fit`);
+- the correction to prod's pre-match total (`recent_total_shade`).
+
+A test moves every prod price column in the export and checks that
+nothing in v5 changes.
+
+### Overtime as it is played
+
+The feed shows overtime played like the NFL's current rule: each side
+has the ball once, and after that the game ends the moment one side
+leads. A side that scores a touchdown to trail by one then goes for two,
+to win or lose: finals like 24-23 and 32-31 are common. v5 used to play
+overtime as a full timed quarter in which both sides kept scoring. From
+an overtime kickoff it averaged 10.0 points, with 20+ in 8.7% of games;
+real overtimes never went past 15. Now it averages 7.8. Real overtimes
+averaged about 8.9 over 29 matches. The second side answers a touchdown
+with one of its own more often in real games (about 65% of 23 cases,
+against v5's 36%).
+
+Held out on Sep 3–9, overtime snapshots now expect 5.9 points still to
+come, against 7.2 before and a real 5.3. Over at v5's own line went from
+40.7% to 45.3%. Nothing else moves.
+
+### A dead game's line
+
+When v5 is certain no more points will come (a leader kneeling it out),
+the half-point lines either side of the score were equally near even
+money. v5 took the lower one, quoting an Over that had already won; that
+was 2.8% of snapshots. It now never picks a line that everything goes
+over (v4 too).
+
+### The shape of the points still to come
+
+The real distribution of points still to come is skewed right, not left.
+Its median is below its mean. v5's is skewed almost exactly as much in
+every cross-section, and its medians match. Held out on Sep 3–9:
+
+| cross-section | skew, real / v5 | median, real / v5 |
+|---|---|---|
+| Q1, level | +0.45 / +0.44 | 32 / 31 |
+| Q3, 1 score, leader has ball | +0.69 / +0.81 | 14 / 14 |
+| Q4, 1 score, leader has ball | +1.58 / +1.52 | 0 / 0 |
+| Q4, level | +1.98 / +1.86 | 3 / 3 |
+
+So a middle line doesn't sit too high from skew. Late in a game the
+points still to come are lumpy (0, 3 or 7), so the line nearest even
+money isn't 50/50. The test is each stream's own P(over) at its line
+against how often the game went over it. For v5 (Sep 3–9, P(over) /
+real):
+
+| cross-section | v5 | real |
+|---|---|---|
+| Q4, leader has ball, 1 score | 55.5% | 54.1% |
+| Q4, leader has ball, 2+ scores | 57.5% | 55.7% |
+| Q4, level | 47.0% | 40.3% |
+| Q4, trailer has ball, 2+ scores | 45.4% | 51.0% |
+| Q4, trailer has ball, 1 score | 44.7% | 48.6% |
+| Q3, leader has ball, 2+ scores | 50.1% | 55.4% |
+| Q3, trailer has ball, 2+ scores | 49.7% | 46.0% |
+
+The real misses are:
+- level Q4, where v5 gives too many points;
+- trailing teams late, where it gives too few;
+- two-score Q3 games.
+
+The report's totals breakdown shows the same for prod and every
+candidate.
+
+### Totals from inside a game
+
+**Lines against results.** A report can show that the rest of the game
+really produced one score or less more often than the lines sat within
+one score (31.8% real against about 22% for prod, v4 and v5, Sep 17–24).
+Most of that is the line being a middle, not a miss. A line sits in the
+middle of the points still to come, so it is more than a score out more
+often than the result is. On held-out games (Sep 3–9):
+- 29.4% of snapshots really had one score or less still to come;
+- v5 put its line within one score on 22.0% of them;
+- yet v5's own distributions gave one score or less a 30.1% chance.
+
+The fair test is how often the game went over the line, by where the
+line sat; a middle line goes over half the time wherever it sits. On
+Sep 3–9:
+
+| line above the score | prod | v5 |
+|---|---|---|
+| within 1 score | 45.1% | 52.3% |
+| 1–2 scores | 43.9% | 48.0% |
+| more than 2 scores | 47.0% | 50.5% |
+| 1–2 scores, Q4 | 34.3% | 41.1% |
+| more than 2, Q3 | 41.4% | 45.2% |
+
+Prod holds its lines about a score too far out. v5 is near a half apart
+from Q3, where it leaves 0.3–0.8 points too many, and Q4 with the line
+1–2 scores out. The report now carries this table (Additional checks).
+
+**By state, held out (Sep 3–9).**
+
+| state | chance of | real | v5 |
+|---|---|---|---|
+| Q4, within 3 | 7+ more | 39.0% | 42.6% |
+| Q3, within 3 | 21+ more | 18.9% | 23.0% |
+| Q3, 17+ margin | no more points | 14.1% | 6.1% |
+| Q4, 17+ margin | 14+ more | 12.1% | 6.8% |
+
+The last two minutes of the first half score more than v5 gives them,
+and Q3 less.
+
+**The in-play shift (`v5-build --in-play`, off by default).** It fits a
+scoring shift, `inplay_theta`, for each segment of the game (Q1; Q2; Q2's
+last 2:00; Q3; Q4; Q4's last 2:00; OT). Optionally it also fits each
+margin band within a segment (0–3, 4–8, 9–16, 17+). The fit uses states
+from inside the build's games, with each match's prior as pricing sets
+it, so that from each the simulation leaves the points really still to
+come. It goes from the end of the game backwards. Only the total is
+priced off the shifted run; moneyline and spread keep the plain one. The
+pre-match isn't touched.
+
+The mean moved the right way in every test, and the shape got closer.
+On Sep 3–9, close Q4 games went from 42.6% to 39.7% for 7+ more (real
+39.0%), and Q3 at v5's own line went from 48.6% to 51.3% over. But total
+Brier at prod's line didn't hold up. Positive is better:
+
+| shift (total only) | Sep 3–9, NB2 pre-match | Sep 10–22, prod's pre-match |
+|---|---|---|
+| by segment | +0.0001 | −0.0012 (significant) |
+| by segment and margin | +0.0004 | −0.0010 |
+| Q3 and overtime only | −0.0005 | +0.0012 |
+
+Shifting scoring for every market cost moneyline 0.0011 and spread 0.0018
+in Q1 (Sep 3–9, significant); that's why only the total uses it. How much
+of the in-game miss there is depends on whether the pre-match level is
+right, and that changes from week to week. Q4 by margin even flipped
+between weeks: blowouts scored in garbage time in one week and not the
+next. So the shift stays off until a longer run of weeks shows it pays.
+With the flag, the build prints real against simulated for each segment,
+and pricing runs two simulations per snapshot.
+
+**Common random numbers.** Averages over thousands of states from many
+matches need independent paths (`common=False`). On common random numbers
+they get only `n_paths` games' worth of luck between them, and that had
+hidden the Q3 miss: the build's in-game check read Q3 as right. The
+in-play fit and that check now use independent paths. The rubber band's
+fit still uses common ones, and is worth refitting the same way.
+
 ```bash
 python -m eAMFModel v5-build eAMFCalibrator/out/scouting_playover.csv --half all --out v5_model --history eAMFCalibrator/out/match_history.csv
 python -m eAMFCalibrator report --candidate v5 --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v5
