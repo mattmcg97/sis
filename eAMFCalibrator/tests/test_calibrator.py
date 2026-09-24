@@ -5042,6 +5042,60 @@ class TestReportShape(unittest.TestCase):
         self.assertTrue(build_parser().parse_args(["report", "--axes"]).axes)
 
 
+class TestCandidateLabel(unittest.TestCase):
+    """With a model standing in, the reports say its name, not "candidate"."""
+
+    _render = TestReportRendering._render
+
+    def setUp(self):
+        TestReportRendering.setUp(self)
+        self.saved = (dict(config.STREAMS), getattr(config, "CANDIDATE_LABEL", None))
+
+    def tearDown(self):
+        config.STREAMS.clear()
+        config.STREAMS.update(self.saved[0])
+        config.CANDIDATE_LABEL = self.saved[1]
+
+    @staticmethod
+    def _visible(page):
+        import re
+        page = re.sub(r"(?is)<script\b.*?</script>|<style\b.*?</style>", " ", page)
+        titles = " ".join(re.findall(r'title="([^"]*)"', page))
+        return re.sub(r"<[^>]+>", " ", page) + " " + titles
+
+    def test_the_model_name_replaces_candidate_everywhere_a_reader_looks(self):
+        import re
+        from .. import labels
+        config.STREAMS["candidate"] = "MODEL:v3"
+        config.CANDIDATE_LABEL = None
+        raw = self._render()
+        page = labels.relabel(raw)
+        seen = self._visible(page)
+        self.assertIsNone(re.search(r"(?i)\bcand(idate)?\b", seen), re.search(r"(?i).{40}\bcand(idate)?\b.{40}", seen))
+        self.assertIn("v3", seen)
+        self.assertIn("<title>eAMF v3 vs prod</title>", page)
+        # what the page runs on is untouched
+        pick = lambda p, rx: re.findall(rx, p, re.S | re.I)
+        self.assertEqual(pick(raw, r"<script\b.*?</script>"), pick(page, r"<script\b.*?</script>"))
+        self.assertEqual(pick(raw, r'class="[^"]*"'), pick(page, r'class="[^"]*"'))
+        self.assertEqual(pick(raw, r'data-v="[^"]*"'), pick(page, r'data-v="[^"]*"'))
+
+    def test_a_label_can_be_given(self):
+        from .. import labels
+        config.STREAMS["candidate"] = "MODEL:v3"
+        config.CANDIDATE_LABEL = "v3 sim"
+        self.assertIn("v3 sim win", labels.relabel(self._render()))
+        self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v3_sim.html")
+
+    def test_a_real_candidate_stream_keeps_its_name(self):
+        from .. import labels
+        config.STREAMS["candidate"] = "GAMEPLAI_STREAM_CANDIDATE"
+        config.CANDIDATE_LABEL = None
+        raw = self._render()
+        self.assertEqual(labels.relabel(raw), raw)
+        self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report.html")
+
+
 class TestConfigSanity(unittest.TestCase):
     def test_score_buckets_are_contiguous_and_ordered(self):
         edges = config.SCORE_DIFF_BUCKETS
