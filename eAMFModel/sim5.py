@@ -1,14 +1,18 @@
-"""v4's simulation: v3's play-by-play simulation (sim.py, copied as the
-starting point and left untouched there), with
+"""v5's simulation: v4's (sim4.py, copied as the starting point and left
+untouched there) with play calling by game state -- see "Game states for
+play calling" below: each bin's plays are split by what they did to the
+clock, and the state (quarter, 40-second slice, the offense's lead)
+decides which kind is called, how long it takes and how well offenses do.
+
+v4's simulation, in turn, is v3's with
 
   * common random numbers: every simulated path draws its randomness from
     its own stream, keyed on the path's number and how many events it has
     played since the snapshot. Two snapshots of one match, priced side by
     side, play out the same luck, so their prices differ by what changed
-    in the game and not by Monte Carlo noise -- the price no longer
-    jitters between messages where nothing happened;
-  * the league's efficiency by quarter fitted on the states real games
-    pass through (fit_period_theta_states), not only from kickoff.
+    in the game and not by Monte Carlo noise;
+  * kneels only with room to take them, and a safety's free kick from the
+    20.
 
 What follows is v3's description.
 
@@ -121,6 +125,121 @@ def _keys_np(mode, down, dist, y):
     z = np.where(y < 40, 0, np.where(y < 70, 1, np.where(y < 90, 2, 3)))
     d = np.clip(down, 1, 4) - 1
     return ((mode * 4 + d) * 4 + db) * 4 + z
+
+
+# --------------------------------------------------------------------------
+# Game states for play calling (v5)
+#
+# The feed never says run or pass, but it does say what a play did to the
+# clock: the game clock from one snap to the next is the play alone when
+# the clock stopped after it (an incompletion, out of bounds -- passes,
+# mostly) and the play plus however long the offense took to pick the next
+# one when it kept running (runs and completions in bounds). v5 splits
+# every play of a bin by that, and decides which kind is called from the
+# game state -- the quarter, the time left in it and the offense's lead --
+# before drawing the yards from real plays of that kind.
+
+STOP_SECONDS = 12.0   # a snap to the next in this or less: the clock stopped
+CLOCK_CELLS = 6       # 40-second slices of a quarter
+LEAD_CELLS = 5        # the offense's lead: <=-9, -8..-1, 0, 1..8, >=9
+N_CELLS = 4 * CLOCK_CELLS * LEAD_CELLS
+STOP_PRIOR = 40.0     # snaps' worth of shrinkage toward the bin's own mix
+SECONDS_PRIOR = 40.0  # snaps' worth of shrinkage on the clock used
+EFF_PRIOR = 40.0      # information units shrinking the rubber band to 0
+# A snap is only kept when the next one came in the same quarter, so with
+# less than this left the plays that would have run past the buzzer are
+# missing and the rest look short: the clock and play-call shifts are
+# fitted on snaps with at least this much of the quarter left.
+UNCUT_SECONDS = 60.0
+STOP, RUNNING = 0, 1
+# which parts of the play-calling fit are used ("stop", "seconds", "band"):
+# each can be switched off to see what it is worth on its own
+PLAY_CALLING = {"stop", "seconds", "band"}
+# The quarters the play-calling shifts apply in. The fourth is left to the
+# end-game tables (lead_late, trail_late, tied_late) as in v4: on held-out
+# weeks every shift cost a little there, and together significantly
+# (spread -0.0017, total -0.0024 Brier on Sep 10-22).
+PLAY_CALLING_QUARTERS = (1, 2, 3)
+
+
+def _quarter_mask():
+    q = np.arange(N_CELLS) // (CLOCK_CELLS * LEAD_CELLS) + 1
+    return np.isin(q, PLAY_CALLING_QUARTERS)
+
+
+def lead_cell(lead):
+    return 0 if lead <= -9 else 1 if lead < 0 else 2 if lead == 0 else 3 if lead <= 8 else 4
+
+
+def cell_index(period, clock, lead):
+    """(quarter, 40-second slice of it, the offense's lead) -> 0..N_CELLS-1."""
+    pq = min(max(period, 1), 4) - 1
+    cb = min(CLOCK_CELLS - 1, max(0, int((QUARTER - clock) // (QUARTER / CLOCK_CELLS))))
+    return (pq * CLOCK_CELLS + cb) * LEAD_CELLS + lead_cell(lead)
+
+
+def _cells_np(period, clock, lead):
+    pq = np.clip(period, 1, 4) - 1
+    cb = np.clip(((QUARTER - clock) // (QUARTER / CLOCK_CELLS)).astype(np.int64), 0, CLOCK_CELLS - 1)
+    lc = np.where(lead <= -9, 0, np.where(lead < 0, 1, np.where(lead == 0, 2, np.where(lead <= 8, 3, 4))))
+    return (pq * CLOCK_CELLS + cb) * LEAD_CELLS + lc
+
+
+def fit_play_calling(tables, snaps):
+    """By game-state cell: (1) how much likelier a clock-stopping play is
+    than its bin's own mix says (a log-odds shift), (2) how many seconds
+    more or less each kind of play uses than its bin's (the huddle: a leader
+    milks the play clock, a trailer hurries), (3) the rubber band -- how
+    much better or worse offenses do in that state than the bin's league
+    average (a tilt on the efficiency). Each is shrunk toward 0."""
+    n = len(snaps)
+    key = np.array([r["key"] for r in snaps])
+    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in snaps])
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in snaps])
+    secs = np.array([r["seconds"] for r in snaps])
+    succ = np.array([bool(r["success"]) for r in snaps])
+    uncut = np.array([r["clock"] >= UNCUT_SECONDS for r in snaps])
+    ns, cnt = tables.n_stop[key].astype(float), tables.count[key].astype(float)
+    base = np.log(np.clip(ns, 0.5, None) / np.clip(cnt - ns, 0.5, None))
+    # (1) the stop shift: Newton steps on the penalised likelihood
+    stop_shift = np.zeros(N_CELLS)
+    for _ in range(10):
+        p = _sigmoid(base + stop_shift[cell])
+        g = np.bincount(cell, (stop - p) * uncut, N_CELLS) - STOP_PRIOR * 0.25 * stop_shift
+        h = np.bincount(cell, p * (1 - p) * uncut, N_CELLS) + STOP_PRIOR * 0.25
+        stop_shift += g / h
+    # (2) seconds against the bin's mean for the same kind of play
+    cls_mean = np.zeros((2, N_KEYS))
+    for k in range(N_KEYS):
+        a, m, c = tables.start[k], tables.n_stop[k], tables.count[k]
+        seg = tables.seconds[a:a + c]
+        cls_mean[STOP, k] = seg[:m].mean() if m else 0.0
+        cls_mean[RUNNING, k] = seg[m:].mean() if c > m else 0.0
+    kind = np.where(stop, STOP, RUNNING)
+    resid = secs - cls_mean[kind, key]
+    sec_shift = np.zeros((2, N_CELLS))
+    for c_ in (STOP, RUNNING):
+        on = (kind == c_) & uncut
+        tot = np.bincount(cell[on], resid[on], N_CELLS)
+        num = np.bincount(cell[on], minlength=N_CELLS)
+        sec_shift[c_] = tot / (num + SECONDS_PRIOR)
+    # (3) the rubber band: P(success) = f ** exp(-a) within the play's kind
+    f = np.clip(np.where(stop, tables.stop_success[key], tables.run_success[key]), 1e-3, 1 - 1e-3)
+    grid = np.linspace(-1.0, 1.0, 201)
+    eff_shift = np.zeros(N_CELLS)
+    for c_ in range(N_CELLS):
+        on = cell == c_
+        if not on.any():
+            continue
+        lf, s_ = np.log(f[on]), succ[on]
+        pa = np.exp(np.outer(np.exp(-grid), lf))                  # grid x snaps
+        ll = np.where(s_, np.log(np.clip(pa, 1e-12, 1)), np.log(np.clip(1 - pa, 1e-12, 1))).sum(1)
+        eff_shift[c_] = grid[np.argmax(ll - 0.5 * EFF_PRIOR * grid ** 2)]
+    on = _quarter_mask()
+    tables.stop_shift = stop_shift * on if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
+    tables.sec_shift = sec_shift * on if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
+    tables.eff_shift = eff_shift * on if "band" in PLAY_CALLING else np.zeros(N_CELLS)
+    return n
 
 
 # --------------------------------------------------------------------------
@@ -476,6 +595,13 @@ class Tables:
         self.kick = {}        # desperate -> (onside, field, seconds) arrays
         self.punt = {}        # field bucket -> (net, seconds)
         self.safety_kick = None   # the receiver's field after a safety's free kick
+        # v5's play calling (fit_play_calling): each bin lays out its
+        # clock-stopping plays first, n_stop of them, then the rest
+        self.n_stop = None
+        self.stop_success = self.run_success = None
+        self.stop_shift = np.zeros(N_CELLS)
+        self.sec_shift = np.zeros((2, N_CELLS))
+        self.eff_shift = np.zeros(N_CELLS)
         self.fg_seconds = None
         self.fg_after = None
         self.go_for_two = None   # (phase, margin after the six) -> P(going for two)
@@ -524,16 +650,23 @@ class Tables:
                 bins[g] = recs
             chosen.append(g)
         order = list(bins)
-        start, count, succ = {}, {}, {}
+        start, count, succ, nstop, ssucc, rsucc = {}, {}, {}, {}, {}, {}
         kind, gain, newf, secs, rep, tdf = [], [], [], [], [], []
         for g in order:
             recs = list(bins[g])
             rng.shuffle(recs)
-            recs.sort(key=lambda r: (-2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
+            # clock-stopping plays first, then the rest, each worst to best
+            recs.sort(key=lambda r: (r["seconds"] > STOP_SECONDS,
+                                     -2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
                                      else r["gain"] - r["distance"]))
             start[g] = len(kind)
             count[g] = len(recs)
             succ[g] = sum(r["success"] for r in recs) / len(recs)
+            stops = [r for r in recs if r["seconds"] <= STOP_SECONDS]
+            nstop[g] = len(stops)
+            ssucc[g] = sum(r["success"] for r in stops) / max(1, len(stops))
+            rsucc[g] = (sum(r["success"] for r in recs) - sum(r["success"] for r in stops)) \
+                / max(1, len(recs) - len(stops))
             for r in recs:
                 kind.append(r["kind"])
                 gain.append(r["gain"])
@@ -544,6 +677,9 @@ class Tables:
         t.start = np.array([start[g] for g in chosen], dtype=np.int64)
         t.count = np.array([count[g] for g in chosen], dtype=np.int64)
         t.success = np.array([succ[g] for g in chosen])
+        t.n_stop = np.array([nstop[g] for g in chosen], dtype=np.int64)
+        t.stop_success = np.array([ssucc[g] for g in chosen])
+        t.run_success = np.array([rsucc[g] for g in chosen])
         t.kind = np.array(kind, dtype=np.int8)
         t.gain = np.array(gain, dtype=np.int32)
         t.new_field = np.array(newf, dtype=np.int32)
@@ -594,6 +730,7 @@ class Tables:
             if ch:
                 t.late_fg[i] = (sum(c == "fg" for c in ch) + 1) / (len(ch) + 2)
         t.n_snaps = len(snaps)
+        fit_play_calling(t, snaps)
         return t
 
     def success_of(self, key):
@@ -606,7 +743,9 @@ class Tables:
                       fg_after=np.array([self.fg_after]), period_theta=self.period_theta,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
                       late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
-                      safety_kick=self.safety_kick)
+                      safety_kick=self.safety_kick, n_stop=self.n_stop,
+                      stop_success=self.stop_success, run_success=self.run_success,
+                      stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift)
         for d, (a, b, c) in self.kick.items():
             arrays[f"kick{int(d)}_onside"], arrays[f"kick{int(d)}_field"], arrays[f"kick{int(d)}_sec"] = a, b, c
         for b, (net, s) in self.punt.items():
@@ -635,6 +774,12 @@ class Tables:
         for b in range(3):
             t.punt[b] = (z[f"punt{b}_net"], z[f"punt{b}_sec"])
         t.safety_kick = z["safety_kick"] if "safety_kick" in z else _shifted_kick(t.kick[False][1])
+        if "n_stop" in z:
+            t.n_stop, t.stop_success, t.run_success = z["n_stop"], z["stop_success"], z["run_success"]
+            t.stop_shift, t.sec_shift, t.eff_shift = z["stop_shift"], z["sec_shift"], z["eff_shift"]
+        else:                     # a v4 model's tables: one kind of play per bin, as v4
+            t.n_stop = t.count.copy()
+            t.stop_success = t.run_success = t.success
         return t
 
 
@@ -958,15 +1103,33 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if not len(sx):
             continue
         so = team[sx]
-        mode = _modes_np(period[sx], clock[sx], score[sx, so] - score[sx, 1 - so])
+        lead = score[sx, so] - score[sx, 1 - so]
+        mode = _modes_np(period[sx], clock[sx], lead)
         key = _keys_np(mode, down[sx], dist[sx], y[sx])
         n = tables.count[key]
+        # the play call: one that stops the clock (a pass, mostly) or one
+        # that keeps it running, as likely as in this state of the game
+        cell = _cells_np(period[sx], clock[sx], lead)
+        ns = tables.n_stop[key]
+        logit = np.log(np.maximum(ns, 0.5) / np.maximum(n - ns, 0.5)) + tables.stop_shift[cell]
+        p_stop = np.where(ns == 0, 0.0, np.where(ns == n, 1.0, _sigmoid(logit)))
+        stops = rand(sx, 15) < p_stop
+        seg0 = tables.start[key] + np.where(stops, 0, ns)
+        seg_n = np.maximum(1, np.where(stops, ns, n - ns))
+        # the yards: that kind of play's real results, tilted by the
+        # offense's efficiency and by how offenses really do in this state
         uu = rand(sx, 11)
-        uu = 1.0 - (1.0 - uu) ** (exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)])
-        j = tables.start[key] + np.minimum(n - 1, (uu * n).astype(np.int64))
-        clock[sx] -= tables.seconds[j] * pace[sx, so]
+        tilt = exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
+        uu = 1.0 - (1.0 - uu) ** tilt
+        j = seg0 + np.minimum(seg_n - 1, (uu * seg_n).astype(np.int64))
+        # the clock: that play's, plus how much longer (or shorter) offenses
+        # take in this state for this kind of play
+        used = np.maximum(1.0, tables.seconds[j] + tables.sec_shift[np.where(stops, STOP, RUNNING), cell]) \
+            * pace[sx, so]
+        clock[sx] -= used
         kd = tables.kind[j]
         tally("snaps", len(sx))
+        tally("stop_calls", stops.sum())
         if stats is not None:
             for q in (1, 2, 3, 4):
                 on = period[sx] == q
@@ -1025,7 +1188,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         pg = period[gx]
         mg = score[gx, team[gx]] - score[gx, 1 - team[gx]]
         wants = ((pg == 2) | ((pg >= 4) & (mg <= 0) & (mg >= -3))) & (100 - y2 + 17 <= EARLY_FG_RANGE)
-        before = clock[gx] + tables.seconds[j[gsel]][rest] * pace[gx, team[gx]]
+        before = clock[gx] + used[gsel][rest]
         keep = wants & (clock[gx] < MANAGED_SECONDS) & (before > MANAGED_SECONDS + 1)
         clock[gx[keep]] = MANAGED_SECONDS
         tally("managed", keep.sum())

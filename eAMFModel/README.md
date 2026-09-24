@@ -405,6 +405,129 @@ python -m eAMFModel v4 eAMFCalibrator/out/scouting_playover.csv --model v4_model
 `--history` takes any CSV shaped like `nb2/AMFELO.csv`. For `v4`, it needs
 only the priced matches' players, teams and stream; the finals are not read.
 
+### Its own lines
+
+As a stream (`--candidate v4`), v4 quotes its own line on the spread and
+the total, not prod's. At every snapshot it takes the half-point line
+nearest even money off its own distribution for the state: the margin's
+for the spread, the total's for the total. The line moves when the game
+moves it. The calibrator then pairs the two streams as it pairs any two:
+where the lines are the same, it compares the probabilities; where they
+differ, it scores whose line landed nearer the result.
+`--v4-lines prod` goes back to reading v4's price at prod's line.
+
+On 3–9 Sep (built before 3 Sep, NB2 prior, 583 matches, live quotes):
+
+| | spread | total |
+|---|---|---|
+| v4's line same as prod's | 38% | 23% |
+| mean distance from the final result, v4 / prod | 5.09 / 5.22 | 6.46 / 6.49 |
+| different-line pairs won by v4 | 53.7% | 49.9% |
+| Brier at each stream's own line, v4 / prod | 0.2386 / 0.2473 | 0.2384 / 0.2474 |
+| Brier at prod's line, prod − v4 | +0.0144 | +0.0108 |
+
+v4's lines are nearer the result on the spread in every quarter, and most
+of all in Q4 (2.83 against 3.09). Totals are level with prod's: slightly
+better in Q1, Q3 and Q4, slightly worse in Q2 (7.60 against 7.52). The
+last row is the old same-line comparison, unchanged by the goal-line fixes
+below.
+
+### Backed up on the goal line
+
+A leader late with the ball on their own 1–3 won 88.9% of the time in real
+games (27 cases), but v4 gave them 98.3%. Two things were missing:
+- **The kneel.** v4 knelt out the clock from anywhere. A kneel loses a
+  yard, so on the goal line it's a safety. v4 now only kneels with the room
+  to take the kneels it needs; backed up, it runs real plays.
+- **The free kick.** After a safety, the kick comes from the 20. Real
+  receivers start about their 42, against a kickoff's 26. v4 now draws
+  from real free kicks, or a kickoff moved on 16 yards when fewer than 20
+  have been seen.
+
+Now v4 gives the leader 94.4%. That's within the noise of 27 cases.
+Everywhere else on the field it's unchanged, and matches what happened:
+
+| ball on | cases | leader wins, v4 | real |
+|---|---|---|---|
+| own 1–3 | 27 | 0.944 (was 0.983) | 0.889 |
+| own 4–10 | 55 | 0.957 | 0.964 |
+| own 11–30 | 305 | 0.938 | 0.934 |
+| beyond | 1,175 | 0.949 | 0.941 |
+
+Rebuild the model (`v4-build`) to pick up the free-kick table.
+
+## v5: v4 plus play calling by game state
+
+v5 is a copy of v4 (`sim5.py`, `v5.py`, `v5_stream.py`; v4 untouched). It
+tests three ideas about how players really play:
+- run and pass;
+- clock bleed;
+- the rubber band.
+
+**What the games say.** These are real games only, from Aug 24 to Sep 22.
+In the last 1:20–2:40 of Q4, a leader by 1–8 with the ball leaves 4.2
+points to be scored; with the trailer on the ball it's 7.2. In Q3 the
+leader with the ball scores less in the rest of the quarter, but the
+rest-of-game totals are almost the same (15.8 against 16.0 early in Q3).
+Leaders use 24–26 s a snap in Q3, and teams trailing by 9+ use 18 s.
+
+**Run or pass.** The feed doesn't say which, but it does say what a play
+did to the clock. From one snap to the next, a play that stopped the clock
+(an incompletion, out of bounds: mostly passes) takes about 4–10 s. One
+that kept it running (runs, completions in bounds) takes about 30–40 s,
+the play plus the time to pick the next one. v5 splits every bin's plays
+that way and decides the call from the game state: the quarter, which
+40-second slice of it, and the offense's lead. It then draws the yards
+from real plays of that kind.
+
+**Clock bleed.** Within v4's bins, real snaps used 2–4 s more or less
+clock than the bin by state. Examples: Q3 mid-quarter level or ahead by
+1–8, +2.6 to +3.9 s; the last minute of Q2, about −2 s. v5 shifts each
+kind of play's clock by state. The shifts are fitted on snaps with at
+least 60 s left in the quarter. Nearer the buzzer, the data only keeps
+plays whose next snap came before it, so their clock looks short.
+
+**The rubber band.** v5 gives each state an efficiency shift from real
+first-down success. It also fits a pull per half, so that from real
+in-game states the simulated share of a lead that comes back by the end
+matches the real one. v4 brought back 12.2% of each point of second-half
+lead against a real 14.8% (held out, Sep 10–22); v5 matches it. The
+pull came out at −0.09 per score in the first half, where the state
+shifts already pulled too hard, and +0.09 in the second.
+
+**The fourth quarter** is left to v4's end-game tables. On held-out games
+every shift cost a little there, and all three together cost
+significantly: spread −0.0017 and total −0.0024 Brier.
+
+**Results.** v5 was built on games before Sep 3 and scored on held-out
+games; Brier, v5 − v4:
+
+| held-out games | moneyline | spread | total |
+|---|---|---|---|
+| Sep 3–9, 583 matches, NB2 pre-match | −0.0001 | +0.0000 | +0.0003 |
+| Sep 10–22, 453 matches, prod's pre-match | −0.0006 | −0.0005 | +0.0001 |
+
+All within the noise (95% intervals by match span about ±0.001). By
+quarter, nothing is significant beyond Q4 spread on Sep 3–9 (+0.0005).
+Across the states, v5 has:
+- a 15.4% / 12.7% rubber band, matching real games in both halves;
+- Q3 totals from level scores closer to real (+1.04 against v4's +1.37
+  points too many);
+- a big lead's movement in Q3 fixed (trailing by 17+: −1.21 to −0.01);
+- but it over-reverts some middle buckets (Q3 leading by 9–16: −0.85).
+
+v5 does what it was built to do in the states it targets. It's level with
+v4 overall: no quarter or market moves beyond the noise. v4's bins
+already carry most of this behaviour, because they split plays by
+situation (the leader milking, the trailer hurrying, the last two
+minutes).
+
+```bash
+python -m eAMFModel v5-build eAMFCalibrator/out/scouting_playover.csv --half all --out v5_model --history eAMFCalibrator/out/match_history.csv
+python -m eAMFCalibrator report --candidate v5 --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v5
+python -m unittest eAMFModel.tests.test_v5
+```
+
 ## Run it
 
 ```bash

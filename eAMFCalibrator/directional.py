@@ -1174,6 +1174,33 @@ def line_cells(pairs, key_function, n_bootstrap=500):
     return cells
 
 
+def line_error_cells(pairs, key_function, n_bootstrap=500):
+    """Per cell, each stream's line error in points -- |line - result| --
+    over EVERY live pair with a line, same line or not (a shared line
+    counts the same for both). Unlike line_cells this covers one
+    population whatever the candidate quotes, so several candidates can
+    be read against one prod figure."""
+    grouped = defaultdict(list)
+    for pair in pairs:
+        if pair.comparable(LINE):
+            grouped[key_function(pair)].append(pair)
+    cells = {}
+    for key, subset in grouped.items():
+        points = paired_delta_summary(subset, ABSOLUTE, LINE, n_bootstrap)
+        cells[key] = {
+            "n": len(subset),
+            "matches": len({p.match_code for p in subset}),
+            "same_share": sum(1 for p in subset if p.same_line) / len(subset),
+            "prod_line_error": sum(p.prod_line_error for p in subset) / len(subset),
+            "candidate_line_error": sum(p.candidate_line_error for p in subset) / len(subset),
+            "points_delta": points["mean"],
+            "ci_low": points["ci_low"],
+            "ci_high": points["ci_high"],
+            "p_value": points["p_value"],
+        }
+    return cells
+
+
 def possession_label(pair):
     return buckets.possession_bucket(pair.offensive_team)
 
@@ -1417,7 +1444,13 @@ def build_full_report(pairs, n_bootstrap=2000):
         })
 
     full = calibration_cells(pairs, cell_key)
+    for axis, (_, key_function, _) in zip(axes, CROSS_AXES):
+        axis["line_error"] = line_error_cells(pairs, key_function)
     return {
+        "line_error": {
+            "all": line_error_cells(pairs, lambda p: "all", n_bootstrap),
+            "market": line_error_cells(pairs, market_label, n_bootstrap),
+        },
         "summary": build_summary(pairs, n_bootstrap),
         "complement": complement_report(pairs),
         "spread": spread_interpretation_report(pairs),

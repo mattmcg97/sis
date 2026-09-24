@@ -1,18 +1,24 @@
-"""v4: price PLAY_OVER snapshots with the play-by-play simulation (sim4.py).
+"""v5: price PLAY_OVER snapshots with the play-by-play simulation (sim5.py).
 
-v4 starts as a copy of v3 (v3.py is left as it is) and changes:
+v5 starts as a copy of v4 (v4.py is left as it is: NB2's pre-match
+prior, common random numbers with a fixed seed per match, player profiles,
+its own even lines) and adds play calling by game state (sim5.py):
 
-  * the league's efficiency by quarter is fitted on the states real games
-    pass through -- the start of each quarter of every training match --
-    so the points the simulation expects from a real in-game state match
-    what real games scored from there. v3 fitted it only from kickoff,
-    and from real states it expected 0.3-0.6 points too many at every
-    quarter (4-6% of what was left);
-  * common random numbers in the simulation (sim4.py): consecutive
-    snapshots of a match no longer jitter from Monte Carlo noise;
-  * player profiles (players.py: pace and 4th-down aggression) are built
-    with the model from the export's player handles and applied whenever
-    a match's handles are known.
+  * the play call -- one that stops the clock (an incompletion or out of
+    bounds: a pass, mostly) or one that keeps it running (a run, a
+    completion in bounds) -- as likely as real offenses make it in that
+    quarter, 40-second slice of it and lead, with the yards then drawn
+    from real plays of that kind;
+  * the clock each kind of play uses in that state (a leader milking the
+    play clock, a trailer hurrying);
+  * the rubber band: offenses' efficiency by state, from their real
+    first-down success, and a pull per half (fit_rubber_band) solved so
+    that from real in-game states the simulated share of a lead that comes
+    back by the end matches the real one. With the play-level fit it
+    came out at zero: leads already come back as fast as in real games.
+
+The fourth quarter is left to v4's end-game tables: on held-out weeks
+every shift cost a little there. See the eAMFModel README for the tests.
 
 What follows is v3's description, which still holds.
 
@@ -44,7 +50,7 @@ from collections import Counter
 
 import numpy as np
 
-from . import nb2_prior, playover, players, sim4 as sim
+from . import nb2_prior, playover, players, sim5 as sim
 from .pricer import HOME
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
@@ -343,7 +349,7 @@ def _fill(start, i, fields):
 
 
 class Variant:
-    """One way of running v4 (what it reacts to). By default: no in-game
+    """One way of running v5 (what it reacts to). By default: no in-game
     efficiency update (it measured as noise), player profiles on."""
 
     def __init__(self, name, kappa=KAPPA, react=False, theta_sd=False, profiles=True,
@@ -524,6 +530,96 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
     return tables.period_theta.copy(), got, real
 
 
+def in_game_states(matches, grid, every=5):
+    """Every `every`-th scrimmage PLAY_OVER of each match, with the match's
+    prior (off prod's pre-match lines: this only fits in-game behaviour, on
+    the matches the tables are built from) and how far the offense's lead
+    really moved from there to the final whistle:
+    [(GameState, theta0, offense's lead, real change in it)]."""
+    out = []
+    for rows in matches.values():
+        rows = resolve_sides(rows)
+        lines = prior_lines(rows)
+        if lines is None or rows[0].get("final_p1") in ("", None):
+            continue
+        theta0 = grid.fit(*lines)
+        final = int(float(rows[0]["final_p1"])) - int(float(rows[0]["final_p2"]))
+        for r in rows[::every]:
+            state, _ = playover.state_for(r)
+            if state is None or state.down is None or state.pending_conversion is not None \
+                    or not 1 <= state.period <= 4:
+                continue
+            sign = 1 if state.offense == HOME else -1
+            lead = sign * (state.home_score - state.away_score)
+            out.append((state, theta0, lead, sign * final - lead))
+    return out
+
+
+BAND_LEAD = 7.0          # a score: the band's pull is per score of lead
+
+
+def _band_shift(pull, cells=None):
+    """Each cell's efficiency shift from the band's pull by half: an offense
+    ahead by L plays pull * L / BAND_LEAD worse (behind, that much better),
+    the lead taken at its cell's middle and capped at three scores."""
+    cells = np.arange(sim.N_CELLS) if cells is None else cells
+    half = (cells // (sim.CLOCK_CELLS * sim.LEAD_CELLS)) // 2
+    mid = np.array([-14.0, -4.0, 0.0, 4.0, 14.0])[cells % sim.LEAD_CELLS]
+    return -np.asarray(pull)[half] * mid / BAND_LEAD * sim._quarter_mask()[cells]
+
+
+def _slopes(changes, leads, halves):
+    """By half: the least-squares slope of the offense's lead change on its
+    lead, leads capped at three scores."""
+    out = np.zeros(2)
+    x_all = np.clip(leads, -21, 21)
+    for h in (0, 1):
+        on = halves == h
+        x, y = x_all[on], changes[on]
+        out[h] = ((x - x.mean()) * (y - y.mean())).sum() / max(1e-9, ((x - x.mean()) ** 2).sum())
+    return out
+
+
+def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False):
+    """The rubber band, fitted where it shows: from real in-game states,
+    how fast a lead comes back by the end -- the slope of the offense's
+    lead change on its lead, by half -- simulated against real. The pull
+    (see _band_shift) is solved for by the secant method, on top of the
+    snap-level fit. Returns (pull, simulated slopes, real slopes)."""
+    base = tables.eff_shift.copy()
+    leads = np.array([lead for _, _, lead, _ in items], dtype=float)
+    halves = np.array([0 if st.period <= 2 else 1 for st, *_ in items])
+    real = _slopes(np.array([ch for *_, ch in items], dtype=float), leads, halves)
+    start = sim.Start(len(items))
+    sign = np.zeros(len(items))
+    for i, (st, theta0, _, _) in enumerate(items):
+        _fill(start, i, start_from(st))
+        start.theta[i] = theta0
+        sign[i] = 1 if st.offense == HOME else -1
+
+    def simulated(pull):
+        tables.eff_shift = base + _band_shift(pull)
+        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1)
+        return _slopes(sign * (home - away).mean(1) - leads, leads, halves)
+
+    pull0, got0 = np.zeros(2), simulated(np.zeros(2))
+    pull1 = np.full(2, 0.1)
+    got1 = simulated(pull1)
+    for rnd in range(rounds):
+        if verbose:
+            print(f"    round {rnd}: pull {pull1} slopes real {real} simulated {got1}")
+        moved = np.abs(pull1 - pull0) > 1e-6
+        d = np.where(moved, (got1 - got0) / np.where(moved, pull1 - pull0, 1.0), -0.1)
+        d = np.minimum(d, -0.01)                  # more pull, more of the lead comes back
+        step = np.clip((real - got1) / d, -0.3, 0.3)
+        pull0, got0 = pull1, got1
+        # negative when the snap-level fit already brings leads back too fast
+        pull1 = np.clip(pull1 + step, -1.0, 1.0)
+        got1 = simulated(pull1)
+    tables.eff_shift = base + _band_shift(pull1)
+    return pull1, got1, real
+
+
 RECENT_DAYS = 7          # the window the pre-match total correction is read over
 SHADE_PRIOR = 200        # matches' worth of evidence that the correction is zero
 
@@ -549,7 +645,7 @@ def recent_total_shade(matches, days=RECENT_DAYS, prior_n=SHADE_PRIOR):
     matches -- shrunk toward 0 by `prior_n` matches' worth of evidence.
     Returns (shade, matches used, raw over rate, prod's mean P(over)).
 
-    Prod's pre-match total is what v3 and v4 take a match's scoring level
+    Prod's pre-match total is what v3 and v5 take a match's scoring level
     from. Through September its lines fell behind the scoring: games that
     prod priced 50% to go over went over 50% of the time in late August and
     45-47% by mid September. The shade carries the latest week's miss into
@@ -582,8 +678,11 @@ def recent_total_shade(matches, days=RECENT_DAYS, prior_n=SHADE_PRIOR):
 def in_game_check(tables, grid, matches, n_paths=300, seed=0):
     """From the first PLAY_OVER of each quarter of these matches: the points
     real games scored in the rest of that quarter against what the
-    simulation expects. A check printed by the build -- not fitted, since
-    any in-game level is undone by the pre-match fit to prod's total."""
+    simulation expects. A check printed by the build, not fitted -- and it
+    reads low on the real side: a quarter's last row often does not yet
+    show the points of its last scoring play (they appear on the next
+    quarter's first row), so "real" misses 0.4-0.7 a quarter. Judge the
+    model on final scores (the calibrator, `v5`), not on this."""
     items = quarter_start_states(matches, grid)
     _, got, real = fit_period_theta_states(tables, items, rounds=1, n_paths=n_paths, seed=seed)
     return got, real
@@ -593,8 +692,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
           shade_days=RECENT_DAYS, shade_prior=SHADE_PRIOR, history=None, before=None):
     """Tables, the league's efficiency by quarter (from kickoff, as v3), the
     prior grid with the recent pre-match total correction, and the player
-    profiles from {match: export rows}; written to out_dir as v4tables.npz,
-    v4grid.npz and v4players.json (when any handles are known).
+    profiles from {match: export rows}; written to out_dir as v5tables.npz,
+    v5grid.npz and v5players.json (when any handles are known).
     Returns (tables path, grid path)."""
     import copy
     import os
@@ -602,6 +701,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
     tables = sim.Tables.build(matches)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
+    # the rubber band, from real in-game states (with a quick grid for
+    # each match's prior), then the quarters again
+    items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)))
+    if len(items) >= 200 and "band" in sim.PLAY_CALLING:
+        pull, band_got, band_real = fit_rubber_band(tables, items)
+        offsets, got = sim.fit_period_theta(tables, real)
+        if verbose:
+            print("  rubber band: of every point of lead, how much comes back by the end, "
+                  f"real / simulated -- first half {-band_real[0]:.3f} / {-band_got[0]:.3f}, "
+                  f"second half {-band_real[1]:.3f} / {-band_got[1]:.3f}; pull per score "
+                  f"{pull[0]:.2f} / {pull[1]:.2f}")
     shade, n, rate, prod = recent_total_shade(matches, shade_days, shade_prior)
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
@@ -610,8 +720,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
         if n and history is None:
             print(f"  pre-match total, last {shade_days} days: {n} matches went over prod's line "
                   f"{rate:.1%} of the time at a priced {prod:.1%} -> P(over) shaded {shade:+.3f}")
-    tables_path = os.path.join(out_dir, "v4tables.npz")
-    grid_path = os.path.join(out_dir, "v4grid.npz")
+    tables_path = os.path.join(out_dir, "v5tables.npz")
+    grid_path = os.path.join(out_dir, "v5grid.npz")
     tables.save(tables_path)
     grid = PriorGrid.build(tables, n_paths=grid_paths)
     # the correction to prod's pre-match total only matters when prod's
@@ -644,7 +754,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None,
     handles = {c: h for c, h in handles.items() if h}
     if handles:
         book = players.build(matches, handles)
-        book.save(os.path.join(out_dir, "v4players.json"))
+        book.save(os.path.join(out_dir, "v5players.json"))
         if verbose:
             print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
     elif verbose:
@@ -664,13 +774,13 @@ def players_book(model_dir_or_tables):
     """The model's player profiles, or None."""
     import os
     d = model_dir_or_tables if os.path.isdir(model_dir_or_tables) else os.path.dirname(model_dir_or_tables)
-    path = os.path.join(d, "v4players.json")
+    path = os.path.join(d, "v5players.json")
     return players.Book.load(path) if os.path.exists(path) else None
 
 
 def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, workers=4,
         seed=0, book=None, handles=None, require_live=True, priors=None, history=None):
-    """Grade v4 on an export. `priors`: match -> (home points, away points)
+    """Grade v5 on an export. `priors`: match -> (home points, away points)
     from our own pre-match model; or `history` (AMFELO-shaped rows covering
     the graded matches) to have the model's NB2 predict them. Either way the
     prior comes only from there, never from prod's pre-match quotes."""
@@ -680,11 +790,11 @@ def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, work
     pre = prematch_model(tables_path) if priors is None else None
     if priors is None and history is not None:
         if pre is None:
-            raise SystemExit("this v4 model has no NB2 pre-match model: rebuild it with --history")
+            raise SystemExit("this v5 model has no NB2 pre-match model: rebuild it with --history")
         wanted = set(by_match) if matches is None else set(matches)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
     elif priors is None and pre is not None:
-        raise SystemExit("this v4 model prices pre-match with NB2: pass --history (the matches'"
+        raise SystemExit("this v5 model prices pre-match with NB2: pass --history (the matches'"
                          " players, teams and streams, e.g. eAMFCalibrator history's CSV)")
     codes = sorted(by_match) if matches is None else [c for c in matches if c in by_match]
     items = [(c, by_match[c]) for c in codes]

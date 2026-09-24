@@ -79,6 +79,9 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
 | `--v4-model DIR` | `eAMFModel v4-build` output for `--candidate v4` (default `$EAMF_V4_MODEL`, then `./v4_model`) |
 | `--v4-paths N` | games simulated per snapshot for `--candidate v4` (default 2000) |
+| `--v4-lines own\|prod` | `--candidate v4`: quote v4's own even line, moved as the game moves (`own`, the default), or read v4's price at prod's line (`prod`) |
+| `--candidate A,B` | several candidates side by side in one report (see below) |
+| `--v5-model DIR`, `--v5-paths N`, `--v5-lines own\|prod` | the same for `--candidate v5` (`eAMFModel v5-build`; default `$EAMF_V5_MODEL`, then `./v5_model`) |
 | `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
@@ -1361,4 +1364,53 @@ match's players, teams and stream from `EVENT`. That needs pandas and scipy
 as well as numpy. A model built without `--history` falls back to prod's
 pre-match quotes and says so.
 
+v4 quotes its own even line on the spread and the total, so pairs split
+between the same line (compared on probability) and a different line
+(compared on whose line landed nearer the result). `--v4-lines prod`
+reads v4's price at prod's line instead, so every pair is on the same line.
+
 What v4 changes is in the eAMFModel README.
+
+`--candidate v5` works the same way off `eAMFModel v5-build`'s model
+(`--v5-model`), and the reports call it v5 (`eamf_report_v5.html`).
+
+## Several candidates in one report: `--candidate v4,v5`
+
+```bash
+python -m eAMFCalibrator report --candidate v4,v5 --v4-model v4_model --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v4_v5
+```
+
+Name any number of candidates, comma-separated, and the report sets each one
+beside prod: every table reads real, prod, then a group of columns per
+candidate. The file is `eamf_report_v4_v5.html`. To move on to a new
+version, change the names on the command line.
+
+- **One population.** Every candidate is paired with prod in its own pass,
+  then all of them are cut to the snapshots every candidate paired. So
+  prod's figures and the real outcomes are the same beside every
+  candidate. The Run table counts what was dropped for want of one.
+- **Two readings of a model.** A model that quotes its own lines (v4, v5)
+  is read at prod's line for the calibration tables, where its probability
+  answers prod's question. It's read at its own line for the line tables,
+  where the question is whose line landed nearer the result. One simulation
+  gives both, so the second costs a pairing pass and no simulation, and
+  repeated Snowflake queries are answered from memory.
+- **Sections.**
+  - Directional calibration: Brier at prod's line, line error at each
+    side's own line, how often the lines matched, and the match votes.
+  - By market.
+  - Cross-section calibration.
+  - Score difference, Quarter and Possession, each its own section with the
+    calibration at prod's line and each side's line error.
+  - Pre-match.
+  - In-drive.
+  - Additional checks.
+  - Every pair.
+- **Every pair** carries prod's line, probability, result and error, and
+  for each candidate its own line and probability, its probability at
+  prod's line, the difference from prod, its result, its error and who
+  was closer. The rows are drawn in the browser from the embedded data:
+  the first 2,000 of whatever is sorted or filtered are shown, and the
+  match filter searches all of them.
+
+With one candidate the page is the same with one group of columns.

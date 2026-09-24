@@ -104,18 +104,9 @@ CSS = r'''<style>
   td.g2{color:var(--g2);font-weight:600}
   td.g3{color:var(--g3);font-weight:600}
   td.g4{color:var(--g4);font-weight:600}
-  .gapkey{display:flex;flex-wrap:wrap;gap:3px;align-items:center;margin:0 0 8px;
            font-size:10.5px;font-variant-numeric:tabular-nums}
-  .gapkey .klab{color:var(--dim);text-transform:uppercase;letter-spacing:0.04em;
                  margin-right:5px}
-  .gapkey .klab+.klab,.gapkey .key+.klab{margin-left:6px;margin-right:0}
-  .key{padding:1px 6px;border-radius:3px;border:1px solid var(--line);
         font-weight:600}
-  .key.g0{color:var(--g0)}
-  .key.g1{color:var(--g1)}
-  .key.g2{color:var(--g2)}
-  .key.g3{color:var(--g3)}
-  .key.g4{color:var(--g4)}
   .dim{color:var(--dim);font-weight:400}
   .stats{display:flex;flex-wrap:wrap;gap:6px 20px;margin:0}
   .stats dt{color:var(--dim);font-size:10.5px;text-transform:uppercase;
@@ -144,8 +135,10 @@ CSS = r'''<style>
   tbody tr.picked .dim{color:var(--ink)}
   code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px}
   details.panel{padding:0}
-  details.panel > summary{cursor:pointer;padding:12px 14px;font-size:13px;
-                           font-weight:600;list-style:none}
+  details.panel > summary{cursor:pointer;padding:12px 14px;font-size:14px;
+                           font-weight:700;letter-spacing:-0.005em;list-style:none}
+  /* each candidate's group of columns starts with a rule */
+  th.grp,td.grp{border-left:2px solid var(--line)}
   details.panel > summary::-webkit-details-marker{display:none}
   details.panel > summary::before{content:"\25B8 ";color:var(--dim)}
   details.panel[open] > summary::before{content:"\25BE "}

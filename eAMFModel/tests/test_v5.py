@@ -1,5 +1,6 @@
-"""v4: v3's simulation with in-game quarter calibration, common random
-numbers and player profiles (sim4.py, v4.py, v4_stream.py)."""
+"""v5: v4 (copied as it was) plus play calling -- clock-stopping or
+clock-running plays called by game state, the clock each uses by state,
+and the rubber band (sim5.py, v5.py, v5_stream.py)."""
 
 import csv
 import datetime as dt
@@ -13,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import nb2_prior, sim, sim4, v4, v4_stream
+from .. import nb2_prior, sim, sim4, sim5, v5, v5_stream
 from .test_v3 import _matches
 
 
@@ -30,13 +31,13 @@ def _with_handles(matches):
 class TestCommonRandomNumbers(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.tables = sim4.Tables.build(_matches(), min_records=20)
+        cls.tables = sim5.Tables.build(_matches(), min_records=20)
 
     def _two_of(self, common):
-        st = sim4.Start(2)
-        st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim4.SCRIM
+        st = sim5.Start(2)
+        st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim5.SCRIM
         st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 14, 10
-        return sim4.simulate(self.tables, st, 300, np.random.default_rng(1), common=common)
+        return sim5.simulate(self.tables, st, 300, np.random.default_rng(1), common=common)
 
     def test_the_same_state_twice_plays_the_same_games(self):
         h, a = self._two_of(True)
@@ -46,14 +47,113 @@ class TestCommonRandomNumbers(unittest.TestCase):
 
     def test_the_stream_is_uniform_and_repeatable(self):
         path, step = np.arange(20000), np.full(20000, 3)
-        u = sim4._uniform(12345, path, step, 7)
+        u = sim5._uniform(12345, path, step, 7)
         self.assertTrue(((u >= 0) & (u < 1)).all())
         self.assertAlmostEqual(float(u.mean()), 0.5, delta=0.01)
-        self.assertTrue((u == sim4._uniform(12345, path, step, 7)).all())
-        self.assertFalse((u == sim4._uniform(12345, path, step, 8)).all())
+        self.assertTrue((u == sim5._uniform(12345, path, step, 7)).all())
+        self.assertFalse((u == sim5._uniform(12345, path, step, 8)).all())
 
     def test_v3_is_left_as_it_was(self):
         self.assertNotIn("common", inspect.signature(sim.simulate).parameters)
+
+
+class TestPlayCalling(unittest.TestCase):
+    """The play call (a clock-stopping play or one that keeps the clock
+    running), the clock each uses and the rubber band, by game state."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.matches = _matches(60)
+        cls.tables = sim5.Tables.build(cls.matches, min_records=20)
+
+    def test_the_cells_agree(self):
+        for period, clock, lead in ((1, 240, 0), (2, 119.5, -3), (3, 1, 21), (4, 80, 9), (5, 200, -9)):
+            self.assertEqual(sim5.cell_index(period, clock, lead),
+                             int(sim5._cells_np(np.array([period]), np.array([float(clock)]),
+                                                np.array([lead]))[0]))
+        self.assertEqual(sim5.cell_index(4, 0.5, 30), sim5.N_CELLS - 1)
+
+    def test_each_bin_lays_out_its_stopping_plays_first(self):
+        t = self.tables
+        self.assertTrue(((0 <= t.n_stop) & (t.n_stop <= t.count)).all())
+        for key in range(0, sim5.N_KEYS, 13):
+            a, n, m = t.start[key], t.count[key], t.n_stop[key]
+            secs = t.seconds[a:a + n]
+            self.assertTrue((secs[:m] <= sim5.STOP_SECONDS).all())
+            self.assertTrue((secs[m:] > sim5.STOP_SECONDS).all())
+
+    def test_the_fit_finds_a_planted_state_effect(self):
+        import copy
+        snaps = [r for rows in self.matches.values() for r in sim5.snap_records(rows)]
+        target = sim5.cell_index(3, 150, 5)
+        planted = []
+        for r in snaps:
+            r = dict(r)
+            if sim5.cell_index(r["period"], r["clock"], r["margin"]) == target \
+                    and r["seconds"] > sim5.STOP_SECONDS:
+                r["seconds"] += 8                  # leaders here take 8 s longer
+            planted.append(r)
+        t = copy.deepcopy(self.tables)
+        sim5.fit_play_calling(t, planted)
+        sim5.fit_play_calling(self.tables, snaps)
+        gained = t.sec_shift[sim5.RUNNING, target] - self.tables.sec_shift[sim5.RUNNING, target]
+        n = sum(1 for r in snaps if sim5.cell_index(r["period"], r["clock"], r["margin"]) == target
+                and r["seconds"] > sim5.STOP_SECONDS and r["clock"] >= sim5.UNCUT_SECONDS)
+        self.assertGreater(n, 10)
+        # the 8 s, shrunk toward 0 by SECONDS_PRIOR snaps
+        self.assertAlmostEqual(gained, 8 * n / (n + sim5.SECONDS_PRIOR), places=6)
+        self.assertLess(abs(t.sec_shift[sim5.STOP, target] - self.tables.sec_shift[sim5.STOP, target]), 1e-9)
+
+    def test_the_fourth_quarter_is_left_to_the_end_game_tables(self):
+        q4 = np.arange(sim5.N_CELLS) // (sim5.CLOCK_CELLS * sim5.LEAD_CELLS) == 3
+        t = self.tables
+        self.assertTrue((t.stop_shift[q4] == 0).all() and (t.sec_shift[:, q4] == 0).all()
+                        and (t.eff_shift[q4] == 0).all())
+        self.assertTrue(np.abs(t.sec_shift[:, ~q4]).sum() > 0)
+        self.assertTrue((v5._band_shift(np.array([0.3, 0.3]))[q4] == 0).all())
+
+    def _q3_leader_with_ball(self, n=3000, **shift):
+        import copy
+        t = copy.deepcopy(self.tables)
+        for name, (cells, value) in shift.items():
+            arr = getattr(t, name)
+            if arr.ndim == 2:
+                arr[sim5.RUNNING, cells] += value
+            else:
+                arr[cells] += value
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 3, 200.0, sim5.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 30, 17, 10
+        h, a = sim5.simulate(t, st, n, np.random.default_rng(1), seed=5)
+        return (h + a).mean(), (h - a).mean()
+
+    def test_a_leader_milking_the_clock_leaves_fewer_points(self):
+        lead = [c for c in range(sim5.N_CELLS) if c % sim5.LEAD_CELLS >= 3 and c // (sim5.CLOCK_CELLS * sim5.LEAD_CELLS) >= 2]
+        plain, _ = self._q3_leader_with_ball()
+        milked, _ = self._q3_leader_with_ball(sec_shift=(lead, 15.0))
+        self.assertLess(milked, plain - 0.5)
+
+    def test_the_rubber_band_pulls_a_lead_back(self):
+        trail = [c for c in range(sim5.N_CELLS) if c % sim5.LEAD_CELLS <= 1]
+        lead = [c for c in range(sim5.N_CELLS) if c % sim5.LEAD_CELLS >= 3]
+        _, plain = self._q3_leader_with_ball()
+        _, banded = self._q3_leader_with_ball(eff_shift=(trail, 0.4))
+        self.assertLess(banded, plain - 0.3)
+        _, eased = self._q3_leader_with_ball(eff_shift=(lead, -0.4))
+        self.assertLess(eased, plain - 0.3)
+
+    def test_v4s_tables_play_as_v4(self):
+        t4 = sim4.Tables.build(self.matches, min_records=20)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.npz")
+            t4.save(path)
+            t5 = sim5.Tables.load(path)
+        st = sim4.Start(2)
+        st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim4.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 14, 10
+        a = sim4.simulate(t4, st, 400, np.random.default_rng(1), seed=9)
+        b = sim5.simulate(t5, st, 400, np.random.default_rng(1), seed=9)
+        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
 
 class TestBuild(unittest.TestCase):
@@ -61,18 +161,18 @@ class TestBuild(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.matches = _with_handles(_matches(40))
-        v4.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
-        cls.tables = sim4.Tables.load(os.path.join(cls.tmp.name, "v4tables.npz"))
-        cls.grid = v4.PriorGrid.load(os.path.join(cls.tmp.name, "v4grid.npz"))
+        v5.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
+        cls.tables = sim5.Tables.load(os.path.join(cls.tmp.name, "v5tables.npz"))
+        cls.grid = v5.PriorGrid.load(os.path.join(cls.tmp.name, "v5grid.npz"))
 
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
     def test_writes_the_model_and_the_profiles(self):
-        for name in ("v4tables.npz", "v4grid.npz", "v4players.json"):
+        for name in ("v5tables.npz", "v5grid.npz", "v5players.json"):
             self.assertTrue(os.path.exists(os.path.join(self.tmp.name, name)), name)
-        book = v4.players_book(self.tmp.name)
+        book = v5.players_book(self.tmp.name)
         self.assertEqual(set(book.players), {"ALPHA", "BRAVO", "CHARLIE", "DELTA"})
 
     def test_the_quarter_fit_on_real_states_converges_when_asked(self):
@@ -80,9 +180,9 @@ class TestBuild(unittest.TestCase):
         # and thetas the fit does bring the quarters to what games scored
         import copy
         tables = copy.deepcopy(self.tables)
-        items = v4.quarter_start_states(self.matches, self.grid)
-        v4.fit_period_theta_states(tables, items, rounds=6, n_paths=300)
-        _, got, real = v4.fit_period_theta_states(tables, items, rounds=1, n_paths=300)
+        items = v5.quarter_start_states(self.matches, self.grid)
+        v5.fit_period_theta_states(tables, items, rounds=6, n_paths=300)
+        _, got, real = v5.fit_period_theta_states(tables, items, rounds=1, n_paths=300)
         for q in real:
             self.assertAlmostEqual(got[q], real[q], delta=max(0.4, 0.08 * real[q]))
 
@@ -97,13 +197,13 @@ class TestBuild(unittest.TestCase):
                                        "prematch_line_54": "30.5", "prematch_prob_54": "0.5",
                                        "prematch_prob_50": "0.5",
                                        "final_p1": str(total // 2), "final_p2": str(total - total // 2)}]
-        shade, n, rate, prod = v4.recent_total_shade(matches, days=7, prior_n=200)
+        shade, n, rate, prod = v5.recent_total_shade(matches, days=7, prior_n=200)
         recent = [i for i in range(60) if i % 10 >= 3]          # the last 7 of the 10 days
         self.assertEqual(n, len(recent))
         self.assertAlmostEqual(rate, sum(i % 4 == 0 for i in recent) / len(recent), places=9)
         self.assertAlmostEqual(prod, 0.5, places=9)
         self.assertAlmostEqual(shade, (rate - 0.5) * n / (n + 200), places=9)
-        self.assertEqual(v4.recent_total_shade({}, 7)[0], 0.0)
+        self.assertEqual(v5.recent_total_shade({}, 7)[0], 0.0)
 
     def test_the_shade_lowers_the_prior_level(self):
         import copy
@@ -115,8 +215,8 @@ class TestBuild(unittest.TestCase):
 
     def test_handles_come_off_the_export(self):
         rows = next(iter(self.matches.values()))
-        self.assertEqual(v4.handles_of(rows), (rows[0]["home_handle"], rows[0]["away_handle"]))
-        self.assertIsNone(v4.handles_of([{"home_handle": "", "away_handle": None}]))
+        self.assertEqual(v5.handles_of(rows), (rows[0]["home_handle"], rows[0]["away_handle"]))
+        self.assertIsNone(v5.handles_of([{"home_handle": "", "away_handle": None}]))
 
     def test_grades_a_snapshot_file_with_profiles(self):
         rng = random.Random(1)
@@ -132,40 +232,40 @@ class TestBuild(unittest.TestCase):
             w.writeheader()
             for rows in self.matches.values():
                 w.writerows(rows)
-        graded, _ = v4.run(path, os.path.join(self.tmp.name, "v4tables.npz"),
-                           os.path.join(self.tmp.name, "v4grid.npz"),
-                           [v4.Variant("v4"), v4.Variant("plain", profiles=False, pace=False)],
+        graded, _ = v5.run(path, os.path.join(self.tmp.name, "v5tables.npz"),
+                           os.path.join(self.tmp.name, "v5grid.npz"),
+                           [v5.Variant("v5"), v5.Variant("plain", profiles=False, pace=False)],
                            n_paths=100, workers=1)
         self.assertGreater(len(graded), 50)
         for _, row, probs in graded:
-            self.assertTrue(0 < probs["v4"] < 1 and 0 < probs["plain"] < 1)
+            self.assertTrue(0 < probs["v5"] < 1 and 0 < probs["plain"] < 1)
 
     def test_the_stream_finds_the_model_and_quotes(self):
         rows = next(iter(self.matches.values()))
         code = rows[0]["match_code"]
         prod = [(code, 54, None, 50.0, 2.0, "Total points over 30.5", int(r["message"]), "OPEN", "true")
                 for r in rows]
-        quotes = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50, workers=1)
+        quotes = v5_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50, workers=1)
         self.assertTrue(quotes)
         self.assertTrue(all(q[1] == 54 and 0 < q[3] < 100 for q in quotes))
 
     def test_fit_means_finds_the_thetas_that_score_the_points(self):
         g = self.grid
-        x_m = np.arange(g.margin.shape[-1]) - v4.MARGIN_MAX
+        x_m = np.arange(g.margin.shape[-1]) - v5.MARGIN_MAX
         x_t = np.arange(g.total.shape[-1])
         for i, j in ((8, 8), (4, 11), (12, 6)):
             margin, total = (g.margin[i, j] * x_m).sum(), (g.total[i, j] * x_t).sum()
-            got = v4.fit_means(g, (total + margin) / 2, (total - margin) / 2)
+            got = v5.fit_means(g, (total + margin) / 2, (total - margin) / 2)
             self.assertAlmostEqual(got[0], g.grid[i], delta=0.02)
             self.assertAlmostEqual(got[1], g.grid[j], delta=0.02)
-        low, high = v4.fit_means(g, 14, 14), v4.fit_means(g, 24, 24)
+        low, high = v5.fit_means(g, 14, 14), v5.fit_means(g, 24, 24)
         self.assertLess(sum(low), sum(high))
 
     def test_a_fixed_seed_prices_a_match_the_same_every_time(self):
         rows = next(iter(self.matches.values()))
-        a = v4_stream.match_books(self.tables, self.grid, v4.Variant("v4"), rows, 80,
+        a = v5_stream.match_books(self.tables, self.grid, v5.Variant("v5"), rows, 80,
                                   np.random.default_rng(1), means=(20.0, 14.0))
-        b = v4_stream.match_books(self.tables, self.grid, v4.Variant("v4"), rows, 80,
+        b = v5_stream.match_books(self.tables, self.grid, v5.Variant("v5"), rows, 80,
                                   np.random.default_rng(99), means=(20.0, 14.0))
         self.assertTrue(a)
         for (m1, mp1, tp1), (m2, mp2, tp2) in zip(a, b):
@@ -178,9 +278,9 @@ class TestBuild(unittest.TestCase):
                       prematch_line_54="80.5", prematch_prob_54="0.9", prematch_prob_50="0.99",
                       line_52="-20.5", prob_52="0.9", line_54="80.5", prob_54="0.9")
                  for r in rows]
-        args = (self.tables, self.grid, v4.Variant("v4"))
-        a = v4_stream.match_books(*args, rows, 80, np.random.default_rng(1), means=(20.0, 14.0))
-        b = v4_stream.match_books(*args, other, 80, np.random.default_rng(1), means=(20.0, 14.0))
+        args = (self.tables, self.grid, v5.Variant("v5"))
+        a = v5_stream.match_books(*args, rows, 80, np.random.default_rng(1), means=(20.0, 14.0))
+        b = v5_stream.match_books(*args, other, 80, np.random.default_rng(1), means=(20.0, 14.0))
         for (_, mp1, tp1), (_, mp2, tp2) in zip(a, b):
             self.assertTrue(np.array_equal(mp1, mp2) and np.array_equal(tp1, tp2))
 
@@ -192,7 +292,7 @@ class TestBuild(unittest.TestCase):
 
     def test_a_model_with_nb2_takes_its_prior_from_there(self):
         path = self._snapshot_file()
-        tables, grid = (os.path.join(self.tmp.name, n) for n in ("v4tables.npz", "v4grid.npz"))
+        tables, grid = (os.path.join(self.tmp.name, n) for n in ("v5tables.npz", "v5grid.npz"))
         codes = sorted(self.matches)[:6]
 
         class Fake:
@@ -205,19 +305,19 @@ class TestBuild(unittest.TestCase):
                 return {r["MATCH_CODE"]: self.level for r in schedule}
 
         history = [{"MATCH_CODE": c} for c in codes]
-        with mock.patch.object(v4, "prematch_model", return_value=Fake((12.0, 12.0))):
+        with mock.patch.object(v5, "prematch_model", return_value=Fake((12.0, 12.0))):
             with self.assertRaises(SystemExit) as caught:
-                v4.run(path, tables, grid, [v4.Variant("v4")], matches=codes, workers=1)
+                v5.run(path, tables, grid, [v5.Variant("v5")], matches=codes, workers=1)
             self.assertIn("--history", str(caught.exception))
-            low, _ = v4.run(path, tables, grid, [v4.Variant("v4")], matches=codes, n_paths=100,
+            low, _ = v5.run(path, tables, grid, [v5.Variant("v5")], matches=codes, n_paths=100,
                             workers=1, history=history)
-        with mock.patch.object(v4, "prematch_model", return_value=Fake((26.0, 26.0))):
-            high, _ = v4.run(path, tables, grid, [v4.Variant("v4")], matches=codes, n_paths=100,
+        with mock.patch.object(v5, "prematch_model", return_value=Fake((26.0, 26.0))):
+            high, _ = v5.run(path, tables, grid, [v5.Variant("v5")], matches=codes, n_paths=100,
                              workers=1, history=history)
-        over = lambda graded: np.mean([p["v4"] for _, r, p in graded if r.market_id == 54])
+        over = lambda graded: np.mean([p["v5"] for _, r, p in graded if r.market_id == 54])
         self.assertLess(over(low), over(high))
         # no prediction for a match: skipped, never priced off prod
-        _, skipped = v4.run(path, tables, grid, [v4.Variant("v4")], matches=codes, n_paths=50,
+        _, skipped = v5.run(path, tables, grid, [v5.Variant("v5")], matches=codes, n_paths=50,
                             workers=1, priors={codes[0]: (20.0, 14.0)})
         self.assertGreater(skipped["no_prematch_prediction"], 0)
 
@@ -235,10 +335,10 @@ class TestBuild(unittest.TestCase):
                 Fake.asked = schedule
                 return {}
 
-        with mock.patch.object(v4, "prematch_model", return_value=Fake()):
+        with mock.patch.object(v5, "prematch_model", return_value=Fake()):
             with self.assertRaises(SystemExit):
-                v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50, workers=1)
-            quotes = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50,
+                v5_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50, workers=1)
+            quotes = v5_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50,
                                                   workers=1, match_info=[])
         self.assertTrue(quotes)
         self.assertEqual(Fake.asked, [])
@@ -249,23 +349,23 @@ class TestBuild(unittest.TestCase):
         pmf[[38, 41, 44, 47]] = [0.2, 0.25, 0.3, 0.25]
         # P(> 38.5) = 0.8, P(> 41.5 .. 43.5) = 0.55, P(> 44.5) = 0.25: of the
         # three 0.55 lines, the one nearest the mean (42.8)
-        self.assertEqual(v4.even_line(pmf, 0), 42.5)
-        margin = np.zeros(2 * v4.MARGIN_MAX + 1)
-        margin[v4.MARGIN_MAX + np.array([-3, 3, 7])] = [0.3, 0.45, 0.25]
+        self.assertEqual(v5.even_line(pmf, 0), 42.5)
+        margin = np.zeros(2 * v5.MARGIN_MAX + 1)
+        margin[v5.MARGIN_MAX + np.array([-3, 3, 7])] = [0.3, 0.45, 0.25]
         # -2.5 .. 2.5 all give P(home by more) = 0.7: the one nearest the mean (2.2)
-        self.assertEqual(v4.even_line(margin, v4.MARGIN_MAX), 2.5)
-        line = v4.even_line(margin, v4.MARGIN_MAX)
-        self.assertLessEqual(abs(v4.market_prob(52, line, margin, pmf) - 0.5), 0.2 + 1e-9)
+        self.assertEqual(v5.even_line(margin, v5.MARGIN_MAX), 2.5)
+        line = v5.even_line(margin, v5.MARGIN_MAX)
+        self.assertLessEqual(abs(v5.market_prob(52, line, margin, pmf) - 0.5), 0.2 + 1e-9)
 
     def test_the_stream_moves_its_own_line_with_the_game(self):
         rows = next(iter(self.matches.values()))
         code = rows[0]["match_code"]
-        prod = [(code, m, None, 50.0, 2.0, v4_stream.description(m, 30.5 if m in (54, 55) else 0.5),
+        prod = [(code, m, None, 50.0, 2.0, v5_stream.description(m, 30.5 if m in (54, 55) else 0.5),
                  int(r["message"]), "OPEN", "true") for r in rows for m in (52, 53, 54, 55)]
-        own = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100, workers=1)
-        at_prod = v4_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100,
+        own = v5_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100, workers=1)
+        at_prod = v5_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100,
                                                workers=1, lines="prod")
-        parse = v4_stream._parse_line
+        parse = v5_stream._parse_line
         self.assertEqual({parse(q[5]) for q in at_prod if q[1] == 54}, {30.5})
         totals = [(q[6], parse(q[5])) for q in own if q[1] == 54]
         self.assertGreater(len({t for _, t in totals}), 1)         # it moves with the game
@@ -279,8 +379,8 @@ class TestBuild(unittest.TestCase):
     def test_a_missing_model_says_how_to_build_it(self):
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(SystemExit) as caught:
-                v4_stream.model_paths(empty)
-        self.assertIn("v4-build", str(caught.exception))
+                v5_stream.model_paths(empty)
+        self.assertIn("v5-build", str(caught.exception))
 
 
 _FIT_STUB = """
@@ -375,15 +475,15 @@ class TestNB2Prior(unittest.TestCase):
         self.assertTrue(nb2_prior.Prematch.exists(out))
         self.assertFalse(nb2_prior.Prematch.exists(self.tmp.name))
 
-    def test_v4_build_with_history_writes_the_prematch_model(self):
+    def test_v5_build_with_history_writes_the_prematch_model(self):
         from .test_v3 import _matches
         matches = _matches(12)
-        out = os.path.join(self.tmp.name, "v4")
-        v4.build(matches, out, grid_paths=40, verbose=False, history=self.history(),
+        out = os.path.join(self.tmp.name, "v5")
+        v5.build(matches, out, grid_paths=40, verbose=False, history=self.history(),
                  before=self.BEFORE)
-        self.assertIsNotNone(v4.prematch_model(out))
-        self.assertIsNotNone(v4.prematch_model(os.path.join(out, "v4tables.npz")))
-        self.assertEqual(v4.PriorGrid.load(os.path.join(out, "v4grid.npz")).total_shade, 0.0)
+        self.assertIsNotNone(v5.prematch_model(out))
+        self.assertIsNotNone(v5.prematch_model(os.path.join(out, "v5tables.npz")))
+        self.assertEqual(v5.PriorGrid.load(os.path.join(out, "v5grid.npz")).total_shade, 0.0)
 
     def test_a_failing_script_says_what_went_wrong(self):
         with open(os.path.join(nb2_prior.NB2_DIR, nb2_prior.FIT_SCRIPT), "w") as fh:

@@ -41,12 +41,29 @@ def is_model(stream_table):
 
 
 def stream_name(value):
-    """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table."""
+    """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table.
+    A model with its own lines (v4, v5) read at prod's line instead is
+    'v4@prod'."""
     if is_model(value):
         return MODEL_PREFIX + value.split(":", 1)[1].lower()
-    if value.lower().startswith("v") and value[1:].isdigit():
+    version = value.lower().split("@", 1)[0]
+    if version.startswith("v") and version[1:].isdigit():
         return MODEL_PREFIX + value.lower()
     return value
+
+
+LINE_MODELS = ("v4", "v5")     # versions that quote their own lines
+
+
+def model_version(stream_table):
+    """'MODEL:v4@prod' -> ('v4', 'prod'); ('v4', None) without a suffix."""
+    version = stream_table.split(":", 1)[1] or "v1"
+    name, _, lines = version.lower().partition("@")
+    return name, (lines or None)
+
+
+def has_own_lines(stream_table):
+    return is_model(stream_table) and model_version(stream_table)[0] in LINE_MODELS
 
 
 def source_table(stream_table):
@@ -54,10 +71,28 @@ def source_table(stream_table):
     return config.STREAMS["prod"] if is_model(stream_table) else stream_table
 
 
+# A report with several candidates pairs prod against each in turn: the
+# same plays, scores and prod quotes every time. With config.FETCH_CACHE on
+# each query is run once and answered from here after that.
+_FETCH_CACHE = {}
+
+
 def fetch_all(cur, sql, params=None):
+    key = (sql, tuple(params or ()))
+    if getattr(config, "FETCH_CACHE", False) and key in _FETCH_CACHE:
+        cols, rows = _FETCH_CACHE[key]
+        return list(cols), list(rows)
     cur.execute(sql, params or ())
     cols = [d[0] for d in cur.description]
-    return cols, cur.fetchall()
+    rows = cur.fetchall()
+    if getattr(config, "FETCH_CACHE", False):
+        _FETCH_CACHE[key] = (list(cols), list(rows))
+    return cols, rows
+
+
+def clear_fetch_cache():
+    _FETCH_CACHE.clear()
+    _MODEL_QUOTES.clear()
 
 
 def qualified(table):
@@ -313,11 +348,11 @@ def _model_quotes(cur, stream_table, match_codes):
     a stream table would.
     """
     from eAMFModel import stream as model_stream
-    version = stream_table.split(":", 1)[1] or "v1"
-    if version.lower() == "v3":
+    version, lines = model_version(stream_table)
+    if version == "v3":
         return _v3_quotes(cur, match_codes)
-    if version.lower() == "v4":
-        return _v4_quotes(cur, match_codes)
+    if version in LINE_MODELS:
+        return _v4_quotes(cur, match_codes, version, lines)
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
     scores = fetch_scores(cur, match_codes)
@@ -460,25 +495,45 @@ def _v3_quotes(cur, match_codes):
                                         n_paths=config.V3_PATHS, workers=config.V3_WORKERS)
 
 
-def _v4_quotes(cur, match_codes):
-    """eAMFModel v4, as v3 (same snapshots, same line pairing), with the
-    players' handles attached for v4's player profiles."""
-    _need_numpy("v4")
-    from eAMFModel import v4, v4_stream
-    tables, _ = v4_stream.model_paths(config.V4_MODEL_DIR)   # fail early, with instructions
-    nb2 = v4.prematch_model(tables) is not None
+_MODEL_QUOTES = {}
+
+
+def _v4_quotes(cur, match_codes, name="v4", lines=None):
+    """eAMFModel v4 (or v5, its successor), as v3 (same snapshots), with the
+    players' handles attached for the player profiles.
+
+    Each match is simulated once for both of its line modes -- its own even
+    lines and prod's -- and the other is kept, so a report that reads the
+    model both ways does not simulate it twice."""
+    import importlib
+    _need_numpy(name)
+    model = importlib.import_module(f"eAMFModel.{name}")
+    stream = importlib.import_module(f"eAMFModel.{name}_stream")
+    key = name.upper()
+    model_dir = getattr(config, f"{key}_MODEL_DIR")
+    paths = getattr(config, f"{key}_PATHS")
+    lines = lines or getattr(config, f"{key}_LINES")
+    cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END)
+    caching = getattr(config, "FETCH_CACHE", False)
+    if caching and cache_key in _MODEL_QUOTES:
+        return list(_MODEL_QUOTES[cache_key][lines])
+    tables, _ = stream.model_paths(model_dir)                 # fail early, with instructions
+    nb2 = model.prematch_model(tables) is not None
     if not nb2:
-        print("  v4: this model was built without --history, so its pre-match comes from prod's"
-              " quotes; rebuild it with --history for our own (NB2)", flush=True)
+        print(f"  {name}: this model was built without --history, so its pre-match comes from"
+              " prod's quotes; rebuild it with --history for our own (NB2)", flush=True)
     snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
-    # players, teams and stream for v4's own pre-match model (NB2)
+    # players, teams and stream for the model's own pre-match model (NB2)
     match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
-    print(f"  v4: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
+    print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{config.V4_PATHS:,} games each", flush=True)
-    return v4_stream.quotes_for_matches(snapshots, prod_all, config.V4_MODEL_DIR,
-                                        n_paths=config.V4_PATHS, workers=config.V3_WORKERS,
-                                        match_info=match_info)
+          f"{paths:,} games each", flush=True)
+    both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
+                                     workers=config.V3_WORKERS, match_info=match_info,
+                                     lines=(stream.OWN, stream.PROD_LINES))
+    if caching:
+        _MODEL_QUOTES[cache_key] = both
+    return list(both[lines])
 
 
 def status_profile(cur, stream_table):
