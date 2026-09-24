@@ -1,14 +1,18 @@
-"""v5's simulation: v3's play-by-play simulation (sim.py, copied as the
-starting point and left untouched there), with
+"""v5's simulation: v4's (sim4.py, copied as the starting point and left
+untouched there) with play calling by game state -- see "Game states for
+play calling" below: each bin's plays are split by what they did to the
+clock, and the state (quarter, 40-second slice, the offense's lead)
+decides which kind is called, how long it takes and how well offenses do.
+
+v4's simulation, in turn, is v3's with
 
   * common random numbers: every simulated path draws its randomness from
     its own stream, keyed on the path's number and how many events it has
     played since the snapshot. Two snapshots of one match, priced side by
     side, play out the same luck, so their prices differ by what changed
-    in the game and not by Monte Carlo noise -- the price no longer
-    jitters between messages where nothing happened;
-  * the league's efficiency by quarter fitted on the states real games
-    pass through (fit_period_theta_states), not only from kickoff.
+    in the game and not by Monte Carlo noise;
+  * kneels only with room to take them, and a safety's free kick from the
+    20.
 
 What follows is v3's description.
 
@@ -151,6 +155,16 @@ STOP, RUNNING = 0, 1
 # which parts of the play-calling fit are used ("stop", "seconds", "band"):
 # each can be switched off to see what it is worth on its own
 PLAY_CALLING = {"stop", "seconds", "band"}
+# The quarters the play-calling shifts apply in. The fourth is left to the
+# end-game tables (lead_late, trail_late, tied_late) as in v4: on held-out
+# weeks every shift cost a little there, and together significantly
+# (spread -0.0017, total -0.0024 Brier on Sep 10-22).
+PLAY_CALLING_QUARTERS = (1, 2, 3)
+
+
+def _quarter_mask():
+    q = np.arange(N_CELLS) // (CLOCK_CELLS * LEAD_CELLS) + 1
+    return np.isin(q, PLAY_CALLING_QUARTERS)
 
 
 def lead_cell(lead):
@@ -221,9 +235,10 @@ def fit_play_calling(tables, snaps):
         pa = np.exp(np.outer(np.exp(-grid), lf))                  # grid x snaps
         ll = np.where(s_, np.log(np.clip(pa, 1e-12, 1)), np.log(np.clip(1 - pa, 1e-12, 1))).sum(1)
         eff_shift[c_] = grid[np.argmax(ll - 0.5 * EFF_PRIOR * grid ** 2)]
-    tables.stop_shift = stop_shift if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
-    tables.sec_shift = sec_shift if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
-    tables.eff_shift = eff_shift if "band" in PLAY_CALLING else np.zeros(N_CELLS)
+    on = _quarter_mask()
+    tables.stop_shift = stop_shift * on if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
+    tables.sec_shift = sec_shift * on if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
+    tables.eff_shift = eff_shift * on if "band" in PLAY_CALLING else np.zeros(N_CELLS)
     return n
 
 

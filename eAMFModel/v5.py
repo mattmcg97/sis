@@ -1,18 +1,24 @@
 """v5: price PLAY_OVER snapshots with the play-by-play simulation (sim5.py).
 
-v5 starts as a copy of v3 (v3.py is left as it is) and changes:
+v5 starts as a copy of v4 (v4.py is left as it is: NB2's pre-match
+prior, common random numbers with a fixed seed per match, player profiles,
+its own even lines) and adds play calling by game state (sim5.py):
 
-  * the league's efficiency by quarter is fitted on the states real games
-    pass through -- the start of each quarter of every training match --
-    so the points the simulation expects from a real in-game state match
-    what real games scored from there. v3 fitted it only from kickoff,
-    and from real states it expected 0.3-0.6 points too many at every
-    quarter (4-6% of what was left);
-  * common random numbers in the simulation (sim5.py): consecutive
-    snapshots of a match no longer jitter from Monte Carlo noise;
-  * player profiles (players.py: pace and 4th-down aggression) are built
-    with the model from the export's player handles and applied whenever
-    a match's handles are known.
+  * the play call -- one that stops the clock (an incompletion or out of
+    bounds: a pass, mostly) or one that keeps it running (a run, a
+    completion in bounds) -- as likely as real offenses make it in that
+    quarter, 40-second slice of it and lead, with the yards then drawn
+    from real plays of that kind;
+  * the clock each kind of play uses in that state (a leader milking the
+    play clock, a trailer hurrying);
+  * the rubber band: offenses' efficiency by state, from their real
+    first-down success, and a pull per half (fit_rubber_band) solved so
+    that from real in-game states the simulated share of a lead that comes
+    back by the end matches the real one. With the play-level fit it
+    came out at zero: leads already come back as fast as in real games.
+
+The fourth quarter is left to v4's end-game tables: on held-out weeks
+every shift cost a little there. See the eAMFModel README for the tests.
 
 What follows is v3's description, which still holds.
 
@@ -559,7 +565,7 @@ def _band_shift(pull, cells=None):
     cells = np.arange(sim.N_CELLS) if cells is None else cells
     half = (cells // (sim.CLOCK_CELLS * sim.LEAD_CELLS)) // 2
     mid = np.array([-14.0, -4.0, 0.0, 4.0, 14.0])[cells % sim.LEAD_CELLS]
-    return -np.asarray(pull)[half] * mid / BAND_LEAD
+    return -np.asarray(pull)[half] * mid / BAND_LEAD * sim._quarter_mask()[cells]
 
 
 def _slopes(changes, leads, halves):
@@ -671,8 +677,11 @@ def recent_total_shade(matches, days=RECENT_DAYS, prior_n=SHADE_PRIOR):
 def in_game_check(tables, grid, matches, n_paths=300, seed=0):
     """From the first PLAY_OVER of each quarter of these matches: the points
     real games scored in the rest of that quarter against what the
-    simulation expects. A check printed by the build -- not fitted, since
-    any in-game level is undone by the pre-match fit to prod's total."""
+    simulation expects. A check printed by the build, not fitted -- and it
+    reads low on the real side: a quarter's last row often does not yet
+    show the points of its last scoring play (they appear on the next
+    quarter's first row), so "real" misses 0.4-0.7 a quarter. Judge the
+    model on final scores (the calibrator, `v5`), not on this."""
     items = quarter_start_states(matches, grid)
     _, got, real = fit_period_theta_states(tables, items, rounds=1, n_paths=n_paths, seed=seed)
     return got, real

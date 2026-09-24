@@ -104,6 +104,14 @@ class TestPlayCalling(unittest.TestCase):
         self.assertAlmostEqual(gained, 8 * n / (n + sim5.SECONDS_PRIOR), places=6)
         self.assertLess(abs(t.sec_shift[sim5.STOP, target] - self.tables.sec_shift[sim5.STOP, target]), 1e-9)
 
+    def test_the_fourth_quarter_is_left_to_the_end_game_tables(self):
+        q4 = np.arange(sim5.N_CELLS) // (sim5.CLOCK_CELLS * sim5.LEAD_CELLS) == 3
+        t = self.tables
+        self.assertTrue((t.stop_shift[q4] == 0).all() and (t.sec_shift[:, q4] == 0).all()
+                        and (t.eff_shift[q4] == 0).all())
+        self.assertTrue(np.abs(t.sec_shift[:, ~q4]).sum() > 0)
+        self.assertTrue((v5._band_shift(np.array([0.3, 0.3]))[q4] == 0).all())
+
     def _q3_leader_with_ball(self, n=3000, **shift):
         import copy
         t = copy.deepcopy(self.tables)

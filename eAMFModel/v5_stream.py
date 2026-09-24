@@ -1,6 +1,6 @@
 """v5 as a stream: quote rows shaped like GAMEPLAI_STREAM's, so the
 calibrator can stand v5 in for the candidate (`--candidate v5`). A copy of
-v3_stream.py pointed at v5 (and at v5's player profiles when the
+v4_stream.py pointed at v5 (and at v5's player profiles when the
 calibrator passes handles).
 
 v5 prices on the game clock, which only SCOUTING_FULL carries, so its input
