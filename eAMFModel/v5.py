@@ -444,29 +444,136 @@ def handles_of(match_rows):
     return (home.upper(), away.upper()) if home and away else None
 
 
+# Each quarter's scoring level (off by default: see below). fit_period_theta sets it from kickoff with
+# league-average offenses; held out, from real quarter starts with NB2's
+# priors, that left the fourth quarter (and overtime) about half a point
+# too high and the first 0.3-0.7 too low, and every total line priced in
+# the third quarter too high with it. So the build fits the levels again
+# from real quarter starts: from the first row of each quarter of every
+# game built on, the simulation scores in that quarter what was scored --
+# and, with a level of their own, from the two-minute mark of each half
+# to its end (fit_quarter_levels): Q2's two-minute drill scores about 9 of
+# the quarter's 13 points, which one level for the whole quarter misses.
+# Held out, it fixed the third quarter's totals but cost moneyline and
+# spread about 0.001 Brier in both weeks tested, with no gain on the total,
+# so it is off: v5-build keeps the kickoff fit.
+QUARTER_START_FIT = False
+QUARTER_ROUNDS = 6
+QUARTER_PATHS = 150
+
+
 def quarter_start_states(matches, grid, priors=None):
     """(quarter, GameState, theta0, points really scored in the rest of that
     quarter) at the first PLAY_OVER of every quarter 1-4 of every match.
     theta0: prior_theta off `priors` (match -> NB2's expected points; a
-    match missing from them is left out), league average without."""
+    match missing from them is left out), league average without.
+
+    A quarter's points run to the next period's first row, or to the final
+    score after the fourth: a quarter's last row often does not yet show
+    its last score, which the feed posts on the next quarter's first row."""
     out = []
     for code, rows in matches.items():
         if priors is not None and code not in priors:
             continue
         rows = resolve_sides(rows)
+        if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
+            continue
+        final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
         theta0 = prior_theta(grid, None if priors is None else priors[code])
+        firsts = {}
+        for r in rows:
+            p = r["period"]
+            if p and p.isdigit() and p not in firsts and r["score_p1"] and r["score_p2"]:
+                firsts[p] = r
         for q in (1, 2, 3, 4):
-            in_q = [r for r in rows if r["period"] == str(q)]
-            later = [r for r in rows if r["period"] and r["period"].isdigit() and int(r["period"]) > q]
-            if not in_q or (q < 4 and not later):
+            if str(q) not in firsts:
                 continue
-            state, _ = playover.state_for(in_q[0])
-            end = in_q[-1]
-            if state is None or not end["score_p1"] or not end["score_p2"]:
+            nxt = next((firsts[p] for p in sorted(firsts, key=int) if int(p) > q), None)
+            if nxt is None and q < 4:
+                continue                         # the feed stops before the quarter ends
+            state, _ = playover.state_for(firsts[str(q)])
+            if state is None:
                 continue
-            points = int(end["score_p1"]) + int(end["score_p2"]) - state.home_score - state.away_score
-            out.append((q, state, theta0, points))
+            end = int(nxt["score_p1"]) + int(nxt["score_p2"]) if nxt is not None else final
+            out.append((q, state, theta0, end - state.home_score - state.away_score))
     return out
+
+
+def late_start_states(matches, grid, priors=None):
+    """(quarter 2 or 4, GameState, theta0, points really scored from there to
+    the quarter's end) at the first row of the last two minutes of each
+    half -- counted, as in quarter_start_states, to the next period's first
+    row or the final score."""
+    out = []
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
+            continue
+        rows = resolve_sides(rows)
+        if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
+            continue
+        final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        for q in (2, 4):
+            late = next((r for r in rows if r["period"] == str(q) and r["clock_seconds"]
+                         and float(r["clock_seconds"]) <= sim.LATE and r["score_p1"] and r["score_p2"]),
+                        None)
+            if late is None:
+                continue
+            nxt = next((r for r in rows if r["period"] and r["period"].isdigit() and int(r["period"]) > q
+                        and r["score_p1"] and r["score_p2"]), None)
+            if nxt is None and q < 4:
+                continue
+            state, _ = playover.state_for(late)
+            if state is None:
+                continue
+            end = int(nxt["score_p1"]) + int(nxt["score_p2"]) if nxt is not None else final
+            out.append((q, state, theta0, end - state.home_score - state.away_score))
+    return out
+
+
+def fit_quarter_levels(tables, quarter_items, late_items, rounds=6, n_paths=150, seed=0,
+                       verbose=False):
+    """tables.period_theta and tables.late_theta so that, from real quarter
+    starts, the simulation scores in each quarter what was scored, and from
+    the two-minute mark of each half, what was scored from there. Returns
+    ({quarter: (real, simulated)}, {half's quarter: (real, simulated)})."""
+    def prepared(items):
+        by_q = {}
+        for it in items:
+            by_q.setdefault(it[0], []).append(it)
+        out = {}
+        for q, its in by_q.items():
+            start = sim.Start(len(its))
+            for i, (_, state, theta0, _) in enumerate(its):
+                _fill(start, i, start_from(state))
+                start.theta[i] = theta0
+            out[q] = (start, float(np.mean([it[3] for it in its])))
+        return out
+
+    def scored(start, q):
+        stats = {}
+        sim.simulate(tables, start, n_paths, np.random.default_rng(seed + q), stats=stats,
+                     common=False)
+        began = float((start.home + start.away).sum()) * n_paths
+        return (stats[f"points_by_q{q}"] - began) / (len(start.period) * n_paths)
+
+    quarters, lates = prepared(quarter_items), prepared(late_items)
+    got_q, got_l = {}, {}
+    for rnd in range(rounds):
+        for q, (start, real) in sorted(quarters.items()):
+            got_q[q] = scored(start, q)
+            tables.period_theta[q] += (real - got_q[q]) / (1.8 * max(1.0, real))
+        for q, (start, real) in sorted(lates.items()):
+            got_l[q] = scored(start, q)
+            tables.late_theta[q] += (real - got_l[q]) / (1.8 * max(1.0, real))
+        tables.period_theta[5] = tables.period_theta[4]
+        if verbose:
+            print(f"    round {rnd}: " + "  ".join(f"Q{q} {quarters[q][1]:.2f}/{got_q[q]:.2f}"
+                                             for q in sorted(quarters))
+                  + "  last 2:00 " + "  ".join(f"Q{q} {lates[q][1]:.2f}/{got_l[q]:.2f}"
+                                             for q in sorted(lates)))
+    return ({q: (quarters[q][1], got_q[q]) for q in quarters},
+            {q: (lates[q][1], got_l[q]) for q in lates})
 
 
 def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbose=False):
@@ -524,25 +631,41 @@ def in_game_states(matches, grid, every=5, priors=None):
 
 
 BAND_LEAD = 7.0          # a score: the band's pull is per score of lead
+# One pull for the first half, one for the third quarter and one for the
+# fourth. Fitted as one pull for each half and left out of the fourth
+# quarter, the second half's whole comeback was pushed into the third:
+# held out, v5's third-quarter trailers came back half a point more than
+# real ones, and scored 0.7-0.9 points more, while its fourth-quarter
+# trailers came back 0.2-0.3 less. (A pull for each first-half quarter on
+# its own came out wild off the first quarter's few real leads.)
+BAND_BY_QUARTER = True
+BAND_GROUPS = np.array([0, 0, 1, 2])        # quarter 1-4 -> its pull
 
 
 def _band_shift(pull, cells=None):
-    """Each cell's efficiency shift from the band's pull by half: an offense
-    ahead by L plays pull * L / BAND_LEAD worse (behind, that much better),
-    the lead taken at its cell's middle and capped at three scores."""
+    """Each cell's efficiency shift from the band's pull: an offense ahead by
+    L plays pull * L / BAND_LEAD worse (behind, that much better), the lead
+    taken at its cell's middle and capped at three scores. Three pulls
+    (BAND_GROUPS): the first half, the third quarter, the fourth; two (as it
+    was): one for each half, in the play-calling quarters only."""
     cells = np.arange(sim.N_CELLS) if cells is None else cells
-    half = (cells // (sim.CLOCK_CELLS * sim.LEAD_CELLS)) // 2
+    quarter = cells // (sim.CLOCK_CELLS * sim.LEAD_CELLS)
     mid = np.array([-14.0, -4.0, 0.0, 4.0, 14.0])[cells % sim.LEAD_CELLS]
-    return -np.asarray(pull)[half] * mid / BAND_LEAD * sim._quarter_mask()[cells]
+    pull = np.asarray(pull)
+    if len(pull) == 3:
+        return -pull[BAND_GROUPS[quarter]] * mid / BAND_LEAD
+    return -pull[quarter // 2] * mid / BAND_LEAD * sim._quarter_mask()[cells]
 
 
-def _slopes(changes, leads, halves):
-    """By half: the least-squares slope of the offense's lead change on its
-    lead, leads capped at three scores."""
-    out = np.zeros(2)
+def _slopes(changes, leads, groups, n_groups=2):
+    """By group (half, or quarter): the least-squares slope of the offense's
+    lead change on its lead, leads capped at three scores."""
+    out = np.full(n_groups, np.nan)
     x_all = np.clip(leads, -21, 21)
-    for h in (0, 1):
-        on = halves == h
+    for h in range(n_groups):
+        on = groups == h
+        if on.sum() < 2:
+            continue
         x, y = x_all[on], changes[on]
         out[h] = ((x - x.mean()) * (y - y.mean())).sum() / max(1e-9, ((x - x.mean()) ** 2).sum())
     return out
@@ -551,41 +674,72 @@ def _slopes(changes, leads, halves):
 def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False):
     """The rubber band, fitted where it shows: from real in-game states,
     how fast a lead comes back by the end -- the slope of the offense's
-    lead change on its lead, by half -- simulated against real. The pull
-    (see _band_shift) is solved for by the secant method, on top of the
-    snap-level fit. Returns (pull, simulated slopes, real slopes)."""
+    lead change on its lead -- simulated against real, solved for the pull
+    (see _band_shift) by the secant method, on top of the snap-level fit.
+    Each state plays luck of its own, the same for every trial pull.
+
+    By quarter (BAND_BY_QUARTER, BAND_GROUPS): one pull at a time from the
+    last, each on its own states with the later pulls held -- a lead's fate
+    early on runs through all that follows, so the pulls solved together
+    only chase each other. By half, as it was: both together.
+    Returns (pull, simulated slopes, real slopes)."""
     base = tables.eff_shift.copy()
+    n = 3 if BAND_BY_QUARTER else 2
     leads = np.array([lead for _, _, lead, _ in items], dtype=float)
-    halves = np.array([0 if st.period <= 2 else 1 for st, *_ in items])
-    real = _slopes(np.array([ch for *_, ch in items], dtype=float), leads, halves)
-    start = sim.Start(len(items))
-    sign = np.zeros(len(items))
-    for i, (st, theta0, _, _) in enumerate(items):
-        _fill(start, i, start_from(st))
-        start.theta[i] = theta0
-        sign[i] = 1 if st.offense == HOME else -1
+    changes = np.array([ch for *_, ch in items], dtype=float)
+    groups = np.array([BAND_GROUPS[st.period - 1] if n == 3 else (0 if st.period <= 2 else 1)
+                       for st, *_ in items])
+    real = _slopes(changes, leads, groups, n)
+    sign = np.array([1 if st.offense == HOME else -1 for st, *_ in items], dtype=float)
 
-    def simulated(pull):
+    def start_for(sel):
+        start = sim.Start(len(sel))
+        for k, i in enumerate(sel):
+            st, theta0, _, _ = items[i]
+            _fill(start, k, start_from(st))
+            start.theta[k] = theta0
+        return start
+
+    def simulated(pull, sel, start):
         tables.eff_shift = base + _band_shift(pull)
-        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1)
-        return _slopes(sign * (home - away).mean(1) - leads, leads, halves)
+        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1,
+                                  distinct=True)
+        return _slopes(sign[sel] * (home - away).mean(1) - leads[sel], leads[sel], groups[sel], n)
 
-    pull0, got0 = np.zeros(2), simulated(np.zeros(2))
-    pull1 = np.full(2, 0.1)
-    got1 = simulated(pull1)
-    for rnd in range(rounds):
-        if verbose:
-            print(f"    round {rnd}: pull {pull1} slopes real {real} simulated {got1}")
-        moved = np.abs(pull1 - pull0) > 1e-6
-        d = np.where(moved, (got1 - got0) / np.where(moved, pull1 - pull0, 1.0), -0.1)
-        d = np.minimum(d, -0.01)                  # more pull, more of the lead comes back
-        step = np.clip((real - got1) / d, -0.3, 0.3)
-        pull0, got0 = pull1, got1
-        # negative when the snap-level fit already brings leads back too fast
-        pull1 = np.clip(pull1 + step, -1.0, 1.0)
-        got1 = simulated(pull1)
-    tables.eff_shift = base + _band_shift(pull1)
-    return pull1, got1, real
+    def secant(pull, which, sel, start):
+        """pull[which] so that the states `sel` come back as real ones do."""
+        p0 = pull.copy()
+        g0 = simulated(p0, sel, start)
+        p1 = pull + 0.1 * which
+        g1 = simulated(p1, sel, start)
+        for rnd in range(rounds):
+            if verbose:
+                print(f"    round {rnd}: pull {p1} slopes real {real} simulated {g1}")
+            moved = np.abs(p1 - p0) > 1e-6
+            d = np.where(moved, (g1 - g0) / np.where(moved, p1 - p0, 1.0), -0.1)
+            d = np.minimum(np.nan_to_num(d, nan=-0.1), -0.01)   # more pull, more comes back
+            step = np.where(which > 0, np.clip(np.nan_to_num((real - g1) / d), -0.3, 0.3), 0.0)
+            p0, g0 = p1, g1
+            # negative when the snap-level fit already brings leads back too fast
+            p1 = np.clip(p1 + step, -1.0, 1.0)
+            g1 = simulated(p1, sel, start)
+        return p1, g1
+
+    if n == 2:
+        every = np.arange(len(items))
+        pull, got = secant(np.zeros(2), np.ones(2), every, start_for(every))
+    else:
+        pull, got = np.zeros(n), np.zeros(n)
+        for q in range(n - 1, -1, -1):
+            sel = np.flatnonzero(groups == q)
+            if len(sel) < 50:
+                continue
+            which = np.zeros(n)
+            which[q] = 1.0
+            pull, g = secant(pull, which, sel, start_for(sel))
+            got[q] = g[q]
+    tables.eff_shift = base + _band_shift(pull)
+    return pull, got, real
 
 
 
@@ -743,11 +897,7 @@ def match_day(match_rows):
 def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
     """From the first PLAY_OVER of each quarter of these matches: the points
     real games scored in the rest of that quarter against what the
-    simulation expects. A check printed by the build, not fitted -- and it
-    reads low on the real side: a quarter's last row often does not yet
-    show the points of its last scoring play (they appear on the next
-    quarter's first row), so "real" misses 0.4-0.7 a quarter. Judge the
-    model on final scores (the calibrator, `v5`), not on this."""
+    simulation expects (quarter_start_states)."""
     items = quarter_start_states(matches, grid, priors)
     _, got, real = fit_period_theta_states(tables, items, rounds=1, n_paths=n_paths, seed=seed)
     return got, real
@@ -789,19 +939,38 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         pull, band_got, band_real = fit_rubber_band(tables, items)
         offsets, got = sim.fit_period_theta(tables, real)
         if verbose:
+            names = (["first half", "Q3", "Q4"] if len(pull) == 3
+                     else ["first half", "second half"])
             print("  rubber band: of every point of lead, how much comes back by the end, "
-                  f"real / simulated -- first half {-band_real[0]:.3f} / {-band_got[0]:.3f}, "
-                  f"second half {-band_real[1]:.3f} / {-band_got[1]:.3f}; pull per score "
-                  f"{pull[0]:.2f} / {pull[1]:.2f}")
+                  "real / simulated -- " + ", ".join(
+                      f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
+                  + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
-              + " / ".join(f"{x:.2f}" for x in real) + ", simulated "
+              + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "
               + " / ".join(f"{x:.2f}" for x in got))
-        if tables.backed is not None:
-            print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
-                  + "; ".join(f"{name.replace('_', ' ')} "
-                              + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
-                              for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
+    if QUARTER_START_FIT:
+        # each quarter's scoring again, from real quarter starts with each
+        # match's prior as pricing sets it (see QUARTER_START_FIT)
+        quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
+        before_q = tables.period_theta.copy()
+        fitted_q, fitted_l = fit_quarter_levels(
+            tables, quarter_start_states(matches, quick, priors),
+            late_start_states(matches, quick, priors), rounds=QUARTER_ROUNDS, n_paths=QUARTER_PATHS)
+        if verbose:
+            print("  points in each quarter from real quarter starts, real / simulated: "
+                  + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
+                  + "; from the two-minute mark: "
+                  + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items()))
+                  + "; scoring by quarter moved " + " / ".join(
+                      f"{d:+.3f}" for d in (tables.period_theta - before_q)[1:5])
+                  + ", last two minutes of each half " + " / ".join(
+                      f"{tables.late_theta[q]:+.3f}" for q in (2, 4)))
+    if verbose and tables.backed is not None:
+        print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
+              + "; ".join(f"{name.replace('_', ' ')} "
+                          + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
+                          for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
     tables_path = os.path.join(out_dir, "v5tables.npz")
     grid_path = os.path.join(out_dir, "v5grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)

@@ -104,6 +104,37 @@ class TestPlayCalling(unittest.TestCase):
         self.assertAlmostEqual(gained, 8 * n / (n + sim5.SECONDS_PRIOR), places=6)
         self.assertLess(abs(t.sec_shift[sim5.STOP, target] - self.tables.sec_shift[sim5.STOP, target]), 1e-9)
 
+    def test_the_band_pulls_in_every_quarter(self):
+        self.assertTrue(v5.BAND_BY_QUARTER)
+        shift = v5._band_shift(np.array([0.1, 0.2, 0.3]))
+        quarter = np.arange(sim5.N_CELLS) // (sim5.CLOCK_CELLS * sim5.LEAD_CELLS)
+        ahead = np.arange(sim5.N_CELLS) % sim5.LEAD_CELLS == 4          # ahead by 9+
+        behind = np.arange(sim5.N_CELLS) % sim5.LEAD_CELLS == 0
+        for q, pull in enumerate((0.1, 0.1, 0.2, 0.3)):             # the fourth included
+            self.assertTrue(np.allclose(shift[(quarter == q) & ahead], -pull * 14 / v5.BAND_LEAD))
+            self.assertTrue(np.allclose(shift[(quarter == q) & behind], pull * 14 / v5.BAND_LEAD))
+
+    def test_the_band_is_fitted_by_quarter(self):
+        import copy
+        tables = copy.deepcopy(self.tables)
+        grid = v5.PriorGrid.build(tables, n_paths=60)
+        items = v5.in_game_states(self.matches, grid)
+        pull, got, real = v5.fit_rubber_band(tables, items, rounds=3, n_paths=60)
+        self.assertEqual(len(pull), 3)
+        # each pull brings its own states' comeback to the real one
+        for g, r in zip(got, real):
+            self.assertAlmostEqual(g, r, delta=0.08)
+        self.assertEqual({st.period for st, *_ in items} >= {1, 2, 3, 4}, True)
+
+    def test_distinct_streams_keep_their_luck_between_calls(self):
+        st = sim5.Start(2)
+        st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim5.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 14, 10
+        a = sim5.simulate(self.tables, st, 200, np.random.default_rng(1), seed=5, distinct=True)
+        b = sim5.simulate(self.tables, st, 200, np.random.default_rng(2), seed=5, distinct=True)
+        self.assertTrue(np.array_equal(a[0], b[0]))               # the same luck, call to call
+        self.assertFalse(np.array_equal(a[0][0], a[0][1]))        # its own for each state
+
     def test_the_fourth_quarter_is_left_to_the_end_game_tables(self):
         q4 = np.arange(sim5.N_CELLS) // (sim5.CLOCK_CELLS * sim5.LEAD_CELLS) == 3
         t = self.tables
@@ -314,12 +345,14 @@ class TestBuild(unittest.TestCase):
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
         cls.matches = _with_handles(_matches(40))
-        # the in-play shift is off by default; the build is tested with it on
-        saved, v5.IN_PLAY_FIT = v5.IN_PLAY_FIT, True
+        # the in-play shift and the quarter-start fit are off by default; the
+        # build is tested with them on
+        saved = v5.IN_PLAY_FIT, v5.QUARTER_START_FIT
+        v5.IN_PLAY_FIT = v5.QUARTER_START_FIT = True
         try:
             v5.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
         finally:
-            v5.IN_PLAY_FIT = saved
+            v5.IN_PLAY_FIT, v5.QUARTER_START_FIT = saved
         cls.tables = sim5.Tables.load(os.path.join(cls.tmp.name, "v5tables.npz"))
         cls.grid = v5.PriorGrid.load(os.path.join(cls.tmp.name, "v5grid.npz"))
 
@@ -333,9 +366,66 @@ class TestBuild(unittest.TestCase):
         book = v5.players_book(self.tmp.name)
         self.assertEqual(set(book.players), {"ALPHA", "BRAVO", "CHARLIE", "DELTA"})
 
+    def test_a_quarters_points_run_to_the_next_quarters_first_row(self):
+        # the feed posts a quarter's last score on the next quarter's first
+        # row: that score belongs to the quarter before
+        base = dict(team_a_side="home", offense="TEAM_A", play_kind="SCRIMMAGE", down="1",
+                    distance="10", field_position="25", clock_seconds="200", play_messages="",
+                    final_p1="17", final_p2="10", match_code="AFX")
+        rows = [dict(base, message="1", period="1", score_p1="0", score_p2="0"),
+                dict(base, message="2", period="1", score_p1="7", score_p2="0"),
+                dict(base, message="3", period="2", score_p1="10", score_p2="0"),
+                dict(base, message="4", period="3", score_p1="10", score_p2="3"),
+                dict(base, message="5", period="4", score_p1="17", score_p2="10")]
+        got = {q: pts for q, _, _, pts in v5.quarter_start_states({"AFX": rows}, self.grid)}
+        self.assertEqual(got, {1: 10, 2: 3, 3: 14, 4: 0})
+
+    def test_the_two_minute_mark_states(self):
+        base = dict(team_a_side="home", offense="TEAM_A", play_kind="SCRIMMAGE", down="1",
+                    distance="10", field_position="25", play_messages="", final_p1="17",
+                    final_p2="10", match_code="AFX")
+        rows = [dict(base, message="1", period="2", clock_seconds="200", score_p1="0", score_p2="0"),
+                dict(base, message="2", period="2", clock_seconds="118", score_p1="3", score_p2="0"),
+                dict(base, message="3", period="2", clock_seconds="30", score_p1="3", score_p2="0"),
+                dict(base, message="4", period="3", clock_seconds="240", score_p1="10", score_p2="0"),
+                dict(base, message="5", period="4", clock_seconds="100", score_p1="10", score_p2="10")]
+        got = {q: pts for q, _, _, pts in v5.late_start_states({"AFX": rows}, self.grid)}
+        self.assertEqual(got, {2: 7, 4: 7})
+
+    def test_the_build_fits_the_quarters_and_the_two_minute_drills(self):
+        import copy
+        self.assertFalse(v5.QUARTER_START_FIT)          # off by default (see v5.py)
+        tables = copy.deepcopy(self.tables)
+        tables.inplay_theta[:] = 0.0          # this class's build has the in-play shift on too
+        quarters, lates = v5.fit_quarter_levels(
+            tables, v5.quarter_start_states(self.matches, self.grid),
+            v5.late_start_states(self.matches, self.grid), rounds=1, n_paths=200)
+        for real, got in list(quarters.values()) + list(lates.values()):
+            self.assertAlmostEqual(got, real, delta=max(0.6, 0.12 * real))
+        self.assertEqual(set(lates), {2, 4})
+        self.assertTrue(np.any(self.tables.late_theta))
+
+    def test_the_two_minute_level_is_only_the_last_two_minutes(self):
+        import copy
+        tables = copy.deepcopy(self.tables)
+        tables.inplay_theta[:] = 0.0
+        tables.late_theta[:] = 0.0
+        st = sim5.Start(1)
+        st.period[:], st.clock[:], st.phase[:], st.y[:] = 2, 239.0, sim5.SCRIM, 30
+        plain = sim5.simulate(tables, st, 3000, np.random.default_rng(1), seed=4, max_steps=2)
+        tables.late_theta[2] = 1.0
+        early = sim5.simulate(tables, st, 3000, np.random.default_rng(1), seed=4, max_steps=2)
+        self.assertTrue(np.array_equal(plain[0], early[0]))    # 4:00 left: untouched
+        st.clock[:] = 100.0
+        tables.late_theta[2] = 0.0
+        a = sim5.simulate(tables, st, 3000, np.random.default_rng(1), seed=4)
+        tables.late_theta[2] = 1.0
+        b = sim5.simulate(tables, st, 3000, np.random.default_rng(1), seed=4)
+        self.assertGreater(float((b[0] + b[1]).mean()), float((a[0] + a[1]).mean()))
+
     def test_the_quarter_fit_on_real_states_converges_when_asked(self):
-        # kept as a diagnostic (the build only reports it): on fixed states
-        # and thetas the fit does bring the quarters to what games scored
+        # on fixed states and thetas the fit brings the quarters to what
+        # games scored
         import copy
         tables = copy.deepcopy(self.tables)
         items = v5.quarter_start_states(self.matches, self.grid)

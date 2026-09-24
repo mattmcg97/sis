@@ -759,6 +759,10 @@ class Tables:
         # of each offense's own, fitted so that the simulation scores what
         # the league scores in each quarter (fit_period_theta).
         self.period_theta = np.zeros(6)
+        # On top of it in the last two minutes of each half (index 2 and 4):
+        # Q2's two-minute drill scores three-quarters of the quarter's points,
+        # more than one level for the quarter gives it (v5.fit_quarter_levels)
+        self.late_theta = np.zeros(6)
         # On top of it when pricing a total from inside a game (simulate's
         # in_play), by segment of the game and margin band:
         # v5.fit_rest_of_game, so that from real in-game states the
@@ -898,6 +902,7 @@ class Tables:
                       gain=self.gain, new_field=self.new_field, seconds=self.seconds,
                       replay=self.replay, td_from=self.td_from, fg_seconds=self.fg_seconds,
                       fg_after=np.array([self.fg_after]), period_theta=self.period_theta,
+                      late_theta=self.late_theta,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
                       late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
@@ -923,6 +928,8 @@ class Tables:
             setattr(t, name, z[name])
         t.fg_after = float(z["fg_after"][0])
         t.two_good, t.kick_good = (float(x) for x in z["conv_rates"])
+        if "late_theta" in z:
+            t.late_theta = z["late_theta"]
         if "period_theta" in z:
             t.period_theta = z["period_theta"]
         if "go_shift" in z:
@@ -1005,7 +1012,7 @@ def _uniform(seed, path, step, slot):
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
-             in_play=False):
+             in_play=False, distinct=False):
     """Play every starting state `n_paths` times to the end.
 
     Returns (home, away) final scores, arrays of shape (states, n_paths).
@@ -1017,6 +1024,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     priced together differ only by what differs between them. Averaging
     over the states of many matches wants `common=False`: with it on, a
     thousand states on 100 paths are 100 games' worth of luck.
+
+    `distinct` (with `common`): every path of every state has a stream of
+    its own, the same from call to call -- what a fit over many states wants:
+    their luck independent, and each trial value played on the same luck.
 
     `in_play`: price the rest of the game's points as they really come --
     each snap's efficiency takes tables.inplay_theta for its segment of the
@@ -1040,6 +1051,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         theta = theta + rep(theta_sd) * rng.standard_normal((P, 2))
     exp_theta = np.exp(theta)
     period_exp = np.exp(tables.period_theta)
+    late_exp = np.exp(tables.late_theta)
     inplay_exp = np.exp(tables.inplay_theta) if in_play else None
     agg = rep(start.aggression)
     pace = rep(start.pace)
@@ -1050,7 +1062,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
 
     tally = (lambda name, k: stats.__setitem__(name, stats.get(name, 0) + int(k))) \
         if stats is not None else (lambda name, k: None)
-    path_no = np.tile(np.arange(n_paths, dtype=np.int64), S)   # path k of its state
+    path_no = (np.arange(P, dtype=np.int64) if distinct
+               else np.tile(np.arange(n_paths, dtype=np.int64), S))   # path k of its state
     free = np.zeros(P, dtype=bool)                             # the kick is a safety's free kick
     # overtime: whose possession is running (-1 none) and which sides have
     # had theirs -- over the whole of overtime, not per period
@@ -1332,6 +1345,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         # offense's efficiency and by how offenses really do in this state
         uu = rand(sx, 11)
         tilt = exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
+        late = ((period[sx] == 2) | (period[sx] == 4)) & (clock[sx] <= LATE)
+        if late.any():
+            tilt = tilt * np.where(late, late_exp[np.minimum(period[sx], 5)], 1.0)
         if inplay_exp is not None:
             tilt = tilt * inplay_exp[_segments_np(period[sx], clock[sx]),
                                      _bands_np(score[sx, 0] - score[sx, 1])]
@@ -1488,7 +1504,16 @@ def kickoff_quarter_points(tables, n_paths=30000, seed=1):
 
 
 def quarter_points(matches):
-    """The league's mean points in each of quarters 1-4, off the export."""
+    """The league's mean points in each of quarters 1-4, off the export --
+    read off each quarter's last row. That row often does not yet show the
+    quarter's last score (the feed posts it on the next quarter's first
+    row), so Q1 comes out about 0.65 short and Q4 0.5 long of what was
+    scored. Counting to the next quarter's first row instead (as
+    v5.quarter_start_states does) moved scoring from the fourth quarter to
+    the first and, held out, cost moneyline and spread about 0.001 Brier in
+    both weeks tested with no gain on the total: the late-game margin swings
+    lean on those fourth-quarter points (see the README), so the kickoff
+    fit keeps this reading."""
     ends = defaultdict(list)
     for rows in matches.values():
         last = {}

@@ -579,6 +579,61 @@ That holds in 2,294 of the 2,320 matches in SCOUTING_FULL, and v5 already
 did it. Where a snapshot doesn't know who received the opening kick, v5
 used to have home kick. Now each path tosses a coin.
 
+### The rubber band by quarter
+
+**What the report showed.** In the report week (Sep 17–24), v4 and v5
+lines through Q3 went over only 41–44% of the time at about 50% priced.
+That held in every game state and at every level of points already
+scored. Q4 was close to priced, and Q1 was fine.
+
+**Where it came from.** On held-out games, by leader and trailer on the
+ball:
+
+| state | lead change to the end, real / v5 | points still to come, real / v5 |
+|---|---|---|
+| Q3, trailer has ball | −3.16 / −3.62 | 13.1 / 13.9 |
+| Q3, leader has ball | +0.65 / +0.24 | |
+| Q4, trailer has ball | −3.24 / −2.97 | 5.9 / 5.4 |
+| Q4, leader has ball | +0.53 / +0.63 | |
+
+(Sep 3–9; Sep 10–22 shows the same.) v5's third-quarter trailers came
+back too much and scored too much, and its fourth-quarter trailers too
+little. The band was fitted as one pull per half, but applied only in
+Q1–Q3. So the whole second half's comeback was pushed into the third
+quarter.
+
+**Now** the band has three pulls: the first half, Q3 and Q4, the fourth
+included. They're fitted one at a time from the last, each on its own
+states with the later pulls held. Solved together, a Q1 lead's fate runs
+through every later pull, and the pulls chased each other. A separate
+pull for Q1 came out wild off its few real leads. Each state plays its
+own luck, the same for every trial pull (`simulate(..., distinct=True)`).
+Before, the fit shared one set of draws across all states. In the build
+built on games before Sep 3, the pulls came out +0.05 / −0.05 / +0.05.
+The old ones were −0.11 for the first half and +0.12 for the second.
+
+**Held out**, Brier against the same build with the old band:
+
+| | moneyline | spread | total |
+|---|---|---|---|
+| Sep 3–9 | +0.0002 | −0.0004 | +0.0004 (Q3 **+0.0024**, CI +0.0008 to +0.0044) |
+| Sep 10–22 | **+0.0003** (Q1 +0.0013) | +0.0003 | 0.0000 |
+
+On Sep 3–9, Q3 points still to come dropped from 0.36 too many to 0.16.
+With the trailer on the ball two scores down, the miss went from +1.15
+to +0.28. No market got significantly worse in either week.
+
+**Tried and left off: the quarters' levels.** v5's kickoff fit reads each
+quarter's points off its last row. That misses the quarter's last score,
+which the feed posts on the next quarter's first row: Q1 comes out 0.65
+short and Q4 0.5 long. Counted properly, and with Q2's two-minute drill
+given a level of its own (it scores about 9 of the quarter's 13 points),
+the quarter-start fit (`QUARTER_START_FIT`, `fit_quarter_levels`)
+matched every quarter. But held out it cost moneyline and spread about
+0.001 in both weeks, with no gain on the total. The late-game margin
+swings lean on those extra fourth-quarter points. So the kickoff fit
+keeps its old reading, and the fit is left in the code, off.
+
 ### v5 reads nothing of GAMEPLAI's
 
 v5's prices are only ever compared with GAMEPLAI's, never trained on them.
