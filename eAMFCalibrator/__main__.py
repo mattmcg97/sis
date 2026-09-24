@@ -594,7 +594,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2, v3 -- see eAMFModel) priced "
+                             "or a model version (v1, v2, v3, v4 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model) "
                              f"(default {config.STREAMS['candidate']})")
@@ -604,6 +604,12 @@ def common_options():
     tuning.add_argument("--v3-model", metavar="DIR",
                         help="eAMFModel v3-build's output, for --candidate v3 "
                              "(default $EAMF_V3_MODEL, then ./v3_model)")
+    tuning.add_argument("--v4-model", metavar="DIR",
+                        help="eAMFModel v4-build's output, for --candidate v4 "
+                             "(default $EAMF_V4_MODEL, then ./v4_model)")
+    tuning.add_argument("--v4-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v4 "
+                             f"(default {config.V4_PATHS})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -631,7 +637,9 @@ def apply_overrides(args):
                            ("chunk", "MATCH_CHUNK_SIZE"),
                            ("v3_model", "V3_MODEL_DIR"),
                            ("candidate_label", "CANDIDATE_LABEL"),
-                           ("v3_paths", "V3_PATHS")):
+                           ("v3_paths", "V3_PATHS"),
+                           ("v4_model", "V4_MODEL_DIR"),
+                           ("v4_paths", "V4_PATHS")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)

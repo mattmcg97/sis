@@ -263,6 +263,84 @@ GAMEPLAI-shaped quote rows.
 v3 needs numpy (`py -m pip install numpy` on Windows); v1 and v2 do not. The build takes about a minute; scoring the 1,160-match
 test half takes about 18 minutes on four cores at 2,000 paths.
 
+## v4: v3 plus a pre-match total correction and smoother prices
+
+v4 is a copy of v3 (`sim4.py`, `v4.py`, `v4_stream.py`) with v3's files left
+as they are. It came out of re-checking the first v3 calibration report
+(17–23 Sep). All of that report's figures reproduce from its own pair rows,
+and its weak spot was clear: totals leaned over before Q4, most in Q3
+(realised 0.438, prod 0.489, v3 0.531).
+
+**Where the lean comes from.** It isn't the simulation. v3 takes each
+match's scoring level from prod's pre-match total: it fits the efficiencies
+so that its own P(over) at prod's line equals prod's. Through September
+prod's pre-match total fell behind the scoring:
+
+| matches | over rate at prod's pre-match line | prod's P(over) |
+|---|---|---|
+| before 10 Sep | 0.497 | 0.500 |
+| 10–16 Sep | 0.466 | 0.501 |
+| 17–23 Sep | 0.448 | 0.503 |
+
+v3 inherits that miss for the whole game.
+
+**What v4 changes:**
+- **Pre-match total correction** (`recent_total_shade`). At build time,
+  v4 measures how far games in the last 7 days went over prod's pre-match
+  line against the P(over) prod priced them at. It shrinks that toward 0 by
+  200 matches' worth of evidence, and adds it to prod's P(over) before
+  fitting each match's efficiencies. The build prints it: for a model built
+  to 16 Sep, 476 matches went over 46.6% of the time at a priced 50.1%,
+  giving a correction of −0.024.
+- **Common random numbers** (`sim4.py`). Each simulated path draws from its
+  own stream, keyed on the path and the number of events since the
+  snapshot. Snapshots priced together play out the same luck, so a price
+  moves because the game moved, not because of Monte Carlo noise. The
+  noise in the difference between two neighbouring states falls from
+  0.018 to 0.006.
+- **Player profiles** (pace and 4th-down aggression, `players.py`). They're
+  built with the model from the export's player handles and applied when a
+  match's handles are known. On the Sep 3–9 check they came out neutral
+  (totals +0.0002, the rest −0.0001).
+- **In-game check.** The build prints the points real games scored from
+  each quarter's first `PLAY_OVER`, against what the simulation expects.
+
+**Tried and dropped: fitting the quarters to real in-game states.** From
+real states, v3 expected 0.3–0.6 points too many at every quarter. Fitting
+the league's efficiency by quarter to those states helped once, but
+alternating it with the prior fit never settled. Each pass lowered the
+quarters and the pre-match fit raised the efficiencies back to match
+prod's total. The in-game excess comes from the pre-match level, which the
+correction above addresses.
+
+**Results.** v4 is built on everything before a week and scored on every
+`PLAY_OVER` of that week; Brier, prod − version:
+
+| week | market | v3 | v4 |
+|---|---|---|---|
+| 10–16 Sep (correction −0.004) | all | +0.0087 | +0.0091 |
+| 17–23 Sep (correction −0.024) | all | +0.0073 | +0.0078 |
+| | total | +0.0102 | +0.0117 |
+| | Q3 total | −0.0012 | +0.0014 |
+| | moneyline | +0.0015 | +0.0016 |
+| | spread | +0.0107 | +0.0107 |
+
+In the 17–23 Sep week, v4's P(over) is 0.474 / 0.480 / 0.505 / 0.401 by
+quarter (v3 0.490 / 0.493 / 0.515 / 0.405; realised 0.443 / 0.439 / 0.412 /
+0.348). The correction closes about half of that week's miss, as far as
+the week before could support.
+
+```bash
+python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model
+python -m eAMFModel v4 eAMFCalibrator/out/scouting_playover.csv --model v4_model --half test
+python -m eAMFCalibrator report --candidate v4 --v4-model v4_model --out eAMFCalibrator/out_v4
+python -m unittest eAMFModel.tests.test_v4
+```
+
+The correction is read from the last 7 days of whatever the model is
+built on, so rebuild weekly for it to track. Build on an export that ends
+where the report window starts.
+
 ## Run it
 
 ```bash

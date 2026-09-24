@@ -40,6 +40,10 @@ CANDIDATE_LABEL = None
 V3_MODEL_DIR = None
 V3_PATHS = 2000
 V3_WORKERS = None
+# The same for --candidate v4 (its model: `python -m eAMFModel v4-build`;
+# None: $EAMF_V4_MODEL, then ./v4_model). Workers are V3_WORKERS.
+V4_MODEL_DIR = None
+V4_PATHS = 2000
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.

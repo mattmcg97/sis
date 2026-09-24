@@ -13,6 +13,8 @@
   fit-finals             refit the possession structure to nb2/AMFELO.csv
   v3-build SNAPS.csv     v3's play tables and pre-match grid off PLAY_OVER snapshots
   v3 SNAPS.csv           score v3 -- the play-by-play simulation -- against prod
+  v4-build / v4          the same for v4 (v3 plus in-game quarter fit, common
+                         random numbers and player profiles)
 
 The calibrator runs a version as a stream in its own right:
   python -m eAMFCalibrator report --candidate v1
@@ -168,6 +170,52 @@ def cmd_v3(args):
     for by in args.by.split(","):
         summary = backtest.summarise(graded, names, key=keys[by], n_boot=args.boot)
         backtest.print_summary(summary, names, f"Brier by {by} (v3, PLAY_OVER snapshots)")
+
+
+def _v4_module():
+    try:
+        import numpy  # noqa: F401
+    except ImportError:
+        raise SystemExit("v4 needs numpy:  py -m pip install numpy   (or python -m pip ...)")
+    from . import v4
+    return v4
+
+
+def cmd_v4_build(args):
+    v4 = _v4_module()
+    data = playover.load(args.snapshots)
+    keep = set(_half(args.snapshots, args.half))
+    handles = players.load_handles(args.handles) if args.handles else None
+    v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles)
+    print(f"  wrote {args.out}/v4tables.npz, {args.out}/v4grid.npz"
+          f"{' and v4players.json' if os.path.exists(os.path.join(args.out, 'v4players.json')) else ''}")
+
+
+def cmd_v4(args):
+    v4 = _v4_module()
+    variants = [v4.Variant("v4")]
+    if args.without_profiles:
+        variants.append(v4.Variant("v4_no_profiles", profiles=False, pace=False))
+    handles = players.load_handles(args.handles) if args.handles else None
+    matches = _half(args.snapshots, args.half)
+    if args.limit:
+        matches = matches[:args.limit]
+    graded, skipped = v4.run(args.snapshots, os.path.join(args.model, "v4tables.npz"),
+                             os.path.join(args.model, "v4grid.npz"), variants, matches=matches,
+                             n_paths=args.paths, workers=args.workers, handles=handles)
+    names = [v.name for v in variants]
+    print(f"\n  {len(graded):,} graded PLAY_OVER quotes across {len({g[0] for g in graded}):,} matches")
+    for reason, n in skipped.most_common():
+        print(f"  skipped, {reason.replace('_', ' ')}: {n:,}")
+    keys = {
+        "market": lambda r: backtest.GROUPS[r.market_id],
+        "period-market": lambda r: (r.period if r.period and r.period <= 4 else "OT",
+                                    backtest.GROUPS[r.market_id]),
+        "kind": lambda r: r.kind,
+    }
+    for by in args.by.split(","):
+        summary = backtest.summarise(graded, names, key=keys[by], n_boot=args.boot)
+        backtest.print_summary(summary, names, f"Brier by {by} (v4, PLAY_OVER snapshots)")
 
 
 def _num(value):
@@ -356,6 +404,29 @@ def main(argv=None):
     p.add_argument("--boot", type=int, default=300)
     p.add_argument("--by", default="market,period-market,kind")
     p.set_defaults(func=cmd_v3)
+
+    p = sub.add_parser("v4-build", help="v4: play tables, in-game quarter fit, pre-match grid "
+                                        "and player profiles off PLAY_OVER snapshots")
+    p.add_argument("snapshots", help="scouting_playover.csv")
+    p.add_argument("--half", choices=["train", "test", "all"], default="train")
+    p.add_argument("--out", default="v4_model")
+    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
+                                     "(default: the export's own handle columns)")
+    p.set_defaults(func=cmd_v4_build)
+
+    p = sub.add_parser("v4", help="score v4 against prod on PLAY_OVER snapshots")
+    p.add_argument("snapshots", help="scouting_playover.csv")
+    p.add_argument("--model", default="v4_model", help="v4-build's output directory")
+    p.add_argument("--half", choices=["train", "test", "all"], default="test")
+    p.add_argument("--paths", type=int, default=2000, help="simulated games per snapshot")
+    p.add_argument("--without-profiles", action="store_true",
+                   help="also a variant without the player profiles")
+    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    p.add_argument("--limit", type=int, help="first N matches only")
+    p.add_argument("--boot", type=int, default=300)
+    p.add_argument("--by", default="market,period-market,kind")
+    p.set_defaults(func=cmd_v4)
 
     args = parser.parse_args(argv)
     args.func(args)
