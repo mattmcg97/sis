@@ -15,6 +15,8 @@
   v3 SNAPS.csv           score v3 -- the play-by-play simulation -- against prod
   v4-build / v4          the same for v4 (v3 plus common random numbers, player
                          profiles and, with --history, our own NB2 pre-match)
+  v6-build / v6          the same for v6 (v5 plus late 4th downs and kneels
+                         fitted to real play)
   v5-build / v5          the same for v5 (v4 plus run/pass play calling and the
                          rubber band)
 
@@ -196,9 +198,9 @@ def cmd_v4_build(args):
         if args.before:
             import datetime as dt
             before = dt.datetime.fromisoformat(args.before)
-    if name == "v5" and history is None:
-        raise SystemExit("v5-build needs --history: v5 takes every match's prior from its own NB2 "
-                         "pre-match model, never from GAMEPLAI's prices")
+    if name in ("v5", "v6") and history is None:
+        raise SystemExit(f"{name}-build needs --history: {name} takes every match's prior from its own "
+                         "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
         v4.IN_PLAY_FIT = True
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
@@ -430,7 +432,9 @@ def main(argv=None):
 
     for name, what in (("v4", "v4: play tables, pre-match grid (NB2 with --history) and player "
                                "profiles off PLAY_OVER snapshots"),
-                       ("v5", "v5: v4 plus run/pass play calling and the rubber band (see README)")):
+                       ("v5", "v5: v4 plus run/pass play calling and the rubber band (see README)"),
+                       ("v6", "v6: v5 plus late 4th downs and kneels as real players play them "
+                              "(see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -442,7 +446,7 @@ def main(argv=None):
                                          "of reading prod's pre-match quotes")
         p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
                                         "after the last match built on)")
-        if name == "v5":
+        if name in ("v5", "v6"):
             p.add_argument("--in-play", action="store_true",
                            help="also fit the in-play total shift by segment of the game "
                                 "(see README: off by default, it has not held up out of sample)")

@@ -52,7 +52,7 @@ def stream_name(value):
     return value
 
 
-LINE_MODELS = ("v4", "v5")     # versions that quote their own lines
+LINE_MODELS = ("v4", "v5", "v6")     # versions that quote their own lines
 
 
 def model_version(stream_table):

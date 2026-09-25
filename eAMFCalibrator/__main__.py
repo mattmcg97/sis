@@ -676,7 +676,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2, v3, v4, v5 -- see eAMFModel) priced "
+                             "or a model version (v1, v2, v3, v4, v5, v6 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
                              "several, comma-separated (v4,v5), set each against prod "
@@ -705,6 +705,14 @@ def common_options():
                              f"(default {config.V5_PATHS})")
     tuning.add_argument("--v5-lines", choices=["own", "prod"],
                         help=f"--candidate v5: its own even lines or prod's (default {config.V5_LINES})")
+    tuning.add_argument("--v6-model", metavar="DIR",
+                        help="eAMFModel v6-build's output, for --candidate v6 "
+                             "(default $EAMF_V6_MODEL, then ./v6_model)")
+    tuning.add_argument("--v6-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v6 "
+                             f"(default {config.V6_PATHS})")
+    tuning.add_argument("--v6-lines", choices=["own", "prod"],
+                        help=f"--candidate v6: its own even lines or prod's (default {config.V6_LINES})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -738,7 +746,10 @@ def apply_overrides(args):
                            ("v4_lines", "V4_LINES"),
                            ("v5_model", "V5_MODEL_DIR"),
                            ("v5_paths", "V5_PATHS"),
-                           ("v5_lines", "V5_LINES")):
+                           ("v5_lines", "V5_LINES"),
+                           ("v6_model", "V6_MODEL_DIR"),
+                           ("v6_paths", "V6_PATHS"),
+                           ("v6_lines", "V6_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
