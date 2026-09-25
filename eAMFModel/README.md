@@ -634,7 +634,7 @@ matched every quarter. But held out it cost moneyline and spread about
 swings lean on those extra fourth-quarter points. So the kickoff fit
 keeps its old reading, and the fit is left in the code, off.
 
-### The day's strengths are unknown
+### Form on the day
 
 **What was wrong.** v5 played every simulated game with both offenses
 fixed at the match's prior, so all of a snapshot's spread came from the
@@ -645,49 +645,74 @@ plays. Held out, the points still to come were too narrow:
 | Sep 3–9 | 10.5% / 10.9% | 8.52 / 8.13 |
 | Sep 10–22 | 13.0% / 10.8% | 9.26 / 8.23 |
 
-It was narrowest where the pre-match knew least (Q1, Sep 10–22: 14.1% in
-the bottom tenth).
+**Where the missing spread is.** Over a year of finished matches, with
+NB2's expected points for each side, next to the simulation with the
+strengths fixed:
 
-**Now** each simulated game draws its two offenses around the prior, by
-a normal with sd `tables.strength_sd` on the log scale. The draw is on
-common random numbers, so path k has the same strengths at every snapshot
-of a match and in every call. The prior grid is simulated with the draw,
-so expected points still match the prior. The draw raises the mean more
-than the median, so the middle line comes down a little.
+| | real | v5, strengths fixed |
+|---|---|---|
+| each side's variance | ~59 | ~53 |
+| home/away covariance | ~15 | ~9.5 |
+| margin variance | 88 | 87 |
+| total variance | 148 | 125 |
 
-**The fit.** The build takes the last two weeks of the games it's built
-on and prices them with an NB2 fitted only on what came before those two
-weeks, as pricing sees a match in the days after a build. It then sets
-the sd so that, from the Q1–Q3 states, the real squared misses of the
-points still to come equal the simulated variance. Q4 is left out: too
-little is left in it for the day's strengths to matter. The build
-prints the ratio with the strengths fixed and the sd it chose. One week
-of holdout swung the fit (0.19 before Sep 3, 0.13 before Sep 10). Two or
-three weeks give 0.20 and 0.17.
+The margin is already as wide as real games; the total is not. So what
+is missing is mostly a swing that both sides share, where a game scores
+more or less as a whole. Some players also swing more than the
+simulation gives them on their own.
+
+**Now** each simulated game draws two things on the log scale of
+points, both on common random numbers (path k plays the same draw at
+every snapshot of a match):
+- **the game:** one normal draw that moves both offenses together;
+- **each player's own form:** a normal draw for each side, with a
+  standard deviation for each player.
+
+Each draw is converted to theta by how many log points one unit of theta
+is worth at the side's strength (`tables.strength_slope`). The start is
+moved so that the draws leave each side's expected points where they
+were (`sim5.strength_draw`).
+
+**The fit (`fit_form`).** It uses every finished match in the year
+before the build, weighted by NB2's own 60-day half-life, with NB2's
+expected points for each side:
+- the simulation's own variance and covariance with the strengths fixed
+  are measured from kickoff (`fixed_strength_spread`) and taken off;
+- what's left over in the covariance is the game's share;
+- what's left over in each side's variance, beyond the game's, is the
+  player's own. It is shrunk toward the league by how much of it is
+  noise (empirical Bayes; volatility splits half against half at 0.27).
+
+Nothing is fitted week by week. Built before Sep 3 and before Sep 10,
+the game came out 0.154 and 0.147. Players' own form came out 0 to 0.19
+and 0 to 0.21; most players are 0, and a player with no history gets 0.
+It's stored in the tables (the game) and in `v5players.json` (each
+player's `form`).
 
 **Held out**, against the same build with the strengths fixed. Brier,
 where positive is better:
 
-| | sd | moneyline | spread | total |
-|---|---|---|---|---|
-| Sep 3–9 | 0.19 | −0.0002 | −0.0006 | +0.0002 |
-| Sep 10–22 | 0.17 | −0.0001 | −0.0003 | **+0.0010** (Q1 **+0.0024**, Q3 **+0.0011**) |
+| | moneyline | spread | total |
+|---|---|---|---|
+| Sep 3–9 | −0.0001 | −0.0001 | +0.0004 (Q1 +0.0011, Q3 +0.0006; overtime all three **+0.002 to +0.004**) |
+| Sep 10–22 | −0.0001 | +0.0001 | **+0.0012** (Q1 **+0.0025**, Q3 **+0.0010**, Q2 +0.0011) |
 
 Spread of the points still to come, real / v5:
 
-| | before | after |
-|---|---|---|
-| Sep 3–9 | 8.52 / 8.13 | 8.53 / 8.89 |
-| Sep 10–22 | 9.26 / 8.23 | 9.26 / 8.86 |
+| | before | after | bottom / top tenth after |
+|---|---|---|---|
+| Sep 3–9 | 8.52 / 8.13 | 8.52 / 8.79 | 9.1% / 9.8% |
+| Sep 10–22 | 9.26 / 8.23 | 9.26 / 8.84 | 11.5% / 10.0% |
 
-The first week had a strong pre-match and wanted less (0.10 matched its
-spread, with every market neutral). The second wanted more (0.20 gave
-total +0.0013). Across weeks the fitted width is the fair middle.
+An earlier version drew the two offenses independently, with one sd for
+everyone refitted on the last weeks built on. It swung from week to week
+(0.19 against 0.13) and cost spread (−0.0006, and −0.0005 in Q4 on
+Sep 10–22), because an independent draw widens the margin, which was
+already right.
 
-Q3's narrowness remains, and it isn't about strength. On Sep 10–22, 13.9%
-of real results fell in the bottom tenth, with v5 leaving 0.64 points too
-many. The same holds for Q4's (spread 5.24 real against 4.86). Both are
-level and late-game questions, not the day's strengths.
+Q3's narrowness remains (13.4% of real results in the bottom tenth on
+Sep 10–22), and so does Q4's. That is where the line sits, not how wide
+the distribution is.
 
 ### v5 reads nothing of GAMEPLAI's
 
