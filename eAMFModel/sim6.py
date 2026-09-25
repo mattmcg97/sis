@@ -583,6 +583,55 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
     return go_shift, fg_shift
 
 
+LATE_DEFICITS = (-3, -8, -11, -16)
+KICK_RANGES = (45, 55)
+LATE_PRIOR = 10.0
+CHOICES = ("go", "fg", "punt")
+
+
+def late_band(margin):
+    """A trailing side's deficit as a band: -1..-3, -4..-8, -9..-11, -12..-16, <=-17."""
+    for i, edge in enumerate(LATE_DEFICITS):
+        if margin >= edge:
+            return i
+    return len(LATE_DEFICITS)
+
+
+def kick_range(y):
+    """A field goal's distance from here as a range: up to 45, 46-55, longer."""
+    d = 100 - y + 17
+    return 0 if d <= KICK_RANGES[0] else 1 if d <= KICK_RANGES[1] else 2
+
+
+def late_fourth_choices(rows):
+    """Every 4th down by a trailing side in the last three minutes or overtime: deficit band, kick
+    range and what it chose."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"]:
+            continue
+        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"]:
+            continue
+        p, c = _i(a["period"]), _f(a["clock_seconds"])
+        margin = _margin(a, a["offense"])
+        if margin is None or margin >= 0 or not (p >= 5 or (p == 4 and c <= 180)):
+            continue
+        choice = "punt" if b["play_kind"] == "PUNT" else "fg" if b["play_kind"] == "FIELD_GOAL" else "go"
+        out.append((late_band(margin), kick_range(_i(a["field_position"])), CHOICES.index(choice)))
+    return out
+
+
+def fit_late_fourths(records, prior=LATE_PRIOR):
+    """The chance of going for it, kicking and punting by deficit band and kick range, shrunk toward
+    the kick range's rate over all deficits."""
+    n = np.zeros((len(LATE_DEFICITS) + 1, len(KICK_RANGES) + 1, len(CHOICES)))
+    for band, rng_, choice in records:
+        n[band, rng_, choice] += 1
+    pooled = n.sum(0, keepdims=True)
+    pooled = (pooled + 1.0) / (pooled.sum(2, keepdims=True) + len(CHOICES))
+    return (n + prior * pooled) / (n.sum(2, keepdims=True) + prior)
+
+
 def _fallbacks(key):
     """Coarser table bins to fall back on, finest first."""
     rest, z = divmod(key, 4)
@@ -640,6 +689,8 @@ class Tables:
         self.inplay_theta = np.zeros((N_SEGMENTS, N_BANDS))
         self.go_shift = np.zeros((4, 7))
         self.late_fg = np.array([0.32, 0.62])
+        self.late_fourth = None
+        self.kneel_prob = np.ones(2)
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
         self.fg_shift = np.zeros((4, 7))
 
@@ -647,8 +698,9 @@ class Tables:
     def build(cls, matches, min_records=MIN_RECORDS, seed=0):
         """Build every table from the export's matches."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
-        backed = []
+        backed, late4 = [], []
         for rows in matches.values():
+            late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
             backed += backed_up_snaps(rows)
             free += safety_kicks(rows)
@@ -750,6 +802,8 @@ class Tables:
             if ch:
                 t.late_fg[i] = (sum(c == "fg" for c in ch) + 1) / (len(ch) + 2)
         t.n_snaps = len(snaps)
+        if late4:
+            t.late_fourth = fit_late_fourths(late4)
         if backed:
             t.backed, returns = fit_backed_up(backed)
             t.backed_return = returns if len(returns) >= BACKED_RETURNS_MIN else None
@@ -770,11 +824,13 @@ class Tables:
                       strength=np.array([self.strength_game, self.strength_league]),
                       strength_theta=self.strength_theta, strength_slope=self.strength_slope,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
-                      late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
+                      late_fg=self.late_fg, early_fg=self.early_fg, kneel_prob=self.kneel_prob, conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
                       inplay_theta=self.inplay_theta)
+        if self.late_fourth is not None:
+            arrays["late_fourth"] = self.late_fourth
         if self.backed is not None:
             arrays["backed"] = self.backed
             if self.backed_return is not None:
@@ -806,6 +862,10 @@ class Tables:
             t.go_shift, t.fg_shift = z["go_shift"], z["fg_shift"]
         if "late_fg" in z:
             t.late_fg = z["late_fg"]
+        if "kneel_prob" in z:
+            t.kneel_prob = z["kneel_prob"]
+        if "late_fourth" in z:
+            t.late_fourth = z["late_fourth"]
         if "early_fg" in z:
             t.early_fg = z["early_fg"]
         for d in (False, True):
@@ -1096,7 +1156,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         dn = down[ix]
         tt = dist[ix]
 
-        kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
+        kneel_zone = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
+        kneel = kneel_zone & (rand(ix, 24) < tables.kneel_prob[(margin > 8).astype(np.int64)])
         tally("kneel", kneel.sum())
         if kneel.any():
             kx = ix[kneel]
@@ -1131,8 +1192,16 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         kick_to_tie = (margin >= -3) & (make >= 0.3) & \
             (r1 < np.where(c <= 30, tables.late_fg[1], tables.late_fg[0]))
         go = np.where(late_trail, ~kick_to_tie, r1 < pgo)
-        kick_fg = ~go & np.where(late_trail, True, r2 < _sigmoid(ka + kb * u + tables.fg_shift[dph, mbk])) \
-            & (make > 0)
+        kick_fg = np.where(late_trail, True, r2 < _sigmoid(ka + kb * u + tables.fg_shift[dph, mbk]))
+        if tables.late_fourth is not None:
+            band = np.select([margin >= e for e in LATE_DEFICITS], np.arange(len(LATE_DEFICITS)),
+                             len(LATE_DEFICITS))
+            kr = np.where(kd_ <= KICK_RANGES[0], 0, np.where(kd_ <= KICK_RANGES[1], 1, 2))
+            lp = tables.late_fourth[band, kr]
+            table = late_trail & (margin < LATE_DEFICITS[0])
+            go = np.where(table, r1 < lp[:, 0], go)
+            kick_fg = np.where(table, r1 < lp[:, 0] + lp[:, 1], kick_fg)
+        kick_fg = ~go & kick_fg & (make > 0)
         do_fg = fg_now | (fourth & kick_fg)
         do_punt = fourth & ~go & ~kick_fg
         play = ~kneel & ~do_fg & ~do_punt

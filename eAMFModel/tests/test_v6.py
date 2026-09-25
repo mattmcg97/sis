@@ -14,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import nb2_prior, players, sim, sim4, sim6, v6, v6_stream
+from .. import nb2_prior, players, pricer, sim, sim4, sim5, sim6, v6, v6_stream
 from .test_v3 import _matches
 
 
@@ -349,6 +349,80 @@ class TestStrengthSpread(unittest.TestCase):
         t = sim6.Tables()
         theta, own, game = sim6.strength_draw(t, [0.1, -0.1], [0.05, 0.05])
         self.assertTrue(np.allclose(theta, [0.1, -0.1]) and not own.any() and not game.any())
+
+
+class TestLateGame(unittest.TestCase):
+    """v6: a trailing side's late 4th downs from a fitted table, and kneels that are not certain."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.matches = _matches(60)
+        cls.tables = sim6.Tables.build(cls.matches, min_records=20)
+
+    def _fourth(self, behind):
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 4, 60.0, sim6.SCRIM
+        st.team[:], st.down[:], st.dist[:], st.y[:] = 0, 4, 8, 80
+        st.home[:], st.away[:] = 10, 10 + behind
+        return st
+
+    def test_the_table_sets_what_a_trailing_side_does(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        t.late_fourth = np.zeros_like(t.late_fourth)
+        t.late_fourth[..., 1] = 1.0
+        h, _ = sim6.simulate(t, self._fourth(10), 400, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertGreater(float((h == 13).mean()), 0.8)
+        t.late_fourth[..., 1], t.late_fourth[..., 0] = 0.0, 1.0
+        h, _ = sim6.simulate(t, self._fourth(10), 400, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertEqual(float((h == 13).mean()), 0.0)
+
+    def test_the_fitted_table_is_shaped_and_sums_to_one(self):
+        lf = self.tables.late_fourth
+        self.assertEqual(lf.shape, (len(sim6.LATE_DEFICITS) + 1, len(sim6.KICK_RANGES) + 1, 3))
+        self.assertTrue(np.allclose(lf.sum(2), 1.0))
+
+    def test_with_both_off_v6_plays_as_v5(self):
+        import copy
+        t6 = copy.deepcopy(self.tables)
+        t6.late_fourth, t6.kneel_prob = None, np.ones(2)
+        t5 = sim5.Tables.build(self.matches, min_records=20)
+        st = sim6.Start(3)
+        st.period[:], st.clock[:], st.phase[:] = 4, 150.0, sim6.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 50, [3, 17, 10], [10, 10, 30]
+        a = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
+        b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
+        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
+
+    def _kneel_zone(self):
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 4, 50.0, sim6.SCRIM
+        st.team[:], st.down[:], st.dist[:], st.y[:] = 0, 1, 10, 60
+        st.home[:], st.away[:] = 24, 20
+        return st
+
+    def test_a_kneel_that_is_not_certain_leaves_points(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        t.kneel_prob = np.ones(2)
+        h, a = sim6.simulate(t, self._kneel_zone(), 2000, np.random.default_rng(1), seed=4)
+        self.assertEqual(float(((h + a) > 44).mean()), 0.0)
+        t.kneel_prob = np.zeros(2)
+        h, a = sim6.simulate(t, self._kneel_zone(), 2000, np.random.default_rng(1), seed=4)
+        self.assertGreater(float(((h + a) > 44).mean()), 0.0)
+
+    def test_the_kneel_fit_matches_real_games(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        state = pricer.GameState(period=4, elapsed_in_period=0.0, home_score=24, away_score=20,
+                                 offense=pricer.HOME, down=1, field_position=60, distance=10,
+                                 clock_seconds=50.0)
+        items = [(0, state, (0.0, 0.0), 0 if i % 10 else 7) for i in range(60)]
+        fitted = v6.fit_kneels(t, items, n_paths=200)
+        real, got, k = fitted[0]
+        self.assertAlmostEqual(real, 0.9)
+        self.assertTrue(abs(got - real) < 0.05 or k < 0.02)
+        self.assertEqual(len(v6.kneel_states([(None, state, (0.0, 0.0), 0)])), 1)
 
 
 class TestOvertime(unittest.TestCase):

@@ -9,7 +9,7 @@ from collections import Counter
 import numpy as np
 
 from . import nb2_prior, playover, players, sim6 as sim
-from .pricer import HOME
+from .pricer import AWAY, HOME
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
@@ -736,6 +736,63 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
     return got, real
 
 
+KNEEL_FIT = True
+KNEEL_PATHS = 300
+KNEEL_ROUNDS = 7
+
+
+def kneel_states(items):
+    """The states from rest_of_game_states where the leader has the ball late with the downs to
+    kneel it out, by lead: 0 for one score (1-8), 1 for more."""
+    out = []
+    for _, state, theta0, rest in items:
+        if state.period < 4 or state.pending_conversion is not None or state.down is None:
+            continue
+        lead = state.home_score - state.away_score
+        if state.offense == AWAY:
+            lead = -lead
+        down = state.down
+        if (lead <= 0 or state.clock_seconds is None or state.field_position is None
+                or state.clock_seconds > 20.0 * (5 - down) or state.field_position <= 5 - down):
+            continue
+        out.append((0 if lead <= 8 else 1, state, theta0, rest))
+    return out
+
+
+def _no_more_points(tables, items, n_paths, seed):
+    """The simulated share of games with no more points from these states."""
+    start = sim.Start(len(items))
+    for i, (_, state, theta0, _) in enumerate(items):
+        _fill(start, i, start_from(state))
+        start.theta[i] = theta0
+    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1,
+                              distinct=True)
+    return float(((home + away) == (start.home + start.away)[:, None]).mean())
+
+
+def fit_kneels(tables, items, n_paths=KNEEL_PATHS, rounds=KNEEL_ROUNDS, seed=0):
+    """tables.kneel_prob, by lead, so that from real kneel-it-out states the simulation ends with no
+    more points as often as real games did. Returns {lead group: (real, simulated, kneel chance)}."""
+    out = {}
+    for g in (0, 1):
+        sel = [it for it in items if it[0] == g]
+        if len(sel) < 30:
+            continue
+        real = float(np.mean([it[3] == 0 for it in sel]))
+        lo, hi = 0.0, 1.0
+        tables.kneel_prob[g] = 1.0
+        if _no_more_points(tables, sel, n_paths, seed) > real:
+            for _ in range(rounds):
+                tables.kneel_prob[g] = (lo + hi) / 2
+                if _no_more_points(tables, sel, n_paths, seed) > real:
+                    hi = tables.kneel_prob[g]
+                else:
+                    lo = tables.kneel_prob[g]
+            tables.kneel_prob[g] = (lo + hi) / 2
+        out[g] = (real, _no_more_points(tables, sel, n_paths, seed), float(tables.kneel_prob[g]))
+    return out
+
+
 FORM_HALF_LIFE = 60.0
 FORM_DAYS = 365
 FORM_GRID = np.array([-0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6])
@@ -858,6 +915,13 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                   "real / simulated -- " + ", ".join(
                       f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
                   + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
+    if KNEEL_FIT:
+        quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
+        kneels = fit_kneels(tables, kneel_states(rest_of_game_states(matches, quick, priors, every=1)))
+        if verbose and kneels:
+            print("  kneeling it out: no more points, real / simulated, and the chance of a kneel per "
+                  "snap -- " + "; ".join(f"{'lead 1-8' if g == 0 else 'lead 9+'} {r:.3f} / {m:.3f}, {k:.2f}"
+                                          for g, (r, m, k) in sorted(kneels.items())))
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "
