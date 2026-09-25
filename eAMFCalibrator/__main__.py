@@ -253,7 +253,7 @@ def cmd_bets(args):
     if args.bet_table:
         config.BET_TABLE = args.bet_table
     if args.max_lag is not None:
-        config.MAX_LAG_SECONDS = args.max_lag
+        config.LAG_RANGE = (config.LAG_RANGE[0], args.max_lag)
     if args.extra_columns:
         config.BET_EXTRA_COLUMNS = [c.strip().upper() for c in args.extra_columns.split(",") if c.strip()]
     conn = snowflake_io.get_connection()
@@ -860,8 +860,8 @@ def build_parser():
 
     bets_parser = sub.add_parser(
         "bets", parents=[shared],
-        help="betting simulation: every in-play bet with prod's and the candidate's probability at "
-             "the moment it was priced (latency per match and operator off the bets' lines)")
+        help="betting simulation: every single bet, pre-match and in play, with prod's and the "
+             "candidate's probability at the moment it was priced (a lag per operator off its odds)")
     bets_parser.add_argument("action", nargs="?", choices=["run", "probe"], default="run",
                              help="probe: print the columns and messages it reads, to check the names")
     bets_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
@@ -870,8 +870,8 @@ def build_parser():
                                   f"outside {config.DATABASE}.{config.SCHEMA} "
                                   f"(default {config.BET_TABLE})")
     bets_parser.add_argument("--max-lag", type=float, metavar="SECONDS",
-                             help=f"the longest lag tried for a match "
-                                  f"(default {config.MAX_LAG_SECONDS})")
+                             help=f"the longest lag tried "
+                                  f"(default {config.LAG_RANGE[1]})")
     bets_parser.add_argument("--extra-columns", metavar="COLS",
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")

@@ -1,4 +1,4 @@
-"""The betting simulation: latency off the bets' lines, the join, and the re-pricing."""
+"""The betting simulation: a lag per operator off the odds, the join, and the re-pricing."""
 
 import datetime as dt
 import unittest
@@ -15,55 +15,65 @@ def at(seconds):
 
 def quote(match, market, seconds, prob, line=None, message=None, status="open", active="true"):
     """A snowflake_io.fetch_quotes row, published at T0 + seconds (GAMEPLAI publishes 0-100)."""
-    desc = None if line is None else f"Total {line}"
+    desc = None if line is None else f"Line {line}"
     return (match, market, at(seconds), 100.0 * prob, None, desc,
             seconds if message is None else message, status, active)
 
 
-def bet(match, seconds, market_type=3, selection=1, odds=1.9, stake=10.0, revenue=10.0,
-        line=None, operator="FANDUEL", **extra):
+def bet(match, seconds, market_type=1, selection=1, odds=1.9, stake=10.0, revenue=10.0,
+        line=None, operator="FANDUEL", in_play="Yes", **extra):
     return bets.Bet(bet_id=f"{match}-{seconds}", match_code=match, time=at(seconds),
                     market_type=market_type, selection=selection, odds=odds, stake=stake,
                     revenue=revenue, line=line,
-                    extra=dict({config.BET_GROUP_COLUMN: operator}, **extra))
+                    extra=dict({config.BET_GROUP_COLUMN: operator,
+                                config.BET_IN_PLAY_COLUMN: in_play}, **extra))
 
 
-# prod's total: 44.5 until 100s, 47.5 until 200s, then 41.5
-TOTALS = [quote("M1", 54, 0, 0.50, 44.5), quote("M1", 54, 100, 0.52, 47.5),
-          quote("M1", 54, 200, 0.48, 41.5)]
+MARGIN = 1.05
+# prod's home moneyline: changes every 100s
+PRICES = [(0, 0.40), (100, 0.60), (200, 0.45), (300, 0.70), (400, 0.50)]
+MONEYLINE = [quote("M1", 50, t, p) for t, p in PRICES]
 
 
-class TestLatency(unittest.TestCase):
+def odds_for(p):
+    return 1.0 / (p * MARGIN)
 
-    def test_the_lag_is_where_the_bets_lines_agree_with_prods(self):
-        tl = bets.timeline(TOTALS)
-        # placed 8s behind prod: still on the old line just after each change (a quote published
-        # exactly at bet time - lag is already showing, so 207s on 47.5 means a lag of 8 or more)
-        bs = [bet("M1", 105, line=44.5), bet("M1", 107, line=44.5), bet("M1", 150, line=47.5),
-              bet("M1", 207, line=47.5), bet("M1", 230, line=41.5)]
-        lat = bets.fit_latency(bs, tl, max_lag=60, step=1, min_bets=2)[("M1", "FANDUEL")]
-        self.assertEqual((lat.seconds, lat.source), (8, "lines"))
-        self.assertEqual(lat.agree, 1.0)
-        self.assertLess(lat.agree_no_lag, 1.0)
 
-    def test_a_moneyline_group_is_fitted_on_the_odds(self):
-        tl = bets.timeline([quote("M2", 50, 0, 0.50), quote("M2", 50, 100, 0.70)])
-        margin = 1.05
-        bs = [bet("M2", 102, 1, 1, odds=1 / (0.50 * margin)),
-              bet("M2", 103, 1, 1, odds=1 / (0.50 * margin)),
-              bet("M2", 110, 1, 1, odds=1 / (0.70 * margin)),
-              bet("M2", 130, 1, 1, odds=1 / (0.70 * margin))]
-        lat = bets.fit_latency(bs, tl, max_lag=30, step=1, min_bets=2)[("M2", "FANDUEL")]
-        self.assertEqual((lat.seconds, lat.source), (4, "odds"))
+class TestLag(unittest.TestCase):
 
-    def test_a_thin_group_takes_its_operators_median(self):
-        tl = bets.timeline(TOTALS)
-        bs = [bet("M1", 105, line=44.5), bet("M1", 107, line=44.5), bet("M1", 150, line=47.5),
-              bet("M1", 207, line=47.5), bet("M1", 230, line=41.5),
-              bet("M9", 10, line=44.5)]
-        lat = bets.fit_latency(bs, tl, max_lag=60, step=1, min_bets=2)
-        self.assertEqual((lat[("M9", "FANDUEL")].seconds, lat[("M9", "FANDUEL")].source),
-                         (8, "operator median"))
+    def test_the_lag_is_where_the_odds_follow_prod(self):
+        tl = bets.timeline(MONEYLINE)
+        bs = []
+        for (c, new), (_, old) in zip(PRICES[1:], PRICES):
+            bs.append(bet("M1", c + 6, odds=odds_for(old)))   # still the old price: lag 7 or more
+            bs.append(bet("M1", c + 7, odds=odds_for(new)))   # the new one: lag 7 or less
+        lag = bets.fit_lags(bs, tl, lags=list(range(-20, 31)))["FANDUEL"]
+        self.assertEqual(lag.seconds, 7)
+        self.assertLess(lag.curve[7], lag.curve[0])
+
+    def test_a_clock_behind_prods_gives_a_negative_lag(self):
+        tl = bets.timeline(MONEYLINE)
+        bs = []
+        for (c, new), (_, old) in zip(PRICES[1:], PRICES):
+            bs.append(bet("M1", c - 4, odds=odds_for(old)))
+            bs.append(bet("M1", c - 3, odds=odds_for(new)))
+        self.assertEqual(bets.fit_lags(bs, tl, lags=list(range(-20, 31)))["FANDUEL"].seconds, -3)
+
+    def test_pre_match_bets_are_read_at_bet_time(self):
+        lags = {"FANDUEL": bets.Lag(7.0)}
+        self.assertEqual(bets.bet_lag(bet("M1", 50), lags), 7.0)
+        self.assertEqual(bets.bet_lag(bet("M1", 50, in_play="No"), lags), 0.0)
+        self.assertEqual(bets.bet_lag(bet("M1", 50, operator="OTHER"), lags), 0.0)
+
+    def test_a_spread_quoted_from_the_other_side_gets_its_sign_turned(self):
+        tl = bets.timeline([quote("M1", 52, 0, 0.5, -3.5), quote("M1", 53, 0, 0.5, -3.5),
+                            quote("M1", 54, 0, 0.5, 44.5)])
+        bs = [bet("M1", 10, 2, 1, line=-3.5), bet("M1", 11, 2, 2, line=3.5),
+              bet("M1", 12, 2, 2, line=3.5), bet("M1", 13, 3, 1, line=44.5)]
+        signs = bets.fit_line_signs(bs, tl, {})
+        self.assertEqual(signs[("FANDUEL", 52)][0], 1)
+        self.assertEqual(signs[("FANDUEL", 53)][0], -1)
+        self.assertEqual(signs[("FANDUEL", 54)][0], 1)
 
 
 class TestJoin(unittest.TestCase):
@@ -71,31 +81,42 @@ class TestJoin(unittest.TestCase):
     def setUp(self):
         self.prod = bets.timeline([quote("M1", 54, 0, 0.50, 44.5, message=10),
                                    quote("M1", 54, 40, 0.40, 44.5, message=12)])
-        self.cand = bets.quote_index([quote("M1", 54, 1, 0.55, 44.5, message=10),
-                                      quote("M1", 54, 41, 0.45, 44.5, message=12)])
+        cand = [quote("M1", 54, 1, 0.55, 44.5, message=10), quote("M1", 54, 41, 0.45, 44.5, message=12)]
+        self.cand, self.cand_tl = bets.quote_index(cand), bets.timeline(cand)
 
-    def test_a_bet_is_priced_at_prods_quote_one_latency_earlier(self):
-        lat = {("M1", "FANDUEL"): bets.Latency(15.0, "lines")}
-        (r,) = bets.join([bet("M1", 50, line=44.5, odds=2.2)], lat, self.prod, self.cand)
-        self.assertEqual(r["message"], 10)
-        self.assertEqual((r["stream_prob"], r["candidate_prob"]), (0.50, 0.55))
-        self.assertEqual(r["stream_prob_no_lag"], 0.40)
-        self.assertTrue(r["line_match"])
+    def join(self, bs, lag=0.0, signs=None):
+        return bets.join(bs, {"FANDUEL": bets.Lag(lag)}, signs or {}, self.prod, self.cand,
+                         self.cand_tl)
+
+    def test_an_in_play_bet_is_priced_one_lag_earlier_and_a_pre_match_one_at_bet_time(self):
+        live, pre = self.join([bet("M1", 50, 3, 1, line=44.5, odds=2.2),
+                               bet("M1", 50, 3, 1, line=44.5, odds=2.2, in_play="No")], lag=15)
+        self.assertEqual((live["message"], live["stream_prob"], live["candidate_prob"]), (10, 0.50, 0.55))
+        self.assertEqual((pre["message"], pre["stream_prob"], pre["candidate_prob"]), (12, 0.40, 0.45))
+        self.assertEqual(live["stream_prob_no_lag"], 0.40)
+
+    def test_the_candidate_is_found_by_time_when_prods_quote_has_no_message(self):
+        prod = bets.timeline([quote("M1", 50, 0, 0.5)])
+        prod[("M1", 50)][1][0] = (None,) + prod[("M1", 50)][1][0][1:]
+        cand_tl = bets.timeline([quote("M1", 50, 1, 0.6)])
+        (r,) = bets.join([bet("M1", 5, in_play="No")], {}, {}, prod, {}, cand_tl)
+        self.assertEqual((r["stream_prob"], r["candidate_prob"]), (0.5, 0.6))
 
     def test_a_loser_keeps_its_revenue_and_a_winner_is_repaid_at_the_candidates_odds(self):
-        lat = {("M1", "FANDUEL"): bets.Latency(0.0, "lines")}
-        lost, won = bets.join([bet("M1", 45, line=44.5, odds=2.4, stake=10, revenue=10),
-                               bet("M1", 45, line=44.5, odds=2.4, stake=10, revenue=-14)],
-                              lat, self.prod, self.cand)
+        lost, won = self.join([bet("M1", 45, 3, 1, line=44.5, odds=2.4, stake=10, revenue=10),
+                               bet("M1", 45, 3, 1, line=44.5, odds=2.4, stake=10, revenue=-14)])
         self.assertEqual((lost["result"], won["result"]), (bets.LOST, bets.WON))
         self.assertEqual(lost["candidate_revenue"], 10)
         odds_c = 2.4 * 0.40 / 0.45
         self.assertAlmostEqual(won["candidate_odds"], odds_c, places=4)
         self.assertAlmostEqual(won["candidate_revenue"], 10 - 10 * odds_c)
 
-    def test_a_bet_on_another_line_is_not_simulated(self):
-        (r,) = bets.join([bet("M1", 45, line=47.5)], {}, self.prod, self.cand)
-        self.assertFalse(r["line_match"] or r["simulated"])
+    def test_a_turned_line_is_matched_on_prods_side_and_another_line_is_not(self):
+        turned, other = self.join([bet("M1", 45, 3, 1, line=-44.5), bet("M1", 45, 3, 1, line=47.5)],
+                                  signs={("FANDUEL", 54): (-1, 0, 0, 0)})
+        self.assertTrue(turned["line_match"] and turned["simulated"])
+        self.assertFalse(other["line_match"] or other["simulated"])
+        self.assertEqual(bets.why_not(other), "line differs")
 
     def test_results_are_read_off_revenue_and_cash_outs_are_left_out(self):
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=0)), bets.PUSH)
@@ -104,37 +125,23 @@ class TestJoin(unittest.TestCase):
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=10,
                                             BET_CASHED_OUT="Yes")), bets.OTHER)
 
-    def test_the_summary_is_margin_both_ways_and_can_leave_out_the_vips(self):
-        lat = {("M1", "FANDUEL"): bets.Latency(0.0, "lines")}
-        rows = bets.join([bet("M1", 45, line=44.5, odds=2.4, stake=10, revenue=10,
+    def test_the_summary_splits_pre_match_and_in_play_and_can_leave_out_the_vips(self):
+        rows = self.join([bet("M1", 45, 3, 1, line=44.5, odds=2.4, stake=10, revenue=10,
                               CUSTOMER_TEMPERATURE="Standard"),
-                          bet("M1", 45, line=44.5, odds=2.4, stake=10, revenue=-14,
-                              CUSTOMER_TEMPERATURE="VIP")],
-                         lat, self.prod, self.cand)
+                          bet("M1", 45, 3, 1, line=44.5, odds=2.4, stake=10, revenue=-14,
+                              CUSTOMER_TEMPERATURE="VIP", in_play="No")])
         n, stake, rev, margin, rev_c, margin_c = bets.summarise(rows)["all"]
         self.assertEqual((n, stake, rev), (2, 20.0, -4.0))
-        self.assertAlmostEqual(margin, -20.0)
         self.assertGreater(margin_c, margin)
+        split = bets.summarise(rows, "in_play")
+        self.assertEqual((split[True][0], split[False][0]), (1, 1))
         no_vip = bets.summarise(rows, keep=lambda r: r["CUSTOMER_TEMPERATURE"] != "VIP")["all"]
         self.assertEqual(no_vip[:3], (1, 10.0, 10.0))
 
-
-class TestLines(unittest.TestCase):
-
-    def test_the_line_report_tells_a_turned_spread_from_an_alternate_total(self):
-        rows = [dict(market="spread", bet_line=3.5, stream_line=-3.5, OPERATOR_NAME="FD"),
-                dict(market="spread", bet_line=-3.5, stream_line=-3.5, OPERATOR_NAME="FD"),
-                dict(market="total", bet_line=45.5, stream_line=44.5, OPERATOR_NAME="FD"),
-                dict(market="moneyline", bet_line=None, stream_line=None, OPERATOR_NAME="FD")]
-        report = {(op, m): (n, same, turned, gaps) for op, m, n, same, turned, gaps in
-                  bets.line_report(rows)}
-        self.assertEqual(report[("FD", "spread")][:3], (2, 0.5, 0.5))
-        self.assertEqual(report[("FD", "total")][3], [(1.0, 1)])
-        self.assertNotIn(("FD", "moneyline"), report)
-
-    def test_probabilities_are_read_as_0_to_1(self):
-        tl = bets.timeline([quote("M1", 50, 0, 0.62)])
-        self.assertAlmostEqual(bets.price_at_time(tl, "M1", 50, at(5))[1], 0.62)
+    def test_coverage_shows_where_the_money_is_and_how_much_is_re_priced(self):
+        rows = self.join([bet("M1", 45, 3, 1, line=44.5, stake=10),
+                          bet("M1", 45, 3, 1, line=47.5, stake=30)])
+        self.assertEqual(bets.coverage(rows)[(True, "total")], (2, 40.0, 1, 10.0))
 
 
 class TestCommand(unittest.TestCase):
@@ -168,17 +175,20 @@ class TestCommand(unittest.TestCase):
         from .. import snowflake_io
         cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
                 "ODDS", "STAKE_GBP", "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER",
-                "OPERATOR_NAME", "CUSTOMER_TEMPERATURE"]
-        rows = [(i, "M1", at(t), 3, 1, 1.9, 10, 10, line, 2, "FANDUEL", "Standard")
-                for i, (t, line) in enumerate(((105, 44.5), (107, 44.5), (150, 47.5),
-                                               (207, 47.5), (230, 41.5)))]
+                "OPERATOR_NAME", "BET_IN_PLAY", "CUSTOMER_TEMPERATURE"]
+        rows = []
+        for (c, new), (_, old) in zip(PRICES[1:], PRICES):
+            for t, p in ((c + 6, old), (c + 7, new)):
+                rows.append((len(rows), "M1", at(t), 1, 1, odds_for(p), 10, 10, None, 2, "FANDUEL",
+                             "Yes", "Standard"))
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
-                mock.patch.object(snowflake_io, "fetch_quotes", return_value=TOTALS), \
+                mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(bets, "write_csv"), mock.patch("builtins.print"), \
-                mock.patch("os.makedirs"):
+                mock.patch("os.makedirs"), \
+                mock.patch.object(config, "LAG_RANGE", (-20, 30)):
             out = bets.run(None, "out")
-        self.assertEqual(len(out), 5)
-        self.assertTrue(all(r["latency_seconds"] == 8 for r in out))
+        self.assertEqual(len(out), 8)
+        self.assertTrue(all(r["latency_seconds"] == 7 for r in out))
         self.assertTrue(all(r["simulated"] for r in out))
 
 
@@ -186,16 +196,16 @@ class TestReading(unittest.TestCase):
 
     def test_bets_are_read_through_the_configured_columns(self):
         cols = ["MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID", "ODDS", "STAKE_GBP",
-                "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER", "OPERATOR_NAME"]
-        row = ("M1", T0, 2, 2, 1.95, 5, -4.75, -3.5, 3, "HARDROCK")
+                "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER", "OPERATOR_NAME", "BET_IN_PLAY"]
+        row = ("M1", T0, 2, 2, 1.95, 5, -4.75, -3.5, 3, "HARDROCK", "No")
         (b,) = bets.to_bets(cols, [row])
-        self.assertEqual((b.feed_market, b.line, b.group), (53, -3.5, ("M1", "HARDROCK")))
+        self.assertEqual((b.feed_market, b.line, b.operator, b.in_play), (53, -3.5, "HARDROCK", False))
 
-    def test_the_query_reads_in_play_singles_in_the_window(self):
+    def test_the_query_reads_every_single_in_the_window(self):
         sql, params, wanted = bets.bets_sql()
         self.assertIn("MARKET_TYPE_ID IN (1, 2, 3)", sql)
         self.assertIn("UPPER(BET_TYPE) = 'SINGLE'", sql)
-        self.assertIn("BET_IN_PLAY = 'Yes'", sql)
+        self.assertNotIn("BET_IN_PLAY = 'Yes'", sql)
         self.assertIn(config.SPORT_CODE, params)
 
     def test_the_bet_source_can_live_in_another_database(self):
