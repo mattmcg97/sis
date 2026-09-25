@@ -1520,17 +1520,23 @@ python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate 
     --extra-columns BET_TYPE,CUSTOMER_ID
 ```
 
-- **Bets.** Every in-play AF bet in the window (moneyline, handicap and
-  totals) from `config.BET_TABLE` (`CUSTOMER_REVENUE_EVENT`). Columns are
-  read through `config.BET_COLUMNS`. Anything listed in `--extra-columns`
-  goes through to the output unchanged: the customer and VIP columns, to
-  filter on.
-- **Latency, one number per match.** The feed marks the Q4 two-minute
-  auto-suspend: the first suspend message in the fourth quarter with no
-  more than 2:00 (+10s) on the clock. A bet the operator still accepted
-  after it shows how far the operator runs behind the feed. The match's
-  latency is the latest such bet, up to `--max-lag` (60s). A match without
-  one takes the median of the rest (`latency_source = median`).
+- **Bets.** Every single bet on an AF moneyline, handicap or total in the
+  window that has a bet time, from `config.BET_TABLE`. That defaults to
+  `CUSTOMER_REVENUE`, the bet-by-bet source; the `SHARED.CUSTOMER_REVENUE_EVENT`
+  table is one row per operator, match and day. The bet-level
+  `CUSTOMER_REVENUE_EVENT` is a view; `bets probe` finds it, and
+  `--bet-table DATABASE.SCHEMA.NAME` points at it. Columns are read through
+  `config.BET_COLUMNS`. The operator, customer hash and
+  `CUSTOMER_TEMPERATURE` (to filter the VIPs) come through to the output
+  unchanged, as does anything else in `--extra-columns`. A bet before the
+  match's first play is pre-match and isn't re-priced.
+- **Latency, one number per match.** The feed suspends around every play.
+  The Q4 two-minute auto-suspend is the fourth quarter's last suspend that
+  is never lifted, when it came with no more than 2:00 (+10s) left. A bet
+  the operator still accepted after it shows how far the operator runs
+  behind the feed. The match's latency is the latest such bet, up to
+  `--max-lag` (60s). A match without one takes the median of the rest
+  (`latency_source = median`).
 - **The join.** Each bet is placed at the feed message that was live at
   bet time minus the latency. It then takes prod's probability
   (`stream_prob`) and the candidate's (`candidate_prob`) at that message.
@@ -1547,8 +1553,16 @@ The run checks the latency itself. It prints how closely the operator's
 odds follow prod's probability, the mean |log(implied / prod)|, with the
 latency and without. Smaller with it means it lines the bets up.
 
-`bets probe` prints the bet table's columns and a few rows, any tables
-named like HUD, and the fourth-quarter suspend messages by game clock.
+`bets probe` prints:
+- any views named like `CUSTOMER_REVENUE` across the account;
+- the configured bet source's columns, and any configured ones it lacks;
+- the window's bets by operator (with a bet time, single) and the values
+  of `BET_IN_PLAY` and `CUSTOMER_TEMPERATURE`;
+- any tables named like HUD across the account;
+- the fourth quarter's suspends and unsuspends by game clock, the clock of
+  each match's last never-lifted suspend, and where prod's last live quote
+  was.
+
 Use it to check the names in `config` before the first run.
 
 Output:

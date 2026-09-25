@@ -866,7 +866,9 @@ def build_parser():
                              help="probe: print the columns and messages it reads, to check the names")
     bets_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     bets_parser.add_argument("--bet-table", metavar="NAME",
-                             help=f"the bets table (default {config.BET_TABLE})")
+                             help=f"the bet-by-bet table or view, DATABASE.SCHEMA.NAME for one "
+                                  f"outside {config.DATABASE}.{config.SCHEMA} "
+                                  f"(default {config.BET_TABLE})")
     bets_parser.add_argument("--max-lag", type=float, metavar="SECONDS",
                              help=f"latest a bet can land after the Q4 auto-suspend and still "
                                   f"count as latency (default {config.MAX_LAG_SECONDS})")
@@ -953,6 +955,8 @@ def main(argv=None):
         return cmd_drive_audit(args)
     if args.command == "expected-points":
         return cmd_expected_points(args)
+    if args.command == "bets":
+        return cmd_bets(args)
     return 1
 
 
