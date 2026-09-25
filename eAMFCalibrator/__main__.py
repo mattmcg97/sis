@@ -259,7 +259,11 @@ def cmd_bets(args):
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
-            if args.action == "probe":
+            if args.action == "lines":
+                from . import bet_lines
+                path, _ = bet_lines.run(cur, out_dir, n_matches=args.matches, only=args.match)
+                print(f"\n  -> {path}")
+            elif args.action == "probe":
                 lines = bets.probe(cur)
                 path = os.path.join(out_dir, "bets_probe.txt")
                 with open(path, "w", encoding="utf-8") as fh:
@@ -862,8 +866,14 @@ def build_parser():
         "bets", parents=[shared],
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
              "candidate's probability at the moment it was priced (a lag per operator off its odds)")
-    bets_parser.add_argument("action", nargs="?", choices=["run", "probe"], default="run",
-                             help="probe: print the columns and messages it reads, to check the names")
+    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines"], default="run",
+                             help="probe: print the columns it reads, to check the names; lines: "
+                                  "prod's spread and total lines through each match against the "
+                                  "lines bet (out/bets_lines.html)")
+    bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
+                             help="lines: draw the N matches with the most spread and total bets")
+    bets_parser.add_argument("--match", action="append", metavar="CODE",
+                             help="lines: draw this match (repeatable)")
     bets_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     bets_parser.add_argument("--bet-table", metavar="NAME",
                              help=f"the bet-by-bet table or view, DATABASE.SCHEMA.NAME for one "
