@@ -634,6 +634,61 @@ matched every quarter. But held out it cost moneyline and spread about
 swings lean on those extra fourth-quarter points. So the kickoff fit
 keeps its old reading, and the fit is left in the code, off.
 
+### The day's strengths are unknown
+
+**What was wrong.** v5 played every simulated game with both offenses
+fixed at the match's prior, so all of a snapshot's spread came from the
+plays. Held out, the points still to come were too narrow:
+
+| | real results in the bottom / top tenth of v5 | spread, real / v5 |
+|---|---|---|
+| Sep 3–9 | 10.5% / 10.9% | 8.52 / 8.13 |
+| Sep 10–22 | 13.0% / 10.8% | 9.26 / 8.23 |
+
+It was narrowest where the pre-match knew least (Q1, Sep 10–22: 14.1% in
+the bottom tenth).
+
+**Now** each simulated game draws its two offenses around the prior, by
+a normal with sd `tables.strength_sd` on the log scale. The draw is on
+common random numbers, so path k has the same strengths at every snapshot
+of a match and in every call. The prior grid is simulated with the draw,
+so expected points still match the prior. The draw raises the mean more
+than the median, so the middle line comes down a little.
+
+**The fit.** The build takes the last two weeks of the games it's built
+on and prices them with an NB2 fitted only on what came before those two
+weeks, as pricing sees a match in the days after a build. It then sets
+the sd so that, from the Q1–Q3 states, the real squared misses of the
+points still to come equal the simulated variance. Q4 is left out: too
+little is left in it for the day's strengths to matter. The build
+prints the ratio with the strengths fixed and the sd it chose. One week
+of holdout swung the fit (0.19 before Sep 3, 0.13 before Sep 10). Two or
+three weeks give 0.20 and 0.17.
+
+**Held out**, against the same build with the strengths fixed. Brier,
+where positive is better:
+
+| | sd | moneyline | spread | total |
+|---|---|---|---|---|
+| Sep 3–9 | 0.19 | −0.0002 | −0.0006 | +0.0002 |
+| Sep 10–22 | 0.17 | −0.0001 | −0.0003 | **+0.0010** (Q1 **+0.0024**, Q3 **+0.0011**) |
+
+Spread of the points still to come, real / v5:
+
+| | before | after |
+|---|---|---|
+| Sep 3–9 | 8.52 / 8.13 | 8.53 / 8.89 |
+| Sep 10–22 | 9.26 / 8.23 | 9.26 / 8.86 |
+
+The first week had a strong pre-match and wanted less (0.10 matched its
+spread, with every market neutral). The second wanted more (0.20 gave
+total +0.0013). Across weeks the fitted width is the fair middle.
+
+Q3's narrowness remains, and it isn't about strength. On Sep 10–22, 13.9%
+of real results fell in the bottom tenth, with v5 leaving 0.64 points too
+many. The same holds for Q4's (spread 5.24 real against 4.86). Both are
+level and late-game questions, not the day's strengths.
+
 ### v5 reads nothing of GAMEPLAI's
 
 v5's prices are only ever compared with GAMEPLAI's, never trained on them.
