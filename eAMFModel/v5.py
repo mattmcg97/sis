@@ -912,14 +912,16 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
 # time and in the top tenth 10-12%, and the real spread ran 3-12% wider
 # than v5's (widest where the pre-match knew least). So each simulated game
 # draws its offenses around the prior (sim5: tables.strength_sd), and the
-# build fits how far: on the last week of the games built on, each priced
-# with an NB2 fitted only on what came before that week -- as pricing sees
-# a match -- the real squared misses must equal the simulated variance.
+# build fits how far: on the last two weeks of the games built on, each
+# priced with an NB2 fitted only on what came before them -- as pricing
+# sees a match in the days after a build -- the real squared misses must
+# equal the simulated variance. One week swung the fit (0.19 before Sep 3,
+# 0.13 before Sep 10); two or three weeks give 0.20 and 0.17.
 # The fourth quarter is left out of the target: too little is left in it
 # for the day's strengths to matter (its narrowness is its own).
 
 STRENGTH_FIT = True
-STRENGTH_HOLDOUT_DAYS = 7
+STRENGTH_HOLDOUT_DAYS = 14
 STRENGTH_PATHS = 200
 STRENGTH_MAX = 0.5
 
