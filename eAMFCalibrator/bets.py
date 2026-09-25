@@ -367,7 +367,10 @@ def why_not(r):
     if r["candidate_prob"] is None:
         return "no candidate price"
     if not r["line_match"]:
-        return "line differs"
+        line = r["bet_line_prod_side"]
+        if not _same_line(line, r["stream_line"]):
+            return "not on prod's line"
+        return "candidate on another line"
     return f"result {r['result']}"
 
 
@@ -516,10 +519,34 @@ def probe(cur):
     missing = [v for v in list(config.BET_COLUMNS.values()) + config.BET_EXTRA_COLUMNS
                if v and v not in set(cols)]
     lines.append(f"   configured columns missing: {', '.join(missing) or 'none'}")
-    try:
-        lines += _coverage(cur)
-    except Exception as exc:
-        lines.append(f"   (failed: {exc})")
+    for section in (_coverage, _reconcile):
+        try:
+            lines += section(cur)
+        except Exception as exc:
+            lines.append(f"   (failed: {exc})")
+    return lines
+
+
+def _reconcile(cur):
+    """Every row of the bet source in the window, to set against an operator's own report: by
+    operator, bet type, market type and in play, the rows, the sum of BETS (a multi's legs share
+    one bet), the distinct bet ids and the stake -- and which of them the simulation reads."""
+    c = config.BET_COLUMNS
+    since, until = config.CUTOFF_START[:10], (config.CUTOFF_END or "2100-01-01")[:10]
+    names, rows = fetch_all(cur, f"""
+        SELECT OPERATOR_NAME, BET_TYPE, {c['market_type']} AS MARKET_TYPE,
+               {config.BET_IN_PLAY_COLUMN} AS IN_PLAY,
+               COUNT(*) AS ROWS_, ROUND(SUM(BETS), 0) AS BETS,
+               COUNT(DISTINCT {c['id']}) AS BET_IDS,
+               COUNT({c['time']}) AS WITH_TIME, ROUND(SUM({c['stake']}), 0) AS STAKE_GBP
+        FROM {bet_table()}
+        WHERE {c['sport']} = %s AND REVENUE_DATE BETWEEN TO_DATE(%s) AND TO_DATE(%s)
+        GROUP BY 1, 2, 3, 4 ORDER BY 1, ROWS_ DESC""", (config.SPORT_CODE, since, until))
+    lines = [f"\n== every row of {bet_table()}, revenue date {since} to {until} "
+             "(read by the simulation: single, market type 1-3, with a bet time)"]
+    lines.append("   " + "  ".join(f"{n:>13s}" for n in names))
+    for r in rows:
+        lines.append("   " + "  ".join(f"{str(v):>13s}" for v in r))
     return lines
 
 

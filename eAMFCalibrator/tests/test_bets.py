@@ -116,7 +116,13 @@ class TestJoin(unittest.TestCase):
                                   signs={("FANDUEL", 54): (-1, 0, 0, 0)})
         self.assertTrue(turned["line_match"] and turned["simulated"])
         self.assertFalse(other["line_match"] or other["simulated"])
-        self.assertEqual(bets.why_not(other), "line differs")
+        self.assertEqual(bets.why_not(other), "not on prod's line")
+
+    def test_a_bet_on_prods_line_the_candidate_did_not_quote_is_told_apart(self):
+        cand = [quote("M1", 54, 1, 0.55, 45.5, message=10)]
+        (r,) = bets.join([bet("M1", 5, 3, 1, line=44.5)], {}, {}, self.prod,
+                         bets.quote_index(cand), bets.timeline(cand))
+        self.assertEqual(bets.why_not(r), "candidate on another line")
 
     def test_results_are_read_off_revenue_and_cash_outs_are_left_out(self):
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=0)), bets.PUSH)
@@ -164,11 +170,14 @@ class TestCommand(unittest.TestCase):
                 return [v for v in config.BET_COLUMNS.values() if v] + config.BET_EXTRA_COLUMNS, []
             if "GROUP BY OPERATOR_NAME" in sql:
                 return ["OPERATOR_NAME", "BETS"], [("FANDUEL", 10)]
+            if "GROUP BY 1, 2, 3, 4" in sql:
+                return ["OPERATOR_NAME", "BET_TYPE", "ROWS_"], [("FANDUEL", "Multi", 70000)]
             return ["V", "N"], [("x", 3)]
         with mock.patch.object(bets, "fetch_all", side_effect=fake_fetch):
             text = "\n".join(bets.probe(None))
         self.assertIn("FANDUEL", text)
         self.assertIn("configured columns missing: none", text)
+        self.assertIn("Multi", text)
         self.assertNotIn("failed", text)
 
     def test_the_whole_pipeline_runs_on_fake_results(self):
