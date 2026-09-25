@@ -2,14 +2,21 @@
 
 bets -> latency -> join -> analysis
 
-  bets      every in-play AF bet in the window from config.BET_TABLE
-  latency   for each match, how long after the Q4 two-minute auto-suspend
-            the operator still accepted bets: the latest such bet, capped at
-            config.MAX_LAG_SECONDS; matches without one take the median
-  join      each bet against the feed message live at (bet time - latency),
-            and prod's and the candidate's probability at that message
+  bets      every in-play single AF bet in the window, bet by bet, from
+            config.BET_TABLE (the CUSTOMER_REVENUE view)
+  latency   for each match and operator, the lag at which the bets' lines
+            agree best with the line prod was quoting at (bet time - lag);
+            ties go to the lag at which the odds follow prod's probability
+            closest. A group with too few bets takes its operator's median.
+  join      each bet against prod's quote as published at (bet time -
+            latency), and the candidate's probability at the same message
   analysis  the bet re-priced at the candidate's probability with the
             operator's own margin kept, and the margin both ways
+
+The feeds carry no two-minute auto-suspend to measure the lag against: the
+scouting feed's Q4 suspends and unsuspends balance to 0:00 and prod quotes to
+the end, so the operator's suspend is its own, and HudStats is not in
+Snowflake. The lines are the next best clock.
 """
 
 import csv
@@ -21,11 +28,10 @@ from bisect import bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
-from . import config, markets, scouting, snowflake_io
+from . import config, markets, snowflake_io
 from .snowflake_io import fetch_all
 
 FEED_MARKET = {(1, 1): 50, (1, 2): 51, (2, 1): 52, (2, 2): 53, (3, 1): 54, (3, 2): 55}
-SUSPENDS = ("BET_SUSPEND", "PERMANENT_BET_SUSPEND")
 WON, LOST, PUSH, OTHER = "won", "lost", "push", "other"
 
 
@@ -49,14 +55,26 @@ class Bet:
         """The GAMEPLAI market id this bet was placed on."""
         return FEED_MARKET.get((self.market_type, self.selection))
 
+    @property
+    def operator(self):
+        """The operator that took the bet."""
+        return self.extra.get(config.BET_GROUP_COLUMN)
+
+    @property
+    def group(self):
+        """The (match, operator) the latency is fitted for."""
+        return self.match_code, self.operator
+
 
 @dataclass
 class Latency:
-    """How late one match's bets ran behind the feed."""
+    """How far one match's bets at one operator ran behind prod's quotes."""
     seconds: float
     source: str
-    suspend_time: object = None
-    late_bets: int = 0
+    bets: int = 0
+    line_bets: int = 0
+    agree: float = None
+    agree_no_lag: float = None
 
 
 def _naive(t):
@@ -64,11 +82,6 @@ def _naive(t):
     if t is None or getattr(t, "tzinfo", None) is None:
         return t
     return t.astimezone(dt.timezone.utc).replace(tzinfo=None)
-
-
-def _seconds(a, b):
-    """a - b in seconds."""
-    return (_naive(a) - _naive(b)).total_seconds()
 
 
 def bet_table():
@@ -123,77 +136,34 @@ def to_bets(cols, rows):
     return out
 
 
-def auto_suspend_times(scouting_rows, clock=None, slack=None):
-    """match -> the time of the Q4 two-minute auto-suspend. The feed suspends around every play,
-    so it is the fourth quarter's last suspend that is never lifted in the quarter, when it came
-    with no more than clock + slack seconds left. Rows are scouting.fetch_scouting's."""
-    clock = config.AUTO_SUSPEND_CLOCK if clock is None else clock
-    slack = config.AUTO_SUSPEND_SLACK if slack is None else slack
-    period, last = {}, {}
-    for r in scouting_rows:
-        match, status = r[0], scouting._text(r[3])
-        if status in scouting.PERIOD_START:
-            period[match] = scouting.PERIOD_START[status]
-        if period.get(match) != 4:
+def timeline(quote_rows):
+    """(match, market) -> (sorted publish times, [(message, probability, line, live)]), off
+    snowflake_io.fetch_quotes rows; the latest row per publish time wins."""
+    latest = {}
+    for r in quote_rows:
+        match, market, publish, prob, _, desc, msg, status, active = r[:9]
+        if publish is None or prob is None:
             continue
-        if status in SUSPENDS:
-            last[match] = (_float(r[2]), _naive(r[9]))
-        elif status == "BET_UNSUSPEND":
-            last[match] = None
-    return {m: t for m, v in last.items() if v is not None
-            for left, t in [v] if left is not None and left <= clock + slack and t is not None}
-
-
-def kickoff_times(scouting_rows):
-    """match -> the time of its first play: a bet before it is pre-match."""
+        live = str(status).lower() == "open" and str(active).lower() == "true"
+        latest[(match, int(market), _naive(publish))] = (msg, float(prob), markets.parse_line(desc), live)
+    grouped = defaultdict(list)
+    for (match, market, publish), entry in latest.items():
+        grouped[(match, market)].append((publish, entry))
     out = {}
-    for r in scouting_rows:
-        if r[0] not in out and scouting._text(r[4]) == "PLAY_STARTED" and r[9] is not None:
-            out[r[0]] = _naive(r[9])
+    for key, qs in grouped.items():
+        qs.sort(key=lambda q: q[0])
+        out[key] = ([q[0] for q in qs], [q[1] for q in qs])
     return out
 
 
-def match_latency(bets, suspend_times, max_lag=None):
-    """match -> Latency: the latest bet accepted after the Q4 auto-suspend, up to max_lag seconds
-    after it. A match with a suspend but no such bet, or with no suspend, takes the median of the
-    rest ("median")."""
-    max_lag = config.MAX_LAG_SECONDS if max_lag is None else max_lag
-    by_match = defaultdict(list)
-    for b in bets:
-        by_match[b.match_code].append(b)
-    out = {}
-    for match, suspend in suspend_times.items():
-        late = [_seconds(b.time, suspend) for b in by_match.get(match, [])]
-        late = [x for x in late if 0 < x <= max_lag]
-        if late:
-            out[match] = Latency(max(late), "suspend", suspend, len(late))
-    fallback = statistics.median([x.seconds for x in out.values()]) if out else 0.0
-    for match in by_match:
-        if match not in out:
-            out[match] = Latency(fallback, "median", suspend_times.get(match), 0)
-    return out
-
-
-def message_times(scouting_rows):
-    """match -> (sorted feed times, their message counts), off scouting.fetch_scouting's rows."""
-    pairs = defaultdict(list)
-    for r in scouting_rows:
-        if r[9] is not None and r[1] is not None:
-            pairs[r[0]].append((_naive(r[9]), int(r[1])))
-    out = {}
-    for match, ps in pairs.items():
-        ps.sort()
-        out[match] = ([t for t, _ in ps], [m for _, m in ps])
-    return out
-
-
-def message_at(times, match, t):
-    """The last feed message at or before time t, or None."""
-    if match not in times or t is None:
+def price_at_time(tl, match, market, t):
+    """(message, probability, line, live) of the latest quote published at or before t, or None."""
+    entry = tl.get((match, market))
+    if entry is None or t is None:
         return None
-    ts, msgs = times[match]
-    i = bisect_right(ts, t)
-    return msgs[i - 1] if i else None
+    times, quotes = entry
+    i = bisect_right(times, t)
+    return quotes[i - 1] if i else None
 
 
 def quote_index(quote_rows):
@@ -225,14 +195,80 @@ def price_at(index, match, market, message):
     if entry is None or message is None:
         return None
     msgs, quotes = entry
-    i = bisect_right(msgs, message)
+    i = bisect_right(msgs, int(message))
     return quotes[i - 1] if i else None
+
+
+def _same_line(a, b):
+    return a is None or b is None or abs(a - b) < 1e-6
+
+
+def _lag_score(bets, tl, lag):
+    """(lines agreeing, line bets priced, odds misfit) for these bets at this lag: the misfit is the
+    mean absolute log of implied over prod, less its median (the operator's margin)."""
+    agree = n_line = 0
+    logs = []
+    delta = dt.timedelta(seconds=lag)
+    for b in bets:
+        q = price_at_time(tl, b.match_code, b.feed_market, b.time - delta)
+        if q is None:
+            continue
+        _, prob, line, _ = q
+        if b.line is not None and line is not None:
+            n_line += 1
+            if abs(b.line - line) < 1e-6:
+                agree += 1
+            else:
+                continue
+        if b.odds and prob and 0 < prob < 1:
+            logs.append(math.log(1.0 / b.odds / prob))
+    if not logs:
+        return agree, n_line, float("inf")
+    mid = statistics.median(logs)
+    return agree, n_line, sum(abs(x - mid) for x in logs) / len(logs)
+
+
+def fit_latency(bets, tl, max_lag=None, step=None, min_bets=None):
+    """(match, operator) -> Latency: the lag, 0 to max_lag seconds, at which the most bets' lines
+    agree with prod's line at (bet time - lag), ties to the best odds fit; odds fit alone for a
+    moneyline-only group. A group with fewer than min_bets priced bets takes its operator's
+    median ("operator median")."""
+    max_lag = config.MAX_LAG_SECONDS if max_lag is None else max_lag
+    step = config.LAG_STEP_SECONDS if step is None else step
+    min_bets = config.MIN_LAG_BETS if min_bets is None else min_bets
+    lags = [i * step for i in range(int(max_lag / step) + 1)]
+    groups = defaultdict(list)
+    for b in bets:
+        if b.time is not None and b.feed_market is not None:
+            groups[b.group].append(b)
+    out = {}
+    for key, bs in groups.items():
+        scores = {lag: _lag_score(bs, tl, lag) for lag in lags}
+        n_line = max(s[1] for s in scores.values())
+        priced = sum(1 for b in bs if price_at_time(tl, b.match_code, b.feed_market, b.time))
+        if priced < min_bets:
+            continue
+        best = max(lags, key=lambda lag: (scores[lag][0], -scores[lag][2], -lag))
+        source = "lines" if n_line else "odds"
+        rate = lambda lag: scores[lag][0] / scores[lag][1] if scores[lag][1] else None
+        out[key] = Latency(best, source, len(bs), scores[best][1], rate(best), rate(0))
+    by_operator = defaultdict(list)
+    for (match, op), lat in out.items():
+        by_operator[op].append(lat.seconds)
+    everyone = [x.seconds for x in out.values()]
+    for key, bs in groups.items():
+        if key not in out:
+            pool = by_operator.get(key[1]) or everyone
+            out[key] = Latency(statistics.median(pool) if pool else 0.0, "operator median", len(bs))
+    return out
 
 
 def result_of(bet):
     """won / lost / push off the bet's revenue, stake and odds; other for anything else (cash out,
     part settled)."""
     if not bet.stake or not bet.odds:
+        return OTHER
+    if str(bet.extra.get("BET_CASHED_OUT", "")).strip().lower() == "yes":
         return OTHER
     payout = (bet.stake - bet.revenue) / bet.stake
     if abs(payout) < 0.01:
@@ -244,43 +280,34 @@ def result_of(bet):
     return OTHER
 
 
-def _same_line(a, b):
-    return a is None or b is None or abs(a - b) < 1e-6
-
-
-def join(bets, latency, times, prod, cand, kickoff=None):
-    """One row per bet: the message it was priced at, prod's and the candidate's probability there,
-    and the bet re-priced at the candidate's probability with the operator's margin kept. A bet
-    before the match's first play (kickoff) is pre-match and not re-priced."""
+def join(bets, latency, prod_tl, cand):
+    """One row per bet: prod's quote as published one latency before the bet, the candidate's
+    probability at the same message, and the bet re-priced at the candidate's probability with the
+    operator's margin kept."""
     rows = []
     for b in bets:
-        lat = latency.get(b.match_code)
+        lat = latency.get(b.group)
         lag = lat.seconds if lat else 0.0
-        t0 = b.time
-        seen = None if t0 is None else t0 - dt.timedelta(seconds=lag)
-        msg = message_at(times, b.match_code, seen)
-        msg0 = message_at(times, b.match_code, t0)
         market = b.feed_market
-        p = price_at(prod, b.match_code, market, msg)
+        seen = None if b.time is None else b.time - dt.timedelta(seconds=lag)
+        p = price_at_time(prod_tl, b.match_code, market, seen)
+        p0 = price_at_time(prod_tl, b.match_code, market, b.time)
+        msg = p[0] if p else None
         c = price_at(cand, b.match_code, market, msg)
-        p0 = price_at(prod, b.match_code, market, msg0)
-        result = result_of(b)
         row = dict(bet_id=b.bet_id, match_code=b.match_code, bet_time=b.time,
                    market=markets.market_group(market), selection=markets.selection_label(market),
                    feed_market=market, period=b.period, bet_line=b.line, odds=b.odds,
-                   stake=b.stake, revenue=b.revenue, result=result,
-                   latency_seconds=round(lag, 3), latency_source=lat.source if lat else None,
+                   stake=b.stake, revenue=b.revenue, result=result_of(b),
+                   latency_seconds=lag, latency_source=lat.source if lat else None,
                    message=msg, implied_prob=(1.0 / b.odds) if b.odds else None,
-                   stream_prob=p[0] if p else None, stream_line=p[1] if p else None,
-                   stream_live=p[2] if p else None,
+                   stream_prob=p[1] if p else None, stream_line=p[2] if p else None,
+                   stream_live=p[3] if p else None,
                    candidate_prob=c[0] if c else None, candidate_line=c[1] if c else None,
                    candidate_live=c[2] if c else None,
-                   stream_prob_no_lag=p0[0] if p0 else None)
-        row["in_play"] = bool(kickoff is None or (b.match_code in kickoff and t0 is not None
-                                                    and t0 >= kickoff[b.match_code]))
-        row["line_match"] = bool(p and c and _same_line(b.line, p[1]) and _same_line(b.line, c[1]))
+                   stream_prob_no_lag=p0[1] if p0 else None)
+        row["line_match"] = bool(p and c and _same_line(b.line, p[2]) and _same_line(b.line, c[1]))
         row.update(reprice(row))
-        row.update({k: v for k, v in b.extra.items()})
+        row.update(b.extra)
         rows.append(row)
     return rows
 
@@ -290,19 +317,19 @@ def reprice(row):
     kept, so the candidate's odds are odds * prod / candidate. Revenue as the book sees it."""
     p, c, odds, stake, result = (row["stream_prob"], row["candidate_prob"], row["odds"],
                                  row["stake"], row["result"])
-    if not (p and c and odds and row["line_match"] and row.get("in_play", True)) or result == OTHER:
+    if not (p and c and odds and row["line_match"]) or result == OTHER:
         return dict(candidate_odds=None, candidate_revenue=None, simulated=False)
     odds_c = odds * p / c
     revenue_c = stake - (stake * odds_c if result == WON else stake if result == PUSH else 0.0)
     return dict(candidate_odds=round(odds_c, 4), candidate_revenue=revenue_c, simulated=True)
 
 
-def summarise(rows, by=None):
+def summarise(rows, by=None, keep=None):
     """{group: (bets, stake, revenue, margin %, candidate revenue, candidate margin %)} over the
-    simulated bets; by is a row key (None: all)."""
+    simulated bets that `keep` allows; by is a row key (None: all)."""
     groups = defaultdict(list)
     for r in rows:
-        if r["simulated"]:
+        if r["simulated"] and (keep is None or keep(r)):
             groups["all" if by is None else r.get(by)].append(r)
     out = {}
     for g, rs in groups.items():
@@ -353,57 +380,99 @@ def run(cur, out_dir):
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
     matches = sorted({b.match_code for b in bets})
-    print(f"  {len(bets):,} bets on {len(matches):,} matches from {config.BET_TABLE}")
+    print(f"  {len(bets):,} bets on {len(matches):,} matches from {bet_table()}")
     if not bets:
         return None
-    table = scouting.locate(cur, config.SCOUTING_TABLE)
-    feed, prod_rows, cand_rows = [], [], []
+    prod_rows, cand_rows = [], []
     cand_name = candidate_stream()
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(matches), chunk):
         batch = matches[start:start + chunk]
-        feed += scouting.fetch_scouting(cur, table, batch, windowed=False)
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         cand_rows += snowflake_io.fetch_quotes(cur, cand_name, batch)
-    suspend = auto_suspend_times(feed)
-    latency = match_latency(bets, suspend)
-    rows = join(bets, latency, message_times(feed), quote_index(prod_rows), quote_index(cand_rows),
-                kickoff_times(feed))
+    prod_tl = timeline(prod_rows)
+    latency = fit_latency(bets, prod_tl)
+    rows = join(bets, latency, prod_tl, quote_index(cand_rows))
     os.makedirs(out_dir, exist_ok=True)
-    lat_rows = [dict(match_code=m, latency_seconds=round(x.seconds, 3), source=x.source,
-                     suspend_time=x.suspend_time, late_bets=x.late_bets)
-                for m, x in sorted(latency.items())]
+    lat_rows = [dict(match_code=m, operator=op, latency_seconds=x.seconds, source=x.source,
+                     bets=x.bets, line_bets=x.line_bets, lines_agree=x.agree,
+                     lines_agree_no_lag=x.agree_no_lag)
+                for (m, op), x in sorted(latency.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1])))]
     write_csv(os.path.join(out_dir, "bets_latency.csv"), lat_rows)
     write_csv(os.path.join(out_dir, "bets_sim.csv"), rows)
     report(rows, latency, cand_name)
     return rows
 
 
+def _pct(xs, q):
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(q * len(xs)))]
+
+
 def report(rows, latency, cand_name):
     """Print the latency, the join and the margin both ways."""
-    measured = [x.seconds for x in latency.values() if x.source == "suspend"]
-    print(f"\n  latency: measured on {len(measured):,} of {len(latency):,} matches"
-          + (f", median {statistics.median(measured):.1f}s, 10th-90th "
-             f"{sorted(measured)[len(measured) // 10]:.1f}-{sorted(measured)[(9 * len(measured)) // 10]:.1f}s"
-             if measured else "; none measured, every match at 0s"))
+    print("\n  latency by operator (fitted per match off the bets' lines against prod's):")
+    by_op = defaultdict(list)
+    for (_, op), lat in latency.items():
+        by_op[op].append(lat)
+    for op, lats in sorted(by_op.items(), key=lambda kv: str(kv[0])):
+        fitted = [x for x in lats if x.source != "operator median"]
+        secs = [x.seconds for x in fitted]
+        agree = [x for x in fitted if x.agree is not None]
+        line = f"  {str(op):24s} {len(lats):4d} matches, fitted {len(fitted):4d}"
+        if secs:
+            line += (f", median {statistics.median(secs):.0f}s (10th-90th "
+                     f"{_pct(secs, 0.1):.0f}-{_pct(secs, 0.9):.0f}s)")
+        if agree:
+            n = sum(x.line_bets for x in agree)
+            a = sum(x.agree * x.line_bets for x in agree) / n
+            a0 = sum((x.agree_no_lag or 0) * x.line_bets for x in agree) / n
+            line += f"; lines agree {100 * a:.1f}% at the fitted lag, {100 * a0:.1f}% at none"
+        print(line)
     check = lag_check(rows)
     if check:
         n, a, b = check
         print(f"  operator odds against prod: mean |log(implied / prod)| {a:.4f} with the latency, "
               f"{b:.4f} without ({n:,} bets)")
     joined = Counter("simulated" if r["simulated"] else
-                     "pre-match" if not r.get("in_play", True) else
                      "no prod price" if r["stream_prob"] is None else
                      "no candidate price" if r["candidate_prob"] is None else
                      "line differs" if not r["line_match"] else
                      f"result {r['result']}" for r in rows)
     print("  bets: " + ", ".join(f"{k} {v:,}" for k, v in joined.most_common()))
+    vip = config.BET_VIP_VALUE.lower()
+    not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
     print(f"\n  margin, prod as priced against {cand_name} re-priced (operator margin kept)")
-    print(f"  {'':12s} {'bets':>7s} {'stake':>12s} {'prod margin':>12s} {'candidate':>10s} {'change':>8s}")
-    for by in (None, "market", "period"):
-        for g, (n, stake, rev, m, rev_c, m_c) in sorted(summarise(rows, by).items(), key=lambda kv: str(kv[0])):
-            label = str(g) if by is None else f"{by} {g}"
-            print(f"  {label:12s} {n:7,d} {stake:12,.0f} {m:11.2f}% {m_c:9.2f}% {m_c - m:+7.2f}")
+    print(f"  {'':24s} {'bets':>7s} {'stake':>12s} {'prod':>8s} {'candidate':>10s} {'change':>8s}")
+    cuts = [(None, None, ""), (None, not_vip, f"all but {config.BET_VIP_VALUE}"),
+            (config.BET_GROUP_COLUMN, None, ""), (config.BET_VIP_COLUMN, None, ""),
+            ("market", None, ""), ("period", None, "")]
+    for by, keep, name in cuts:
+        for g, (n, stake, rev, m, rev_c, m_c) in sorted(summarise(rows, by, keep).items(),
+                                                          key=lambda kv: str(kv[0])):
+            label = name or (str(g) if by is None else f"{by.lower()} {g}")
+            print(f"  {label[:24]:24s} {n:7,d} {stake:12,.0f} {m:7.2f}% {m_c:9.2f}% {m_c - m:+7.2f}")
+
+
+def probe(cur):
+    """What the pipeline reads, for checking the configured names: the bet source's columns and its
+    coverage by operator in the window."""
+    lines = []
+    try:
+        cols, _ = fetch_all(cur, f"SELECT * FROM {bet_table()} LIMIT 0")
+    except Exception as exc:
+        cols = []
+        lines.append(f"   (reading {bet_table()} failed: {exc})")
+    lines.append(f"\n== {bet_table()} (the configured bet source): {len(cols)} columns")
+    lines.append("   " + ", ".join(cols))
+    missing = [v for v in list(config.BET_COLUMNS.values()) + config.BET_EXTRA_COLUMNS
+               if v and v not in set(cols)]
+    lines.append(f"   configured columns missing: {', '.join(missing) or 'none'}")
+    try:
+        lines += _coverage(cur)
+    except Exception as exc:
+        lines.append(f"   (failed: {exc})")
+    return lines
 
 
 def _coverage(cur):
@@ -416,15 +485,15 @@ def _coverage(cur):
         SELECT OPERATOR_NAME, COUNT(*) AS BETS,
                COUNT({c['time']}) AS WITH_TIME,
                SUM(CASE WHEN UPPER(BET_TYPE) = 'SINGLE' THEN 1 ELSE 0 END) AS SINGLES,
-               SUM(CASE WHEN UPPER(BET_TYPE) = 'SINGLE' AND {c['time']} IS NOT NULL THEN 1 ELSE 0 END)
-                   AS USABLE,
+               SUM(CASE WHEN UPPER(BET_TYPE) = 'SINGLE' AND {c['time']} IS NOT NULL
+                         AND BET_IN_PLAY = 'Yes' THEN 1 ELSE 0 END) AS USABLE,
                MIN({c['time']}) AS FIRST_TIME, MAX({c['time']}) AS LAST_TIME
         FROM {bet_table()}
         WHERE {c['sport']} = %s AND REVENUE_DATE BETWEEN TO_DATE(%s) AND TO_DATE(%s)
           AND {c['market_type']} IN (1, 2, 3)
         GROUP BY OPERATOR_NAME ORDER BY BETS DESC""", (config.SPORT_CODE, since, until))
     lines.append(f"\n== {bet_table()}, {since} to {until}, by operator "
-                 "(usable = single with a bet time)")
+                 "(usable = single, in play, with a bet time)")
     lines += ["   " + "; ".join(f"{n}={v}" for n, v in zip(names, r)) for r in rows]
     for col in ("BET_IN_PLAY", "CUSTOMER_TEMPERATURE", "BET_CASHED_OUT", "CUSTOMER_WIN_LOSS"):
         _, vals = fetch_all(cur, f"""
@@ -433,113 +502,4 @@ def _coverage(cur):
               AND {c['time']} IS NOT NULL
             GROUP BY {col} ORDER BY 2 DESC LIMIT 20""", (config.SPORT_CODE, since, until))
         lines.append(f"   {col}: " + ", ".join(f"{v}={n:,}" for v, n in vals))
-    return lines
-
-
-def _revenue_views(cur):
-    """Views named like CUSTOMER_REVENUE in any database this login can see, with their columns and
-    two rows: the bet-level source may be a view rather than the SHARED table."""
-    lines = []
-    try:
-        names, rows = fetch_all(cur, "SHOW VIEWS LIKE 'CUSTOMER_REVENUE%' IN ACCOUNT")
-    except Exception as exc:
-        return [f"\n== views like CUSTOMER_REVENUE in the account: search failed ({exc})"]
-    at = {n.lower(): i for i, n in enumerate(names)}
-    found = [f"{r[at['database_name']]}.{r[at['schema_name']]}.{r[at['name']]}" for r in rows]
-    lines.append(f"\n== views like CUSTOMER_REVENUE in the account: {len(found)}")
-    for v in found:
-        try:
-            cols, sample = fetch_all(cur, f"SELECT * FROM {v} WHERE SPORT_CODE = %s LIMIT 2",
-                                     (config.SPORT_CODE,))
-        except Exception:
-            cols, sample = fetch_all(cur, f"SELECT * FROM {v} LIMIT 2")
-        lines.append(f"   {v}: {len(cols)} columns: " + ", ".join(cols))
-        lines += ["   --- " + "; ".join(f"{n}={x}" for n, x in zip(cols, r)) for r in sample]
-    return lines
-
-
-def _hud_tables(cur):
-    """Tables named like HUD in any database this login can see."""
-    lines = []
-    try:
-        names, rows = fetch_all(cur, "SHOW TABLES LIKE '%HUD%' IN ACCOUNT")
-        at = {n.lower(): i for i, n in enumerate(names)}
-        found = [f"{r[at['database_name']]}.{r[at['schema_name']]}.{r[at['name']]}" for r in rows]
-        lines.append(f"\n== tables like HUD in the account: {len(found)}")
-        lines += [f"   {t}" for t in found]
-        for t in found[:5]:
-            cols, sample = fetch_all(cur, f"SELECT * FROM {t} LIMIT 2")
-            lines.append(f"   {t}: " + ", ".join(cols))
-            lines += ["   --- " + "; ".join(f"{n}={v}" for n, v in zip(cols, r)) for r in sample]
-    except Exception as exc:                      # no rights to search the account
-        lines.append(f"\n== tables like HUD in the account: search failed ({exc})")
-    return lines
-
-
-def _suspends(cur, sample_matches):
-    """The fourth quarter's suspends and unsuspends by game clock, the last never-lifted suspend,
-    and where prod's last live quote of each match was."""
-    lines = []
-    table = scouting.locate(cur, config.SCOUTING_TABLE)
-    recent = scouting.scouting_matches(cur, table)[-sample_matches:]
-    feed = scouting.fetch_scouting(cur, table, recent, windowed=False)
-    period, seen = {}, Counter()
-    clock_at = {}
-    for r in feed:
-        status = scouting._text(r[3])
-        if status in scouting.PERIOD_START:
-            period[r[0]] = scouting.PERIOD_START[status]
-        left = _float(r[2])
-        if period.get(r[0]) == 4 and left is not None:
-            clock_at[(r[0], r[1])] = left
-        if period.get(r[0]) == 4 and status in SUSPENDS + ("BET_UNSUSPEND",):
-            seen[(None if left is None else int(left // 20) * 20, status)] += 1
-    lines.append(f"\n== fourth quarter in {table.qualified}, last {len(recent)} matches: "
-                 "suspends / unsuspends by game clock left (20s bins)")
-    for b in sorted({k[0] for k in seen}, key=lambda x: -1 if x is None else x):
-        lines.append(f"   {'-' if b is None else b:>4}s  suspend {seen[(b, 'BET_SUSPEND')]:3d}  "
-                     f"unsuspend {seen[(b, 'BET_UNSUSPEND')]:3d}  "
-                     f"permanent {seen[(b, 'PERMANENT_BET_SUSPEND')]:3d}")
-    last = auto_suspend_times(feed, clock=240, slack=0)
-    lefts = []
-    for r in feed:
-        if r[0] in last and _naive(r[9]) == last[r[0]] and scouting._text(r[3]) in SUSPENDS:
-            lefts.append(_float(r[2]))
-    lines.append(f"   last never-lifted Q4 suspend, game clock left: "
-                 + ", ".join(f"{x:.0f}" for x in sorted(x for x in lefts if x is not None))
-                 + f"  ({len(last)} of {len(recent)} matches)")
-    found = auto_suspend_times(feed)
-    lines.append(f"   taken as the two-minute auto-suspend (clock <= {config.AUTO_SUSPEND_CLOCK}"
-                 f"+{config.AUTO_SUSPEND_SLACK}s): {len(found)} of {len(recent)} matches")
-    prod = snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], recent)
-    last_live = {}
-    for q in prod:
-        if str(q[7]).lower() == "open" and str(q[8]).lower() == "true" and q[6] is not None:
-            last_live[q[0]] = max(last_live.get(q[0], 0), int(q[6]))
-    lefts = sorted(clock_at[(m, msg)] for m, msg in last_live.items() if (m, msg) in clock_at)
-    lines.append("   prod's last live quote, Q4 game clock left at that message: "
-                 + ", ".join(f"{x:.0f}" for x in lefts)
-                 + f"  ({len(lefts)} of {len(last_live)} matches in Q4)")
-    return lines
-
-
-def probe(cur, sample_matches=20):
-    """What the pipeline reads, for checking the configured names: the bet table's columns, its
-    coverage by operator in the window, any HUD-like tables, and the fourth quarter's suspends."""
-    lines = _revenue_views(cur)
-    try:
-        cols, _ = fetch_all(cur, f"SELECT * FROM {bet_table()} LIMIT 0")
-    except Exception as exc:
-        cols = []
-        lines.append(f"   (reading {bet_table()} failed: {exc})")
-    lines.append(f"\n== {bet_table()} (the configured bet source): {len(cols)} columns")
-    lines.append("   " + ", ".join(cols))
-    missing = [v for v in list(config.BET_COLUMNS.values()) + config.BET_EXTRA_COLUMNS
-               if v and v not in set(cols)]
-    lines.append(f"   configured columns missing: {', '.join(missing) or 'none'}")
-    for section in (_coverage, _hud_tables, lambda c: _suspends(c, sample_matches)):
-        try:
-            lines += section(cur)
-        except Exception as exc:              # one failing query should not hide the rest
-            lines.append(f"   (failed: {exc})")
     return lines
