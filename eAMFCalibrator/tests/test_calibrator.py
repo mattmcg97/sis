@@ -5605,7 +5605,8 @@ class TestSeveralCandidates(unittest.TestCase):
                       '<td class="g0">0%<span class="pp">+0</span></td></tr>', block)
         self.assertIn("<h3>By quarter and game state</h3>", block)
         self.assertIn('<th colspan="4" class="grp">Within 1 score</th>', block)
-        self.assertIn('<tr class="subtotal"><th>Q1</th><td>all</td>', block)
+        self.assertIn('<tr class="subtotal"><th>Q1</th><td class="state">all</td>', block)
+        self.assertIn('<tr><th>Q1</th><td class="state">level</td>', block)
         # over against priced: prod's 44.5 went over at 50% (+50), v4's 46.5
         # under at 52% (-52), T2's 44.5 over at 40% (+60)
         self.assertIn("<h3>Over at the line against priced</h3>", block)

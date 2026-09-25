@@ -678,7 +678,8 @@ def _totals_reach_breakdown(sides):
             cells += "".join(_share_cell(line[k], real) for line in lines)
         whole = key[1] == totals_reach.ALL
         label = "all" if whole else html.escape(key[1])
-        rows.append(f'<tr class="{"subtotal" if whole else ""}"><th>{key[0]}</th><td class="state">{label}</td>'
+        tr = '<tr class="subtotal">' if whole else "<tr>"
+        rows.append(f'{tr}<th>{key[0]}</th><td class="state">{label}</td>'
                     f'<td>{first["n"]:,}</td>{cells}</tr>')
     return f"""
     <h3>By quarter and game state</h3>
@@ -705,7 +706,8 @@ def _totals_over_block(sides, per):
     quarters = sorted((k for k in by_q[0] if k[1] == totals_reach.ALL), key=lambda k: _quarter_order(k[0]))
     for n, key in enumerate(quarters):
         lines = [by_q[0][key]["prod"]] + [b.get(key, {}).get("candidate", (None,) * 4) for b in by_q]
-        rows.append(f'<tr{" class=split" if n == 0 else ""}><th>{key[0]}</th>'
+        tr = '<tr class="split">' if n == 0 else "<tr>"
+        rows.append(f'{tr}<th>{key[0]}</th>'
                     + "".join(_over_gap_cell(l[2], l[3]) for l in lines) + "</tr>")
     head = "".join(f"<th>{n}</th>" for n in names)
     return f"""

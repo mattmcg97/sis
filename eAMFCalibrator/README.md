@@ -1466,8 +1466,8 @@ version, change the names on the command line.
     calibration at prod's line and each side's line error.
   - Pre-match.
   - In-drive.
-  - Additional checks, starting with the run and then **Totals line
-    within 1 and 2 scores** (below).
+  - **Totals line within 1 and 2 scores** (below).
+  - Additional checks.
   - Every pair.
 - **Every pair** carries prod's line, probability, result and error, and
   for each candidate its own line and probability, its probability at
@@ -1480,44 +1480,30 @@ With one candidate the page is the same with one group of columns.
 
 ### Totals line within 1 and 2 scores
 
-At each drive snapshot a total line needs (line − points already scored)
-more points. The table counts how often that is:
-- within 1 score, where a single touchdown takes the game over;
-- within 2 scores;
-- more than 2 scores.
-
-It does this for prod's line and for each candidate's own line. Real is
-the same count for the points the rest of the game really produced.
+The totals line test is now a section of its own, after In-drive, rather
+than inside Additional checks. At each drive snapshot a total line needs
+(line − points already scored) more points. The test counts how often
+that is within 1 score, where a single touchdown takes the game over, and
+within 2 scores. It does this for prod's line and each candidate's own
+line. Real is the same count for the points the rest of the game really
+produced.
 
 A score counts as 7, except at a scoreline where the trailing player goes
 for two after a touchdown. There it counts as 8. Those scorelines are the
 margins where most players in SCOUTING_FULL went for two: behind by 1, 5,
-8, 11 or 16. The table isn't split by quarter, because every column is
-read on the same snapshots. It counts one row per snapshot: the over and
-the under share a line.
+8, 11 or 16. It counts one row per snapshot: the over and the under
+share a line.
 
-These shares can't match Real's, even for a perfect model. A line sits in
-the middle of the points still to come, so it is more than a score away
-more often than the result is. For example, on Sep 3–9:
-- 29.4% of snapshots really had one score or less still to come;
-- v5 put its line within one score on 22.0% of them;
-- yet v5's own distributions gave one score or less a 30.1% chance.
-
-The second table, **Over at the line, by where the line sits**, is the
-fair test. Next to each Over rate is the stream's own P(over) at its line
-(**Priced**), read off whichever side of the total the pair is. A middle
-line prices about 50%, but late in a game the points still to come are
-lumpy (0, 3 or 7), and the line nearest even money can price well off
-it. The test is Over against Priced, not Over against 50%. The third
-table, **By quarter and game state**, splits all of it by quarter and by:
-- level;
-- one score or two+ apart, with the leader or the trailer on the ball;
-- no ball.
-
-It shows real's shares, then each stream's line shares, Over and Priced.
-Early in a game, a line in the middle goes over half the
-time. A line held a score too far out shows as an Over rate well under
-50%. On Sep 3–9 prod's lines went over:
-- 45% of the time when within 1 score;
-- 44% when 1–2 scores out;
-- 34% when 1–2 scores out in Q4.
+- **The overall table** gives Real's share, then each stream's share with
+  its gap to Real in points beside it. The cell is coloured by the gap's
+  size on the report's green-to-red ramp: under 3 points, 3–6, 6–10,
+  10–15, over 15.
+- **By quarter and game state** gives the same within 1 score and within
+  2 scores, with each quarter's all-states row shaded above its states:
+  - level;
+  - one score or two+ apart, with the leader or the trailer on the ball;
+  - no ball.
+- **Over at the line against priced** gives each stream's over rate at
+  its own line minus its own priced P(over), in points. It's shown by
+  where the line sits and by quarter, coloured on the probability-gap
+  ramp.
