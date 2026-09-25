@@ -87,20 +87,20 @@ BET_COLUMNS = {
     "period": "BET_PLACED_PERIOD_NUMBER",
     "sport": "SPORT_CODE",
 }
-BET_FILTERS = ["UPPER(BET_TYPE) = 'SINGLE'", "BET_IN_PLAY = 'Yes'"]
+BET_FILTERS = ["UPPER(BET_TYPE) = 'SINGLE'"]
 BET_EXTRA_COLUMNS = ["OPERATOR_NAME", "CUSTOMER_NAME_HASH", "CUSTOMER_TEMPERATURE", "BET_TYPE",
                      "BET_IN_PLAY", "BET_CASHED_OUT", "CUSTOMER_WIN_LOSS"]
-# The latency is fitted per (match, BET_GROUP_COLUMN); the report cuts the
-# margin by BET_VIP_COLUMN and without BET_VIP_VALUE.
+# The lag is fitted per BET_GROUP_COLUMN (the operator) off its in-play bets
+# (BET_IN_PLAY_COLUMN = 'Yes'); the report cuts the margin by BET_VIP_COLUMN
+# and without BET_VIP_VALUE.
 BET_GROUP_COLUMN = "OPERATOR_NAME"
+BET_IN_PLAY_COLUMN = "BET_IN_PLAY"
 BET_VIP_COLUMN = "CUSTOMER_TEMPERATURE"
 BET_VIP_VALUE = "VIP"
-# The lag tried for each match and operator, 0 to MAX_LAG_SECONDS in steps of
-# LAG_STEP_SECONDS; a group with fewer than MIN_LAG_BETS priced bets takes its
-# operator's median.
-MAX_LAG_SECONDS = 60
+# The lags tried, seconds (negative: the operator's clock runs behind
+# GAMEPLAI's), in steps of LAG_STEP_SECONDS.
+LAG_RANGE = (-30, 60)
 LAG_STEP_SECONDS = 1
-MIN_LAG_BETS = 5
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.

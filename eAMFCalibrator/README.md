@@ -1520,47 +1520,52 @@ python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25
 python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate v6 --v6-model v6_model
 ```
 
-- **Bets.** Every in-play single bet on an AF moneyline, handicap or
-  total in the window, from the `CUSTOMER_REVENUE` view (bet by bet: bet
-  time, odds, line, operator, customer). `SHARED.CUSTOMER_REVENUE_EVENT`
-  is one row per operator, match and day, so it can't be used. The
-  operator, customer hash, `CUSTOMER_TEMPERATURE` (Standard / VIP /
-  Restricted) and cash-out flag come through to the output.
-- **Latency, one number per match and operator.** The feeds we can reach
-  have no two-minute auto-suspend to measure against:
-  - the scouting feed's Q4 suspends and unsuspends balance all the way
-    to 0:00;
-  - prod quotes live to the end;
-  - HudStats isn't in Snowflake.
+- **Bets.** Every single bet on an AF moneyline, handicap or total in the
+  window, pre-match and in play, from the `CUSTOMER_REVENUE` view (bet by
+  bet: bet time, odds, line, operator, customer).
+  `SHARED.CUSTOMER_REVENUE_EVENT` is one row per operator, match and day,
+  so it can't be used. The operator, `BET_IN_PLAY`, customer hash,
+  `CUSTOMER_TEMPERATURE` (Standard / VIP / Restricted; Hard Rock sends
+  none) and cash-out flag come through to the output.
+- **Latency, one lag per operator.** It's the lag, −30 to +60s, at which
+  the operator's in-play moneyline odds follow prod's probability most
+  closely, once its margin is taken out. A negative lag means the
+  operator's clock runs behind GAMEPLAI's. The report prints the misfit at
+  each lag, so the minimum and its sharpness can be seen. Pre-match bets
+  are read at bet time.
 
-  So the lag is read off the lines instead. For each match and operator
-  it's the lag, 0–60s, at which the most bets' lines agree with the line
-  prod was quoting at bet time minus the lag. Ties go to the lag at which
-  the odds follow prod's probability closest, once the operator's margin
-  is taken out. A moneyline-only group is fitted on the odds alone. A group
-  with fewer than 5 priced bets takes its operator's median.
-- **The join.** Each bet takes prod's quote as published one latency
-  before it (`stream_prob`), and the candidate's probability at the same
-  feed message (`candidate_prob`). A model candidate (v4–v6) is read at
-  prod's line. `line_match` is false when the bet's line isn't the line
-  quoted.
+  Why not per match: the feeds we can reach have no two-minute
+  auto-suspend to measure against, and per-match lags fitted off the lines
+  (which agree for only a fifth of bets) made the odds follow prod *worse*
+  than no lag at all.
+- **The join.** Each bet takes prod's quote as published one lag before it
+  (`stream_prob`), and the candidate's probability at the same feed message
+  (`candidate_prob`), or at the same time when prod's quote carries no
+  message. A spread line is read from prod's side. Whether an operator
+  records a side's line turned is fitted from the data, per operator and
+  side (`bet_line_prod_side`). A bet on another line than prod's (an
+  alternate line) isn't re-priced.
 - **Analysis.** The operator's odds already include its margin over prod
   (implied / prod). Keeping that margin, the candidate's odds are
   odds × prod / candidate. Each won, lost or pushed bet is re-settled at
-  those odds; cash-outs are left out. The margin is shown both ways:
-  overall, all but VIPs, and by operator, customer temperature, market and
-  period.
+  those odds; cash-outs are left out.
 
-The run prints the fitted latency by operator, with how often the lines
-agree at the fitted lag against at no lag. It also prints how closely the
-operator's odds follow prod's probability with the latency and without.
+The report prints:
+- the lag by operator, and the odds misfit with and without it;
+- the spread and total line checks: the sign fitted per operator and side,
+  how often the bet is on prod's line, and the commonest gaps;
+- where the money is: bets and stake by pre-match or in play and market,
+  and how much of each the simulation re-prices;
+- the margin both ways: overall, all but VIPs, and by pre-match or in play,
+  operator, customer temperature, market and period.
 
 `bets probe` prints the bet source's columns (and any configured ones it
 lacks), the window's bets by operator, and the values of `BET_IN_PLAY`,
 `CUSTOMER_TEMPERATURE`, `BET_CASHED_OUT` and `CUSTOMER_WIN_LOSS`.
 
 Output:
-- `out/bets_sim.csv`, one row per bet: `stream_prob`, `candidate_prob`,
-  `implied_prob`, `latency_seconds`, `candidate_odds`, `candidate_revenue`,
-  plus the bet source's own columns;
-- `out/bets_latency.csv`, one row per match and operator.
+- `out/bets_sim.csv`, one row per bet: `in_play`, `stream_prob`,
+  `candidate_prob`, `implied_prob`, `latency_seconds`, `candidate_odds`,
+  `candidate_revenue`, plus the bet source's own columns;
+- `out/bets_latency.csv`, one row per operator, with the misfit at every
+  lag tried.

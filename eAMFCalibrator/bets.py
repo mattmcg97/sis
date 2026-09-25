@@ -2,21 +2,21 @@
 
 bets -> latency -> join -> analysis
 
-  bets      every in-play single AF bet in the window, bet by bet, from
-            config.BET_TABLE (the CUSTOMER_REVENUE view)
-  latency   for each match and operator, the lag at which the bets' lines
-            agree best with the line prod was quoting at (bet time - lag);
-            ties go to the lag at which the odds follow prod's probability
-            closest. A group with too few bets takes its operator's median.
-  join      each bet against prod's quote as published at (bet time -
-            latency), and the candidate's probability at the same message
+  bets      every single AF bet in the window, bet by bet, from
+            config.BET_TABLE (the CUSTOMER_REVENUE view), pre-match and in play
+  latency   one lag per operator: the one, config.LAG_RANGE seconds, at
+            which its in-play moneyline odds follow prod's probability
+            closest (its margin taken out); pre-match bets are priced at
+            bet time
+  join      each bet against prod's quote as published at (bet time - lag),
+            and the candidate's at the same message; a spread line is read
+            from prod's side, the sign fitted per operator and side
   analysis  the bet re-priced at the candidate's probability with the
             operator's own margin kept, and the margin both ways
 
-The feeds carry no two-minute auto-suspend to measure the lag against: the
-scouting feed's Q4 suspends and unsuspends balance to 0:00 and prod quotes to
-the end, so the operator's suspend is its own, and HudStats is not in
-Snowflake. The lines are the next best clock.
+The feeds carry no two-minute auto-suspend to measure the lag against, and
+per-match lags fitted off the lines (which agree for only a fifth of bets)
+made the odds follow prod worse than no lag at all; the odds are the signal.
 """
 
 import csv
@@ -62,20 +62,17 @@ class Bet:
         return self.extra.get(config.BET_GROUP_COLUMN)
 
     @property
-    def group(self):
-        """The (match, operator) the latency is fitted for."""
-        return self.match_code, self.operator
+    def in_play(self):
+        """Placed in play, by the operator's own flag."""
+        return str(self.extra.get(config.BET_IN_PLAY_COLUMN, "")).strip().lower() == "yes"
 
 
 @dataclass
-class Latency:
-    """How far one match's bets at one operator ran behind prod's quotes."""
+class Lag:
+    """One operator's lag behind prod: the seconds, and the odds misfit at each lag tried."""
     seconds: float
-    source: str
     bets: int = 0
-    line_bets: int = 0
-    agree: float = None
-    agree_no_lag: float = None
+    curve: dict = field(default_factory=dict)
 
 
 def _naive(t):
@@ -206,64 +203,62 @@ def _same_line(a, b):
     return a is None or b is None or abs(a - b) < 1e-6
 
 
-def _lag_score(bets, tl, lag):
-    """(lines agreeing, line bets priced, odds misfit) for these bets at this lag: the misfit is the
-    mean absolute log of implied over prod, less its median (the operator's margin)."""
-    agree = n_line = 0
-    logs = []
+def odds_misfit(bets, tl, lag):
+    """(bets priced, misfit) at this lag: the mean absolute log of implied over prod, less its median
+    (the operator's margin). A negative lag reads prod's quote from after the bet (a clock that
+    runs behind GAMEPLAI's)."""
     delta = dt.timedelta(seconds=lag)
+    logs = []
     for b in bets:
         q = price_at_time(tl, b.match_code, b.feed_market, b.time - delta)
-        if q is None:
-            continue
-        _, prob, line, _ = q
-        if b.line is not None and line is not None:
-            n_line += 1
-            if abs(b.line - line) < 1e-6:
-                agree += 1
-            else:
-                continue
-        if b.odds and prob and 0 < prob < 1:
-            logs.append(math.log(1.0 / b.odds / prob))
+        if q is not None and b.odds and q[1] and 0 < q[1] < 1:
+            logs.append(math.log(1.0 / b.odds / q[1]))
     if not logs:
-        return agree, n_line, float("inf")
+        return 0, float("inf")
     mid = statistics.median(logs)
-    return agree, n_line, sum(abs(x - mid) for x in logs) / len(logs)
+    return len(logs), sum(abs(x - mid) for x in logs) / len(logs)
 
 
-def fit_latency(bets, tl, max_lag=None, step=None, min_bets=None):
-    """(match, operator) -> Latency: the lag, 0 to max_lag seconds, at which the most bets' lines
-    agree with prod's line at (bet time - lag), ties to the best odds fit; odds fit alone for a
-    moneyline-only group. A group with fewer than min_bets priced bets takes its operator's
-    median ("operator median")."""
-    max_lag = config.MAX_LAG_SECONDS if max_lag is None else max_lag
-    step = config.LAG_STEP_SECONDS if step is None else step
-    min_bets = config.MIN_LAG_BETS if min_bets is None else min_bets
-    lags = [i * step for i in range(int(max_lag / step) + 1)]
-    groups = defaultdict(list)
+def fit_lags(bets, tl, lags=None):
+    """operator -> Lag: over its in-play moneyline bets, the lag at which the odds follow prod
+    closest (ties to the lag nearest 0)."""
+    lo, hi = config.LAG_RANGE if lags is None else (min(lags), max(lags))
+    lags = list(range(int(lo), int(hi) + 1, config.LAG_STEP_SECONDS)) if lags is None else lags
+    by_op = defaultdict(list)
     for b in bets:
-        if b.time is not None and b.feed_market is not None:
-            groups[b.group].append(b)
+        if b.in_play and b.market_type == 1 and b.time is not None and b.odds:
+            by_op[b.operator].append(b)
     out = {}
-    for key, bs in groups.items():
-        scores = {lag: _lag_score(bs, tl, lag) for lag in lags}
-        n_line = max(s[1] for s in scores.values())
-        priced = sum(1 for b in bs if price_at_time(tl, b.match_code, b.feed_market, b.time))
-        if priced < min_bets:
-            continue
-        best = max(lags, key=lambda lag: (scores[lag][0], -scores[lag][2], -lag))
-        source = "lines" if n_line else "odds"
-        rate = lambda lag: scores[lag][0] / scores[lag][1] if scores[lag][1] else None
-        out[key] = Latency(best, source, len(bs), scores[best][1], rate(best), rate(0))
-    by_operator = defaultdict(list)
-    for (match, op), lat in out.items():
-        by_operator[op].append(lat.seconds)
-    everyone = [x.seconds for x in out.values()]
-    for key, bs in groups.items():
-        if key not in out:
-            pool = by_operator.get(key[1]) or everyone
-            out[key] = Latency(statistics.median(pool) if pool else 0.0, "operator median", len(bs))
+    for op, bs in by_op.items():
+        curve = {lag: odds_misfit(bs, tl, lag) for lag in lags}
+        best = min(lags, key=lambda lag: (curve[lag][1], abs(lag)))
+        out[op] = Lag(best, curve[best][0], {lag: m for lag, (_, m) in curve.items()})
     return out
+
+
+def bet_lag(b, lags):
+    """The seconds a bet is read back from: its operator's lag in play, none pre-match."""
+    lag = lags.get(b.operator)
+    return lag.seconds if (lag is not None and b.in_play) else 0.0
+
+
+def fit_line_signs(bets, tl, lags):
+    """(operator, market) -> (sign, bets, same, turned): whether the operator records a spread's line
+    from prod's side (+1) or the other (-1), by which agrees with prod's line more often."""
+    counts = defaultdict(lambda: [0, 0, 0])
+    for b in bets:
+        if b.line is None or b.market_type not in (2, 3):
+            continue
+        q = price_at_time(tl, b.match_code, b.feed_market,
+                          b.time - dt.timedelta(seconds=bet_lag(b, lags)))
+        if q is None or q[2] is None:
+            continue
+        c = counts[(b.operator, b.feed_market)]
+        c[0] += 1
+        c[1] += abs(b.line - q[2]) < 1e-6
+        c[2] += abs(b.line + q[2]) < 1e-6
+    return {k: (-1 if turned > same else 1, n, same / n, turned / n)
+            for k, (n, same, turned) in counts.items()}
 
 
 def result_of(bet):
@@ -283,32 +278,37 @@ def result_of(bet):
     return OTHER
 
 
-def join(bets, latency, prod_tl, cand):
-    """One row per bet: prod's quote as published one latency before the bet, the candidate's
-    probability at the same message, and the bet re-priced at the candidate's probability with the
-    operator's margin kept."""
+def join(bets, lags, signs, prod_tl, cand, cand_tl=None):
+    """One row per bet: prod's quote as published one lag before the bet (at bet time pre-match), the
+    candidate's probability at the same message (at the same time when prod's quote has none), and
+    the bet re-priced at the candidate's probability with the operator's margin kept."""
     rows = []
     for b in bets:
-        lat = latency.get(b.group)
-        lag = lat.seconds if lat else 0.0
+        lag = bet_lag(b, lags)
         market = b.feed_market
         seen = None if b.time is None else b.time - dt.timedelta(seconds=lag)
         p = price_at_time(prod_tl, b.match_code, market, seen)
         p0 = price_at_time(prod_tl, b.match_code, market, b.time)
         msg = p[0] if p else None
-        c = price_at(cand, b.match_code, market, msg)
-        row = dict(bet_id=b.bet_id, match_code=b.match_code, bet_time=b.time,
+        if msg is not None:
+            c = price_at(cand, b.match_code, market, msg)
+        else:
+            q = price_at_time(cand_tl or {}, b.match_code, market, seen)
+            c = q[1:] if q else None
+        sign = signs.get((b.operator, market), (1,))[0]
+        line = None if b.line is None else sign * b.line
+        row = dict(bet_id=b.bet_id, match_code=b.match_code, bet_time=b.time, in_play=b.in_play,
                    market=markets.market_group(market), selection=markets.selection_label(market),
-                   feed_market=market, period=b.period, bet_line=b.line, odds=b.odds,
-                   stake=b.stake, revenue=b.revenue, result=result_of(b),
-                   latency_seconds=lag, latency_source=lat.source if lat else None,
-                   message=msg, implied_prob=(1.0 / b.odds) if b.odds else None,
+                   feed_market=market, period=b.period, bet_line=b.line, bet_line_prod_side=line,
+                   odds=b.odds, stake=b.stake, revenue=b.revenue, result=result_of(b),
+                   latency_seconds=lag, message=msg,
+                   implied_prob=(1.0 / b.odds) if b.odds else None,
                    stream_prob=p[1] if p else None, stream_line=p[2] if p else None,
                    stream_live=p[3] if p else None,
                    candidate_prob=c[0] if c else None, candidate_line=c[1] if c else None,
                    candidate_live=c[2] if c else None,
                    stream_prob_no_lag=p0[1] if p0 else None)
-        row["line_match"] = bool(p and c and _same_line(b.line, p[2]) and _same_line(b.line, c[1]))
+        row["line_match"] = bool(p and c and _same_line(line, p[2]) and _same_line(line, c[1]))
         row.update(reprice(row))
         row.update(b.extra)
         rows.append(row)
@@ -344,34 +344,65 @@ def summarise(rows, by=None, keep=None):
     return out
 
 
-def lag_check(rows):
-    """How closely the operator's odds follow prod's probability, with the latency and without:
-    the mean absolute log of implied / prod. Smaller with the latency means it lines bets up."""
-    with_lag, without = [], []
+def coverage(rows):
+    """{(in play, market): (bets, stake, bets re-priced, stake re-priced)}: where the money is and how
+    much of it the simulation reaches."""
+    out = defaultdict(lambda: [0, 0.0, 0, 0.0])
     for r in rows:
-        if r["implied_prob"] and r["stream_prob"] and r["stream_prob_no_lag"]:
-            with_lag.append(abs(math.log(r["implied_prob"] / r["stream_prob"])))
-            without.append(abs(math.log(r["implied_prob"] / r["stream_prob_no_lag"])))
-    if not with_lag:
+        c = out[(r["in_play"], r["market"])]
+        c[0] += 1
+        c[1] += r["stake"]
+        if r["simulated"]:
+            c[2] += 1
+            c[3] += r["stake"]
+    return {k: tuple(v) for k, v in out.items()}
+
+
+def why_not(r):
+    """Why a bet was not re-priced."""
+    if r["simulated"]:
+        return "simulated"
+    if r["stream_prob"] is None:
+        return "no prod price"
+    if r["candidate_prob"] is None:
+        return "no candidate price"
+    if not r["line_match"]:
+        return "line differs"
+    return f"result {r['result']}"
+
+
+def lag_check(rows):
+    """How closely the operator's odds follow prod's probability in play, with the lag and without:
+    the mean absolute log of implied / prod, less each operator's median (its margin)."""
+    by_op = defaultdict(lambda: ([], []))
+    for r in rows:
+        if r["in_play"] and r["implied_prob"] and r["stream_prob"] and r["stream_prob_no_lag"]:
+            a, b = by_op[r.get(config.BET_GROUP_COLUMN)]
+            a.append(math.log(r["implied_prob"] / r["stream_prob"]))
+            b.append(math.log(r["implied_prob"] / r["stream_prob_no_lag"]))
+    if not by_op:
         return None
+    def dev(xs):
+        mid = statistics.median(xs)
+        return [abs(x - mid) for x in xs]
+    with_lag = [d for a, _ in by_op.values() for d in dev(a)]
+    without = [d for _, b in by_op.values() for d in dev(b)]
     return len(with_lag), sum(with_lag) / len(with_lag), sum(without) / len(without)
 
 
 def line_report(rows):
-    """For spread and total bets priced by prod: how often the bet's line is prod's, how often it is
-    prod's with the sign turned (a spread quoted from the other side), and the commonest gaps
-    (bet line - prod's line), by operator and market."""
+    """For spread and total bets priced by prod, by operator and market: how often the bet's line (read
+    from prod's side) is prod's, and the commonest gaps (bet line - prod's line)."""
     groups = defaultdict(list)
     for r in rows:
-        if r["market"] in (markets.SPREAD, markets.TOTAL) and r["bet_line"] is not None \
+        if r["market"] in (markets.SPREAD, markets.TOTAL) and r["bet_line_prod_side"] is not None \
                 and r["stream_line"] is not None:
             groups[(r.get(config.BET_GROUP_COLUMN), r["market"])].append(r)
     out = []
     for (op, market), rs in sorted(groups.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
-        same = sum(abs(r["bet_line"] - r["stream_line"]) < 1e-6 for r in rs)
-        flipped = sum(abs(r["bet_line"] + r["stream_line"]) < 1e-6 for r in rs)
-        gaps = Counter(round(r["bet_line"] - r["stream_line"], 1) for r in rs).most_common(6)
-        out.append((op, market, len(rs), same / len(rs), flipped / len(rs), gaps))
+        same = sum(abs(r["bet_line_prod_side"] - r["stream_line"]) < 1e-6 for r in rs)
+        gaps = Counter(round(r["bet_line_prod_side"] - r["stream_line"], 1) for r in rs).most_common(6)
+        out.append((op, market, len(rs), same / len(rs), gaps))
     return out
 
 
@@ -396,12 +427,13 @@ def candidate_stream():
 
 
 def run(cur, out_dir):
-    """The whole pipeline: fetch, latency, join, write the CSVs and print the summary."""
+    """The whole pipeline: fetch, lag, join, write the CSVs and print the summary."""
     sql, params, _ = bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
     matches = sorted({b.match_code for b in bets})
-    print(f"  {len(bets):,} bets on {len(matches):,} matches from {bet_table()}")
+    print(f"  {len(bets):,} bets on {len(matches):,} matches from {bet_table()} "
+          f"({sum(b.in_play for b in bets):,} in play)")
     if not bets:
         return None
     prod_rows, cand_rows = [], []
@@ -412,71 +444,61 @@ def run(cur, out_dir):
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         cand_rows += snowflake_io.fetch_quotes(cur, cand_name, batch)
     prod_tl = timeline(prod_rows)
-    latency = fit_latency(bets, prod_tl)
-    rows = join(bets, latency, prod_tl, quote_index(cand_rows))
+    lags = fit_lags(bets, prod_tl)
+    signs = fit_line_signs(bets, prod_tl, lags)
+    rows = join(bets, lags, signs, prod_tl, quote_index(cand_rows), timeline(cand_rows))
     os.makedirs(out_dir, exist_ok=True)
-    lat_rows = [dict(match_code=m, operator=op, latency_seconds=x.seconds, source=x.source,
-                     bets=x.bets, line_bets=x.line_bets, lines_agree=x.agree,
-                     lines_agree_no_lag=x.agree_no_lag)
-                for (m, op), x in sorted(latency.items(), key=lambda kv: (str(kv[0][0]), str(kv[0][1])))]
-    write_csv(os.path.join(out_dir, "bets_latency.csv"), lat_rows)
+    lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
+                     **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
+                for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0]))]
+    write_csv(os.path.join(out_dir, "bets_latency.csv"), lag_rows)
     write_csv(os.path.join(out_dir, "bets_sim.csv"), rows)
-    report(rows, latency, cand_name)
+    report(rows, lags, signs, cand_name)
     return rows
 
 
-def _pct(xs, q):
-    xs = sorted(xs)
-    return xs[min(len(xs) - 1, int(q * len(xs)))]
-
-
-def report(rows, latency, cand_name):
-    """Print the latency, the join and the margin both ways."""
-    print("\n  latency by operator (fitted per match off the bets' lines against prod's):")
-    by_op = defaultdict(list)
-    for (_, op), lat in latency.items():
-        by_op[op].append(lat)
-    for op, lats in sorted(by_op.items(), key=lambda kv: str(kv[0])):
-        fitted = [x for x in lats if x.source != "operator median"]
-        secs = [x.seconds for x in fitted]
-        agree = [x for x in fitted if x.agree is not None]
-        line = f"  {str(op):24s} {len(lats):4d} matches, fitted {len(fitted):4d}"
-        if secs:
-            line += (f", median {statistics.median(secs):.0f}s (10th-90th "
-                     f"{_pct(secs, 0.1):.0f}-{_pct(secs, 0.9):.0f}s)")
-        if agree:
-            n = sum(x.line_bets for x in agree)
-            a = sum(x.agree * x.line_bets for x in agree) / n
-            a0 = sum((x.agree_no_lag or 0) * x.line_bets for x in agree) / n
-            line += f"; lines agree {100 * a:.1f}% at the fitted lag, {100 * a0:.1f}% at none"
-        print(line)
+def report(rows, lags, signs, cand_name):
+    """Print the lag, the lines, where the money is and the margin both ways."""
+    print("\n  lag by operator: in-play moneyline odds against prod's probability, misfit at each lag "
+          "(lower follows prod closer)")
+    for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0])):
+        shown = [x for x in (-20, -10, -5, -2, 0, 2, 5, 10, 20, 30, 45, 60) if x in lag.curve]
+        print(f"  {str(op)[:22]:22s} lag {lag.seconds:+.0f}s ({lag.bets:,} bets)  "
+              + "  ".join(f"{x:+d}s {lag.curve[x]:.4f}" for x in shown))
     check = lag_check(rows)
     if check:
         n, a, b = check
-        print(f"  operator odds against prod: mean |log(implied / prod)| {a:.4f} with the latency, "
-              f"{b:.4f} without ({n:,} bets)")
-    print("\n  lines of spread and total bets against prod's at the fitted lag "
-          "(same / sign turned / commonest gaps, bet - prod):")
-    for op, market, n, same, flipped, gaps in line_report(rows):
-        print(f"  {str(op)[:22]:22s} {market:7s} {n:6,d} bets  same {100 * same:5.1f}%  "
-              f"turned {100 * flipped:5.1f}%  gaps " + ", ".join(f"{g:+g} ({c:,})" for g, c in gaps))
-    joined = Counter("simulated" if r["simulated"] else
-                     "no prod price" if r["stream_prob"] is None else
-                     "no candidate price" if r["candidate_prob"] is None else
-                     "line differs" if not r["line_match"] else
-                     f"result {r['result']}" for r in rows)
+        print(f"  in play, odds against prod (margin taken out): {a:.4f} with the lag, {b:.4f} "
+              f"without ({n:,} bets)")
+    print("\n  spread and total lines against prod's (sign: +1 as prod, -1 from the other side):")
+    for (op, market), (sign, n, same, turned) in sorted(signs.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        print(f"  {str(op)[:22]:22s} {markets.market_group(market):7s} {markets.selection_label(market):5s} "
+              f"{n:6,d} bets  as prod {100 * same:5.1f}%  turned {100 * turned:5.1f}%  -> sign {sign:+d}")
+    for op, market, n, same, gaps in line_report(rows):
+        print(f"  {str(op)[:22]:22s} {market:7s} {n:6,d} bets  on prod's line {100 * same:5.1f}%  "
+              "commonest gaps " + ", ".join(f"{g:+g} ({c:,})" for g, c in gaps))
+    print("\n  where the money is, and how much the simulation re-prices:")
+    print(f"  {'':22s} {'bets':>8s} {'stake':>12s} {'re-priced':>10s} {'of stake':>9s}")
+    cov = coverage(rows)
+    for (in_play, market), (n, stake, n_s, stake_s) in sorted(cov.items(), key=lambda kv: (not kv[0][0], str(kv[0][1]))):
+        label = f"{'in play' if in_play else 'pre-match'} {market}"
+        print(f"  {label:22s} {n:8,d} {stake:12,.0f} {n_s:10,d} {100 * stake_s / stake if stake else 0:8.1f}%")
+    joined = Counter(why_not(r) for r in rows)
     print("  bets: " + ", ".join(f"{k} {v:,}" for k, v in joined.most_common()))
     vip = config.BET_VIP_VALUE.lower()
     not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
     print(f"\n  margin, prod as priced against {cand_name} re-priced (operator margin kept)")
     print(f"  {'':24s} {'bets':>7s} {'stake':>12s} {'prod':>8s} {'candidate':>10s} {'change':>8s}")
     cuts = [(None, None, ""), (None, not_vip, f"all but {config.BET_VIP_VALUE}"),
-            (config.BET_GROUP_COLUMN, None, ""), (config.BET_VIP_COLUMN, None, ""),
-            ("market", None, ""), ("period", None, "")]
+            ("in_play", None, ""), (config.BET_GROUP_COLUMN, None, ""),
+            (config.BET_VIP_COLUMN, None, ""), ("market", None, ""), ("period", None, "")]
     for by, keep, name in cuts:
         for g, (n, stake, rev, m, rev_c, m_c) in sorted(summarise(rows, by, keep).items(),
                                                           key=lambda kv: str(kv[0])):
-            label = name or (str(g) if by is None else f"{by.lower()} {g}")
+            if by == "in_play":
+                label = "in play" if g else "pre-match"
+            else:
+                label = name or (str(g) if by is None else f"{by.lower()} {g}")
             print(f"  {label[:24]:24s} {n:7,d} {stake:12,.0f} {m:7.2f}% {m_c:9.2f}% {m_c - m:+7.2f}")
 
 
@@ -512,14 +534,14 @@ def _coverage(cur):
                COUNT({c['time']}) AS WITH_TIME,
                SUM(CASE WHEN UPPER(BET_TYPE) = 'SINGLE' THEN 1 ELSE 0 END) AS SINGLES,
                SUM(CASE WHEN UPPER(BET_TYPE) = 'SINGLE' AND {c['time']} IS NOT NULL
-                         AND BET_IN_PLAY = 'Yes' THEN 1 ELSE 0 END) AS USABLE,
+                   THEN 1 ELSE 0 END) AS USABLE,
                MIN({c['time']}) AS FIRST_TIME, MAX({c['time']}) AS LAST_TIME
         FROM {bet_table()}
         WHERE {c['sport']} = %s AND REVENUE_DATE BETWEEN TO_DATE(%s) AND TO_DATE(%s)
           AND {c['market_type']} IN (1, 2, 3)
         GROUP BY OPERATOR_NAME ORDER BY BETS DESC""", (config.SPORT_CODE, since, until))
     lines.append(f"\n== {bet_table()}, {since} to {until}, by operator "
-                 "(usable = single, in play, with a bet time)")
+                 "(usable = single with a bet time)")
     lines += ["   " + "; ".join(f"{n}={v}" for n, v in zip(names, r)) for r in rows]
     for col in ("BET_IN_PLAY", "CUSTOMER_TEMPERATURE", "BET_CASHED_OUT", "CUSTOMER_WIN_LOSS"):
         _, vals = fetch_all(cur, f"""
