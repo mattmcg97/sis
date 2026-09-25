@@ -5490,7 +5490,9 @@ class TestTotalsReach(unittest.TestCase):
         self.assertEqual(totals_reach.game_state(free), "no ball")
         b = totals_reach.breakdown([level, leading, trailing, free])
         self.assertEqual(set(b), {("Q1", "level"), ("Q3", "1 score, leader has ball"),
-                                  ("Q3", "1 score, trailer has ball"), ("Q3", "no ball")})
+                                  ("Q3", "1 score, trailer has ball"), ("Q3", "no ball"),
+                                  ("Q1", "all"), ("Q3", "all")})
+        self.assertEqual(b[("Q3", "all")]["n"], 3)
         cell = b[("Q3", "1 score, leader has ball")]
         self.assertEqual(cell["n"], 1)
         self.assertEqual(cell["real"], (0.0, 1.0))                  # 16 more, a score of 8
@@ -5584,26 +5586,40 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertLess(page.index('id="cross"'), page.index("<h2>Score difference</h2>"))
         self.assertLess(page.index("<h2>Possession</h2>"), page.index('id="checks"'))
 
-    def test_the_totals_reach_table_sits_in_additional_checks(self):
+    def test_the_totals_line_test_is_a_section_of_its_own(self):
         from .. import html_full
         sides, dropped = self._sides()
         page = html_full.render_sides(sides, dropped)
         checks = page[page.index('id="checks"'):page.index("</details>")]
-        block = checks[checks.index("<h2>Totals line within 1 and 2 scores</h2>"):]
+        self.assertNotIn("Totals line within 1 and 2 scores", checks)
+        self.assertLess(page.index('id="totals-reach"'), page.index('id="checks"'))
+        block = page[page.index('id="totals-reach"'):]
         block = block[:block.index("</section>")]
         for column in ("<th>Real</th>", "<th>Prod</th>", "<th>v4</th>", "<th>T2</th>"):
             self.assertIn(column, block)
-        # 0-0, lines of 44.5 and 46.5, 45 scored: all beyond two scores
-        self.assertIn("<tr><th>More than 2 scores</th><td>100.0%</td><td>100.0%</td>"
-                      "<td>100.0%</td><td>100.0%</td></tr>", block)
-        # and how often the game went over each line: 45 over 44.5, under 46.5
-        self.assertIn("<h3>Over at the line, by where the line sits</h3>", block)
+        # 0-0, lines of 44.5 and 46.5, 45 scored: nothing within two scores,
+        # for real or any line -- each stream's share with its gap to real
+        self.assertIn('<tr><th>Within 1 score</th><td><b>0%</b></td>'
+                      '<td class="g0">0%<span class="pp">+0</span></td>'
+                      '<td class="g0">0%<span class="pp">+0</span></td>'
+                      '<td class="g0">0%<span class="pp">+0</span></td></tr>', block)
         self.assertIn("<h3>By quarter and game state</h3>", block)
-        self.assertIn('<th colspan="4">v4</th><th colspan="4">T2</th>', block)
-        # prod's 44.5 went over at a priced 50%, v4's 46.5 under at 52%
-        self.assertIn('<tr><th>More than 2 scores</th><td>100.0% <span class="dim">(2)</span></td>'
-                      '<td>50.0%</td><td>0.0% <span class="dim">(2)</span></td><td>52.0%</td>'
-                      '<td>100.0% <span class="dim">(2)</span></td><td>40.0%</td></tr>', block)
+        self.assertIn('<th colspan="4" class="grp">Within 1 score</th>', block)
+        self.assertIn('<tr class="subtotal"><th>Q1</th><td class="state">all</td>', block)
+        self.assertIn('<tr><th>Q1</th><td class="state">level</td>', block)
+        # over against priced: prod's 44.5 went over at 50% (+50), v4's 46.5
+        # under at 52% (-52), T2's 44.5 over at 40% (+60)
+        self.assertIn("<h3>Over at the line against priced</h3>", block)
+        self.assertIn('<tr><th>More than 2 scores</th><td class="g4">+50 <span class="dim">(2)</span></td>'
+                      '<td class="g4">-52 <span class="dim">(2)</span></td>'
+                      '<td class="g4">+60 <span class="dim">(2)</span></td></tr>', block)
+
+    def test_a_shares_gap_to_real_is_coloured_by_its_size(self):
+        from .. import html_full
+        self.assertIn('class="g0"', html_full._share_cell(0.31, 0.30))
+        self.assertIn('class="g2"', html_full._share_cell(0.22, 0.30))
+        self.assertIn('class="g4"', html_full._share_cell(0.10, 0.30))
+        self.assertIn('<span class="pp">-8</span>', html_full._share_cell(0.22, 0.30))
 
     def test_additional_checks_is_headed_like_every_other_section(self):
         from .. import html_style

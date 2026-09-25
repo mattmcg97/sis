@@ -1,28 +1,5 @@
-"""Our own pre-match model for v4: the NB2 player + team model in nb2/.
-
-v4 takes each match's scoring level from here, not from GAMEPLAI:
-
-  fit       nb2/NBRatingTrial.py on the match history before a cut-off --
-            player and team attack/defence, stream effects, dispersion and
-            score correlation (recency-weighted, 60-day half-life);
-  predict   nb2/NB2_schedule_predict.py on the matches to price -- each
-            side's expected points (and the rest of NB2's pre-match book);
-  level     NB2's totals ran about 3% under the real ones, week after week
-            (Aug 20-26, Aug 27-Sep 2, Sep 3-9: ratios 1.027, 1.028, 1.035,
-            each fitted only on what came before). level_scale measures
-            that on the last week before the cut-off, walk-forward, shrinks
-            it toward 1 by SCALE_PRIOR matches, and v4 multiplies both
-            sides' expected points by it.
-
-The two scripts are run as they are (they need pandas and scipy), in a
-working directory of their own, so nb2/ is never written to.
-
-History rows are shaped like nb2/AMFELO.csv: MATCH_CODE, SPORT_CODE,
-STREAM_NUMBER, SCHEDULED_START_TIME_UTC, PLAYER_1_HANDLE, PLAYER_1_TEAM,
-PLAYER_2_HANDLE, PLAYER_2_TEAM, PLAYER_1_FINAL_SCORE, PLAYER_2_FINAL_SCORE
-(`python -m eAMFCalibrator history` writes one from Snowflake). PLAYER_1
-is the home side, as everywhere in the feed.
-"""
+"""Our own pre-match model: fits the NB2 player and team ratings on match results and predicts each
+side's expected points."""
 
 import csv
 import datetime as dt
@@ -47,16 +24,17 @@ N_SIMS = 20000
 
 
 def _need_libraries():
+    """Stop with a clear message if pandas or scipy is missing."""
     try:
-        import pandas  # noqa: F401
-        import scipy  # noqa: F401
+        import pandas
+        import scipy
     except ImportError:
         raise SystemExit("the NB2 pre-match model needs pandas and scipy:  "
                          "py -m pip install pandas scipy")
 
 
 def load_history(path, sport="AF"):
-    """AF rows of an AMFELO-shaped CSV."""
+    """Read the AF rows of a match-history CSV."""
     with open(path, newline="", encoding="utf-8") as fh:
         rows = [r for r in csv.DictReader(fh) if r.get("SPORT_CODE", sport) in (sport, "", None)]
     missing = [f for f in HISTORY_FIELDS if f != "SPORT_CODE" and rows and f not in rows[0]]
@@ -66,6 +44,7 @@ def load_history(path, sport="AF"):
 
 
 def _start(row):
+    """A history row's scheduled start as a datetime, or None."""
     text = (row.get("SCHEDULED_START_TIME_UTC") or "")[:19].replace("T", " ")
     try:
         return dt.datetime.fromisoformat(text)
@@ -74,6 +53,7 @@ def _start(row):
 
 
 def _write(path, rows, fields):
+    """Write rows to a CSV with these columns."""
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fields, extrasaction="ignore")
         w.writeheader()
@@ -81,6 +61,7 @@ def _write(path, rows, fields):
 
 
 def _run(script, args, cwd):
+    """Run one of the nb2/ scripts in its own working directory."""
     done = subprocess.run([sys.executable, os.path.join(NB2_DIR, script)] + args, cwd=cwd,
                           capture_output=True, text=True, encoding="utf-8", errors="replace")
     if done.returncode != 0:
@@ -88,9 +69,7 @@ def _run(script, args, cwd):
 
 
 def fit(history, out_dir, before=None):
-    """Fit NB2's ratings on the finished matches in `history` that started
-    before `before` (a datetime; None: all). Writes RATINGS into out_dir.
-    Returns the number of matches fitted on."""
+    """Fit NB2's ratings on the finished matches before a cut-off."""
     _need_libraries()
     os.makedirs(out_dir, exist_ok=True)
     rows = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
@@ -103,9 +82,7 @@ def fit(history, out_dir, before=None):
 
 
 def predict(ratings_dir, schedule, n_sims=N_SIMS):
-    """match -> (home points, away points) off fitted ratings, for schedule
-    rows shaped like the history (finals not needed). Matches NB2 cannot
-    price (an unknown player or team, a stream mismatch) are left out."""
+    """Each match's expected (home, away) points from fitted ratings."""
     _need_libraries()
     if not schedule:
         return {}
@@ -129,9 +106,7 @@ def predict(ratings_dir, schedule, n_sims=N_SIMS):
 
 
 def level_scale(history, work_dir, before, days=SCALE_DAYS, prior_n=SCALE_PRIOR):
-    """How far NB2's totals have run under the real ones: fitted on history
-    before (before - days), scored on the `days` after, walk-forward.
-    Returns (scale, matches, raw ratio); scale is the ratio shrunk toward 1."""
+    """How far NB2's totals have run under the real ones lately, shrunk toward 1."""
     start = before - dt.timedelta(days=days)
     week = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
             and _start(r) is not None and start <= _start(r) < before]
@@ -154,8 +129,7 @@ def level_scale(history, work_dir, before, days=SCALE_DAYS, prior_n=SCALE_PRIOR)
 
 
 def league_average(history, before, days=30):
-    """(home points, away points) over the last `days` before `before`: the
-    prior for a match NB2 cannot price."""
+    """The league's average (home, away) points over recent days."""
     since = before - dt.timedelta(days=days)
     rows = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
             and _start(r) is not None and since <= _start(r) < before]
@@ -167,10 +141,10 @@ def league_average(history, before, days=30):
 
 
 class Prematch:
-    """A fitted NB2 pre-match model as v4 stores it: the ratings and
-    level.json (scale, league average) in one directory."""
+    """A fitted NB2 model saved in one directory."""
 
     def __init__(self, directory):
+        """Load the saved level scale and league average."""
         self.directory = directory
         with open(os.path.join(directory, "level.json"), encoding="utf-8") as fh:
             meta = json.load(fh)
@@ -180,6 +154,7 @@ class Prematch:
 
     @classmethod
     def build(cls, history, directory, before):
+        """Fit NB2 and its level scale before a cut-off and save them."""
         n = fit(history, directory, before=before)
         scale, n_scale, ratio = level_scale(history, directory, before)
         meta = {"fitted_on": n, "before": before.isoformat(), "scale": scale,
@@ -191,11 +166,12 @@ class Prematch:
 
     @staticmethod
     def exists(directory):
+        """Whether a fitted model is saved in this directory."""
         return os.path.exists(os.path.join(directory, "level.json"))
 
     def means(self, schedule, n_sims=N_SIMS):
-        """match -> (home, away) expected points, scaled; matches NB2 cannot
-        price get the league average."""
+        """Each match's expected (home, away) points, scaled; the league average when NB2 cannot
+        price it."""
         pred = predict(self.directory, schedule, n_sims)
         out = {}
         for r in schedule:
@@ -203,5 +179,5 @@ class Prematch:
             if code in pred:
                 out[code] = (pred[code][0] * self.scale, pred[code][1] * self.scale)
             else:
-                out[code] = self.league           # already a real average: not scaled
+                out[code] = self.league
         return out

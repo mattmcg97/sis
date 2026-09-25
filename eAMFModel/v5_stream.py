@@ -1,25 +1,4 @@
-"""v5 as a stream: quote rows shaped like GAMEPLAI_STREAM's, so the
-calibrator can stand v5 in for the candidate (`--candidate v5`). A copy of
-v4_stream.py pointed at v5 (and at v5's player profiles when the
-calibrator passes handles).
-
-v5 prices on the game clock, which only SCOUTING_FULL carries, so its input
-is the PLAY_OVER snapshots eAMFCalibrator's scouting module builds (the
-same rows as scouting_playover.csv), plus prod's quotes for the lines and
-publish times.
-
-Each PLAY_OVER is priced by simulation. A stream's quote stands until its
-next one, so every prod quote after a snapshot gets v5's latest book. v5
-quotes its own even line off that book, moving it as the game moves (the
-calibrator then scores whose line was nearer the result where the lines
-differ); `lines="prod"` re-reads the book at prod's line instead, so the
-two streams always answer the same question. Messages before the first
-snapshot get no quote.
-
-The model itself -- the play tables and the pre-match grid -- comes from
-`python -m eAMFModel v5-build` and is loaded from `model_dir`. It is never
-fitted on the matches it prices here.
-"""
+"""v5 as a price stream: v5's quotes at every snapshot, shaped like prod's."""
 
 import math
 import os
@@ -36,7 +15,7 @@ DEFAULT_PATHS = 2000
 
 
 def model_paths(model_dir=None):
-    """(tables, grid) paths, or SystemExit saying how to build them."""
+    """The model's tables and grid paths, or an error saying how to build them."""
     candidates = [model_dir] if model_dir else [
         os.environ.get("EAMF_V5_MODEL"), DEFAULT_MODEL_DIR,
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", DEFAULT_MODEL_DIR)]
@@ -55,15 +34,12 @@ def model_paths(model_dir=None):
 
 
 def _as_text(row):
-    """Snapshot dict -> the CSV-string shape the backtest reads."""
+    """A snapshot dict as strings, as the export reads."""
     return {k: "" if v is None else str(v) for k, v in row.items()}
 
 
 def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, means=None):
-    """[(message, margin pmf, total pmf)] at every priceable PLAY_OVER of one
-    match (export-shaped rows, message order). `means`: (home, away)
-    expected points from our pre-match model (NB2); without them league-
-    average offenses. Prod's quotes never set the prior."""
+    """v5's margin and total distributions at every priceable snapshot of one match."""
     rows = v5.resolve_sides([_as_text(r) for r in match_rows])
     theta0 = v5.prior_theta(grid, means)
     a_home = rows[0]["team_a_side"] == "home"
@@ -83,11 +59,7 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
 
 
 def paired_prod_rows(prod_quote_rows):
-    """(market, message) -> the prod row the calibrator pairs a candidate
-    quote with: the first live row on that message, else the first row --
-    eAMFCalibrator.directional.index_by_message's rule, applied to rows in
-    the order they were fetched (publish time). v5 quotes at that row's
-    line, so the pair always answers one question."""
+    """The prod row each quote is paired with, per market and message."""
     chosen = {}
     for r in prod_quote_rows:
         if r[6] is None or r[3] is None:
@@ -104,17 +76,7 @@ OWN, PROD_LINES = "own", "prod"
 
 
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN):
-    """GAMEPLAI-shaped rows: at every (market, message) prod quoted from
-    v5's first snapshot on, v5's latest book.
-
-    lines=OWN (the default): v5 prices its own line, the even one off its
-    own distribution for the state -- the margin's for the spread, the
-    total's for the total -- so the line moves when the game moves it.
-    lines=PROD_LINES reads the book at the line of the prod row the
-    calibrator pairs with, so every pair answers one question.
-
-    `first_play_message` is kept for callers; pre-match messages carry no
-    book and so no quote."""
+    """Prod-shaped quote rows from v5's distributions."""
     if not books:
         return []
     keys = [b[0] for b in books]
@@ -149,6 +111,7 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
 
 
 def _worker(job):
+    """Worker: price a list of matches."""
     items, tables_path, grid_path, variant, n_paths, seed, lines = job
     tables = sim.Tables.load(tables_path)
     grid = v5.PriorGrid.load(grid_path)
@@ -165,20 +128,11 @@ def _worker(job):
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, variant=None, book=None, handles=None, seed=0,
                        match_info=None, lines=OWN):
-    """Quote rows for many matches.
-
-    `snapshots_by_match`: match -> export-shaped PLAY_OVER rows (scouting's
-    snapshots_for_match); `prod_quote_rows`: prod's raw quote rows.
-    `lines` is OWN or PROD_LINES; a tuple of both returns {mode: rows},
-    off one simulation of each match.
-    """
+    """Quote rows for many matches."""
     tables_path, grid_path = model_paths(model_dir)
     variant = variant or v5.Variant("v5")
     if book is None:
         book = v5.players_book(tables_path)
-    # the prior: our NB2 pre-match model when the model has one, for the
-    # matches whose players, teams and stream are known (match_info:
-    # AMFELO-shaped rows); league-average offenses for a model without one
     pre = v5.prematch_model(tables_path)
     means = {}
     if pre is not None:

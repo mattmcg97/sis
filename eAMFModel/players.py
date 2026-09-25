@@ -1,26 +1,4 @@
-"""Player effects: how each gamer plays the clock and the 4th down.
-
-Measured on SCOUTING_FULL PLAY_OVER snapshots (eAMFCalibrator scouting's
-export) against the league, situation by situation, and shrunk toward the
-league by how much evidence there is:
-
-  pace        seconds of game clock the player's offense uses between one
-              whistle and the next, over what the league uses in the same
-              situation (score margin, whether it is the last two minutes of
-              a half). 1.05 = 5% slower = fewer drives in his games. The
-              players' means run from about 19 to 27 seconds against a
-              league 23, and it is stable (split-half correlation 0.73).
-  aggression  on 4th down, the shift in log odds of going for it against
-              the league's fitted rate for that down, distance and field
-              (drive.go_probability). Players run from about 16% to 93%
-              where the league goes 44%: -1.4 to +2.8.
-  milk        seconds per play when protecting a lead in the last two
-              minutes of a half, over the league's in the same spot --
-              how hard the player kills the clock.
-
-Also here: the league's situation table of seconds per play, and the
-running in-game pace estimate the pricer uses (Pace).
-"""
+"""Player profiles: each player's pace, 4th-down aggression, clock milking and form on the day."""
 
 import csv
 import json
@@ -30,19 +8,15 @@ from dataclasses import dataclass, field
 
 from .drive import DriveParams, go_probability
 
-# Evidence needed before a player's own number counts for half, set from the
-# spread between players against the noise within them: pace varies ~6%
-# between players and a single play's clock use ~50% (so ~70 plays); 4th-down
-# go rates vary ~0.8 in log odds between players (a prior of ~1.6 in units
-# of Fisher information, p(1-p) summed over decisions); milking is noisier.
 PACE_PRIOR_PLAYS = 70
 AGGRESSION_PRIOR = 2.0
 MILK_PRIOR_PLAYS = 40
 
-LATE_SECONDS = 120             # the "last two minutes" of a half
+LATE_SECONDS = 120
 
 
 def margin_bucket(margin):
+    """The offense's lead as a small bucket number."""
     if margin >= 9:
         return "lead9+"
     if margin > 0:
@@ -55,23 +29,23 @@ def margin_bucket(margin):
 
 
 def situation(period, clock_seconds, margin):
-    """(late, margin bucket) for an offense at a whistle."""
+    """(late in a half, margin bucket) for an offense at a snap."""
     half_left = clock_seconds + (240 if period % 2 == 1 else 0)
     return (half_left <= LATE_SECONDS, margin_bucket(margin))
 
 
 def _f(v):
+    """A float, or None for a blank."""
     return float(v) if v not in ("", None) else None
 
 
 def _i(v):
+    """An int, or None for a blank."""
     return int(float(v)) if v not in ("", None) else None
 
 
 def play_intervals(rows):
-    """Consecutive whistles by the same offense in one period of one match:
-    (offense TEAM_x, situation, seconds between them). `rows` are one
-    match's export rows in message order."""
+    """Seconds between consecutive snaps by the same offense, with the situation of each."""
     out = []
     for a, b in zip(rows, rows[1:]):
         if not a["period"] or a["period"] != b["period"] or int(a["period"]) > 4:
@@ -90,8 +64,7 @@ def play_intervals(rows):
 
 
 def fourth_downs(rows):
-    """(offense, field, distance, went for it) for every non-desperate 4th
-    down in one match."""
+    """Every ordinary 4th down: who had the ball, where, how far, and whether they went for it."""
     out = []
     for a, b in zip(rows, rows[1:]):
         if a["down"] != "4" or not a["field_position"] or not a["period"] or int(a["period"]) > 4:
@@ -108,42 +81,46 @@ def fourth_downs(rows):
 
 @dataclass
 class Profile:
+    """One player's tendencies against the league."""
     plays: int = 0
     pace: float = 1.0
     aggression: float = 0.0
     fourth_downs: int = 0
     milk: float = 1.0
     milk_plays: int = 0
+    form: float = None
 
 
 @dataclass
 class Book:
-    """League situation table and every player's profile."""
-    seconds: dict = field(default_factory=dict)      # "late|bucket" -> league mean
-    players: dict = field(default_factory=dict)      # handle -> Profile
+    """The league's snap timings and every player's profile."""
+    seconds: dict = field(default_factory=dict)
+    players: dict = field(default_factory=dict)
 
     def expected_seconds(self, sit):
+        """The league's average seconds between snaps in this situation."""
         return self.seconds.get(f"{int(sit[0])}|{sit[1]}", 23.0)
 
     def profile(self, handle):
+        """A player's profile, or a league-average one if unknown."""
         return self.players.get((handle or "").upper(), Profile())
 
     def save(self, path):
+        """Write the book to JSON."""
         with open(path, "w", encoding="utf-8") as fh:
             json.dump({"seconds": self.seconds,
                        "players": {h: p.__dict__ for h, p in self.players.items()}}, fh, indent=1)
 
     @classmethod
     def load(cls, path):
+        """Read a book from JSON."""
         with open(path, encoding="utf-8") as fh:
             raw = json.load(fh)
         return cls(raw["seconds"], {h: Profile(**p) for h, p in raw["players"].items()})
 
 
 def load_handles(path):
-    """match -> (home handle, away handle), from a CSV with MATCH_CODE,
-    PLAYER_1_HANDLE, PLAYER_2_HANDLE (nb2/AMFELO.csv has them), or from the
-    export's own home_handle / away_handle columns when present."""
+    """Match code to (home handle, away handle) from a CSV."""
     out = {}
     with open(path, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
@@ -156,11 +133,7 @@ def load_handles(path):
 
 
 def build(matches, handles, drive_params=None):
-    """A Book from {match: rows} (export rows, message order) and handles.
-
-    TEAM_A is PLAYER_1 (home) throughout the feed -- the scouting probe
-    showed it on every row -- so TEAM_A's handle is the home handle.
-    """
+    """Build every player's profile from the export."""
     drive_params = drive_params or DriveParams()
     sums = defaultdict(lambda: [0.0, 0])
     intervals = []
@@ -178,7 +151,7 @@ def build(matches, handles, drive_params=None):
                 fourths.append((h[0] if offense == "TEAM_A" else h[1], y, t, went))
     book = Book(seconds={k: s / n for k, (s, n) in sums.items() if n})
 
-    obs = defaultdict(lambda: [0.0, 0.0, 0])            # seconds, expected, plays
+    obs = defaultdict(lambda: [0.0, 0.0, 0])
     milk = defaultdict(lambda: [0.0, 0.0, 0])
     for who, sit, seconds in intervals:
         exp = book.expected_seconds(sit)
@@ -192,7 +165,7 @@ def build(matches, handles, drive_params=None):
             o[0] += seconds
             o[1] += exp
             o[2] += 1
-    agg = defaultdict(lambda: [0.0, 0.0, 0])            # sum(go - p), sum p(1-p), n
+    agg = defaultdict(lambda: [0.0, 0.0, 0])
     for who, y, t, went in fourths:
         p = go_probability(drive_params, y, t)
         a = agg[who]
@@ -214,7 +187,6 @@ def build(matches, handles, drive_params=None):
             prof.milk_plays = n
         resid, info, n = agg.get(who, (0.0, 0.0, 0))
         if n:
-            # One Newton step from 0 on the log-odds shift, shrunk.
             prof.aggression = resid / (info + AGGRESSION_PRIOR)
             prof.fourth_downs = n
         book.players[who] = prof
@@ -222,15 +194,10 @@ def build(matches, handles, drive_params=None):
 
 
 class Pace:
-    """This match's pace so far, against what the players were expected to
-    use: the running ratio of clock used to clock expected, shrunk to the
-    players' own pace by `prior_seconds` of evidence.
-
-    `ratio()` > 1: slower than the players' profiles said -> fewer drives
-    to come than the pre-match price assumed.
-    """
+    """This match's pace so far against what the two players were expected to play at."""
 
     def __init__(self, book, home_handle, away_handle, prior_seconds=600.0):
+        """Start with the two players' profiles and no snaps seen."""
         self.book = book
         self.prior = {"TEAM_A": book.profile(home_handle).pace,
                       "TEAM_B": book.profile(away_handle).pace}
@@ -239,13 +206,15 @@ class Pace:
         self.expected = 0.0
 
     def add(self, offense, sit, seconds):
+        """Count one more snap interval."""
         self.used += seconds
         self.expected += self.book.expected_seconds(sit) * self.prior.get(offense, 1.0)
 
     def ratio(self):
-        """Observed over profile-expected, shrunk to 1."""
+        """Observed pace over expected, shrunk toward 1."""
         k = self.prior_seconds
         return (k + self.used) / (k + self.expected)
 
     def profile_pace(self):
+        """The two players' average profile pace."""
         return 0.5 * (self.prior["TEAM_A"] + self.prior["TEAM_B"])
