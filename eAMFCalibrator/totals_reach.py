@@ -100,7 +100,8 @@ def over_probability(pair, probability):
     return probability if markets.selection_label(pair.market_id) == "Over" else 1 - probability
 
 
-STATES = ("level", "1 score, leader has ball", "1 score, trailer has ball",
+ALL = "all"
+STATES = (ALL, "level", "1 score, leader has ball", "1 score, trailer has ball",
           "2+ scores, leader has ball", "2+ scores, trailer has ball", "no ball")
 
 
@@ -122,12 +123,14 @@ def breakdown(pairs):
     """{(quarter, state): {"n", "real": (within 1, within 2), "prod" and
     "candidate": (line within 1, line within 2, over rate at the line, the
     stream's mean P(over) there)}}: summarise's figures for each quarter
-    and game state."""
+    and game state, and for each quarter as a whole (state ALL)."""
     groups = {}
     for p in snapshots(pairs):
         if p.prod_line is None or p.candidate_line is None or p.realized is None:
             continue
-        groups.setdefault((buckets.period_bucket(p.period_number), game_state(p)), []).append(p)
+        quarter = buckets.period_bucket(p.period_number)
+        groups.setdefault((quarter, game_state(p)), []).append(p)
+        groups.setdefault((quarter, ALL), []).append(p)
     out = {}
     for key, ps in groups.items():
         r = summarise(ps)

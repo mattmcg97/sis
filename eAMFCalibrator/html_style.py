@@ -139,6 +139,10 @@ CSS = r'''<style>
                            font-weight:700;letter-spacing:-0.005em;list-style:none}
   /* each candidate's group of columns starts with a rule */
   th.grp,td.grp{border-left:2px solid var(--line)}
+  table.reach td span.pp{font-size:10px;margin-left:4px}
+  table.reach tr.subtotal th,table.reach tr.subtotal td{background:var(--axis)}
+  table.reach td.state,table.reach th.state{text-align:left}
+  table.reach tr.split th,table.reach tr.split td{border-top:2px solid var(--line)}
   details.panel > summary::-webkit-details-marker{display:none}
   details.panel > summary::before{content:"\25B8 ";color:var(--dim)}
   details.panel[open] > summary::before{content:"\25BE "}
