@@ -694,7 +694,6 @@ class Tables:
         self.go_shift = np.zeros((4, 7))
         self.late_fg = np.array([0.32, 0.62])
         self.late_fourth = None
-        self.kneel_prob = np.ones(2)
         self.big_lead = BIG_LEAD
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
         self.fg_shift = np.zeros((4, 7))
@@ -829,8 +828,7 @@ class Tables:
                       strength=np.array([self.strength_game, self.strength_league]),
                       strength_theta=self.strength_theta, strength_slope=self.strength_slope,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
-                      late_fg=self.late_fg, early_fg=self.early_fg, kneel_prob=self.kneel_prob,
-                      big_lead=np.array([-1 if self.big_lead is None else self.big_lead]), conv_rates=np.array([self.two_good, self.kick_good]),
+                      late_fg=self.late_fg, early_fg=self.early_fg, big_lead=np.array([-1 if self.big_lead is None else self.big_lead]), conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
@@ -868,8 +866,6 @@ class Tables:
             t.go_shift, t.fg_shift = z["go_shift"], z["fg_shift"]
         if "late_fg" in z:
             t.late_fg = z["late_fg"]
-        if "kneel_prob" in z:
-            t.kneel_prob = z["kneel_prob"]
         t.big_lead = int(z["big_lead"][0]) if "big_lead" in z else None
         if t.big_lead is not None and t.big_lead < 0:
             t.big_lead = None
@@ -1165,8 +1161,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         dn = down[ix]
         tt = dist[ix]
 
-        kneel_zone = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
-        kneel = kneel_zone & (rand(ix, 24) < tables.kneel_prob[(margin > 8).astype(np.int64)])
+        kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
         tally("kneel", kneel.sum())
         if kneel.any():
             kx = ix[kneel]

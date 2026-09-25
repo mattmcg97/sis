@@ -352,7 +352,8 @@ class TestStrengthSpread(unittest.TestCase):
 
 
 class TestLateGame(unittest.TestCase):
-    """v6: a trailing side's late 4th downs from a fitted table, and kneels that are not certain."""
+    """v6: a trailing side's late 4th downs from a fitted table, and big leads as situations of
+    their own."""
 
     @classmethod
     def setUpClass(cls):
@@ -390,7 +391,7 @@ class TestLateGame(unittest.TestCase):
             t6 = sim6.Tables.build(self.matches, min_records=20)
         finally:
             sim6.BIG_LEAD = big
-        t6.late_fourth, t6.kneel_prob = None, np.ones(2)
+        t6.late_fourth = None
         t5 = sim5.Tables.build(self.matches, min_records=20)
         st = sim6.Start(3)
         st.period[:], st.clock[:], st.phase[:] = 4, 150.0, sim6.SCRIM
@@ -407,36 +408,6 @@ class TestLateGame(unittest.TestCase):
         modes = sim6._modes_np(np.array([3, 4, 4]), np.array([100.0, 60.0, 60.0]), np.array([12, 12, 3]), 9)
         self.assertEqual(list(modes), [8, 9, 4])
         self.assertEqual(self.tables.big_lead, sim6.BIG_LEAD)
-
-    def _kneel_zone(self):
-        st = sim6.Start(1)
-        st.period[:], st.clock[:], st.phase[:] = 4, 50.0, sim6.SCRIM
-        st.team[:], st.down[:], st.dist[:], st.y[:] = 0, 1, 10, 60
-        st.home[:], st.away[:] = 24, 20
-        return st
-
-    def test_a_kneel_that_is_not_certain_leaves_points(self):
-        import copy
-        t = copy.deepcopy(self.tables)
-        t.kneel_prob = np.ones(2)
-        h, a = sim6.simulate(t, self._kneel_zone(), 2000, np.random.default_rng(1), seed=4)
-        self.assertEqual(float(((h + a) > 44).mean()), 0.0)
-        t.kneel_prob = np.zeros(2)
-        h, a = sim6.simulate(t, self._kneel_zone(), 2000, np.random.default_rng(1), seed=4)
-        self.assertGreater(float(((h + a) > 44).mean()), 0.0)
-
-    def test_the_kneel_fit_matches_real_games(self):
-        import copy
-        t = copy.deepcopy(self.tables)
-        state = pricer.GameState(period=4, elapsed_in_period=0.0, home_score=24, away_score=20,
-                                 offense=pricer.HOME, down=1, field_position=60, distance=10,
-                                 clock_seconds=50.0)
-        items = [(0, state, (0.0, 0.0), 0 if i % 10 else 7) for i in range(60)]
-        fitted = v6.fit_kneels(t, items, n_paths=200)
-        real, got, k = fitted[0]
-        self.assertAlmostEqual(real, 0.9)
-        self.assertTrue(abs(got - real) < 0.05 or k < 0.02)
-        self.assertEqual(len(v6.kneel_states([(None, state, (0.0, 0.0), 0)])), 1)
 
 
 class TestOvertime(unittest.TestCase):
