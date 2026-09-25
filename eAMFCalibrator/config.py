@@ -60,6 +60,11 @@ V4_LINES = "own"
 V5_MODEL_DIR = None
 V5_PATHS = 2000
 V5_LINES = "own"
+# The same for --candidate v6 (`python -m eAMFModel v6-build`; None:
+# $EAMF_V6_MODEL, then ./v6_model).
+V6_MODEL_DIR = None
+V6_PATHS = 2000
+V6_LINES = "own"
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.
