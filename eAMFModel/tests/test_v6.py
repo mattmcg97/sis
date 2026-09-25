@@ -587,7 +587,7 @@ class TestBuild(unittest.TestCase):
         # the third quarter: its in-play scoring comes down, most of the way
         lower = [(c, st, th, pts - 1 if c[0] == q3 else pts) for c, st, th, pts in items]
         before = tables.inplay_theta.copy()
-        segs, bands = v6.fit_rest_of_game(tables, lower, n_paths=60, rounds=4, max_states=600)
+        segs, bands = v6.fit_rest_of_game(tables, lower, n_paths=120, rounds=6, max_states=600)
         real, simulated_before, after = segs[q3]
         self.assertLess(abs(after - real), 0.5 * abs(simulated_before - real))
         self.assertLess(tables.inplay_theta[q3].mean(), before[q3].mean() - 0.02)
