@@ -114,6 +114,7 @@ class Profile:
     fourth_downs: int = 0
     milk: float = 1.0
     milk_plays: int = 0
+    form: float = None
 
 
 @dataclass

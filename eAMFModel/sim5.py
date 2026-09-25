@@ -764,9 +764,14 @@ class Tables:
         # more than one level for the quarter gives it (v5.fit_quarter_levels)
         self.late_theta = np.zeros(6)
         # How far each simulated game's two offenses are drawn around the
-        # match's prior, in theta: what the pre-match does not know about the
-        # day (v5.fit_strength_sd). 0: fixed at the prior, as v4.
-        self.strength_sd = 0.0
+        # match's prior (v5.fit_form), as variances of log points: the
+        # game's, shared by both sides, and a player's own form for one with
+        # no history; strength_slope (at strength_theta) is how many log
+        # points one unit of theta is worth, to turn one into the other.
+        self.strength_game = 0.0
+        self.strength_league = 0.0
+        self.strength_theta = np.zeros(0)
+        self.strength_slope = np.zeros(0)
         # On top of it when pricing a total from inside a game (simulate's
         # in_play), by segment of the game and margin band:
         # v5.fit_rest_of_game, so that from real in-game states the
@@ -906,7 +911,9 @@ class Tables:
                       gain=self.gain, new_field=self.new_field, seconds=self.seconds,
                       replay=self.replay, td_from=self.td_from, fg_seconds=self.fg_seconds,
                       fg_after=np.array([self.fg_after]), period_theta=self.period_theta,
-                      late_theta=self.late_theta, strength_sd=np.array([self.strength_sd]),
+                      late_theta=self.late_theta,
+                      strength=np.array([self.strength_game, self.strength_league]),
+                      strength_theta=self.strength_theta, strength_slope=self.strength_slope,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
                       late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
@@ -934,8 +941,9 @@ class Tables:
         t.two_good, t.kick_good = (float(x) for x in z["conv_rates"])
         if "late_theta" in z:
             t.late_theta = z["late_theta"]
-        if "strength_sd" in z:
-            t.strength_sd = float(z["strength_sd"][0])
+        if "strength" in z:
+            t.strength_game, t.strength_league = (float(x) for x in z["strength"])
+            t.strength_theta, t.strength_slope = z["strength_theta"], z["strength_slope"]
         if "period_theta" in z:
             t.period_theta = z["period_theta"]
         if "go_shift" in z:
@@ -992,6 +1000,8 @@ class Start:
         self.theta = np.zeros((n, 2))
         self.aggression = np.zeros((n, 2))
         self.pace = np.ones((n, 2))
+        self.strength = np.zeros((n, 2))
+        self.strength_game = np.zeros((n, 2))
 
 
 def _sigmoid(z):
@@ -1016,9 +1026,23 @@ def _uniform(seed, path, step, slot):
     return (z >> np.uint64(11)).astype(np.float64) * (1.0 / 9007199254740992.0)
 
 
+def strength_draw(tables, theta, form):
+    """(theta, own sd, game sd) for each side, in theta: the players' own
+    form on the day (`form`, variances of log points) and the game's, with
+    theta moved so that the draws leave each side's expected points where
+    they were."""
+    theta = np.asarray(theta, dtype=float)
+    if not len(tables.strength_slope):
+        return theta, np.zeros(2), np.zeros(2)
+    slope = np.maximum(0.3, np.interp(theta, tables.strength_theta, tables.strength_slope))
+    own = np.sqrt(np.maximum(0.0, np.asarray(form, dtype=float))) / slope
+    game = np.sqrt(max(0.0, tables.strength_game)) / slope
+    return theta - slope * (own * own + game * game) / 2.0, own, game
+
+
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
-             in_play=False, distinct=False, strength_sd=None):
+             in_play=False, distinct=False):
     """Play every starting state `n_paths` times to the end.
 
     Returns (home, away) final scores, arrays of shape (states, n_paths).
@@ -1031,10 +1055,11 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     over the states of many matches wants `common=False`: with it on, a
     thousand states on 100 paths are 100 games' worth of luck.
 
-    `strength_sd` (default tables.strength_sd): each path's two offenses
-    are drawn around the state's theta with this sd, off the path's own
-    stream -- with `common`, path k of every snapshot of a match plays the
-    same strengths, so the draw moves no price between snapshots.
+    `start.strength` and `start.strength_game` (states x 2): each path's
+    two offenses are drawn around the state's theta, each by its own sd and
+    both by one shared draw times the game's sd, off the path's own stream
+    -- with `common`, path k of every snapshot of a match plays the same
+    strengths.
 
     `distinct` (with `common`): every path of every state has a stream of
     its own, the same from call to call -- what a fit over many states wants:
@@ -1087,16 +1112,16 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     step = np.zeros(P, dtype=np.int64)                         # events since the snapshot
     # each path's own strengths around the prior: what the pre-match does
     # not know about the day (step 0 is never used by the plays)
-    sd = tables.strength_sd if strength_sd is None else strength_sd
-    if sd:
-        if common:
-            u1 = _uniform(seed, path_no, step, 20)
-            u2 = _uniform(seed, path_no, step, 21)
-        else:
-            u1, u2 = rng.random(P), rng.random(P)
-        radius = np.sqrt(-2.0 * np.log(np.maximum(u1, 1e-12)))
-        z = np.stack([radius * np.cos(2 * np.pi * u2), radius * np.sin(2 * np.pi * u2)], axis=1)
-        theta = theta + sd * z
+    own_sd = getattr(start, "strength", np.zeros((S, 2)))
+    game_sd = getattr(start, "strength_game", np.zeros((S, 2)))
+    if np.any(own_sd) or np.any(game_sd):
+        u = [_uniform(seed, path_no, step, slot) if common else rng.random(P)
+             for slot in (20, 21, 22, 23)]
+        r1 = np.sqrt(-2.0 * np.log(np.maximum(u[0], 1e-12)))
+        r2 = np.sqrt(-2.0 * np.log(np.maximum(u[2], 1e-12)))
+        own = np.stack([r1 * np.cos(2 * np.pi * u[1]), r1 * np.sin(2 * np.pi * u[1])], axis=1)
+        game = (r2 * np.cos(2 * np.pi * u[3]))[:, None]
+        theta = theta + rep(own_sd) * own + rep(game_sd) * game
         exp_theta = np.exp(theta)
 
     def rand(ix, slot):

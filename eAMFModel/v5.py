@@ -46,6 +46,7 @@ the rest of the game is played, so a leader who keeps moving the chains
 bleeds the clock and the total dies with it.
 """
 
+import datetime as dt
 import math
 import multiprocessing as mp
 from collections import Counter
@@ -346,7 +347,9 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
                     s["period"])
             k += 1
         _fill(start, i, start_from(states[i]))
-        start.theta[i] = eff.theta() if v.react else theta0
+        start.theta[i], start.strength[i], start.strength_game[i] = sim.strength_draw(
+            tables, eff.theta() if v.react else theta0,
+            [tables.strength_league if p.form is None else p.form for p in prof])
         sds[i] = eff.sd() if v.react else 1.0 / math.sqrt(v.kappa)
         if v.profiles:
             start.aggression[i] = (prof[0].aggression, prof[1].aggression)
@@ -880,7 +883,6 @@ def fit_rest_of_game(tables, items, n_paths=REST_PATHS, rounds=REST_ROUNDS, seed
 
 def match_day(match_rows):
     """The match's date: its first row's file time, else the code's DDMMYY."""
-    import datetime as dt
     stamp = (match_rows[0].get("file_time") or "")[:10] if match_rows else ""
     try:
         return dt.date.fromisoformat(stamp)
@@ -904,79 +906,109 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
 
 
 # --------------------------------------------------------------------------
-# How much the day's strengths are unknown
+# A player's form on the day
 #
-# v5 played every simulated game with the two offenses fixed at the match's
-# prior. The points still to come then came out too narrow: held out, real
-# results fell in the bottom tenth of v5's distribution 10.5-14.6% of the
-# time and in the top tenth 10-12%, and the real spread ran 3-12% wider
-# than v5's (widest where the pre-match knew least). So each simulated game
-# draws its offenses around the prior (sim5: tables.strength_sd), and the
-# build fits how far: on the last two weeks of the games built on, each
-# priced with an NB2 fitted only on what came before them -- as pricing
-# sees a match in the days after a build -- the real squared misses must
-# equal the simulated variance. One week swung the fit (0.19 before Sep 3,
-# 0.13 before Sep 10); two or three weeks give 0.20 and 0.17.
-# The fourth quarter is left out of the target: too little is left in it
-# for the day's strengths to matter (its narrowness is its own).
+# Each simulated game draws both offenses around the match's prior, each by
+# its own player's form: how much more that player's points swing from match
+# to match than the simulation already swings with the strengths fixed. It
+# is read off every finished match in the history, NB2's expected points
+# against what was scored, weighted by NB2's own 60-day half-life, and each
+# player's figure is shrunk toward the league's by how much of it is noise.
 
-STRENGTH_FIT = True
-STRENGTH_HOLDOUT_DAYS = 14
-STRENGTH_PATHS = 200
-STRENGTH_MAX = 0.5
+FORM_HALF_LIFE = 60.0
+FORM_DAYS = 365
+FORM_GRID = np.array([-0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6])
+FORM_PATHS = 2000
 
 
-def spread_ratio(tables, items, sd, n_paths=STRENGTH_PATHS, seed=0):
-    """Real squared misses of the points still to come over the simulated
-    variance, from these states (rest_of_game_states' items) with strength
-    sd `sd`: 1 when the simulation is as wide as real games."""
-    start = sim.Start(len(items))
-    for i, (_, state, theta0, _) in enumerate(items):
-        _fill(start, i, start_from(state))
-        start.theta[i] = theta0
-    real = np.array([it[3] for it in items], dtype=float)
-    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1,
-                              distinct=True, strength_sd=sd)
-    rest = (home + away) - (start.home + start.away)[:, None]
-    return float(((real - rest.mean(1)) ** 2).mean() / max(1e-9, rest.var(1).mean()))
+def _var_terms(mu):
+    mu = np.asarray(mu, dtype=float)
+    return np.stack([np.ones_like(mu), mu, mu * mu], axis=-1)
 
 
-def fit_strength_sd(tables, items, rounds=6, hi=STRENGTH_MAX):
-    """tables.strength_sd so that spread_ratio is 1 (none when the fixed
-    strengths are already wide enough). Returns (ratio at 0, sd, ratio)."""
-    at0 = spread_ratio(tables, items, 0.0)
-    if at0 <= 1.0:
-        tables.strength_sd = 0.0
-        return at0, 0.0, at0
-    lo, top = 0.0, hi
-    for _ in range(rounds):
-        mid = (lo + top) / 2
-        if spread_ratio(tables, items, mid) > 1.0:
-            lo = mid
-        else:
-            top = mid
-    tables.strength_sd = (lo + top) / 2
-    return at0, tables.strength_sd, spread_ratio(tables, items, tables.strength_sd)
+def _cov_terms(mh, ma):
+    mh, ma = np.asarray(mh, dtype=float), np.asarray(ma, dtype=float)
+    return np.stack([np.ones_like(mh), mh + ma, mh * ma, mh * mh + ma * ma], axis=-1)
 
 
-def strength_states(matches, grid, history, out_dir, days=STRENGTH_HOLDOUT_DAYS):
-    """The last `days` days of these matches, each priced with an NB2 fitted
-    only on the history before them: rest_of_game_states' items in the
-    first three quarters."""
-    import datetime as dt
-    import os
-    dated = {c: match_day(rows) for c, rows in matches.items()}
-    if all(d is None for d in dated.values()):
-        return []
-    last = max(d for d in dated.values() if d is not None)
-    first = last - dt.timedelta(days=days - 1)
-    recent = {c: rows for c, rows in matches.items() if dated[c] is not None and dated[c] >= first}
-    if not recent:
-        return []
-    pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2_strength"),
-                                   dt.datetime.combine(first, dt.time()))
-    priors = pre.means([r for r in history if r["MATCH_CODE"] in recent])
-    return [it for it in rest_of_game_states(recent, grid, priors) if it[1].period <= 3]
+def fixed_strength_spread(tables, grid=FORM_GRID, n_paths=FORM_PATHS, seed=0):
+    """From kickoff with the strengths fixed, over a grid of (theta_home,
+    theta_away): each side's variance as a quadratic in its mean, the two
+    sides' covariance as a quadratic in their means, and the slope of log
+    points in the side's own theta at each grid theta."""
+    g = len(grid)
+    start = sim.Start(g * g)
+    th, ta = np.meshgrid(grid, grid, indexing="ij")
+    start.theta = np.stack([th.ravel(), ta.ravel()], axis=1)
+    rng = np.random.default_rng(seed)
+    start.team = rng.integers(0, 2, g * g).astype(np.int8)
+    start.kicks_second_half = 1 - start.team
+    home, away = sim.simulate(tables, start, n_paths, rng, common=False)
+    mh, ma = home.mean(1), away.mean(1)
+    means = np.concatenate([mh, ma])
+    var = np.concatenate([home.var(1), away.var(1)])
+    cov = ((home - mh[:, None]) * (away - ma[:, None])).mean(1)
+    var_fn = np.linalg.lstsq(_var_terms(means), var, rcond=None)[0]
+    cov_fn = np.linalg.lstsq(_cov_terms(mh, ma), cov, rcond=None)[0]
+    log_home = np.log(np.maximum(0.5, mh)).reshape(g, g)
+    slope = np.gradient(log_home, grid, axis=0).mean(1)
+    return var_fn, cov_fn, slope
+
+
+def form_sides(history, means, before, days=FORM_DAYS, half_life=FORM_HALF_LIFE):
+    """(handle, weight, real, expected, match) for each side of each finished
+    match in the `days` before `before` that NB2 priced."""
+    out = []
+    since = before - dt.timedelta(days=days)
+    for r in history:
+        start = nb2_prior._start(r)
+        if (r.get("PLAYER_1_FINAL_SCORE") in ("", None) or start is None
+                or not since <= start < before or r["MATCH_CODE"] not in means):
+            continue
+        w = 2.0 ** (-(before - start).total_seconds() / 86400.0 / half_life)
+        mu = means[r["MATCH_CODE"]]
+        for k, side in ((0, "PLAYER_1"), (1, "PLAYER_2")):
+            out.append((r[f"{side}_HANDLE"].strip().upper(), w, float(r[f"{side}_FINAL_SCORE"]),
+                        mu[k], r["MATCH_CODE"]))
+    return out
+
+
+def fit_form(sides, var_fn, cov_fn):
+    """(game, league form, {handle: form}) from form_sides, as variances of
+    log points on top of the simulation's own: `game` is shared by both
+    sides of a match (both score more, or less, together), a form is a
+    player's own, shrunk toward the league's by how noisy it is."""
+    handle = np.array([s[0] for s in sides])
+    w = np.array([s[1] for s in sides])
+    y = np.array([s[2] for s in sides])
+    mu = np.maximum(1.0, np.array([s[3] for s in sides]))
+    r = ((y - mu) ** 2 - _var_terms(mu) @ var_fn) / mu ** 2
+    wm = w * mu ** 2
+    num = den = 0.0
+    by_match = {}
+    for s in sides:
+        by_match.setdefault(s[4], []).append(s)
+    for pair in by_match.values():
+        if len(pair) == 2:
+            (_, w1, y1, m1, _), (_, _, y2, m2, _) = pair
+            m1, m2 = max(1.0, m1), max(1.0, m2)
+            num += w1 * ((y1 - m1) * (y2 - m2) - _cov_terms(m1, m2) @ cov_fn)
+            den += w1 * m1 * m2
+    game = max(0.0, num / den) if den > 0 else 0.0
+    league = float((wm * r).sum() / wm.sum())
+    per_side = float((wm * (r - league) ** 2).sum() / wm.sum())
+    raw, noise = {}, {}
+    for h in np.unique(handle):
+        k = handle == h
+        raw[h] = float((wm[k] * r[k]).sum() / wm[k].sum())
+        noise[h] = per_side * float((wm[k] ** 2).sum() / wm[k].sum() ** 2)
+    names = list(raw)
+    size = np.array([wm[handle == h].sum() for h in names])
+    spread = float(np.average([(raw[h] - league) ** 2 for h in names], weights=size))
+    tau2 = max(0.0, spread - float(np.average([noise[h] for h in names], weights=size)))
+    form = {h: max(0.0, league - game + tau2 / (tau2 + noise[h]) * (raw[h] - league))
+            for h in names}
+    return game, max(0.0, league - game), form
 
 
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
@@ -997,7 +1029,6 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     if history is not None:
         # our own pre-match model: NB2 fitted on the history before the day
         # after the last match built on (or `before`)
-        import datetime as dt
         if before is None:
             days = [match_day(rows) for rows in matches.values()]
             last = max(d for d in days if d is not None)
@@ -1047,17 +1078,23 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
               + "; ".join(f"{name.replace('_', ' ')} "
                           + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
                           for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
-    if STRENGTH_FIT and history is not None:
-        # how far each simulated game's offenses are drawn around the prior
-        # (see STRENGTH_FIT), before the grid, which is simulated with it
-        items = strength_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)),
-                                history, out_dir)
-        if len(items) >= 200:
-            at0, sd, ratio = fit_strength_sd(tables, items)
+    form = {}
+    if pre is not None:
+        var_fn, cov_fn, slope = fixed_strength_spread(tables)
+        tables.strength_theta, tables.strength_slope = FORM_GRID.copy(), slope
+        cutoff = dt.datetime.fromisoformat(pre.meta["before"])
+        finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
+                    and nb2_prior._start(r) is not None and nb2_prior._start(r) < cutoff
+                    and nb2_prior._start(r) >= cutoff - dt.timedelta(days=FORM_DAYS)]
+        sides = form_sides(history, pre.means(finished, n_sims=1000), cutoff)
+        if len(sides) >= 200:
+            tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
             if verbose:
-                print(f"  width of the points still to come, real / simulated variance (last "
-                      f"{STRENGTH_HOLDOUT_DAYS} days, NB2 fitted before them): {at0:.3f} with the "
-                      f"strengths fixed -> strength sd {sd:.3f}, {ratio:.3f}")
+                sds = sorted(np.sqrt(list(form.values())))
+                print(f"  form on the day, sd in log points: the game {np.sqrt(tables.strength_game):.3f}"
+                      f" (both sides together), each player's own {sds[0]:.3f} to {sds[-1]:.3f}"
+                      f" ({len(form)} players; {np.sqrt(tables.strength_league):.3f} for one"
+                      f" with no history)")
     tables_path = os.path.join(out_dir, "v5tables.npz")
     grid_path = os.path.join(out_dir, "v5grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)
@@ -1092,8 +1129,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
     handles = {c: h for c, h in handles.items() if h}
-    if handles:
-        book = players.build(matches, handles)
+    if handles or form:
+        book = players.build(matches, handles) if handles else players.Book()
+        for h, f in form.items():
+            book.players.setdefault(h, players.Profile()).form = f
         book.save(os.path.join(out_dir, "v5players.json"))
         if verbose:
             print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")

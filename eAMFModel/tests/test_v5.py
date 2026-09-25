@@ -14,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import nb2_prior, sim, sim4, sim5, v5, v5_stream
+from .. import nb2_prior, players, sim, sim4, sim5, v5, v5_stream
 from .test_v3 import _matches
 
 
@@ -268,54 +268,87 @@ class TestBackedUp(unittest.TestCase):
 
 
 class TestStrengthSpread(unittest.TestCase):
-    """Each simulated game's offenses drawn around the prior: wider points
-    still to come, the same draw for path k of every snapshot of a match,
-    and a build-time fit of how far."""
+    """Each simulated game's offenses drawn around the prior: a shared game
+    draw that moves the total, each player's own form, the same draw for
+    path k of every snapshot of a match, and the fit of both off results."""
 
     @classmethod
     def setUpClass(cls):
         cls.matches = _matches(40)
         cls.tables = sim5.Tables.build(cls.matches, min_records=20)
 
-    def _two(self):
-        st = sim5.Start(2)
-        st.period[:], st.clock[:], st.phase[:] = 3, 200.0, sim5.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 30, 14, 10
+    def _kickoff(self, n=1, own=0.0, game=0.0):
+        st = sim5.Start(n)
+        st.team[:] = 0
+        st.kicks_second_half[:] = 1
+        st.strength[:] = own
+        st.strength_game[:] = game
         return st
 
-    def test_a_spread_widens_the_points_to_come(self):
-        widths = []
-        for sd in (0.0, 0.3):
-            h, a = sim5.simulate(self.tables, self._two(), 3000, np.random.default_rng(1), seed=5,
-                                 strength_sd=sd)
-            widths.append(float((h + a)[0].std()))
-        self.assertGreater(widths[1], widths[0] * 1.03)
+    def _spread(self, **kw):
+        h, a = sim5.simulate(self.tables, self._kickoff(**kw), 4000, np.random.default_rng(1), seed=5)
+        return float((h + a)[0].std()), float((h - a)[0].std())
+
+    def test_the_game_draw_widens_the_total_not_the_margin(self):
+        total0, margin0 = self._spread()
+        total1, margin1 = self._spread(game=0.3)
+        self.assertGreater(total1, total0 * 1.08)
+        self.assertGreater(total1 / total0 - 1.0, 2 * (margin1 / margin0 - 1.0))
+
+    def test_a_players_own_form_widens_the_margin(self):
+        _, margin0 = self._spread()
+        _, margin1 = self._spread(own=0.3)
+        self.assertGreater(margin1, margin0 * 1.05)
 
     def test_the_draw_is_the_same_for_every_snapshot(self):
-        h, a = sim5.simulate(self.tables, self._two(), 500, np.random.default_rng(1), seed=5,
-                             strength_sd=0.3)
+        st = self._kickoff(2, own=0.2, game=0.2)
+        h, a = sim5.simulate(self.tables, st, 500, np.random.default_rng(1), seed=5)
         self.assertTrue(np.array_equal(h[0], h[1]) and np.array_equal(a[0], a[1]))
-        h2, a2 = sim5.simulate(self.tables, self._two(), 500, np.random.default_rng(9), seed=5,
-                               strength_sd=0.3)
-        self.assertTrue(np.array_equal(h, h2))                    # and from call to call
+        h2, _ = sim5.simulate(self.tables, st, 500, np.random.default_rng(9), seed=5)
+        self.assertTrue(np.array_equal(h, h2))
 
-    def test_the_fit_matches_the_real_spread(self):
+    def test_the_draw_keeps_the_expected_points(self):
         import copy
-        grid = v5.PriorGrid.build(self.tables, n_paths=80)
-        items = [it for it in v5.rest_of_game_states(self.matches, grid, every=6) if it[1].period <= 3]
-        # real results spread wider than the simulation: each moved from the
-        # simulated mean by an extra draw
-        rng = np.random.default_rng(3)
-        wide = [(c, st, th, max(0, pts + int(round(rng.normal(0, 3))))) for c, st, th, pts in items]
         tables = copy.deepcopy(self.tables)
-        at0, sd, ratio = v5.fit_strength_sd(tables, wide, rounds=5)
-        self.assertGreater(at0, 1.0)
-        self.assertGreater(sd, 0.0)
-        self.assertAlmostEqual(ratio, 1.0, delta=0.12)
-        self.assertEqual(tables.strength_sd, sd)
+        _, _, slope = v5.fixed_strength_spread(tables, n_paths=600)
+        tables.strength_theta, tables.strength_slope = v5.FORM_GRID.copy(), slope
+        tables.strength_game = 0.04
+        theta, own, game = sim5.strength_draw(tables, [0.0, 0.0], [0.03, 0.0])
+        self.assertTrue(own[0] > 0 and own[1] == 0 and game[0] > 0)
+        st = self._kickoff()
+        fixed = sim5.simulate(tables, st, 6000, np.random.default_rng(2), common=False)[0].mean()
+        st.theta[0], st.strength[0], st.strength_game[0] = theta, own, game
+        drawn = sim5.simulate(tables, st, 6000, np.random.default_rng(2), common=False)[0].mean()
+        self.assertAlmostEqual(drawn / fixed, 1.0, delta=0.04)
+
+    def test_the_fit_finds_the_game_and_the_volatile_player(self):
+        rng = np.random.default_rng(4)
+        sides = []
+        for m in range(6000):
+            p1, p2 = rng.choice(["STEADY1", "STEADY2", "STEADY3", "WILD"], 2, replace=False)
+            g = rng.normal(0, 0.15)
+            for k, p in enumerate((p1, p2)):
+                own = rng.normal(0, 0.25) if p == "WILD" else 0.0
+                sides.append((p, 1.0, 20.0 * np.exp(g + own), 20.0, f"M{m}"))
+        game, league, form = v5.fit_form(sides, np.zeros(3), np.zeros(4))
+        self.assertAlmostEqual(np.sqrt(game), 0.15, delta=0.03)
+        self.assertGreater(form["WILD"], 0.03)
+        self.assertLess(max(form["STEADY1"], form["STEADY2"], form["STEADY3"]), 0.01)
+
+    def test_a_players_form_rides_in_the_book(self):
+        import tempfile
+        book = players.Book()
+        book.players["WILD"] = players.Profile(form=0.05)
+        with tempfile.TemporaryDirectory() as d:
+            book.save(os.path.join(d, "p.json"))
+            back = players.Book.load(os.path.join(d, "p.json"))
+        self.assertEqual(back.profile("wild").form, 0.05)
+        self.assertIsNone(back.profile("NOBODY").form)
 
     def test_old_tables_play_with_the_strengths_fixed(self):
-        self.assertEqual(sim5.Tables().strength_sd, 0.0)
+        t = sim5.Tables()
+        theta, own, game = sim5.strength_draw(t, [0.1, -0.1], [0.05, 0.05])
+        self.assertTrue(np.allclose(theta, [0.1, -0.1]) and not own.any() and not game.any())
 
 
 class TestOvertime(unittest.TestCase):
