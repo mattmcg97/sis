@@ -66,13 +66,16 @@ V6_MODEL_DIR = None
 V6_PATHS = 2000
 V6_LINES = "own"
 
-# The betting simulation (`python -m eAMFCalibrator bets`): every in-play AF
-# bet in the window from BET_TABLE, read through BET_COLUMNS (logical name ->
-# column; None: not read). BET_EXTRA_COLUMNS are carried through to the output
-# as they are -- the customer and VIP columns to filter on.
-BET_TABLE = "CUSTOMER_REVENUE_EVENT"
+# The betting simulation (`python -m eAMFCalibrator bets`): every single bet
+# on an AF moneyline, handicap or total in the window, bet by bet, from
+# BET_TABLE, read through BET_COLUMNS (logical name -> column; None: not
+# read) and cut by BET_FILTERS (SQL). BET_EXTRA_COLUMNS are carried through
+# to the output as they are: the operator, the customer and their
+# temperature, to filter the VIPs on. (CUSTOMER_REVENUE_EVENT is one row per
+# operator, match and day -- no bet times or odds -- so it cannot be used.)
+BET_TABLE = "CUSTOMER_REVENUE"
 BET_COLUMNS = {
-    "id": None,
+    "id": "OPERATOR_UNIQUE_ID",
     "match": "MATCH_CODE",
     "time": "BET_DATE_UTC",
     "market_type": "MARKET_TYPE_ID",
@@ -84,9 +87,12 @@ BET_COLUMNS = {
     "period": "BET_PLACED_PERIOD_NUMBER",
     "sport": "SPORT_CODE",
 }
-BET_EXTRA_COLUMNS = ["BET_TYPE"]
-# The Q4 two-minute auto-suspend: the first suspend message in the fourth
-# quarter with no more than AUTO_SUSPEND_CLOCK + AUTO_SUSPEND_SLACK seconds on
+BET_FILTERS = ["UPPER(BET_TYPE) = 'SINGLE'"]
+BET_EXTRA_COLUMNS = ["OPERATOR_NAME", "CUSTOMER_NAME_HASH", "CUSTOMER_TEMPERATURE", "BET_TYPE",
+                     "BET_IN_PLAY", "BET_CASHED_OUT", "CUSTOMER_WIN_LOSS"]
+# The Q4 two-minute auto-suspend: the feed suspends around every play, so the
+# auto-suspend is the fourth quarter's last suspend that is never lifted, when
+# it came with no more than AUTO_SUSPEND_CLOCK + AUTO_SUSPEND_SLACK seconds on
 # the game clock. A bet accepted up to MAX_LAG_SECONDS after it measures how far
 # the operator runs behind the feed.
 AUTO_SUSPEND_CLOCK = 120

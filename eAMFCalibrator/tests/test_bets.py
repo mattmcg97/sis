@@ -42,9 +42,20 @@ FEED = [
 
 class TestLatency(unittest.TestCase):
 
-    def test_the_auto_suspend_is_the_first_q4_suspend_near_two_minutes(self):
+    def test_the_auto_suspend_is_the_last_q4_suspend_never_lifted(self):
         found = bets.auto_suspend_times(FEED, clock=120, slack=10)
         self.assertEqual(found, {"M1": at(180)})
+
+    def test_a_suspend_that_is_lifted_is_a_play_not_the_auto_suspend(self):
+        feed = FEED[:4] + [feed_row("M1", 5, 190, status="BET_UNSUSPEND", clock=118)]
+        self.assertEqual(bets.auto_suspend_times(feed, clock=120, slack=10), {})
+        feed = feed + [feed_row("M1", 6, 200, status="BET_SUSPEND", clock=112)]
+        self.assertEqual(bets.auto_suspend_times(feed, clock=120, slack=10), {"M1": at(200)})
+
+    def test_kickoff_is_the_first_play(self):
+        feed = [feed_row("M1", 1, 0), ("M1", 2, None, None, "PLAY_STARTED", None, None, None, None,
+                                       at(30))]
+        self.assertEqual(bets.kickoff_times(feed), {"M1": at(30)})
 
     def test_latency_is_the_latest_bet_accepted_after_it(self):
         bs = [bet("M1", 170), bet("M1", 183), bet("M1", 187.5), bet("M1", 400), bet("M3", 10)]
@@ -86,6 +97,11 @@ class TestJoin(unittest.TestCase):
         self.assertAlmostEqual(won["candidate_odds"], odds_c, places=4)
         self.assertAlmostEqual(won["candidate_revenue"], 10 - 10 * odds_c)
 
+    def test_a_bet_before_kickoff_is_pre_match_and_not_simulated(self):
+        lat = {"M1": bets.Latency(0.0, "suspend")}
+        (r,) = bets.join([bet("M1", 45)], lat, self.times, self.prod, self.cand, {"M1": at(50)})
+        self.assertFalse(r["in_play"] or r["simulated"])
+
     def test_a_bet_on_another_line_is_not_simulated(self):
         rows = bets.join([bet("M1", 45, line=47.5)], {}, self.times, self.prod, self.cand)
         self.assertFalse(rows[0]["line_match"] or rows[0]["simulated"])
@@ -124,6 +140,38 @@ class TestCommand(unittest.TestCase):
             self.assertTrue(run.called)
 
 
+class TestProbe(unittest.TestCase):
+
+    def test_the_probe_runs_every_section_on_fake_results(self):
+        from unittest import mock
+        from .. import scouting, snowflake_io
+
+        def fake_fetch(cur, sql, params=None):
+            if sql.startswith("SHOW VIEWS"):
+                return ["created_on", "name", "database_name", "schema_name"], [
+                    (None, "CUSTOMER_REVENUE_EVENT", "DB2", "VIEWS")]
+            if sql.startswith("SHOW TABLES"):
+                return ["created_on", "name", "database_name", "schema_name"], []
+            if "LIMIT 0" in sql or "LIMIT 2" in sql:
+                return ["MATCH_CODE", "BET_DATE_UTC"], []
+            if "GROUP BY OPERATOR_NAME" in sql:
+                return ["OPERATOR_NAME", "BETS"], [("FANDUEL", 10)]
+            return ["V", "N"], [("x", 3)]
+        table = mock.MagicMock(qualified="DB.S.SCOUTING_FULL")
+        with mock.patch.object(bets, "fetch_all", side_effect=fake_fetch), \
+                mock.patch.object(scouting, "locate", return_value=table), \
+                mock.patch.object(scouting, "scouting_matches", return_value=["M1"]), \
+                mock.patch.object(scouting, "fetch_scouting", return_value=FEED), \
+                mock.patch.object(snowflake_io, "fetch_quotes",
+                                  return_value=[quote("M1", 54, 4, 0.5)]):
+            lines = bets.probe(None)
+        text = "\n".join(lines)
+        self.assertIn("DB2.VIEWS.CUSTOMER_REVENUE_EVENT", text)
+        self.assertIn("FANDUEL", text)
+        self.assertIn("suspend", text)
+        self.assertNotIn("failed", text)
+
+
 class TestReading(unittest.TestCase):
 
     def test_bets_are_read_through_the_configured_columns(self):
@@ -138,6 +186,20 @@ class TestReading(unittest.TestCase):
         self.assertIn(config.BET_TABLE, sql)
         self.assertIn("MARKET_TYPE_ID IN (1, 2, 3)", sql)
         self.assertIn(config.SPORT_CODE, params)
+
+    def test_the_bet_source_can_live_in_another_database(self):
+        saved = config.BET_TABLE
+        try:
+            config.BET_TABLE = "OTHER_DB.VIEWS.CUSTOMER_REVENUE_EVENT"
+            self.assertEqual(bets.bet_table(), "OTHER_DB.VIEWS.CUSTOMER_REVENUE_EVENT")
+            self.assertIn("FROM OTHER_DB.VIEWS.CUSTOMER_REVENUE_EVENT", bets.bets_sql()[0])
+            config.BET_TABLE = "CUSTOMER_REVENUE"
+            self.assertEqual(bets.bet_table(), f"{config.DATABASE}.{config.SCHEMA}.CUSTOMER_REVENUE")
+        finally:
+            config.BET_TABLE = saved
+
+    def test_only_single_bets_are_read(self):
+        self.assertIn("UPPER(BET_TYPE) = 'SINGLE'", bets.bets_sql()[0])
 
     def test_a_model_candidate_is_read_at_prods_lines(self):
         saved = config.STREAMS["candidate"]
