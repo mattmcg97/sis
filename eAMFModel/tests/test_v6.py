@@ -384,7 +384,12 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
-        t6 = copy.deepcopy(self.tables)
+        big = sim6.BIG_LEAD
+        sim6.BIG_LEAD = None
+        try:
+            t6 = sim6.Tables.build(self.matches, min_records=20)
+        finally:
+            sim6.BIG_LEAD = big
         t6.late_fourth, t6.kneel_prob = None, np.ones(2)
         t5 = sim5.Tables.build(self.matches, min_records=20)
         st = sim6.Start(3)
@@ -393,6 +398,15 @@ class TestLateGame(unittest.TestCase):
         a = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
         b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
+
+    def test_big_leads_have_their_own_situations(self):
+        self.assertEqual(sim6.mode_of(3, 100.0, 5), 3)
+        self.assertEqual(sim6.mode_of(3, 100.0, 12), 8)
+        self.assertEqual(sim6.mode_of(4, 60.0, 12), 9)
+        self.assertEqual(sim6.mode_of(4, 60.0, 12, None), 4)
+        modes = sim6._modes_np(np.array([3, 4, 4]), np.array([100.0, 60.0, 60.0]), np.array([12, 12, 3]), 9)
+        self.assertEqual(list(modes), [8, 9, 4])
+        self.assertEqual(self.tables.big_lead, sim6.BIG_LEAD)
 
     def _kneel_zone(self):
         st = sim6.Start(1)

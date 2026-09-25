@@ -7,7 +7,9 @@ import numpy as np
 
 from .drive import DriveParams
 
-MODES = ("q1", "first", "late1", "lead", "lead_late", "even", "trail_late", "tied_late")
+MODES = ("q1", "first", "late1", "lead", "lead_late", "even", "trail_late", "tied_late", "lead_big",
+         "lead_late_big")
+BIG_LEAD = 9
 N_KEYS = len(MODES) * 4 * 4 * 4
 MIN_RECORDS = 60
 MANAGED_SECONDS = 3.0
@@ -28,7 +30,7 @@ def half_left(period, clock):
     return clock + (QUARTER if period in (1, 3) else 0.0)
 
 
-def mode_of(period, clock, margin):
+def mode_of(period, clock, margin, big_lead=BIG_LEAD):
     """The game situation for an offense: quarter, late in a half, and ahead, level or behind."""
     late = half_left(period, clock) <= LATE and period != 1 and period != 3
     if period == 1:
@@ -36,7 +38,8 @@ def mode_of(period, clock, margin):
     if period == 2:
         return 2 if late else 1
     if margin > 0:
-        return 4 if late else 3
+        big = big_lead is not None and margin >= big_lead
+        return (9 if big else 4) if late else (8 if big else 3)
     if late:
         return 6 if margin < 0 else 7
     return 5
@@ -57,13 +60,14 @@ def key_index(mode, down, t, y):
     return ((mode * 4 + (min(4, max(1, down)) - 1)) * 4 + dist_bucket(t)) * 4 + zone(y)
 
 
-def _modes_np(period, clock, margin):
+def _modes_np(period, clock, margin, big_lead=BIG_LEAD):
     """mode_of for arrays."""
     hl = clock + QUARTER * ((period == 1) | (period == 3))
     late = (hl <= LATE) & (period != 1) & (period != 3)
     first = period <= 2
+    big = (margin >= big_lead) if big_lead is not None else np.zeros(np.shape(margin), dtype=bool)
     out = np.where(period == 1, 0, np.where(first, np.where(late, 2, 1),
-                   np.where(margin > 0, np.where(late, 4, 3),
+                   np.where(margin > 0, np.where(late, np.where(big, 9, 4), np.where(big, 8, 3)),
                             np.where(late, np.where(margin < 0, 6, 7), 5))))
     return out
 
@@ -274,7 +278,7 @@ def snap_records(rows):
                 and rec["gain"] < t and not rec["replay"]:
             continue
         rec["success"] = rec["kind"] == GAIN and (rec["gain"] >= t or rec["gain"] >= 100 - y)
-        rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"])
+        rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD)
         rec["key"] = key_index(rec["mode"], down, t, y)
         out.append(rec)
     return out
@@ -638,7 +642,7 @@ def _fallbacks(key):
     rest, db = divmod(rest, 4)
     mode, d = divmod(rest, 4)
     zc = 0 if z < 2 else 1
-    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6}[mode]
+    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6, 8: 5, 9: 4}[mode]
     return [("k", key), ("zc", mode, d, db, zc), ("mdb", mode, d, db), ("m2", base, d, db, z),
             ("m2zc", base, d, db, zc), ("any", d, db, z), ("anyzc", d, db, zc), ("d", d, db),
             ("dd", min(d, 2))]
@@ -648,7 +652,7 @@ def _group_of(rec, level):
     """The bin of a snap at a given level of coarseness."""
     mode, d, db, z = rec["mode"], min(4, rec["down"]) - 1, dist_bucket(rec["distance"]), zone(rec["field"])
     zc = 0 if z < 2 else 1
-    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6}[mode]
+    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6, 8: 5, 9: 4}[mode]
     return {"k": ("k", rec["key"]), "zc": ("zc", mode, d, db, zc), "mdb": ("mdb", mode, d, db),
             "m2": ("m2", base, d, db, z),
             "m2zc": ("m2zc", base, d, db, zc), "any": ("any", d, db, z), "anyzc": ("anyzc", d, db, zc),
@@ -691,6 +695,7 @@ class Tables:
         self.late_fg = np.array([0.32, 0.62])
         self.late_fourth = None
         self.kneel_prob = np.ones(2)
+        self.big_lead = BIG_LEAD
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
         self.fg_shift = np.zeros((4, 7))
 
@@ -824,7 +829,8 @@ class Tables:
                       strength=np.array([self.strength_game, self.strength_league]),
                       strength_theta=self.strength_theta, strength_slope=self.strength_slope,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
-                      late_fg=self.late_fg, early_fg=self.early_fg, kneel_prob=self.kneel_prob, conv_rates=np.array([self.two_good, self.kick_good]),
+                      late_fg=self.late_fg, early_fg=self.early_fg, kneel_prob=self.kneel_prob,
+                      big_lead=np.array([-1 if self.big_lead is None else self.big_lead]), conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
@@ -864,6 +870,9 @@ class Tables:
             t.late_fg = z["late_fg"]
         if "kneel_prob" in z:
             t.kneel_prob = z["kneel_prob"]
+        t.big_lead = int(z["big_lead"][0]) if "big_lead" in z else None
+        if t.big_lead is not None and t.big_lead < 0:
+            t.big_lead = None
         if "late_fourth" in z:
             t.late_fourth = z["late_fourth"]
         if "early_fg" in z:
@@ -1244,7 +1253,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             continue
         so = team[sx]
         lead = score[sx, so] - score[sx, 1 - so]
-        mode = _modes_np(period[sx], clock[sx], lead)
+        mode = _modes_np(period[sx], clock[sx], lead, tables.big_lead)
         key = _keys_np(mode, down[sx], dist[sx], y[sx])
         n = tables.count[key]
         cell = _cells_np(period[sx], clock[sx], lead)
