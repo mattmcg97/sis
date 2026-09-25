@@ -903,6 +903,80 @@ def in_game_check(tables, grid, matches, n_paths=300, seed=0, priors=None):
     return got, real
 
 
+# --------------------------------------------------------------------------
+# How much the day's strengths are unknown
+#
+# v5 played every simulated game with the two offenses fixed at the match's
+# prior. The points still to come then came out too narrow: held out, real
+# results fell in the bottom tenth of v5's distribution 10.5-14.6% of the
+# time and in the top tenth 10-12%, and the real spread ran 3-12% wider
+# than v5's (widest where the pre-match knew least). So each simulated game
+# draws its offenses around the prior (sim5: tables.strength_sd), and the
+# build fits how far: on the last week of the games built on, each priced
+# with an NB2 fitted only on what came before that week -- as pricing sees
+# a match -- the real squared misses must equal the simulated variance.
+# The fourth quarter is left out of the target: too little is left in it
+# for the day's strengths to matter (its narrowness is its own).
+
+STRENGTH_FIT = True
+STRENGTH_HOLDOUT_DAYS = 7
+STRENGTH_PATHS = 200
+STRENGTH_MAX = 0.5
+
+
+def spread_ratio(tables, items, sd, n_paths=STRENGTH_PATHS, seed=0):
+    """Real squared misses of the points still to come over the simulated
+    variance, from these states (rest_of_game_states' items) with strength
+    sd `sd`: 1 when the simulation is as wide as real games."""
+    start = sim.Start(len(items))
+    for i, (_, state, theta0, _) in enumerate(items):
+        _fill(start, i, start_from(state))
+        start.theta[i] = theta0
+    real = np.array([it[3] for it in items], dtype=float)
+    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1,
+                              distinct=True, strength_sd=sd)
+    rest = (home + away) - (start.home + start.away)[:, None]
+    return float(((real - rest.mean(1)) ** 2).mean() / max(1e-9, rest.var(1).mean()))
+
+
+def fit_strength_sd(tables, items, rounds=6, hi=STRENGTH_MAX):
+    """tables.strength_sd so that spread_ratio is 1 (none when the fixed
+    strengths are already wide enough). Returns (ratio at 0, sd, ratio)."""
+    at0 = spread_ratio(tables, items, 0.0)
+    if at0 <= 1.0:
+        tables.strength_sd = 0.0
+        return at0, 0.0, at0
+    lo, top = 0.0, hi
+    for _ in range(rounds):
+        mid = (lo + top) / 2
+        if spread_ratio(tables, items, mid) > 1.0:
+            lo = mid
+        else:
+            top = mid
+    tables.strength_sd = (lo + top) / 2
+    return at0, tables.strength_sd, spread_ratio(tables, items, tables.strength_sd)
+
+
+def strength_states(matches, grid, history, out_dir, days=STRENGTH_HOLDOUT_DAYS):
+    """The last `days` days of these matches, each priced with an NB2 fitted
+    only on the history before them: rest_of_game_states' items in the
+    first three quarters."""
+    import datetime as dt
+    import os
+    dated = {c: match_day(rows) for c, rows in matches.items()}
+    if all(d is None for d in dated.values()):
+        return []
+    last = max(d for d in dated.values() if d is not None)
+    first = last - dt.timedelta(days=days - 1)
+    recent = {c: rows for c, rows in matches.items() if dated[c] is not None and dated[c] >= first}
+    if not recent:
+        return []
+    pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2_strength"),
+                                   dt.datetime.combine(first, dt.time()))
+    priors = pre.means([r for r in history if r["MATCH_CODE"] in recent])
+    return [it for it in rest_of_game_states(recent, grid, priors) if it[1].period <= 3]
+
+
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
           before=None):
     """Tables, the league's efficiency by quarter (from kickoff, as v3), the
@@ -971,6 +1045,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
               + "; ".join(f"{name.replace('_', ' ')} "
                           + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
                           for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
+    if STRENGTH_FIT and history is not None:
+        # how far each simulated game's offenses are drawn around the prior
+        # (see STRENGTH_FIT), before the grid, which is simulated with it
+        items = strength_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)),
+                                history, out_dir)
+        if len(items) >= 200:
+            at0, sd, ratio = fit_strength_sd(tables, items)
+            if verbose:
+                print(f"  width of the points still to come, real / simulated variance (last "
+                      f"{STRENGTH_HOLDOUT_DAYS} days, NB2 fitted before them): {at0:.3f} with the "
+                      f"strengths fixed -> strength sd {sd:.3f}, {ratio:.3f}")
     tables_path = os.path.join(out_dir, "v5tables.npz")
     grid_path = os.path.join(out_dir, "v5grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)

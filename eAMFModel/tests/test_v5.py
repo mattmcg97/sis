@@ -267,6 +267,57 @@ class TestBackedUp(unittest.TestCase):
         self.assertAlmostEqual(float(sim5.Tables.load(path).backed[1, sim5.B_SAFETY]), 0.3)
 
 
+class TestStrengthSpread(unittest.TestCase):
+    """Each simulated game's offenses drawn around the prior: wider points
+    still to come, the same draw for path k of every snapshot of a match,
+    and a build-time fit of how far."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.matches = _matches(40)
+        cls.tables = sim5.Tables.build(cls.matches, min_records=20)
+
+    def _two(self):
+        st = sim5.Start(2)
+        st.period[:], st.clock[:], st.phase[:] = 3, 200.0, sim5.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 30, 14, 10
+        return st
+
+    def test_a_spread_widens_the_points_to_come(self):
+        widths = []
+        for sd in (0.0, 0.3):
+            h, a = sim5.simulate(self.tables, self._two(), 3000, np.random.default_rng(1), seed=5,
+                                 strength_sd=sd)
+            widths.append(float((h + a)[0].std()))
+        self.assertGreater(widths[1], widths[0] * 1.03)
+
+    def test_the_draw_is_the_same_for_every_snapshot(self):
+        h, a = sim5.simulate(self.tables, self._two(), 500, np.random.default_rng(1), seed=5,
+                             strength_sd=0.3)
+        self.assertTrue(np.array_equal(h[0], h[1]) and np.array_equal(a[0], a[1]))
+        h2, a2 = sim5.simulate(self.tables, self._two(), 500, np.random.default_rng(9), seed=5,
+                               strength_sd=0.3)
+        self.assertTrue(np.array_equal(h, h2))                    # and from call to call
+
+    def test_the_fit_matches_the_real_spread(self):
+        import copy
+        grid = v5.PriorGrid.build(self.tables, n_paths=80)
+        items = [it for it in v5.rest_of_game_states(self.matches, grid, every=6) if it[1].period <= 3]
+        # real results spread wider than the simulation: each moved from the
+        # simulated mean by an extra draw
+        rng = np.random.default_rng(3)
+        wide = [(c, st, th, max(0, pts + int(round(rng.normal(0, 3))))) for c, st, th, pts in items]
+        tables = copy.deepcopy(self.tables)
+        at0, sd, ratio = v5.fit_strength_sd(tables, wide, rounds=5)
+        self.assertGreater(at0, 1.0)
+        self.assertGreater(sd, 0.0)
+        self.assertAlmostEqual(ratio, 1.0, delta=0.12)
+        self.assertEqual(tables.strength_sd, sd)
+
+    def test_old_tables_play_with_the_strengths_fixed(self):
+        self.assertEqual(sim5.Tables().strength_sd, 0.0)
+
+
 class TestOvertime(unittest.TestCase):
     """Overtime as the feed shows it played: each side has the ball once,
     then the game ends the moment one side leads; one or two behind after

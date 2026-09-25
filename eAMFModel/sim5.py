@@ -763,6 +763,10 @@ class Tables:
         # Q2's two-minute drill scores three-quarters of the quarter's points,
         # more than one level for the quarter gives it (v5.fit_quarter_levels)
         self.late_theta = np.zeros(6)
+        # How far each simulated game's two offenses are drawn around the
+        # match's prior, in theta: what the pre-match does not know about the
+        # day (v5.fit_strength_sd). 0: fixed at the prior, as v4.
+        self.strength_sd = 0.0
         # On top of it when pricing a total from inside a game (simulate's
         # in_play), by segment of the game and margin band:
         # v5.fit_rest_of_game, so that from real in-game states the
@@ -902,7 +906,7 @@ class Tables:
                       gain=self.gain, new_field=self.new_field, seconds=self.seconds,
                       replay=self.replay, td_from=self.td_from, fg_seconds=self.fg_seconds,
                       fg_after=np.array([self.fg_after]), period_theta=self.period_theta,
-                      late_theta=self.late_theta,
+                      late_theta=self.late_theta, strength_sd=np.array([self.strength_sd]),
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
                       late_fg=self.late_fg, early_fg=self.early_fg, conv_rates=np.array([self.two_good, self.kick_good]),
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
@@ -930,6 +934,8 @@ class Tables:
         t.two_good, t.kick_good = (float(x) for x in z["conv_rates"])
         if "late_theta" in z:
             t.late_theta = z["late_theta"]
+        if "strength_sd" in z:
+            t.strength_sd = float(z["strength_sd"][0])
         if "period_theta" in z:
             t.period_theta = z["period_theta"]
         if "go_shift" in z:
@@ -1012,7 +1018,7 @@ def _uniform(seed, path, step, slot):
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
-             in_play=False, distinct=False):
+             in_play=False, distinct=False, strength_sd=None):
     """Play every starting state `n_paths` times to the end.
 
     Returns (home, away) final scores, arrays of shape (states, n_paths).
@@ -1024,6 +1030,11 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     priced together differ only by what differs between them. Averaging
     over the states of many matches wants `common=False`: with it on, a
     thousand states on 100 paths are 100 games' worth of luck.
+
+    `strength_sd` (default tables.strength_sd): each path's two offenses
+    are drawn around the state's theta with this sd, off the path's own
+    stream -- with `common`, path k of every snapshot of a match plays the
+    same strengths, so the draw moves no price between snapshots.
 
     `distinct` (with `common`): every path of every state has a stream of
     its own, the same from call to call -- what a fit over many states wants:
@@ -1074,6 +1085,19 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
     ot_done[ahead, np.where(score[ahead, 0] > score[ahead, 1], 0, 1)] = True
     step = np.zeros(P, dtype=np.int64)                         # events since the snapshot
+    # each path's own strengths around the prior: what the pre-match does
+    # not know about the day (step 0 is never used by the plays)
+    sd = tables.strength_sd if strength_sd is None else strength_sd
+    if sd:
+        if common:
+            u1 = _uniform(seed, path_no, step, 20)
+            u2 = _uniform(seed, path_no, step, 21)
+        else:
+            u1, u2 = rng.random(P), rng.random(P)
+        radius = np.sqrt(-2.0 * np.log(np.maximum(u1, 1e-12)))
+        z = np.stack([radius * np.cos(2 * np.pi * u2), radius * np.sin(2 * np.pi * u2)], axis=1)
+        theta = theta + sd * z
+        exp_theta = np.exp(theta)
 
     def rand(ix, slot):
         if not common:
