@@ -29,6 +29,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import config, markets, snowflake_io
+from .pipeline import to_unit_probability
 from .snowflake_io import fetch_all
 
 FEED_MARKET = {(1, 1): 50, (1, 2): 51, (2, 1): 52, (2, 2): 53, (3, 1): 54, (3, 2): 55}
@@ -138,14 +139,16 @@ def to_bets(cols, rows):
 
 def timeline(quote_rows):
     """(match, market) -> (sorted publish times, [(message, probability, line, live)]), off
-    snowflake_io.fetch_quotes rows; the latest row per publish time wins."""
+    snowflake_io.fetch_quotes rows (published 0-100, kept 0-1); the latest row per publish time
+    wins."""
     latest = {}
     for r in quote_rows:
         match, market, publish, prob, _, desc, msg, status, active = r[:9]
         if publish is None or prob is None:
             continue
         live = str(status).lower() == "open" and str(active).lower() == "true"
-        latest[(match, int(market), _naive(publish))] = (msg, float(prob), markets.parse_line(desc), live)
+        latest[(match, int(market), _naive(publish))] = (msg, to_unit_probability(prob),
+                                                         markets.parse_line(desc), live)
     grouped = defaultdict(list)
     for (match, market, publish), entry in latest.items():
         grouped[(match, market)].append((publish, entry))
@@ -178,7 +181,7 @@ def quote_index(quote_rows):
         if key in latest and latest[key][0] > publish:
             continue
         live = str(status).lower() == "open" and str(active).lower() == "true"
-        latest[key] = (publish, float(prob), markets.parse_line(desc), live)
+        latest[key] = (publish, to_unit_probability(prob), markets.parse_line(desc), live)
     grouped = defaultdict(list)
     for (match, market, msg), (_, prob, line, live) in latest.items():
         grouped[(match, market)].append((msg, prob, line, live))
@@ -354,6 +357,24 @@ def lag_check(rows):
     return len(with_lag), sum(with_lag) / len(with_lag), sum(without) / len(without)
 
 
+def line_report(rows):
+    """For spread and total bets priced by prod: how often the bet's line is prod's, how often it is
+    prod's with the sign turned (a spread quoted from the other side), and the commonest gaps
+    (bet line - prod's line), by operator and market."""
+    groups = defaultdict(list)
+    for r in rows:
+        if r["market"] in (markets.SPREAD, markets.TOTAL) and r["bet_line"] is not None \
+                and r["stream_line"] is not None:
+            groups[(r.get(config.BET_GROUP_COLUMN), r["market"])].append(r)
+    out = []
+    for (op, market), rs in sorted(groups.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
+        same = sum(abs(r["bet_line"] - r["stream_line"]) < 1e-6 for r in rs)
+        flipped = sum(abs(r["bet_line"] + r["stream_line"]) < 1e-6 for r in rs)
+        gaps = Counter(round(r["bet_line"] - r["stream_line"], 1) for r in rs).most_common(6)
+        out.append((op, market, len(rs), same / len(rs), flipped / len(rs), gaps))
+    return out
+
+
 def write_csv(path, rows, fields=None):
     """Write rows (dicts) to a CSV."""
     fields = fields or (list(rows[0]) if rows else [])
@@ -434,6 +455,11 @@ def report(rows, latency, cand_name):
         n, a, b = check
         print(f"  operator odds against prod: mean |log(implied / prod)| {a:.4f} with the latency, "
               f"{b:.4f} without ({n:,} bets)")
+    print("\n  lines of spread and total bets against prod's at the fitted lag "
+          "(same / sign turned / commonest gaps, bet - prod):")
+    for op, market, n, same, flipped, gaps in line_report(rows):
+        print(f"  {str(op)[:22]:22s} {market:7s} {n:6,d} bets  same {100 * same:5.1f}%  "
+              f"turned {100 * flipped:5.1f}%  gaps " + ", ".join(f"{g:+g} ({c:,})" for g, c in gaps))
     joined = Counter("simulated" if r["simulated"] else
                      "no prod price" if r["stream_prob"] is None else
                      "no candidate price" if r["candidate_prob"] is None else

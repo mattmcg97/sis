@@ -14,9 +14,9 @@ def at(seconds):
 
 
 def quote(match, market, seconds, prob, line=None, message=None, status="open", active="true"):
-    """A snowflake_io.fetch_quotes row, published at T0 + seconds."""
+    """A snowflake_io.fetch_quotes row, published at T0 + seconds (GAMEPLAI publishes 0-100)."""
     desc = None if line is None else f"Total {line}"
-    return (match, market, at(seconds), prob, None, desc,
+    return (match, market, at(seconds), 100.0 * prob, None, desc,
             seconds if message is None else message, status, active)
 
 
@@ -117,6 +117,24 @@ class TestJoin(unittest.TestCase):
         self.assertGreater(margin_c, margin)
         no_vip = bets.summarise(rows, keep=lambda r: r["CUSTOMER_TEMPERATURE"] != "VIP")["all"]
         self.assertEqual(no_vip[:3], (1, 10.0, 10.0))
+
+
+class TestLines(unittest.TestCase):
+
+    def test_the_line_report_tells_a_turned_spread_from_an_alternate_total(self):
+        rows = [dict(market="spread", bet_line=3.5, stream_line=-3.5, OPERATOR_NAME="FD"),
+                dict(market="spread", bet_line=-3.5, stream_line=-3.5, OPERATOR_NAME="FD"),
+                dict(market="total", bet_line=45.5, stream_line=44.5, OPERATOR_NAME="FD"),
+                dict(market="moneyline", bet_line=None, stream_line=None, OPERATOR_NAME="FD")]
+        report = {(op, m): (n, same, turned, gaps) for op, m, n, same, turned, gaps in
+                  bets.line_report(rows)}
+        self.assertEqual(report[("FD", "spread")][:3], (2, 0.5, 0.5))
+        self.assertEqual(report[("FD", "total")][3], [(1.0, 1)])
+        self.assertNotIn(("FD", "moneyline"), report)
+
+    def test_probabilities_are_read_as_0_to_1(self):
+        tl = bets.timeline([quote("M1", 50, 0, 0.62)])
+        self.assertAlmostEqual(bets.price_at_time(tl, "M1", 50, at(5))[1], 0.62)
 
 
 class TestCommand(unittest.TestCase):
