@@ -874,6 +874,90 @@ python -m eAMFCalibrator report --candidate v5 --v5-model v5_model --since 2026-
 python -m unittest eAMFModel.tests.test_v5
 ```
 
+## v6: v5 plus late-game decisions from real play
+
+v6 (`sim6.py`, `v6.py`, `v6_stream.py`) is a copy of v5 with two changes. Both
+came from testing three ideas against held-out games (Sep 3–9 built before
+Sep 3, Sep 10–22 built before Sep 10).
+
+### The ideas tested
+
+**1. The line and the chunks.** Taking the line under the nearest score (the
+likeliest points-still-to-come near the middle, minus a half) rather than the
+even line puts v5's P(over) at 0.56–0.57 instead of 0.47. The miss against
+real stays where it was under every line rule: +0.015 to +0.019 on Sep 3–9
+and −0.022 to −0.030 on Sep 10–22. So the line rule doesn't fix the
+calibration. What the test did find is that v5 puts the wrong weight on
+exact scores:
+
+| points still to come | v5 / real, Sep 3–9 | v5 / real, Sep 10–22 |
+|---|---|---|
+| exactly 3, Q4 | 9.0% / 11.7% | 9.0% / 11.4% |
+| exactly 7, Q4 | 17.4% / 15.6% | 17.8% / 16.2% |
+| exactly 10, Q3 | 8.0% / 10.4% | 7.6% / 10.1% |
+
+From kickoff the touchdown and field-goal counts are right (4.36 / 1.12 a
+match, real 4.39 / 1.04). The miss is late and depends on the game state.
+The biggest is in Q4 with the sides two scores apart: 6–8 more points 44–45%
+against a real 33–36%, and a single field goal 4–5% against 5–8%.
+
+**2. What has happened in the game so far.** Points scored so far against
+the pre-match expectation, and pace so far, don't predict v5's miss on the
+points still to come. The effects are near zero, well inside the noise, and
+change sign between weeks. That matches the in-game strength update,
+which measured as noise too. No change.
+
+**3. How many points are still available.** v5's upper tail matches real
+games at every time left. For example, with 2–4 minutes left the chance of
+14+ more points is 20.4% against a real 20.0% (Sep 3–9). A cap would only
+cut real outcomes. No change.
+
+### What v6 changes
+
+- **Late 4th downs when behind.** v5 sent a side four or more behind in the
+  last three minutes (or overtime) for it on every 4th down. Real players
+  kick: 28% of the time when 9–11 behind in field-goal range, making it a
+  one-score game. v6 takes go / field goal / punt from a table fitted on
+  real 4th downs by deficit (−4..−8, −9..−11, −12..−16, −17 or more) and
+  kick range (up to 45, 46–55, longer), shrunk toward the kick range's
+  rate over all deficits (`late_fourth_choices`, `fit_late_fourths`). A side
+  1–3 behind keeps v5's fitted kick-to-tie rates.
+- **Big second-half leads as situations of their own.** "Second half,
+  ahead" and "last two minutes, ahead" are split at a lead of 9
+  (`BIG_LEAD`), so a two-score leader draws from its own real plays. The
+  setting is stored in the tables.
+
+**Held out**, against v5. Brier, where positive is better:
+
+| | moneyline | spread | total |
+|---|---|---|---|
+| Sep 3–9 | +0.0001 (Q3 **+0.0005**) | −0.0002 | −0.0002 |
+| Sep 10–22 | +0.0002 (Q3 **+0.0005**) | 0.0000 | −0.0001 |
+
+That's level with v5; rebuilding the same model moves Brier by about
+0.0005. The late 4th-down table moves the chunk it was aimed at: in Q4 with
+the sides two scores apart, exactly 3 more points went from 4.3% to 5.8%
+against a real 8.2%.
+
+**Tried and dropped: kneels that are not certain.** When the leader has the
+downs to kneel it out, v5 ends the game there (99.9% no more points; real
+89–92%). A per-snap kneel chance fitted to real kneel-it-out states fixed
+those states (0.45 more points against a real 0.46). But it cost the total
+0.0015 on Sep 10–22 (Q4 0.0045): the extra points spilled into every late
+state the leader would later kneel from.
+
+**Still open.** In Q4 with the leader on the ball and ahead by 9 or more,
+v5 and v6 give 1–2 points too many. For example, with 80–120 seconds left
+and a lead of 9–16: 3.6 more against a real 2.5, and 54% no more points
+against 67%. It isn't in the play tables (the lead split didn't move it) or
+in the 4th-down choices.
+
+```bash
+python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --out v6_model --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv
+python -m eAMFCalibrator report --candidate v5,v6 --v5-model v5_model --v6-model v6_model --since 2026-09-18 --until 2026-09-25 --out eAMFCalibrator/out_v5_v6
+python -m unittest eAMFModel.tests.test_v6
+```
+
 ## Run it
 
 ```bash
