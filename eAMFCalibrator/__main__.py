@@ -953,6 +953,8 @@ def main(argv=None):
         return cmd_drive_audit(args)
     if args.command == "expected-points":
         return cmd_expected_points(args)
+    if args.command == "bets":
+        return cmd_bets(args)
     return 1
 
 

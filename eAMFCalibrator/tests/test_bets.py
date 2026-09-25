@@ -106,6 +106,24 @@ class TestJoin(unittest.TestCase):
         self.assertGreater(margin_c, margin)
 
 
+class TestCommand(unittest.TestCase):
+
+    def test_bets_probe_runs_the_probe(self):
+        from unittest import mock
+        from .. import __main__ as cli, snowflake_io
+        conn = mock.MagicMock()
+        with mock.patch.object(snowflake_io, "get_connection", return_value=conn), \
+                mock.patch.object(bets, "probe", return_value=["probed"]) as probe, \
+                mock.patch.object(bets, "run") as run, \
+                mock.patch("builtins.print"), \
+                mock.patch("builtins.open", mock.mock_open()):
+            self.assertEqual(cli.main(["bets", "probe", "--since", "2026-09-18"]), 0)
+            self.assertTrue(probe.called)
+            self.assertFalse(run.called)
+            self.assertEqual(cli.main(["bets", "--since", "2026-09-18"]), 0)
+            self.assertTrue(run.called)
+
+
 class TestReading(unittest.TestCase):
 
     def test_bets_are_read_through_the_configured_columns(self):
