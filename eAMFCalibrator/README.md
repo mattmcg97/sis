@@ -1569,6 +1569,35 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+`bets lines` draws prod's spread and total lines through each match against
+the lines customers bet. If an operator only offers the lines GAMEPLAI
+sends, a bet on another line than prod's live one was placed on a line prod
+showed a little earlier (the operator runs behind) or a little later (its
+clock runs behind GAMEPLAI's).
+
+```bash
+python -m eAMFCalibrator bets lines --since 2026-09-18 --until 2026-09-25
+python -m eAMFCalibrator bets lines --since 2026-09-18 --until 2026-09-25 --match AF012200926
+```
+
+Every spread and total bet's line, read from prod's side, is classed
+against prod's LIVE rows:
+- **current:** prod's live line at the bet;
+- **past:** a line prod last showed live that many seconds before;
+- **future:** one prod showed live that many seconds after;
+- **never:** not within two minutes either way.
+
+The summary gives the shares and the seconds (median, 90th), by operator
+and market, by pre-match or in play, and in play by period (does the gap
+move through the match?). `out/bets_lines.html` draws the busiest matches
+(`--matches N`, or `--match CODE`): prod's live line as a step, inactive
+rows grey, each bet a dot coloured by its class, with the details on hover.
+
+Prices and lines are read off prod's live rows only (`IS_ACTIVE`, as
+everywhere in the calibrator; `STATUS` isn't trusted). One moment can carry
+the settlement of the old line beside the open quote for the new one, and
+only the live row is a price anyone could take.
+
 `bets probe` prints the bet source's columns (and any configured ones it
 lacks), the window's bets by operator, and the values of `BET_IN_PLAY`,
 `CUSTOMER_TEMPERATURE`, `BET_CASHED_OUT` and `CUSTOMER_WIN_LOSS`.

@@ -134,30 +134,33 @@ def to_bets(cols, rows):
     return out
 
 
+def _live(active):
+    """Whether a quote row was tradeable: IS_ACTIVE alone decides (STATUS is not trusted)."""
+    return str(active).lower() == config.LIVE_IS_ACTIVE
+
+
 def timeline(quote_rows):
-    """(match, market) -> (sorted publish times, [(message, probability, line, live)]), off
-    snowflake_io.fetch_quotes rows (published 0-100, kept 0-1); the latest row per publish time
-    wins."""
-    latest = {}
+    """(match, market) -> (sorted publish times, [(message, probability, line, live)]) of its LIVE
+    rows, off snowflake_io.fetch_quotes rows (published 0-100, kept 0-1). Every live row is kept:
+    one moment can carry the settlement of the old line beside the open quote for the new one, and
+    only the live row is a price anyone could take."""
+    grouped = defaultdict(list)
     for r in quote_rows:
         match, market, publish, prob, _, desc, msg, status, active = r[:9]
-        if publish is None or prob is None:
+        if publish is None or prob is None or not _live(active):
             continue
-        live = str(status).lower() == "open" and str(active).lower() == "true"
-        latest[(match, int(market), _naive(publish))] = (msg, to_unit_probability(prob),
-                                                         markets.parse_line(desc), live)
-    grouped = defaultdict(list)
-    for (match, market, publish), entry in latest.items():
-        grouped[(match, market)].append((publish, entry))
+        grouped[(match, int(market))].append((_naive(publish), msg is None, msg,
+                                              to_unit_probability(prob), markets.parse_line(desc)))
     out = {}
     for key, qs in grouped.items():
-        qs.sort(key=lambda q: q[0])
-        out[key] = ([q[0] for q in qs], [q[1] for q in qs])
+        qs.sort(key=lambda q: (q[0], q[1], -1 if q[2] is None else q[2]))
+        out[key] = ([q[0] for q in qs], [(q[2], q[3], q[4], True) for q in qs])
     return out
 
 
 def price_at_time(tl, match, market, t):
-    """(message, probability, line, live) of the latest quote published at or before t, or None."""
+    """(message, probability, line, live) of the latest live quote published at or before t, or
+    None."""
     entry = tl.get((match, market))
     if entry is None or t is None:
         return None
@@ -167,18 +170,17 @@ def price_at_time(tl, match, market, t):
 
 
 def quote_index(quote_rows):
-    """(match, market) -> (sorted message counts, [(probability, line, live)]), off
-    snowflake_io.fetch_quotes rows; the latest row per message wins."""
+    """(match, market) -> (sorted message counts, [(probability, line, live)]) of its live rows, off
+    snowflake_io.fetch_quotes rows; the latest live row per message wins."""
     latest = {}
     for r in quote_rows:
         match, market, publish, prob, _, desc, msg, status, active = r[:9]
-        if msg is None or prob is None:
+        if msg is None or prob is None or not _live(active):
             continue
         key = (match, int(market), int(msg))
         if key in latest and latest[key][0] > publish:
             continue
-        live = str(status).lower() == "open" and str(active).lower() == "true"
-        latest[key] = (publish, to_unit_probability(prob), markets.parse_line(desc), live)
+        latest[key] = (publish, to_unit_probability(prob), markets.parse_line(desc), True)
     grouped = defaultdict(list)
     for (match, market, msg), (_, prob, line, live) in latest.items():
         grouped[(match, market)].append((msg, prob, line, live))
@@ -190,7 +192,7 @@ def quote_index(quote_rows):
 
 
 def price_at(index, match, market, message):
-    """(probability, line, live) of the latest quote at or before this message, or None."""
+    """(probability, line, live) of the latest live quote at or before this message, or None."""
     entry = index.get((match, market))
     if entry is None or message is None:
         return None
