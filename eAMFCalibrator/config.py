@@ -66,6 +66,33 @@ V6_MODEL_DIR = None
 V6_PATHS = 2000
 V6_LINES = "own"
 
+# The betting simulation (`python -m eAMFCalibrator bets`): every in-play AF
+# bet in the window from BET_TABLE, read through BET_COLUMNS (logical name ->
+# column; None: not read). BET_EXTRA_COLUMNS are carried through to the output
+# as they are -- the customer and VIP columns to filter on.
+BET_TABLE = "CUSTOMER_REVENUE_EVENT"
+BET_COLUMNS = {
+    "id": None,
+    "match": "MATCH_CODE",
+    "time": "BET_DATE_UTC",
+    "market_type": "MARKET_TYPE_ID",
+    "selection": "SELECTION_ID",
+    "odds": "ODDS",
+    "stake": "STAKE_GBP",
+    "revenue": "REVENUE_GBP",
+    "line": "MARKET_LINE",
+    "period": "BET_PLACED_PERIOD_NUMBER",
+    "sport": "SPORT_CODE",
+}
+BET_EXTRA_COLUMNS = ["BET_TYPE"]
+# The Q4 two-minute auto-suspend: the first suspend message in the fourth
+# quarter with no more than AUTO_SUSPEND_CLOCK + AUTO_SUSPEND_SLACK seconds on
+# the game clock. A bet accepted up to MAX_LAG_SECONDS after it measures how far
+# the operator runs behind the feed.
+AUTO_SUSPEND_CLOCK = 120
+AUTO_SUSPEND_SLACK = 10
+MAX_LAG_SECONDS = 60
+
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.
 MATCH_TOLERANCE_SECONDS = 3.0

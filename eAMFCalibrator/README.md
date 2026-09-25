@@ -1507,3 +1507,52 @@ share a line.
   its own line minus its own priced P(over), in points. It's shown by
   where the line sits and by quarter, coloured on the probability-gap
   ramp.
+
+## Betting simulation: `bets`
+
+What would the book's margin have been had the candidate's prices been
+used instead of prod's? `bets` runs four steps: bets, then latency, then the
+join, then the analysis.
+
+```bash
+python -m eAMFCalibrator bets probe --since 2026-09-18 --until 2026-09-25
+python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate v6 --v6-model v6_model \
+    --extra-columns BET_TYPE,CUSTOMER_ID
+```
+
+- **Bets.** Every in-play AF bet in the window (moneyline, handicap and
+  totals) from `config.BET_TABLE` (`CUSTOMER_REVENUE_EVENT`). Columns are
+  read through `config.BET_COLUMNS`. Anything listed in `--extra-columns`
+  goes through to the output unchanged: the customer and VIP columns, to
+  filter on.
+- **Latency, one number per match.** The feed marks the Q4 two-minute
+  auto-suspend: the first suspend message in the fourth quarter with no
+  more than 2:00 (+10s) on the clock. A bet the operator still accepted
+  after it shows how far the operator runs behind the feed. The match's
+  latency is the latest such bet, up to `--max-lag` (60s). A match without
+  one takes the median of the rest (`latency_source = median`).
+- **The join.** Each bet is placed at the feed message that was live at
+  bet time minus the latency. It then takes prod's probability
+  (`stream_prob`) and the candidate's (`candidate_prob`) at that message.
+  A model candidate (v4–v6) is read at prod's line, since the bet was
+  placed at prod's line. `line_match` is false when the bet's line isn't
+  the line quoted.
+- **Analysis.** The operator's odds already include its margin over prod
+  (implied / prod). Keeping that margin, the candidate's odds are
+  odds × prod / candidate. Each won, lost or pushed bet is re-settled at
+  those odds (result read off revenue, stake and odds), and the margin is
+  shown both ways, overall, by market and by period.
+
+The run checks the latency itself. It prints how closely the operator's
+odds follow prod's probability, the mean |log(implied / prod)|, with the
+latency and without. Smaller with it means it lines the bets up.
+
+`bets probe` prints the bet table's columns and a few rows, any tables
+named like HUD, and the fourth-quarter suspend messages by game clock.
+Use it to check the names in `config` before the first run.
+
+Output:
+- `out/bets_sim.csv`, one row per bet: `stream_prob`, `candidate_prob`,
+  `implied_prob`, `latency_seconds`, `candidate_odds`, `candidate_revenue`,
+  plus the extra columns;
+- `out/bets_latency.csv`, one row per match.

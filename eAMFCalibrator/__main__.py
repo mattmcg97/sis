@@ -244,6 +244,36 @@ def cmd_expected_points(args):
     return 0
 
 
+def cmd_bets(args):
+    """The betting simulation: every in-play bet in the window with prod's and the candidate's
+    probability at the moment it was priced (`probe` first checks the names it reads)."""
+    from . import bets
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    if args.bet_table:
+        config.BET_TABLE = args.bet_table
+    if args.max_lag is not None:
+        config.MAX_LAG_SECONDS = args.max_lag
+    if args.extra_columns:
+        config.BET_EXTRA_COLUMNS = [c.strip().upper() for c in args.extra_columns.split(",") if c.strip()]
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            if args.action == "probe":
+                lines = bets.probe(cur)
+                path = os.path.join(out_dir, "bets_probe.txt")
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write("\n".join(lines) + "\n")
+                print("\n".join(lines))
+                print(f"\n  probe -> {path}")
+            else:
+                bets.run(cur, out_dir)
+                print(f"\n  -> {os.path.join(out_dir, 'bets_sim.csv')} and bets_latency.csv")
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_history(args):
     """Every settled match before --until (default: now), shaped like
     nb2/AMFELO.csv: what v4's own pre-match model (NB2) is fitted on."""
@@ -827,6 +857,23 @@ def build_parser():
         "history", parents=[shared],
         help="every settled match before --until, shaped like nb2/AMFELO.csv (for v4-build --history)")
     hi_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    bets_parser = sub.add_parser(
+        "bets", parents=[shared],
+        help="betting simulation: every in-play bet with prod's and the candidate's probability at "
+             "the moment it was priced (latency per match off the Q4 auto-suspend)")
+    bets_parser.add_argument("action", nargs="?", choices=["run", "probe"], default="run",
+                             help="probe: print the columns and messages it reads, to check the names")
+    bets_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    bets_parser.add_argument("--bet-table", metavar="NAME",
+                             help=f"the bets table (default {config.BET_TABLE})")
+    bets_parser.add_argument("--max-lag", type=float, metavar="SECONDS",
+                             help=f"latest a bet can land after the Q4 auto-suspend and still "
+                                  f"count as latency (default {config.MAX_LAG_SECONDS})")
+    bets_parser.add_argument("--extra-columns", metavar="COLS",
+                             help="bet-table columns to carry into the output, comma-separated "
+                                  "(e.g. the customer and VIP columns)")
+    bets_parser.set_defaults(func=cmd_bets)
 
     sc_parser = sub.add_parser(
         "scouting", parents=[shared],
