@@ -118,11 +118,43 @@ class TestJoin(unittest.TestCase):
         self.assertFalse(other["line_match"] or other["simulated"])
         self.assertEqual(bets.why_not(other), "not on prod's line")
 
-    def test_a_bet_on_prods_line_the_candidate_did_not_quote_is_told_apart(self):
-        cand = [quote("M1", 54, 1, 0.55, 45.5, message=10)]
+    def test_the_candidate_takes_the_bet_at_its_own_line_and_settles_it_there(self):
+        # the game ends 24-21 (45): over 44.5 won with prod; the candidate's line was 45.5
+        cand = [quote("M1", 54, 1, 0.40, 45.5, message=10)]
+        (r,) = bets.join([bet("M1", 5, 3, 1, line=44.5, odds=2.0, stake=10, revenue=-10)], {}, {},
+                         self.prod, bets.quote_index(cand), bets.timeline(cand), {"M1": (24, 21)})
+        self.assertFalse(r["same_line"])
+        self.assertEqual((r["result"], r["result_by_score"], r["candidate_result"]),
+                         (bets.WON, bets.WON, bets.LOST))
+        self.assertTrue(r["simulated"])
+        self.assertAlmostEqual(r["candidate_odds"], 2.0 * 0.50 / 0.40)
+        self.assertEqual(r["candidate_revenue"], 10)
+        self.assertEqual(bets.outcomes([r])["total"][(bets.WON, bets.LOST)], (1, 10.0, -10.0, 10.0))
+        self.assertEqual(bets.effects([r]), (0.0, 20.0))
+
+    def test_without_a_final_score_a_bet_at_another_line_cannot_be_settled(self):
+        cand = [quote("M1", 54, 1, 0.40, 45.5, message=10)]
         (r,) = bets.join([bet("M1", 5, 3, 1, line=44.5)], {}, {}, self.prod,
                          bets.quote_index(cand), bets.timeline(cand))
-        self.assertEqual(bets.why_not(r), "candidate on another line")
+        self.assertFalse(r["simulated"])
+        self.assertEqual(bets.why_not(r), "no final score")
+
+    def test_settling_off_the_score(self):
+        self.assertEqual(bets.settle(54, 44.5, (24, 21)), bets.WON)
+        self.assertEqual(bets.settle(55, 44.5, (24, 21)), bets.LOST)
+        self.assertEqual(bets.settle(54, 45.0, (24, 21)), bets.PUSH)
+        self.assertEqual(bets.settle(52, 2.5, (24, 21)), bets.WON)       # home by 3, needs more than 2.5
+        self.assertEqual(bets.settle(53, -2.5, (24, 21)), bets.LOST)     # away needs to lose by under 2.5
+        self.assertEqual(bets.settle(50, None, (24, 21)), bets.WON)
+        self.assertIsNone(bets.settle(54, None, (24, 21)))
+        self.assertIsNone(bets.settle(54, 44.5, None))
+
+    def test_the_settle_check_counts_where_the_score_agrees_with_the_operator(self):
+        rows = self.join([bet("M1", 45, 3, 1, line=44.5, odds=2.0, stake=10, revenue=-10),
+                          bet("M1", 45, 3, 1, line=44.5, odds=2.0, stake=10, revenue=10)])
+        for r in rows:
+            r["result_by_score"] = bets.settle(54, 44.5, (24, 21))
+        self.assertEqual(bets.settle_check(rows), {"total": (2, 1)})
 
     def test_results_are_read_off_revenue_and_cash_outs_are_left_out(self):
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=0)), bets.PUSH)
@@ -192,6 +224,7 @@ class TestCommand(unittest.TestCase):
                              "Yes", "Standard"))
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv"), mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), \
                 mock.patch.object(config, "LAG_RANGE", (-20, 30)):

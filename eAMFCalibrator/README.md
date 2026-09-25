@@ -1539,16 +1539,22 @@ python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate 
   (which agree for only a fifth of bets) made the odds follow prod *worse*
   than no lag at all.
 - **The join.** Each bet takes prod's quote as published one lag before it
-  (`stream_prob`), and the candidate's probability at the same feed message
-  (`candidate_prob`), or at the same time when prod's quote carries no
-  message. A spread line is read from prod's side. Whether an operator
-  records a side's line turned is fitted from the data, per operator and
-  side (`bet_line_prod_side`). A bet on another line than prod's (an
-  alternate line) isn't re-priced.
-- **Analysis.** The operator's odds already include its margin over prod
-  (implied / prod). Keeping that margin, the candidate's odds are
-  odds × prod / candidate. Each won, lost or pushed bet is re-settled at
-  those odds; cash-outs are left out.
+  (`stream_prob`), and the candidate's quote at the same feed message
+  (`candidate_prob`, `candidate_line`), or at the same time when prod's
+  quote carries no message. A spread line is read from prod's side. Whether
+  an operator records a side's line turned is fitted from the data, per
+  operator and side (`bet_line_prod_side`). A bet on another line than
+  prod's (an alternate line) can't be re-priced, since prod's price for it
+  isn't in the stream.
+- **Analysis: the bet placed with the candidate.** It's the same selection
+  at the candidate's line and probability. The operator's margin over prod
+  (implied / prod) is kept, so its odds are odds × prod / candidate. It's
+  settled at the candidate's line against the final score (`SCORE_ENDGAME`):
+  over 44.5 and over 45.5 can settle differently on the same game. Where
+  the candidate's line is the bet's own (and on moneyline) it keeps the
+  operator's result. Cash-outs are left out. A check reads each bet on
+  prod's line off the final score and sets it against the operator's
+  settlement, by market; that confirms the line conventions.
 
 The report prints:
 - the lag by operator, and the odds misfit with and without it;
@@ -1556,6 +1562,10 @@ The report prints:
   how often the bet is on prod's line, and the commonest gaps;
 - where the money is: bets and stake by pre-match or in play and market,
   and how much of each the simulation re-prices;
+- how each re-priced bet settles with prod and with the candidate (won→won,
+  won→lost, lost→won, ...), by market, and the change in revenue split into
+  the candidate's odds on bets settled the same and bets its line settles
+  differently;
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
@@ -1565,7 +1575,8 @@ lacks), the window's bets by operator, and the values of `BET_IN_PLAY`,
 
 Output:
 - `out/bets_sim.csv`, one row per bet: `in_play`, `stream_prob`,
-  `candidate_prob`, `implied_prob`, `latency_seconds`, `candidate_odds`,
-  `candidate_revenue`, plus the bet source's own columns;
+  `candidate_prob`, `candidate_line`, `implied_prob`, `latency_seconds`,
+  `result`, `candidate_result`, `candidate_odds`, `candidate_revenue`, the
+  final score, plus the bet source's own columns;
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.

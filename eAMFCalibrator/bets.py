@@ -278,10 +278,24 @@ def result_of(bet):
     return OTHER
 
 
-def join(bets, lags, signs, prod_tl, cand, cand_tl=None):
+def settle(market, line, final):
+    """won / lost / push for this selection at this line off the final score, or None when it
+    cannot be settled (no final, or a line market without a line)."""
+    if final is None or final[0] is None or final[1] is None:
+        return None
+    group = markets.market_group(market)
+    if group != markets.MONEYLINE and line is None:
+        return None
+    r = markets.resolve(market, line, final[0], final[1])
+    return PUSH if r is None else WON if r else LOST
+
+
+def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None):
     """One row per bet: prod's quote as published one lag before the bet (at bet time pre-match), the
-    candidate's probability at the same message (at the same time when prod's quote has none), and
-    the bet re-priced at the candidate's probability with the operator's margin kept."""
+    candidate's quote at the same message (at the same time when prod's quote has none), and the bet
+    placed with the candidate instead: the same selection at the candidate's line and probability,
+    the operator's margin kept, settled at that line."""
+    finals = finals or {}
     rows = []
     for b in bets:
         lag = bet_lag(b, lags)
@@ -297,6 +311,9 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None):
             c = q[1:] if q else None
         sign = signs.get((b.operator, market), (1,))[0]
         line = None if b.line is None else sign * b.line
+        final = finals.get(b.match_code)
+        has_line = markets.market_group(market) != markets.MONEYLINE
+        cand_line = c[1] if c else None
         row = dict(bet_id=b.bet_id, match_code=b.match_code, bet_time=b.time, in_play=b.in_play,
                    market=markets.market_group(market), selection=markets.selection_label(market),
                    feed_market=market, period=b.period, bet_line=b.line, bet_line_prod_side=line,
@@ -305,10 +322,20 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None):
                    implied_prob=(1.0 / b.odds) if b.odds else None,
                    stream_prob=p[1] if p else None, stream_line=p[2] if p else None,
                    stream_live=p[3] if p else None,
-                   candidate_prob=c[0] if c else None, candidate_line=c[1] if c else None,
+                   candidate_prob=c[0] if c else None, candidate_line=cand_line,
                    candidate_live=c[2] if c else None,
-                   stream_prob_no_lag=p0[1] if p0 else None)
-        row["line_match"] = bool(p and c and _same_line(line, p[2]) and _same_line(line, c[1]))
+                   stream_prob_no_lag=p0[1] if p0 else None,
+                   final_p1=final[0] if final else None, final_p2=final[1] if final else None)
+        row["on_prod_line"] = bool(p) and (not has_line or (line is not None and p[2] is not None
+                                                            and _same_line(line, p[2])))
+        row["same_line"] = bool(c) and (not has_line or (line is not None and cand_line is not None
+                                                         and _same_line(line, cand_line)))
+        row["line_match"] = row["on_prod_line"] and row["same_line"]
+        row["result_by_score"] = settle(market, line if has_line else None, final)
+        if row["same_line"]:
+            row["candidate_result"] = row["result"]
+        else:
+            row["candidate_result"] = settle(market, cand_line, final)
         row.update(reprice(row))
         row.update(b.extra)
         rows.append(row)
@@ -316,15 +343,56 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None):
 
 
 def reprice(row):
-    """The bet at the candidate's probability: the operator's margin over prod (implied / prod)
-    kept, so the candidate's odds are odds * prod / candidate. Revenue as the book sees it."""
-    p, c, odds, stake, result = (row["stream_prob"], row["candidate_prob"], row["odds"],
-                                 row["stake"], row["result"])
-    if not (p and c and odds and row["line_match"]) or result == OTHER:
+    """The bet placed with the candidate: the same selection at its line and probability, with the
+    operator's margin over prod (implied / prod) kept, so its odds are odds * prod / candidate,
+    settled at the candidate's line. Revenue as the book sees it."""
+    p, c, odds, stake = row["stream_prob"], row["candidate_prob"], row["odds"], row["stake"]
+    result, result_c = row["result"], row.get("candidate_result")
+    if not (p and c and odds and row["on_prod_line"]) or result == OTHER or result_c in (None, OTHER):
         return dict(candidate_odds=None, candidate_revenue=None, simulated=False)
     odds_c = odds * p / c
-    revenue_c = stake - (stake * odds_c if result == WON else stake if result == PUSH else 0.0)
+    revenue_c = stake - (stake * odds_c if result_c == WON else stake if result_c == PUSH else 0.0)
     return dict(candidate_odds=round(odds_c, 4), candidate_revenue=revenue_c, simulated=True)
+
+
+def outcomes(rows, by="market"):
+    """{group: {(prod result, candidate result): (bets, stake, revenue, candidate revenue)}} over the
+    simulated bets: which bets won with prod and lost with the candidate, and the other way."""
+    out = defaultdict(lambda: defaultdict(lambda: [0, 0.0, 0.0, 0.0]))
+    for r in rows:
+        if r["simulated"]:
+            c = out[r.get(by)][(r["result"], r["candidate_result"])]
+            c[0] += 1
+            c[1] += r["stake"]
+            c[2] += r["revenue"]
+            c[3] += r["candidate_revenue"]
+    return {g: {k: tuple(v) for k, v in d.items()} for g, d in out.items()}
+
+
+def effects(rows):
+    """(price effect, result effect): the change in revenue from the candidate's odds on bets that
+    settle the same, and from bets its line settles differently."""
+    price = result = 0.0
+    for r in rows:
+        if r["simulated"]:
+            d = r["candidate_revenue"] - r["revenue"]
+            if r["candidate_result"] == r["result"]:
+                price += d
+            else:
+                result += d
+    return price, result
+
+
+def settle_check(rows):
+    """{market: (bets, agreeing)}: how often the final score read at the bet's own line (on prod's
+    side) settles the bet as the operator did -- the check on the line conventions."""
+    out = defaultdict(lambda: [0, 0])
+    for r in rows:
+        if r["on_prod_line"] and r["result"] in (WON, LOST, PUSH) and r["result_by_score"] is not None:
+            c = out[r["market"]]
+            c[0] += 1
+            c[1] += r["result_by_score"] == r["result"]
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def summarise(rows, by=None, keep=None):
@@ -366,12 +434,11 @@ def why_not(r):
         return "no prod price"
     if r["candidate_prob"] is None:
         return "no candidate price"
-    if not r["line_match"]:
-        line = r["bet_line_prod_side"]
-        if not _same_line(line, r["stream_line"]):
-            return "not on prod's line"
-        return "candidate on another line"
-    return f"result {r['result']}"
+    if not r["on_prod_line"]:
+        return "not on prod's line"
+    if r["result"] == OTHER:
+        return "result other (cash out, part settled)"
+    return "no final score"
 
 
 def lag_check(rows):
@@ -439,17 +506,18 @@ def run(cur, out_dir):
           f"({sum(b.in_play for b in bets):,} in play)")
     if not bets:
         return None
-    prod_rows, cand_rows = [], []
+    prod_rows, cand_rows, finals = [], [], {}
     cand_name = candidate_stream()
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(matches), chunk):
         batch = matches[start:start + chunk]
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         cand_rows += snowflake_io.fetch_quotes(cur, cand_name, batch)
+        finals.update(snowflake_io.fetch_final_scores(cur, batch))
     prod_tl = timeline(prod_rows)
     lags = fit_lags(bets, prod_tl)
     signs = fit_line_signs(bets, prod_tl, lags)
-    rows = join(bets, lags, signs, prod_tl, quote_index(cand_rows), timeline(cand_rows))
+    rows = join(bets, lags, signs, prod_tl, quote_index(cand_rows), timeline(cand_rows), finals)
     os.makedirs(out_dir, exist_ok=True)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
@@ -488,6 +556,21 @@ def report(rows, lags, signs, cand_name):
         print(f"  {label:22s} {n:8,d} {stake:12,.0f} {n_s:10,d} {100 * stake_s / stake if stake else 0:8.1f}%")
     joined = Counter(why_not(r) for r in rows)
     print("  bets: " + ", ".join(f"{k} {v:,}" for k, v in joined.most_common()))
+    check = settle_check(rows)
+    if check:
+        print("  settling off the final score at the bet's line agrees with the operator: "
+              + ", ".join(f"{m} {100 * a / n:.1f}% of {n:,}" for m, (n, a) in sorted(check.items())))
+    moved = sum(1 for r in rows if r["simulated"] and not r["same_line"])
+    print(f"  re-priced at the candidate's own line (another line than the bet's): {moved:,} bets")
+    print("\n  settled with prod and with the candidate (bets / stake):")
+    names = {WON: "won", LOST: "lost", PUSH: "push"}
+    for market, table in sorted(outcomes(rows).items(), key=lambda kv: str(kv[0])):
+        cells = sorted(table.items(), key=lambda kv: (kv[0][0], kv[0][1]))
+        print(f"  {str(market):9s} " + "   ".join(
+            f"{names.get(a, a)}->{names.get(b, b)} {n:,} / {stake:,.0f}" for (a, b), (n, stake, _, _) in cells))
+    price, result = effects(rows)
+    print(f"  change in revenue: {price:+,.0f} from the candidate's odds on bets settled the same, "
+          f"{result:+,.0f} from bets its line settles differently")
     vip = config.BET_VIP_VALUE.lower()
     not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
     print(f"\n  margin, prod as priced against {cand_name} re-priced (operator margin kept)")
