@@ -260,10 +260,13 @@ def cmd_remaining(args):
                            since=dt.date.fromisoformat(args.since) if args.since else None,
                            until=dt.date.fromisoformat(args.until) if args.until else None,
                            n_paths=args.paths, workers=args.workers, history=history,
-                           handles=handles, limit=args.limit)
+                           handles=handles, limit=args.limit, drive=args.drive)
     print(f"\n  {args.version}: {len(rows):,} PLAY_OVER snapshots across "
           f"{len({r[0] for r in rows}):,} matches")
-    print("\n".join(remaining.summary(rows) + remaining.over_calibration(rows)))
+    if args.drive:
+        print("\n".join(remaining.summary(rows, remaining.DRIVE_VALUES, "the rest of the drive")))
+    else:
+        print("\n".join(remaining.summary(rows) + remaining.over_calibration(rows)))
     path = args.out or f"remaining_{args.version}.csv"
     remaining.write_csv(path, rows)
     print(f"\n  -> {path}")
@@ -512,6 +515,9 @@ def main(argv=None):
     p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
     p.add_argument("--limit", type=int, help="first N matches only")
     p.add_argument("--out", help="per-snapshot CSV (default remaining_<version>.csv)")
+    p.add_argument("--drive", action="store_true",
+                   help="v6: the points on the rest of the drive under way at each scrimmage PLAY_OVER "
+                        "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
 
     args = parser.parse_args(argv)

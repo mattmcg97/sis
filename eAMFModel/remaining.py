@@ -50,10 +50,46 @@ def game_state(state):
     return f"{apart}, {'leader' if leader_has_it else 'trailer'} has ball"
 
 
+DRIVE_VALUES = (0, 2, 3, 6, 7, 8)
+
+
+def _board(row):
+    try:
+        return int(float(row["score_p1"] or 0)) + int(float(row["score_p2"] or 0))
+    except (TypeError, ValueError):
+        return None
+
+
+def _half(period):
+    p = int(float(period)) if period not in ("", None) else 0
+    return 0 if p <= 2 else 1 if p <= 4 else p
+
+
+def real_drive_points(rows, i, offense):
+    """The points really scored from snapshot i to the end of its drive: the first later row where
+    the other side has the ball, a kick-off, or the half turning (the board there, less the board at
+    i). None when the board cannot be read."""
+    start = _board(rows[i])
+    if start is None:
+        return None
+    a_side = rows[i].get("team_a_side") or None
+    half = _half(rows[i]["period"])
+    for r in rows[i + 1:]:
+        side = playover.side_of(r.get("offense"), a_side)
+        if _half(r["period"]) != half or r["play_kind"] == "KICKOFF" or (side is not None
+                                                                      and side != offense):
+            end = _board(r)
+            return None if end is None else end - start
+    try:
+        return int(float(rows[i]["final_p1"])) + int(float(rows[i]["final_p2"])) - start
+    except (TypeError, ValueError):
+        return None
+
+
 def _job(job):
     """Worker: every priceable PLAY_OVER of some matches, as (quarter, state, board, real, pmf of
-    the points still to come)."""
-    items, name, model_dir, n_paths, seed = job
+    the points still to come -- or, with `drive`, on the rest of the drive under way)."""
+    items, name, model_dir, n_paths, seed, drive = job
     model = importlib.import_module(f"eAMFModel.{name}")
     stream = importlib.import_module(f"eAMFModel.{name}_stream")
     tables_path, grid_path = stream.model_paths(model_dir)
@@ -61,21 +97,34 @@ def _job(job):
     grid = model.PriorGrid.load(grid_path)
     book = model.players_book(tables_path) if hasattr(model, "players_book") else None
     rng = np.random.default_rng(seed)
+    variant = model.Variant(name, sim_kw={"one_drive": True}) if drive else model.Variant(name)
     out = []
     for code, snaps, means, pair in items:
         rows = model.resolve_sides([stream._as_text(r) for r in snaps])
+        rows.sort(key=lambda r: int(r["message"]))
+        if drive:
+            rows_all = rows
+            rows = [r for r in rows if r.get("play_kind") == "SCRIMMAGE"]
         prof = (book.profile(pair[0]), book.profile(pair[1])) if (book and pair) else None
-        books = stream.match_books(tables, grid, model.Variant(name), rows, n_paths, rng, prof, means)
+        books = stream.match_books(tables, grid, variant, rows, n_paths, rng, prof, means)
         by_msg = {int(r["message"]): r for r in rows}
+        index = {int(r["message"]): k for k, r in enumerate(rows_all)} if drive else {}
         for msg, _, tpmf in books:
             r = by_msg[msg]
             state, _ = playover.state_for(r)
-            try:
-                final = int(float(r["final_p1"])) + int(float(r["final_p2"]))
-            except (TypeError, ValueError):
-                continue
             board = state.home_score + state.away_score
-            real = final - board
+            if drive:
+                if state.pending_conversion is not None or state.offense is None:
+                    continue
+                real = real_drive_points(rows_all, index[msg], state.offense)
+                if real is None:
+                    continue
+            else:
+                try:
+                    final = int(float(r["final_p1"])) + int(float(r["final_p2"]))
+                except (TypeError, ValueError):
+                    continue
+                real = final - board
             if real < 0:
                 continue
             rem = np.zeros(MAX_REMAINING + 1)
@@ -90,9 +139,12 @@ def _job(job):
 
 
 def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, workers=4,
-          history=None, handles=None, limit=None):
+          history=None, handles=None, limit=None, drive=False):
     """[(match, message, quarter, state, points on board, points still to come, the version's pmf
-    of them)] over the matches in [since, until] whose TEAM_A side is known."""
+    of them)] over the matches in [since, until] whose TEAM_A side is known; with `drive`, the
+    points on the rest of the drive under way at each scrimmage PLAY_OVER (v6 only)."""
+    if drive and name != "v6":
+        raise SystemExit("--drive needs v6 (its simulation can stop at the end of a drive)")
     model = importlib.import_module(f"eAMFModel.{name}")
     stream = importlib.import_module(f"eAMFModel.{name}_stream")
     tables_path, _ = stream.model_paths(model_dir)
@@ -114,7 +166,7 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
                                           else None)
         items.append((c, by_match[c], means.get(c, pre.league) if pre is not None else None, pair))
     workers = max(1, min(workers, len(items)))
-    jobs = [(items[i::workers], name, model_dir, n_paths, i) for i in range(workers)]
+    jobs = [(items[i::workers], name, model_dir, n_paths, i, drive) for i in range(workers)]
     if workers == 1:
         parts = [_job(j) for j in jobs]
     else:
@@ -134,12 +186,13 @@ def _groups(rows):
     return sorted(groups.items(), key=lambda kv: (order.get(kv[0][0], 9), states.get(kv[0][1], 9)))
 
 
-def summary(rows):
+def summary(rows, values=VALUES, what="the rest of the game"):
     """Lines of text: for each quarter and state, the real share at each value, the version's
     share minus it, the mean points still to come both ways, and the log score."""
-    head = (f"  {'':32s} {'n':>6s} " + " ".join(f"{('=' + str(v)):>6s}" for v in VALUES)
-            + f" {'>21':>6s}   {'mean':>6s}")
-    real_lines = ["\n  what the rest of the game really made: share at each value (%), and the mean", head]
+    top = values[-1]
+    head = (f"  {'':32s} {'n':>6s} " + " ".join(f"{('=' + str(v)):>6s}" for v in values)
+            + f" {'>' + str(top):>6s}   {'mean':>6s}")
+    real_lines = [f"\n  what {what} really made: share at each value (%), and the mean", head]
     diff_lines = ["\n  the version minus reality at each value (points of %), the mean (points), and the "
                   "log score (lower is sharper and right)",
                   head + f" {'log':>6s}"]
@@ -148,8 +201,9 @@ def summary(rows):
         real = np.array([r[5] for r in rs])
         pmfs = np.stack([r[6] for r in rs])
         label = f"{q} {st}"[:32]
-        real_share = [100 * np.mean(real == v) for v in VALUES] + [100 * np.mean(real > 21)]
-        pred_share = [100 * pmfs[:, v].mean() for v in VALUES] + [100 * pmfs[:, 22:].sum(axis=1).mean()]
+        real_share = [100 * np.mean(real == v) for v in values] + [100 * np.mean(real > top)]
+        pred_share = ([100 * pmfs[:, v].mean() for v in values]
+                      + [100 * pmfs[:, top + 1:].sum(axis=1).mean()])
         support = np.arange(MAX_REMAINING + 1)
         pred_mean = float((pmfs * support).sum(axis=1).mean())
         idx = np.minimum(real, MAX_REMAINING).astype(int)

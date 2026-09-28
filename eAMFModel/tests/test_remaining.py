@@ -69,3 +69,21 @@ class TestBuildUntil(unittest.TestCase):
                       "--history", "h.csv", "--until", "2026-09-10"])
         self.assertEqual(seen["codes"], ["AF001090926"])
         self.assertEqual(str(seen["before"])[:10], "2026-09-10")
+
+
+class TestDrivePoints(unittest.TestCase):
+
+    def rows(self):
+        def r(msg, kind, off, p1, p2, period=3):
+            return dict(message=msg, play_kind=kind, offense=off, score_p1=p1, score_p2=p2,
+                        period=period, team_a_side="home", final_p1=20, final_p2=10)
+        return [r(1, "SCRIMMAGE", "TEAM_A", 10, 7), r(2, "SCRIMMAGE", "TEAM_A", 10, 7),
+                r(3, "FIELD_GOAL", "TEAM_A", 10, 7), r(4, "KICKOFF", "TEAM_A", 13, 7),
+                r(5, "SCRIMMAGE", "TEAM_B", 13, 7), r(6, "PUNT", "TEAM_B", 13, 7),
+                r(7, "SCRIMMAGE", "TEAM_A", 13, 7), r(8, "SCRIMMAGE", "TEAM_A", 13, 7, period=5)]
+
+    def test_the_drive_ends_at_the_kick_off_the_change_of_hands_or_the_half(self):
+        rows = self.rows()
+        self.assertEqual(remaining.real_drive_points(rows, 0, HOME), 3)     # the field goal
+        self.assertEqual(remaining.real_drive_points(rows, 4, AWAY), 0)     # punted away
+        self.assertEqual(remaining.real_drive_points(rows, 6, HOME), 0)     # the half turned
