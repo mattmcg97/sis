@@ -5768,3 +5768,51 @@ class TestConfigSanity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPlayOverSnapshots(unittest.TestCase):
+    """--snapshots play_over: every SCOUTING_FULL PLAY_OVER, paired at the first message both
+    streams quoted before the next play starts."""
+
+    def snaps(self):
+        base = dict(team_a_side="away", offense="TEAM_A", period=1, down=1, distance=10,
+                    field_position=25, score_p1=0, score_p2=0)
+        return {"M": [dict(base, message=5, next_start_message=9),
+                      dict(base, message=12, next_start_message=15, score_p2=7),
+                      dict(base, message=20, next_start_message=None, offense="TEAM_B")]}
+
+    def test_each_play_over_is_a_snapshot_lasting_until_the_next_play(self):
+        out = directional.play_over_snapshots("M", self.snaps()["M"])
+        self.assertEqual([(s.event_message_count, end) for s, end in out],
+                         [(5, 9), (12, 15), (20, float("inf"))])
+        self.assertEqual([s.offensive_team for s, _ in out],
+                         [drives.AWAY_TEAM, drives.AWAY_TEAM, drives.HOME_TEAM])
+        self.assertEqual(out[1][0].score_p2, 7)
+        self.assertEqual(directional.first_message_in([3, 6, 9, 14], 5, 9), (6, 1))
+        self.assertIsNone(directional.first_message_in([3, 9, 14], 5, 9))
+
+    def test_the_pairs_come_from_every_play_over(self):
+        quotes = [("M", 50, dt.datetime(2026, 9, 18, 12, 0, m), 60.0, 1.67, "PLAYER 1", m,
+                   "open", "true") for m in (6, 10, 13, 21)]
+        scores = [("M", 11, 1, 0, 7, 0, 7)]
+        io = directional.snowflake_io
+        names = ("fetch_plays", "fetch_scores", "fetch_final_scores", "fetch_quotes",
+                 "_play_over_snapshots")
+        originals = {n: getattr(io, n) for n in names}
+        io.fetch_plays = lambda cur, m, t: []
+        io.fetch_scores = lambda cur, m: scores
+        io.fetch_final_scores = lambda cur, m: {"M": (0, 7)}
+        io.fetch_quotes = lambda cur, table, m: quotes
+        io._play_over_snapshots = lambda cur, m, prod_by_match=None: (self.snaps(), [])
+        saved = config.SNAPSHOTS
+        config.SNAPSHOTS = "play_over"
+        stats = collections.defaultdict(int)
+        try:
+            pairs = directional.build_pairs(None, ["M"], "PLAY_TIME", stats, handles.Scan())
+        finally:
+            config.SNAPSHOTS = saved
+            for n, f in originals.items():
+                setattr(io, n, f)
+        self.assertEqual([(p.message_count, p.message_gap) for p in pairs], [(6, 1), (13, 1), (21, 1)])
+        self.assertEqual({p.anchor for p in pairs}, {drives.PLAY_OVER})
+        self.assertEqual(stats["snapshots"], 3)

@@ -323,6 +323,52 @@ def common_messages(prod_index, candidate_index):
     return out
 
 
+def _int_or_none(value):
+    try:
+        return None if value in (None, "") else int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def play_over_snapshots(match_code, snaps):
+    """[(Snapshot, the message its state lasts until)]: one per SCOUTING_FULL PLAY_OVER -- the
+    snapshots v4-v6 price off -- each lasting until the next play starts (or the next PLAY_OVER).
+    The side on the ball is read through TEAM_A's side; unknown where that is."""
+    rows = sorted(snaps, key=lambda r: int(r["message"]))
+    out = []
+    for k, r in enumerate(rows):
+        side = str(r.get("team_a_side") or "").lower()
+        offense = str(r.get("offense") or "").upper()
+        team = None
+        if side in ("home", "away") and offense in ("TEAM_A", "TEAM_B"):
+            home_has_it = (offense == "TEAM_A") == (side == "home")
+            team = drives.HOME_TEAM if home_has_it else drives.AWAY_TEAM
+        message = int(r["message"])
+        ends = [e for e in (_int_or_none(r.get("next_start_message")),
+                            int(rows[k + 1]["message"]) if k + 1 < len(rows) else None)
+                if e is not None]
+        out.append((drives.Snapshot(
+            match_code=match_code, drive_number=k + 1, event_message_count=message,
+            period_number=_int_or_none(r.get("period")), offensive_team=team,
+            field_position=_int_or_none(r.get("field_position")),
+            down_number=_int_or_none(r.get("down")), distance=_int_or_none(r.get("distance")),
+            play_time=r.get("file_time"), score_p1=_int_or_none(r.get("score_p1")) or 0,
+            score_p2=_int_or_none(r.get("score_p2")) or 0, n_plays=1, anchor=drives.PLAY_OVER),
+            min(ends) if ends else float("inf")))
+    return out
+
+
+def first_message_in(messages, start, end):
+    """(message, gap) of the first message both streams quoted in [start, end), or None: the
+    price made on the same information as the PLAY_OVER at `start`."""
+    if not messages:
+        return None
+    i = bisect_left(messages, start)
+    if i < len(messages) and messages[i] < end:
+        return messages[i], messages[i] - start
+    return None
+
+
 def nearest_message(messages, target, max_gap):
     """Closest message to target, preferring an exact hit. None if too far."""
     if not messages or target is None:
@@ -379,6 +425,13 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
             for row in rows:
                 quotes_by_match[row[0]][stream].append(row)
 
+    play_overs = {}
+    if config.SNAPSHOTS == "play_over":
+        prod_by = defaultdict(list)
+        for row in prod_quotes:
+            prod_by[row[0]].append(row)
+        play_overs, _ = snowflake_io._play_over_snapshots(cur, list(match_codes), prod_by_match=prod_by)
+
     pairs = []
     for match_code in match_codes:
         plays = [
@@ -398,7 +451,7 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
                 stats["matches_excluded_for_flipped_handles"] += 1
                 continue
 
-        if not plays:
+        if config.SNAPSHOTS != "play_over" and not plays:
             stats["matches_without_plays"] += 1
             continue
 
@@ -406,6 +459,13 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
             stats["matches_without_final"] += 1
             continue
         final_p1, final_p2 = final
+        if config.SNAPSHOTS == "play_over":
+            if not play_overs.get(match_code):
+                stats["matches_without_play_overs"] += 1
+                continue
+            if not scores and (final_p1 or final_p2):
+                stats["matches_without_score_rows"] += 1
+                continue
 
         if sink is not None:
             sink.add(match_code, plays, scores,
@@ -414,12 +474,18 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
             prematch_sink.add(match_code, plays, final,
                               quotes_by_match[match_code], stats)
 
-        snapshots = build_snapshots(match_code, plays, scores)
+        if config.SNAPSHOTS == "play_over":
+            windows = play_over_snapshots(match_code, play_overs[match_code])
+            snapshots = [w[0] for w in windows]
+            ends = {w[0].event_message_count: w[1] for w in windows}
+            garbage = set()
+        else:
+            snapshots = build_snapshots(match_code, plays, scores)
+            ends = None
+            # A quote on a conversion, a kick or a score message was priced
+            # against a down and distance nobody was playing: never paired.
+            garbage = drives.garbage_messages(plays, scores)
         stats["snapshots"] += len(snapshots)
-
-        # A quote on a conversion, a kick or a score message was priced
-        # against a down and distance nobody was playing: never paired.
-        garbage = drives.garbage_messages(plays, scores)
         clean_shared = {}
 
         for snap in snapshots:
@@ -431,10 +497,18 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
                     continue
                 if market_id not in clean_shared:
                     clean_shared[market_id] = [m for m in messages if m not in garbage]
-                raw = nearest_message(messages, snap.event_message_count,
-                                      config.MAX_PAIR_MESSAGE_GAP)
-                hit = nearest_message(clean_shared[market_id], snap.event_message_count,
-                                      config.MAX_PAIR_MESSAGE_GAP)
+                if ends is not None:
+                    raw = None
+                    hit = first_message_in(messages, snap.event_message_count,
+                                           ends[snap.event_message_count])
+                    if hit is None:
+                        stats["no_common_message_before_next_play"] += 1
+                        continue
+                else:
+                    raw = nearest_message(messages, snap.event_message_count,
+                                          config.MAX_PAIR_MESSAGE_GAP)
+                    hit = nearest_message(clean_shared[market_id], snap.event_message_count,
+                                          config.MAX_PAIR_MESSAGE_GAP)
                 if raw is not None and raw[0] in garbage:
                     stats["garbage_quote_message_avoided"] += 1
                 if hit is None:
@@ -886,9 +960,9 @@ def anchor_report(pairs):
         counts[pair.anchor] += 1
         quarter = buckets.time_bucket(pair.period_number, pair.drive_number)
         by_quarter[quarter][0] += 1
-        if pair.anchor != drives.FIRST_DOWN:
+        if pair.anchor not in (drives.FIRST_DOWN, drives.PLAY_OVER):
             by_quarter[quarter][1] += 1
-    clean = counts.get(drives.FIRST_DOWN, 0)
+    clean = counts.get(drives.FIRST_DOWN, 0) + counts.get(drives.PLAY_OVER, 0)
     return {
         "pairs": total,
         "counts": dict(counts),
@@ -896,7 +970,7 @@ def anchor_report(pairs):
         "off_anchor": total - clean,
         "share_clean": clean / total if total else None,
         "matches": len({p.match_code for p in pairs
-                        if p.anchor != drives.FIRST_DOWN}),
+                        if p.anchor not in (drives.FIRST_DOWN, drives.PLAY_OVER)}),
         "by_quarter": {k: tuple(v) for k, v in by_quarter.items()},
     }
 

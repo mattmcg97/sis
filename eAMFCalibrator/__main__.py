@@ -711,6 +711,10 @@ def common_options():
     tuning.add_argument("--chunk", type=int, metavar="N",
                         help="matches fetched per batch, lower it if memory is "
                              f"tight on a long window (default {config.MATCH_CHUNK_SIZE})")
+    tuning.add_argument("--snapshots", choices=["drive", "play_over"],
+                        help="what prod and the candidate are paired at: one snapshot per drive "
+                             "start (play table), or every SCOUTING_FULL PLAY_OVER, before the "
+                             f"next play starts (default {config.SNAPSHOTS})")
     tuning.add_argument("--time-axis", choices=["period", "drive"],
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
@@ -776,6 +780,7 @@ def apply_overrides(args):
                            ("message_gap", "MAX_PAIR_MESSAGE_GAP"),
                            ("spread_resolution", "SPREAD_RESOLUTION"),
                            ("time_axis", "TIME_AXIS"),
+                           ("snapshots", "SNAPSHOTS"),
                            ("chunk", "MATCH_CHUNK_SIZE"),
                            ("v3_model", "V3_MODEL_DIR"),
                            ("candidate_label", "CANDIDATE_LABEL"),

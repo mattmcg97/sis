@@ -812,6 +812,7 @@ ANCHOR_TITLES = {
     drives.FIRST_DOWN: "Opening 1st &amp; 10",
     drives.MID_DRIVE: "Mid-drive snap",
     drives.NO_SNAP: "No real snap",
+    drives.PLAY_OVER: "Every PLAY_OVER (SCOUTING_FULL)",
 }
 
 
@@ -821,11 +822,11 @@ def _anchor_block(report):
     if not a or not a["pairs"]:
         return ""
     rows = []
-    for kind in (drives.FIRST_DOWN, drives.MID_DRIVE, drives.NO_SNAP):
+    for kind in (drives.FIRST_DOWN, drives.PLAY_OVER, drives.MID_DRIVE, drives.NO_SNAP):
         n = a["counts"].get(kind, 0)
         if not n:
             continue
-        good = kind == drives.FIRST_DOWN
+        good = kind in (drives.FIRST_DOWN, drives.PLAY_OVER)
         rows.append(f"""<tr>
             <th>{ANCHOR_TITLES[kind]}</th>
             <td>{n:,}</td>
@@ -1144,7 +1145,7 @@ def _pair_data(sides):
             down = [f"{'?' if p.down_number is None else p.down_number}&"
                     f"{'?' if p.distance is None else p.distance}",
                     p.down_number if p.down_number is not None else "",
-                    0 if p.anchor == drives.FIRST_DOWN else 1]
+                    0 if p.anchor in (drives.FIRST_DOWN, drives.PLAY_OVER) else 1]
         quarter = ("Q" + str(p.period_number) if p.period_number and p.period_number <= 4
                    else ("OT" if p.period_number else "?"))
         row = [None if p.publish_time is None else str(p.publish_time)[:19], p.match_code,

@@ -45,6 +45,7 @@ AWAY_TEAM = "Away Team"
 FIRST_DOWN = "first_down"   # the drive's opening 1st-and-10, as intended
 MID_DRIVE = "mid_drive"     # a real snap, but not 1st-and-10: start lost
 NO_SNAP = "no_snap"         # no plausible snap in the run at all
+PLAY_OVER = "play_over"     # a SCOUTING_FULL PLAY_OVER (--snapshots play_over)
 
 
 @dataclass(frozen=True)

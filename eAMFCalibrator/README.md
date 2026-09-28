@@ -239,6 +239,27 @@ Observations are then aggregated into cells and scored with Brier, log loss
 and ECE. Each run writes `<stream>_cells.csv` and `<stream>_observations.csv`
 to `out/`, so runs are comparable over time as data accumulates.
 
+### Every PLAY_OVER instead of one per drive: `--snapshots play_over`
+
+```bash
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over
+```
+
+The drive-start snapshots give about 10 a match, off the play table's noisy
+drives. `--snapshots play_over` takes every `PLAY_OVER` in SCOUTING_FULL
+instead, about 60 a match: the same snapshots v4–v6 price off and the bet
+simulation checks against. It carries the period, score, side on the ball,
+down, distance and field position. Each is paired at the first message
+both streams quoted from the `PLAY_OVER` until the next play starts, so
+both prices were made on the same feed. The pair's `anchor` is
+`play_over`.
+
+Matches with no SCORE_CHANGES rows (but a non-zero final) are left out
+(`matches_without_score_rows`), since every score bucket would read 0–0.
+So are matches with no `PLAY_OVER`s (`matches_without_play_overs`).
+SCOUTING_FULL's play detail has been empty since 23 Sep, which only leaves
+the side on the ball unknown; the score and period still bucket.
+
 ## Directional comparison
 
 ```
