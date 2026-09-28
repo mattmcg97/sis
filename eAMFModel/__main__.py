@@ -243,6 +243,27 @@ def cmd_v4(args):
         backtest.print_summary(summary, names, f"Brier by {by} ({name}, PLAY_OVER snapshots)")
 
 
+def cmd_remaining(args):
+    import datetime as dt
+    from . import remaining
+    history = None
+    if args.history:
+        from . import nb2_prior
+        history = nb2_prior.load_history(args.history)
+    handles = players.load_handles(args.handles) if args.handles else None
+    rows = remaining.price(args.snapshots, args.version, args.model or f"{args.version}_model",
+                           since=dt.date.fromisoformat(args.since) if args.since else None,
+                           until=dt.date.fromisoformat(args.until) if args.until else None,
+                           n_paths=args.paths, workers=args.workers, history=history,
+                           handles=handles, limit=args.limit)
+    print(f"\n  {args.version}: {len(rows):,} PLAY_OVER snapshots across "
+          f"{len({r[0] for r in rows}):,} matches")
+    print("\n".join(remaining.summary(rows) + remaining.over_calibration(rows)))
+    path = args.out or f"remaining_{args.version}.csv"
+    remaining.write_csv(path, rows)
+    print(f"\n  -> {path}")
+
+
 def _num(value):
     return int(float(value)) if value not in ("", None) else None
 
@@ -467,6 +488,23 @@ def main(argv=None):
         p.add_argument("--boot", type=int, default=300)
         p.add_argument("--by", default="market,period-market,kind")
         p.set_defaults(func=cmd_v4, version=name)
+
+    p = sub.add_parser("remaining", help="a version's points still to come against what the rest "
+                                         "of each game really made, value by value, by quarter and "
+                                         "game state (see remaining.py)")
+    p.add_argument("snapshots", help="scouting_playover.csv")
+    p.add_argument("--version", choices=["v4", "v5", "v6"], default="v6")
+    p.add_argument("--model", help="the version's build directory (default <version>_model)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD")
+    p.add_argument("--paths", type=int, default=500, help="simulated games per snapshot")
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    p.add_argument("--history", help="the matches' players, teams and streams (eAMFCalibrator history's "
+                                     "CSV): needed when the model has NB2's pre-match")
+    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
+    p.add_argument("--limit", type=int, help="first N matches only")
+    p.add_argument("--out", help="per-snapshot CSV (default remaining_<version>.csv)")
+    p.set_defaults(func=cmd_remaining)
 
     args = parser.parse_args(argv)
     args.func(args)
