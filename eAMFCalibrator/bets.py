@@ -575,10 +575,16 @@ def fetch_checks(cur, matches, prod_rows):
         prod_by[r[0]].append(r)
     keep = {}
     snapshots, _ = snowflake_io._play_over_snapshots(cur, matches, prod_by_match=prod_by, keep=keep)
-    books, guessed, reasons = bet_checks.model_books(snapshots)
+    diag = {}
+    books, guessed, reasons = bet_checks.model_books(snapshots, diag)
+    diag["side_why"], diag["side_near"] = bet_checks.side_diagnosis(
+        keep.get("scouting", []), keep.get("scores", []), guessed)
+    diag["vocab"] = bet_checks.vocabulary(keep.get("scouting", []))
+    diag["sports"] = snowflake_io.fetch_sports(cur, matches)
     return bet_checks.Checks(bet_checks.build_feeds(keep.get("scouting", [])),
                              bet_checks.message_times(prod_rows),
-                             bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons)
+                             bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons,
+                             diag)
 
 
 def run(cur, out_dir, only_checks=False):

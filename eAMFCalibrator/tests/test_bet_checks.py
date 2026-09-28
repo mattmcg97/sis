@@ -115,10 +115,27 @@ class TestState(unittest.TestCase):
         snaps = {"M1": [dict(snap, message=5), dict(snap, message=9, period=""),
                         dict(snap, message=12)],
                  "M2": [dict(snap, message=5, team_a_side=None)]}
-        books, guessed, reasons = bet_checks.model_books(snaps)
-        self.assertEqual(books, {"M1": [5, 12], "M2": [5]})
+        snaps["AF001270926"] = [dict(snap, message=5, down=""), dict(snap, message=9)]
+        diag = {}
+        books, guessed, reasons = bet_checks.model_books(snaps, diag)
+        self.assertEqual(books, {"M1": [5, 12], "M2": [5], "AF001270926": [9]})
         self.assertEqual(guessed, {"M2"})
-        self.assertEqual(reasons["no_clock"], 1)
+        self.assertEqual((reasons["no_clock"], reasons["no_state"]), (1, 1))
+        self.assertEqual(diag["detail"][("PASS", "no_state", "down")], 1)
+        self.assertEqual(diag["days"]["2026-09-27"]["read"], 1)
+
+    def test_an_unknown_side_is_explained_off_the_feed(self):
+        rows = [srow(10, kind="TOUCHDOWN_TEAM_A", match="A"), srow(20, kind="TOUCHDOWN_SCORED", match="A"),
+                srow(10, kind="TOUCHDOWN_TEAM_A", match="B")]
+        scores = [("A", 21, 1, 7, 0, 7, 0), ("B", 12, 1, 0, 7, 0, 7)]
+        why, near = bet_checks.side_diagnosis(rows, scores, ["A", "B"])
+        self.assertEqual(why, {"no scoring message by a score change": 1, "one side only": 1})
+        self.assertEqual(near["TOUCHDOWN_SCORED"], 1)
+
+    def test_ended_is_the_match_over_message(self):
+        f = bet_checks.build_feeds([srow(1, "FIRST_QUARTER_STARTED"), srow(2, kind="PLAY_STARTED"),
+                                    srow(8, "FOURTH_QUARTER_ENDED"), srow(9, "ENDED")])["M1"]
+        self.assertEqual((f.over, f.over_status), (9, "ENDED"))
 
 
 class TestJoin(unittest.TestCase):
@@ -197,9 +214,27 @@ class TestCommand(unittest.TestCase):
             keep["scouting"], keep["scores"] = SCOUTING, SCORES
             self.assertEqual(len(prod_by_match["M1"]), len(PROD))
             return {"M1": [snap]}, []
-        with mock.patch.object(snowflake_io, "_play_over_snapshots", side_effect=fake):
+        with mock.patch.object(snowflake_io, "_play_over_snapshots", side_effect=fake), \
+                mock.patch.object(snowflake_io, "fetch_sports",
+                                  return_value=bet_checks.Counter({"AF": 1})) as sports:
             c = bets.fetch_checks(None, ["M1"], PROD)
         self.assertEqual((c.books, c.feeds["M1"].over), ({"M1": [5]}, 30))
+        sports.assert_called_once_with(None, ["M1"])
+        self.assertEqual(c.diag["vocab"][2], {"M1"})
+
+    def test_the_sport_check_shows_every_message_and_flags_another_sport(self):
+        rows = [srow(1, "FIRST_QUARTER_STARTED", match="AF001"), srow(2, kind="PLAY_STARTED", match="AF001"),
+                srow(3, kind="FOUL_COMMITTED_TEAM_A", match="AF001"),
+                srow(1, kind="FREE_THROW_MADE", match="EB001")]
+        vocab = bet_checks.vocabulary(rows)
+        self.assertEqual(vocab[2], {"EB001"})
+        c = checks()
+        c.diag = {"vocab": vocab, "sports": bet_checks.Counter({"AF": 1})}
+        text = "\n".join(bet_checks.report([], c))
+        self.assertIn("EVENT's SPORT_CODE for the bets' matches: AF 1", text)
+        self.assertIn("not starting AF: 1 (EB001)", text)
+        self.assertIn("another sport: FREE_THROW_MADE 1", text)
+        self.assertIn("FOUL_COMMITTED_TEAM_A 1/1", text)
 
 
 if __name__ == "__main__":

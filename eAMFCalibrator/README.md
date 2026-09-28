@@ -1631,6 +1631,13 @@ python -m eAMFCalibrator bets check --since 2026-09-25 --until 2026-09-28
 `bets check` runs the checks alone (no candidate is priced, so it's quick)
 and writes `out/bets_checks.csv`. Every `bets` run prints them too.
 
+- **Sport check.** Only AF may reach the join. The bets are filtered to
+  `SPORT_CODE = 'AF'`, and everything else is read by those bets' match
+  codes (SCOUTING_FULL also by `MATCH_CODE LIKE 'AF%'`). The check confirms
+  it from the data: EVENT's `SPORT_CODE` for the matches, any SCOUTING_FULL
+  match code not starting AF, messages that look like another sport
+  (free throws, rebounds, ...), and every SCOUTING_FULL message with its
+  rows and matches.
 - **When in the match.** The start (the first quarter's start message, or
   the first `PLAY_STARTED` without one), two minutes left in Q4 (the first
   row in the fourth quarter with the clock at 120s or under) and the
@@ -1641,6 +1648,7 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
   before it, accepted after two minutes left (the operators suspend there;
   `EXCLUDE_AFTER_TWO_MINUTES`) or after the match-over message are left out
   (resettlements, trader reviews). `BET_PHASE_TOLERANCE` (10s) is allowed.
+  The match-over message is `ENDED`.
   The report gives bets, stake, margin and seconds past the bound for each,
   by operator. It also lists the statuses seen from two minutes left
   (seconds after the mark) and on the matches' last rows. That's how the
@@ -1662,6 +1670,10 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
     same snapshots the same way without simulating. It counts which
     `PLAY_OVER`s can't be read and why, and the matches with TEAM_A's side
     not known.
+    The report breaks the unreadable ones down by play kind, reason and the
+    fields missing, and gives both by match day. For the matches with
+    TEAM_A's side not known it gives why (no scoring message by a score
+    change, or split) and the feed messages found at their score changes.
   - **A candidate table's** quote at message c (`candidate_message`) is held
     to the same rule.
   - A price is only compared where the feed didn't move on between it and

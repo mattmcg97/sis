@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from . import config
 from .scouting import PERIOD_START, _text
 
-OVER_STATUS = re.compile(r"^(MATCH|GAME)_(OVER|END|ENDED|FINISHED|COMPLETE|COMPLETED)$|^FULL_TIME$|^FINAL$")
+OVER_STATUS = re.compile(r"^ENDED$|^(MATCH|GAME)_(OVER|END|ENDED|FINISHED|COMPLETE|COMPLETED)$")
 TWO_MINUTES = 120
 PRE_MATCH, PRE_AFTER_START = "pre-match", "pre-match after the start"
 BEFORE_START, IN_PLAY, AFTER_TWO, AFTER_OVER, NO_FEED = (
@@ -112,31 +112,104 @@ def build_feeds(scouting_rows):
     return out
 
 
-def model_books(snapshots):
+def _day(match):
+    """The match's date off its code (AFnnnDDMMYY), as YYYY-MM-DD."""
+    d = str(match)[-6:]
+    return f"20{d[4:6]}-{d[2:4]}-{d[0:2]}" if d.isdigit() else "?"
+
+
+def _missing(r):
+    """Which of the state's fields a snapshot row lacks."""
+    gone = [k for k in ("offense", "down", "distance", "field_position") if r.get(k) in ("", None)]
+    return "+".join(gone) or "none missing"
+
+
+def model_books(snapshots, diag=None):
     """(match -> the PLAY_OVER messages a model prices off, matches whose TEAM_A side is guessed,
     Counter of why the others cannot be priced), off the snapshots the models read
-    (snowflake_io._play_over_snapshots), read as v4-v6's match_books read them."""
+    (snowflake_io._play_over_snapshots), read as v4-v6's match_books read them. `diag` (a dict)
+    collects the unreadable ones by play kind and missing field, and the days."""
     from eAMFModel import playover
     books, guessed, reasons = {}, set(), Counter()
+    diag = diag if diag is not None else {}
+    detail, days = diag.setdefault("detail", Counter()), diag.setdefault("days", defaultdict(Counter))
     for match, snaps in snapshots.items():
         rows = [{k: "" if v is None else str(v) for k, v in r.items()}
                 for r in sorted(snaps, key=lambda r: int(r["message"]))]
         if not rows:
             continue
+        day = days[_day(match)]
+        day["matches"] += 1
         if any(r.get("team_a_side") not in ("home", "away") for r in rows):
             guessed.add(match)
+            day["side not known"] += 1
             rows = [r if r.get("team_a_side") in ("home", "away") else dict(r, team_a_side="home")
                     for r in rows]
         msgs = []
         for r in rows:
             state, why = playover.state_for(r)
+            day["play_overs"] += 1
             if state is None:
                 reasons[why] += 1
+                detail[(r.get("play_kind") or "?", why, _missing(r))] += 1
             else:
                 msgs.append(int(r["message"]))
                 reasons["priced"] += 1
+                day["read"] += 1
         books[match] = msgs
     return books, guessed, reasons
+
+
+OTHER_SPORT = re.compile(r"FREE_THROW|REBOUND|THREE_POINT|JUMP_BALL|DUNK|LAYUP|ASSIST|STEAL|"
+                         r"SHOT|BASKET|GOAL_SCORED|CORNER|OFFSIDE|YELLOW_CARD|RED_CARD|INNING|WICKET")
+
+
+def vocabulary(scouting_rows):
+    """(Counter of (column, message) -> rows, Counter of (column, message) -> matches, match codes
+    not starting with the AF prefix) over SCOUTING_FULL rows: the check that only Madden reached
+    the join."""
+    from .scouting import MATCH_PREFIX
+    rows, matches, seen = Counter(), Counter(), set()
+    odd = set()
+    for r in scouting_rows:
+        if not str(r[0]).upper().startswith(MATCH_PREFIX):
+            odd.add(r[0])
+        for col, value in (("status", _text(r[3])), ("in play", _text(r[4]))):
+            if value:
+                rows[(col, value)] += 1
+                if (r[0], col, value) not in seen:
+                    seen.add((r[0], col, value))
+                    matches[(col, value)] += 1
+    return rows, matches, odd
+
+
+def side_diagnosis(scouting_rows, score_rows, matches):
+    """For matches whose TEAM_A side is not known: Counter of why (no scoring message by a score
+    change, or votes split), and Counter of the feed messages at their score changes."""
+    from .scouting import team_a_votes
+    matches = set(matches)
+    rows, scores = defaultdict(list), defaultdict(list)
+    for r in scouting_rows:
+        if r[0] in matches:
+            rows[r[0]].append(r)
+    for sc in score_rows:
+        if sc[0] in matches:
+            scores[sc[0]].append(sc)
+    why, near = Counter(), Counter()
+    for match in matches:
+        votes = team_a_votes(rows[match], scores[match])
+        why["no scoring message by a score change" if not votes else
+            "scoring messages split: " + ", ".join(f"{k} {v}" for k, v in sorted(votes.items()))
+            if len(votes) > 1 else "one side only"] += 1
+        kinds = sorted((int(r[1]), _text(r[4])) for r in rows[match] if r[1] is not None and _text(r[4]))
+        msgs = [m for m, _ in kinds]
+        for sc in scores[match]:
+            if sc[1] is None or not ((sc[3] or 0) or (sc[4] or 0)):
+                continue
+            m = int(sc[1])
+            for _, kind in kinds[bisect_left(msgs, m - 3):bisect_right(msgs, m)]:
+                near[kind] += 1
+    return why, near
 
 
 def message_times(quote_rows):
@@ -178,9 +251,10 @@ def score_index(score_rows):
 class Checks:
     """The phase and state checks for every bet of a window."""
 
-    def __init__(self, feeds, times, scores, books=None, guessed=frozenset(), reasons=None):
+    def __init__(self, feeds, times, scores, books=None, guessed=frozenset(), reasons=None, diag=None):
         self.feeds, self.times, self.scores = feeds, times, scores
         self.books, self.guessed, self.reasons = books, set(guessed), reasons or Counter()
+        self.diag = diag or {}
 
     def time_of(self, match, message):
         """Publish time of prod's first row at or after the message (its last, past the end)."""
@@ -322,7 +396,27 @@ def report(rows, checks):
     state against prod's, with SCOUTING_FULL's completeness by match."""
     from .bets import CASHED
     left_out = excluded_phases()
-    lines = ["\n  when the bets were placed, on prod's clock: seconds after the start (pre-match after "
+    lines = []
+    sports = checks.diag.get("sports")
+    vocab = checks.diag.get("vocab")
+    if sports is not None or vocab is not None:
+        lines.append("\n  sport check: only AF may reach the join")
+        if sports is not None:
+            lines.append("  EVENT's SPORT_CODE for the bets' matches: "
+                         + (", ".join(f"{k} {v:,}" for k, v in sports.most_common()) or "none found"))
+        if vocab is not None:
+            counts, seen_in, odd = vocab
+            lines.append(f"  SCOUTING_FULL match codes not starting AF: {len(odd):,}"
+                         + (f" ({', '.join(sorted(map(str, odd))[:5])})" if odd else ""))
+            flagged = [k for k in counts if OTHER_SPORT.search(k[1])]
+            lines.append("  messages that look like another sport: "
+                         + (", ".join(f"{v} {counts[(c, v)]:,}" for c, v in flagged) or "none"))
+            lines.append("  every SCOUTING_FULL message (rows / matches):")
+            for col in ("in play", "status"):
+                items = sorted(((k, n) for k, n in counts.items() if k[0] == col), key=lambda kv: -kv[1])
+                lines.append(f"    {col}: " + ", ".join(f"{v} {n:,}/{seen_in[(c, v)]:,}"
+                                                     for (c, v), n in items))
+    lines += ["\n  when the bets were placed, on prod's clock: seconds after the start (pre-match after "
              "the start), before it (in play before the start), after two minutes left in Q4, after "
              f"the match-over message; the (left out) ones allow {config.BET_PHASE_TOLERANCE}s",
              f"  {'':44s} {'bets':>7s} {'stake':>11s} {'margin':>8s}   seconds past the bound "
@@ -382,10 +476,26 @@ def report(rows, checks):
         lines.append(f"  {total:,} PLAY_OVERs: priced {reasons['priced']:,} "
                      f"({100 * reasons['priced'] / total:.1f}%); not: "
                      + ", ".join(f"{k} {v:,}" for k, v in reasons.most_common() if k != "priced"))
+    detail = checks.diag.get("detail")
+    if detail:
+        lines.append("  the unreadable ones by play kind, reason and the fields missing:")
+        for (kind, why, gone), n in detail.most_common(10):
+            lines.append(f"    {kind[:14]:14s} {why[:10]:10s} {gone[:40]:40s} {n:7,d}")
     if checks.books is not None:
-        lines.append(f"  matches with TEAM_A's side guessed as home (not tied to the scoreboard): "
+        lines.append(f"  matches with TEAM_A's side not known (no longer guessed; not priced): "
                      f"{len(checks.guessed):,} of {len(checks.books):,}, in-play stake "
                      f"{sum(stake_by[m] for m in checks.guessed):,.0f}")
+    for key, title in (("side_why", "    why"), ("side_near", "    feed messages at their score changes")):
+        c = checks.diag.get(key)
+        if c:
+            lines.append(f"{title}: " + ", ".join(f"{k} {v:,}" for k, v in c.most_common(10)))
+    days = checks.diag.get("days")
+    if days:
+        lines.append(f"  by match day {'':3s} {'matches':>8s} {'side not known':>15s} {'PLAY_OVERs':>11s} "
+                     f"{'read':>7s}")
+        for day, c in sorted(days.items()):
+            lines.append(f"  {day:16s} {c['matches']:8,d} {c['side not known']:15,d} "
+                         f"{c['play_overs']:11,d} {100 * c['read'] / c['play_overs'] if c['play_overs'] else 0:6.1f}%")
 
     lines.append("\n  a model against prod's price at feed message m: priced off its latest PLAY_OVER s, "
                  "the same information only where the feed did not move on in (s, m]")
