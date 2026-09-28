@@ -45,3 +45,27 @@ class TestRemaining(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuildUntil(unittest.TestCase):
+
+    def test_until_builds_only_on_matches_before_the_date(self):
+        import csv
+        import os
+        import tempfile
+        from unittest import mock
+        from .. import __main__ as cli, playover
+        rows = {"AF001090926": [{"match_code": "AF001090926"}], "AF002100926": [{"match_code": "AF002100926"}],
+                "AF003110926": [{"match_code": "AF003110926"}]}
+        seen = {}
+
+        def fake_build(matches, out, **kw):
+            seen["codes"], seen["before"] = sorted(matches), kw.get("before")
+        with mock.patch.object(playover, "load", return_value=rows), \
+                mock.patch("eAMFModel.v6.build", side_effect=fake_build), \
+                mock.patch("eAMFModel.nb2_prior.load_history", return_value=[]), \
+                mock.patch("builtins.print"):
+            cli.main(["v6-build", "x.csv", "--half", "all", "--out", tempfile.mkdtemp(),
+                      "--history", "h.csv", "--until", "2026-09-10"])
+        self.assertEqual(seen["codes"], ["AF001090926"])
+        self.assertEqual(str(seen["before"])[:10], "2026-09-10")

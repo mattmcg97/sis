@@ -188,16 +188,21 @@ def _v4_module(name="v4"):
 def cmd_v4_build(args):
     name = getattr(args, "version", "v4")
     v4 = _v4_module(name)
+    import datetime as dt
     data = playover.load(args.snapshots)
     keep = set(_half(args.snapshots, args.half))
+    if args.until:
+        from .remaining import day
+        cut = dt.date.fromisoformat(args.until)
+        keep = {c for c in keep if day(c) < cut}
+        print(f"  building on {len(keep):,} matches before {cut}")
     handles = players.load_handles(args.handles) if args.handles else None
     history = before = None
     if args.history:
         from . import nb2_prior
         history = nb2_prior.load_history(args.history)
-        if args.before:
-            import datetime as dt
-            before = dt.datetime.fromisoformat(args.before)
+        if args.before or args.until:
+            before = dt.datetime.fromisoformat(args.before or args.until)
     if name in ("v5", "v6") and history is None:
         raise SystemExit(f"{name}-build needs --history: {name} takes every match's prior from its own "
                          "NB2 pre-match model, never from GAMEPLAI's prices")
@@ -467,6 +472,9 @@ def main(argv=None):
                                          "of reading prod's pre-match quotes")
         p.add_argument("--before", help="fit NB2 on history before this date (default: the day "
                                         "after the last match built on)")
+        p.add_argument("--until", help="build everything -- play tables, profiles and NB2 -- on the "
+                                       "matches before this date (YYYY-MM-DD), so a test after it is "
+                                       "out of sample")
         if name in ("v5", "v6"):
             p.add_argument("--in-play", action="store_true",
                            help="also fit the in-play total shift by segment of the game "
