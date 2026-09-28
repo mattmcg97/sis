@@ -281,6 +281,7 @@ class Checks:
         self.feeds, self.times, self.scores = feeds, times, scores
         self.books, self.guessed, self.reasons = books, set(guessed), reasons or Counter()
         self.diag = diag or {}
+        self.timelines = {}
 
     def time_of(self, match, message):
         """Publish time of prod's first row at or after the message (its last, past the end)."""

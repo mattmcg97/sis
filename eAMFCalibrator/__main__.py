@@ -250,6 +250,13 @@ def cmd_bets(args):
     from . import bets
     out_dir = args.out or DEFAULT_OUT
     os.makedirs(out_dir, exist_ok=True)
+    if args.action == "moments":
+        from . import bet_moments
+        path = args.csv or os.path.join(out_dir, "bets_sim.csv")
+        rows = bet_moments.from_csv(path)
+        print(f"  {len(rows):,} bets from {path}")
+        print("\n".join(bet_moments.report([("prod", rows)], candidates=False)))
+        return 0
     if args.bet_table:
         config.BET_TABLE = args.bet_table
     if args.gap is not None:
@@ -892,8 +899,10 @@ def build_parser():
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
-    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check"], default="run",
-                             help="check: the checks alone (when in the match each bet was placed, "
+    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check", "moments"],
+                             default="run",
+                             help="moments: where in the game the book loses, bucketed again off a "
+                                  "bets_sim.csv already written (no Snowflake); check: the checks alone (when in the match each bet was placed, "
                                   "cash-outs, SCOUTING_FULL against prod), quick, no candidate "
                                   "priced; probe: print the columns it reads, to check the names; lines: "
                                   "prod's spread and total lines through each match against the "
@@ -913,6 +922,8 @@ def build_parser():
     bets_parser.add_argument("--gap", type=int, metavar="N",
                              help="prod messages since a model's PLAY_OVER that SCOUTING_FULL may "
                                   f"lack and the bet still be re-priced (default {config.MAX_SCOUTING_GAP})")
+    bets_parser.add_argument("--csv", metavar="PATH",
+                             help="moments: the bets CSV to read (default <out>/bets_sim.csv)")
     bets_parser.add_argument("--extra-columns", metavar="COLS",
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")
