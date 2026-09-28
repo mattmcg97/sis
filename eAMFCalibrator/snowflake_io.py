@@ -433,14 +433,21 @@ def _need_numpy(version):
         raise SystemExit(f"--candidate {version} needs numpy:  py -m pip install numpy")
 
 
+def scouting_table(cur):
+    """SCOUTING_FULL, located once per run."""
+    from . import scouting
+    table = _SCOUTING_TABLE.get(config.SCOUTING_TABLE) or scouting.locate(cur, config.SCOUTING_TABLE)
+    _SCOUTING_TABLE[config.SCOUTING_TABLE] = table
+    return table
+
+
 def _play_over_snapshots(cur, match_codes, with_handles=False):
     """match -> PLAY_OVER snapshot rows off SCOUTING_FULL, built exactly as
     `scouting` exports them, and prod's quote rows for the same matches.
     with_handles adds each match's player handles (home_handle/away_handle)."""
     from collections import defaultdict
     from . import directional, scouting
-    table = _SCOUTING_TABLE.get(config.SCOUTING_TABLE) or scouting.locate(cur, config.SCOUTING_TABLE)
-    _SCOUTING_TABLE[config.SCOUTING_TABLE] = table
+    table = scouting_table(cur)
     snapshots, prod_all = {}, []
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(match_codes), chunk):

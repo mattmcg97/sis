@@ -4,7 +4,7 @@ import datetime as dt
 import unittest
 from unittest import mock
 
-from .. import bets, config
+from .. import bet_checks, bets, config
 
 T0 = dt.datetime(2026, 9, 20, 12, 0, 0)
 
@@ -29,6 +29,7 @@ def bet(match, seconds, market_type=1, selection=1, odds=1.9, stake=10.0, revenu
                                 config.BET_IN_PLAY_COLUMN: in_play}, **extra))
 
 
+NO_CHECKS = bet_checks.Checks({}, {}, {})
 MARGIN = 1.05
 # prod's home moneyline: changes every 100s
 PRICES = [(0, 0.40), (100, 0.60), (200, 0.45), (300, 0.70), (400, 0.50)]
@@ -161,7 +162,7 @@ class TestJoin(unittest.TestCase):
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=-10)), bets.WON)
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=3)), bets.OTHER)
         self.assertEqual(bets.result_of(bet("M1", 0, odds=2.0, stake=10, revenue=10,
-                                            BET_CASHED_OUT="Yes")), bets.OTHER)
+                                            BET_CASHED_OUT="Yes")), bets.CASHED)
 
     def test_the_summary_splits_pre_match_and_in_play_and_can_leave_out_the_vips(self):
         rows = self.join([bet("M1", 45, 3, 1, line=44.5, odds=2.4, stake=10, revenue=10,
@@ -226,7 +227,7 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv"), mock.patch("builtins.print"), \
-                mock.patch("os.makedirs"), \
+                mock.patch("os.makedirs"), mock.patch.object(bets, "fetch_checks", return_value=NO_CHECKS), \
                 mock.patch.object(config, "LAG_RANGE", (-20, 30)):
             out = bets.run(None, "out")
         self.assertEqual(len(out), 8)
@@ -237,6 +238,7 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
+                mock.patch.object(bets, "fetch_checks", return_value=NO_CHECKS), \
                 mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]), \
                 mock.patch.object(bets, "check_models"):
             results = bets.run(None, "out")

@@ -102,6 +102,15 @@ BET_VIP_VALUE = "VIP"
 LAG_RANGE = (-30, 60)
 LAG_STEP_SECONDS = 1
 
+# Bets marked pre-match after kickoff, marked in play before it, or placed
+# after the match-over message are left out; this many seconds either side
+# are allowed.
+BET_PHASE_TOLERANCE = 10
+# A model is read against a bet only where its game state carries the same
+# information as prod's: no score change since its latest PLAY_OVER, and at
+# most this many of prod's messages since then missing from SCOUTING_FULL.
+MAX_SCOUTING_GAP = 0
+
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.
 MATCH_TOLERANCE_SECONDS = 3.0

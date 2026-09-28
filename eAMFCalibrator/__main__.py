@@ -252,6 +252,8 @@ def cmd_bets(args):
     os.makedirs(out_dir, exist_ok=True)
     if args.bet_table:
         config.BET_TABLE = args.bet_table
+    if args.gap is not None:
+        config.MAX_SCOUTING_GAP = args.gap
     if args.max_lag is not None:
         config.LAG_RANGE = (config.LAG_RANGE[0], args.max_lag)
     if args.extra_columns:
@@ -270,6 +272,9 @@ def cmd_bets(args):
                     fh.write("\n".join(lines) + "\n")
                 print("\n".join(lines))
                 print(f"\n  probe -> {path}")
+            elif args.action == "check":
+                bets.run(cur, out_dir, only_checks=True)
+                print(f"\n  -> {os.path.join(out_dir, 'bets_checks.csv')}")
             else:
                 bets.run(cur, out_dir)
                 print(f"\n  -> {os.path.join(out_dir, 'bets_sim.csv')} and bets_latency.csv")
@@ -867,8 +872,10 @@ def build_parser():
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
-    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines"], default="run",
-                             help="probe: print the columns it reads, to check the names; lines: "
+    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check"], default="run",
+                             help="check: the checks alone (when in the match each bet was placed, "
+                                  "cash-outs, SCOUTING_FULL against prod), quick, no candidate "
+                                  "priced; probe: print the columns it reads, to check the names; lines: "
                                   "prod's spread and total lines through each match against the "
                                   "lines bet (out/bets_lines.html)")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
@@ -883,6 +890,9 @@ def build_parser():
     bets_parser.add_argument("--max-lag", type=float, metavar="SECONDS",
                              help=f"the longest lag tried "
                                   f"(default {config.LAG_RANGE[1]})")
+    bets_parser.add_argument("--gap", type=int, metavar="N",
+                             help="prod messages since a model's PLAY_OVER that SCOUTING_FULL may "
+                                  f"lack and the bet still be re-priced (default {config.MAX_SCOUTING_GAP})")
     bets_parser.add_argument("--extra-columns", metavar="COLS",
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")
