@@ -125,12 +125,30 @@ class TestState(unittest.TestCase):
         self.assertEqual(diag["days"]["2026-09-27"]["read"], 1)
 
     def test_an_unknown_side_is_explained_off_the_feed(self):
-        rows = [srow(10, kind="TOUCHDOWN_TEAM_A", match="A"), srow(20, kind="TOUCHDOWN_SCORED", match="A"),
-                srow(10, kind="TOUCHDOWN_TEAM_A", match="B")]
+        rows = [srow(10, kind="TOUCHDOWN_TEAM_A", match="A"), srow(10, kind="TOUCHDOWN_TEAM_A", match="B")]
         scores = [("A", 21, 1, 7, 0, 7, 0), ("B", 12, 1, 0, 7, 0, 7)]
-        why, near = bet_checks.side_diagnosis(rows, scores, ["A", "B"])
+        why, seen = bet_checks.side_diagnosis(rows, scores, ["A", "B"])
         self.assertEqual(why, {"no scoring message by a score change": 1, "one side only": 1})
-        self.assertEqual(near["TOUCHDOWN_SCORED"], 1)
+        self.assertEqual(seen["scoring message, nearest score change over 20 after"], 0)
+        self.assertEqual(seen["scoring message, nearest score change +4 to +20 after"], 1)
+        self.assertEqual(seen["scoring message, nearest score change 0 to +3 after"], 1)
+
+    def test_the_side_is_read_off_the_cumulative_score_when_the_change_columns_are_empty(self):
+        from ..scouting import score_steps, team_a_side
+        scores = [("A", 5, 1, None, None, 0, 0), ("A", 12, 1, None, None, 0, 7),
+                  ("A", 30, 2, None, None, 3, 7)]
+        self.assertEqual(score_steps(scores), [(12, 0, 7), (30, 3, 0)])
+        rows = [srow(10, kind="TOUCHDOWN_TEAM_A", match="A"), srow(28, kind="FIELD_GOAL_GOOD_TEAM_B", match="A")]
+        self.assertEqual(team_a_side(rows, scores), "away")
+        seen = bet_checks.side_diagnosis(rows, scores, ["A"])[1]
+        self.assertEqual(seen["score rows with empty change columns"], 3)
+
+    def test_the_play_detail_is_found_by_day(self):
+        rows = [("AF001270926", 1, None, None, "PLAY_STARTED", "TEAM_A", 1, 10, 25, None),
+                ("AF001270926", 2, None, None, "PLAY_OVER", None, None, None, None, None)]
+        got = bet_checks.detail_presence(rows)
+        self.assertEqual(got[("2026-09-27", "PLAY_STARTED")]["team"], 1)
+        self.assertEqual(got[("2026-09-27", "PLAY_OVER")]["field"], 0)
 
     def test_ended_is_the_match_over_message(self):
         f = bet_checks.build_feeds([srow(1, "FIRST_QUARTER_STARTED"), srow(2, kind="PLAY_STARTED"),
