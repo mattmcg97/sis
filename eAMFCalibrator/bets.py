@@ -533,8 +533,22 @@ def candidate_quotes(cur, stream, matches):
     return rows
 
 
+def check_models(streams):
+    """Stop before any fetching when a model version's build is missing, so a long run does not
+    fail on its last candidate."""
+    import importlib
+    for stream in streams:
+        if not snowflake_io.is_model(stream):
+            continue
+        version, _ = snowflake_io.model_version(stream)
+        if version in snowflake_io.LINE_MODELS:
+            importlib.import_module(f"eAMFModel.{version}_stream").model_paths(
+                getattr(config, f"{version.upper()}_MODEL_DIR"))
+
+
 def run(cur, out_dir):
     """The whole pipeline: fetch, lag, join each candidate, write the CSVs and print the summary."""
+    check_models(candidate_streams())
     sql, params, _ = bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
