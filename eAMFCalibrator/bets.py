@@ -588,9 +588,10 @@ def fetch_checks(cur, matches, prod_rows):
                              diag)
 
 
-def run(cur, out_dir, only_checks=False):
+def run(cur, out_dir, only_checks=False, summary=None):
     """The whole pipeline: fetch, lag, check, join each candidate, write the CSVs and print the
-    summary. only_checks stops after the checks (no candidate is priced)."""
+    summary. only_checks stops after the checks (no candidate is priced). `summary` (a dict)
+    collects the candidates' rows and the lags, for html_section."""
     from . import bet_checks
     if not only_checks:
         check_models(candidate_streams())
@@ -642,6 +643,8 @@ def run(cur, out_dir, only_checks=False):
         report_candidate(rows, name)
     if len(results) > 1:
         print("\n".join(compare_report(results)))
+    if summary is not None:
+        summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches))
     return results[0][1] if len(results) == 1 else results
 
 
@@ -847,3 +850,99 @@ def _coverage(cur):
             GROUP BY {col} ORDER BY 2 DESC LIMIT 20""", (config.SPORT_CODE, since, until))
         lines.append(f"   {col}: " + ", ".join(f"{v}={n:,}" for v, n in vals))
     return lines
+
+
+def _esc(text):
+    import html
+    return html.escape(str(text))
+
+
+def _change_cell(change):
+    if change is None:
+        return "<td>&mdash;</td>"
+    cls = "good" if change > 0.05 else "bad" if change < -0.05 else ""
+    return f'<td class="{cls}">{change:+.2f}</td>'
+
+
+def html_section(summary):
+    """The betting simulation as a section of the calibration page: each candidate on its own
+    coverage, then every candidate side by side on the bets they all re-priced, the price and
+    result effects, why bets were not re-priced, and the lag by operator."""
+    results = summary.get("results") or []
+    if not results:
+        return ""
+    names = [n for n, _ in results]
+    own = []
+    for name, rows in results:
+        s_ = summarise(rows).get("all")
+        price, result = effects(rows)
+        if s_ is None:
+            own.append(f"<tr><th>{_esc(name)}</th><td colspan=\"7\">no bet re-priced</td></tr>")
+            continue
+        n, stake, rev, m, rev_c, m_c = s_
+        own.append(f"<tr><th>{_esc(name)}</th><td>{n:,}</td><td>{stake:,.0f}</td><td>{m:.2f}%</td>"
+                   f"<td>{m_c:.2f}%</td>{_change_cell(m_c - m)}<td>{price:+,.0f}</td>"
+                   f"<td>{result:+,.0f}</td></tr>")
+    vip = config.BET_VIP_VALUE.lower()
+    not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
+    cuts = [(None, None, "All"), (None, not_vip, f"All but {config.BET_VIP_VALUE}"),
+            ("in_play", None, ""), (config.BET_GROUP_COLUMN, None, ""), ("market", None, ""),
+            ("period", None, "")]
+    side = []
+    for by, keep, name in cuts:
+        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep).items(),
+                                                     key=lambda kv: str(kv[0])):
+            if by == "in_play":
+                label = "In play" if g else "Pre-match"
+            elif by == config.BET_GROUP_COLUMN:
+                label = str(g).replace("_BET_BY_BET", "").title()
+            elif by is None:
+                label = name
+            else:
+                label = f"{by.replace('_', ' ')} {g}"
+            side.append(f"<tr><th>{_esc(label)}</th><td>{n:,}</td><td>{stake:,.0f}</td>"
+                        f"<td>{m:.2f}%</td>" + "".join(_change_cell(c - m) for c in margins) + "</tr>")
+    split = compare(results).get("all")
+    effect_rows = []
+    if split:
+        for name, (price, result) in zip(names, split[4]):
+            effect_rows.append(f"<tr><th>{_esc(name)}</th><td>{price:+,.0f}</td><td>{result:+,.0f}</td>"
+                               f"<td>{price + result:+,.0f}</td></tr>")
+    why = []
+    for name, rows in results:
+        c = Counter(why_not(r) for r in rows)
+        top = ", ".join(f"{_esc(k)} {v:,}" for k, v in c.most_common(6))
+        why.append(f"<tr><th>{_esc(name)}</th><td class=\"state\">{top}</td></tr>")
+    lags = summary.get("lags") or {}
+    lag_line = "; ".join(f"{_esc(str(op).replace('_BET_BY_BET', '').title())} {lag.seconds:+.0f}s "
+                         f"({lag.bets:,} bets)" for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0])))
+    head = "".join(f"<th>{_esc(n)}</th>" for n in names)
+    common_n = split[0] if split else 0
+    return f"""
+  <section class="panel" id="bets">
+    <h2>Betting simulation</h2>
+    <p class="dim">{summary.get('bets', 0):,} single bets on {summary.get('matches', 0):,} matches. Each bet
+      is re-priced with the candidate at the prod message it saw, the operator's margin kept, settled at
+      the candidate's own line. Models only where their state carries the same information as prod's.
+      Change is the candidate's margin minus prod's, in points.</p>
+    <h3>Each candidate on the bets it re-priced</h3>
+    <table class="reach">
+      <thead><tr><th>Candidate</th><th>Bets</th><th>Stake</th><th>Prod</th><th>Candidate</th><th>Change</th>
+        <th>From odds</th><th>From line</th></tr></thead>
+      <tbody>{''.join(own)}</tbody>
+    </table>
+    <h3>Side by side, on the {common_n:,} bets every candidate re-priced</h3>
+    <table class="reach">
+      <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod margin</th>{head}</tr></thead>
+      <tbody>{''.join(side)}</tbody>
+    </table>
+    <h3>Change in revenue on those bets</h3>
+    <table class="reach">
+      <thead><tr><th>Candidate</th><th>From odds (settled the same)</th><th>From line (settled
+        differently)</th><th>Total</th></tr></thead>
+      <tbody>{''.join(effect_rows)}</tbody>
+    </table>
+    <h3>Why bets were not re-priced</h3>
+    <table class="reach"><tbody>{''.join(why)}</tbody></table>
+    <p class="dim">Lag by operator: {lag_line or 'none fitted'}</p>
+  </section>"""

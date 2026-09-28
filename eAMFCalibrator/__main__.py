@@ -657,8 +657,20 @@ def cmd_report(args):
                                side["line_pairs"])
         _write_csv(os.path.join(out_dir, f"prematch_closing{suffix}.csv"), prematch.FIELDS,
                    side["line"]["prematch_rows"])
+    extra = ""
+    if getattr(args, "bets", False):
+        from . import bets
+        print(f"\n{'=' * 78}\nBetting simulation\n{'=' * 78}")
+        summary = {}
+        conn = snowflake_io.get_connection()
+        try:
+            with conn.cursor() as cur:
+                bets.run(cur, out_dir, summary=summary)
+        finally:
+            conn.close()
+        extra = bets.html_section(summary)
     html_path = args.html or os.path.join(out_dir, _report_name(sides))
-    html_full.write_sides(html_path, sides, dropped)
+    html_full.write_sides(html_path, sides, dropped, extra)
     size = os.path.getsize(html_path) / 1024 ** 2
     print(f"  combined report    -> {html_path}  ({size:.1f} MB, "
           f"{len(sides[0]['line_pairs']):,} pair rows)")
@@ -844,6 +856,9 @@ def build_parser():
              "with every pair listed")
     report_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     report_parser.add_argument("--html", help="path for the combined HTML report")
+    report_parser.add_argument("--bets", action="store_true",
+                               help="also run the betting simulation for the same window and "
+                                    "candidates, and add it as a section at the bottom of the page")
     report_parser.add_argument("--axes", action="store_true",
                                help="also print the integrity tables and the "
                                     "single-axis breakdowns")
