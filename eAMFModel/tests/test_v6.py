@@ -385,12 +385,12 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
-        big = sim6.BIG_LEAD
-        sim6.BIG_LEAD = None
+        big, joint = sim6.BIG_LEAD, sim6.FOURTH_JOINT
+        sim6.BIG_LEAD, sim6.FOURTH_JOINT = None, False
         try:
             t6 = sim6.Tables.build(self.matches, min_records=20)
         finally:
-            sim6.BIG_LEAD = big
+            sim6.BIG_LEAD, sim6.FOURTH_JOINT = big, joint
         t6.late_fourth = None
         t5 = sim5.Tables.build(self.matches, min_records=20)
         st = sim6.Start(3)
@@ -441,6 +441,77 @@ class TestOvertime(unittest.TestCase):
         st.home[:] = 20                                       # six to lead: kicks as usual
         h, a = sim6.simulate(self.tables, st, 3000, np.random.default_rng(1), seed=3, max_steps=1)
         self.assertIn(27, set(np.unique(a)))
+
+
+class TestOvertimeRules(unittest.TestCase):
+    """A touchdown that wins overtime ends it with no conversion, and a side behind once the other
+    has had the ball never punts or kicks short of a tie."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim6.Tables.build(_matches(60), min_records=20)
+
+    def test_a_walk_off_touchdown_ends_the_game_without_its_kick(self):
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 5, 240.0, sim6.KICK
+        st.team[:], st.home[:], st.away[:] = 0, 20, 20
+        stats = {}
+        h, a = sim6.simulate(self.tables, st, 6000, np.random.default_rng(1), seed=3, stats=stats,
+                             common=False)
+        points = (h + a - 40).ravel()
+        self.assertGreater(stats.get("ot_walk_off", 0), 0)
+        # a field goal answered by a touchdown ends at 9, never 10 with the kick
+        self.assertLess(float((points == 10).mean()), 0.005)
+
+    def test_behind_by_a_touchdown_after_the_other_side_had_the_ball_it_goes_for_it(self):
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 5, 150.0, sim6.SCRIM
+        st.team[:], st.home[:], st.away[:] = 1, 27, 20      # the home side scored first
+        st.down[:], st.dist[:], st.y[:] = 4, 10, 30
+        stats = {}
+        sim6.simulate(self.tables, st, 2000, np.random.default_rng(1), seed=3, stats=stats,
+                      max_steps=1)
+        self.assertEqual(stats.get("punt", 0) + stats.get("fg", 0), 0)
+        self.assertEqual(stats["fourth_go"], 2000)
+
+
+class TestFourthDownFit(unittest.TestCase):
+    """The league's go curve, the part-of-game shifts and each player's own go and kick shifts, fitted
+    together."""
+
+    def test_the_fit_finds_the_bold_player_against_the_league(self):
+        rng = np.random.default_rng(5)
+        dp = sim6.DriveParams()
+        recs = []
+        for i in range(6000):
+            y, t = int(rng.integers(20, 95)), int(rng.integers(1, 12))
+            who = ["BOLD", "CALM", "MID"][i % 3]
+            z = sim6._go_basis([y], [t])[0] @ np.array(dp.go_coef) + {"BOLD": 1.0, "CALM": -1.0, "MID": 0.0}[who]
+            went = rng.random() < 1 / (1 + np.exp(-z))
+            fg_range = 100 - y + 17 <= 55
+            choice = "go" if went else ("fg" if fg_range and rng.random() < 0.9 else "punt")
+            recs.append((0, 3, y, t, choice, who))
+        go_coef, go_shift, go_p, kick_coef, kick_shift, kick_p = sim6.fit_fourth_downs(recs, dp)
+        self.assertGreater(go_p["BOLD"] - go_p["MID"], 0.7)
+        self.assertLess(go_p["CALM"] - go_p["MID"], -0.7)
+        self.assertEqual(set(kick_p), {"BOLD", "CALM", "MID"})
+        self.assertEqual(go_shift.shape, (4, 7))
+
+    def test_the_fitted_curves_ride_in_the_tables(self):
+        t = sim6.Tables.build(_matches(40), min_records=20)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.npz")
+            t.save(path)
+            back = sim6.Tables.load(path)
+        self.assertEqual(back.drive.go_coef, t.drive.go_coef)
+        self.assertEqual(back.drive.fg_kick_coef, t.drive.fg_kick_coef)
+        self.assertNotEqual(t.drive.go_coef, sim6.DriveParams().go_coef)
+
+    def test_the_offense_handle_follows_team_a(self):
+        self.assertEqual(sim6._offense_handle({"offense": "TEAM_A", "team_a_side": "home"}, ("H", "A")), "H")
+        self.assertEqual(sim6._offense_handle({"offense": "TEAM_A", "team_a_side": "away"}, ("H", "A")), "A")
+        self.assertEqual(sim6._offense_handle({"offense": "TEAM_B", "team_a_side": "home"}, ("H", "A")), "A")
+        self.assertIsNone(sim6._offense_handle({"offense": "TEAM_B"}, None))
 
 
 class TestSecondHalfKick(unittest.TestCase):
@@ -508,6 +579,9 @@ class TestBuild(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(self.tmp.name, name)), name)
         book = v6.players_book(self.tmp.name)
         self.assertEqual(set(book.players), {"ALPHA", "BRAVO", "CHARLIE", "DELTA"})
+        # each player's go and kick shifts come from the joint 4th-down fit
+        self.assertTrue(any(p.aggression != 0.0 for p in book.players.values()))
+        self.assertTrue(all(isinstance(p.kick, float) for p in book.players.values()))
 
     def test_a_quarters_points_run_to_the_next_quarters_first_row(self):
         # the feed posts a quarter's last score on the next quarter's first

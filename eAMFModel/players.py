@@ -85,6 +85,7 @@ class Profile:
     plays: int = 0
     pace: float = 1.0
     aggression: float = 0.0
+    kick: float = 0.0
     fourth_downs: int = 0
     milk: float = 1.0
     milk_plays: int = 0
