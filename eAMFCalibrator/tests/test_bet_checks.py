@@ -18,21 +18,22 @@ def srow(msg, status=None, kind=None, clock=None, match="M1"):
     return (match, msg, clock, status, kind, None, None, None, None, None)
 
 
-# the first quarter starts at 1, plays over at 5, 9, 12, 17, 24 and 28, two minutes left at 28,
-# match over at 30; SCOUTING_FULL lacks messages 19-21
+# the first quarter starts at 1; plays start at 2, 9, 15, 20, 27 and are over at 5, 11, 17, 22, 28;
+# a score at 7; a neutral BET_SUSPEND at 13; two minutes left at 28, match over at 30;
+# SCOUTING_FULL lacks messages 23-24
 SCOUTING = [srow(1, "FIRST_QUARTER_STARTED"), srow(2, kind="PLAY_STARTED", clock=240),
-            srow(5, kind="PLAY_OVER", clock=230), srow(6, kind="PLAY_STARTED"),
-            srow(9, kind="PLAY_OVER"), srow(10, kind="PLAY_STARTED"), srow(12, kind="PLAY_OVER"),
-            srow(13, kind="PLAY_STARTED"), srow(17, kind="PLAY_OVER"), srow(18, kind="PLAY_STARTED"),
-            srow(24, kind="PLAY_OVER"), srow(25, "FOURTH_QUARTER_STARTED", clock=240),
-            srow(26, kind="PLAY_STARTED", clock=130), srow(28, kind="PLAY_OVER", clock=110),
-            srow(29, "PERMANENT_BET_SUSPEND"), srow(30, "MATCH_OVER")]
-SCOUTING += [srow(m) for m in (3, 4, 7, 8, 11, 14, 15, 16, 22, 23, 27, 31, 32)]
+            srow(5, kind="PLAY_OVER", clock=230), srow(9, kind="PLAY_STARTED"),
+            srow(11, kind="PLAY_OVER"), srow(13, "BET_SUSPEND"), srow(15, kind="PLAY_STARTED"),
+            srow(17, kind="PLAY_OVER"), srow(20, kind="PLAY_STARTED"), srow(22, kind="PLAY_OVER"),
+            srow(26, "FOURTH_QUARTER_STARTED", clock=240), srow(27, kind="PLAY_STARTED", clock=130),
+            srow(28, kind="PLAY_OVER", clock=110), srow(29, "PERMANENT_BET_SUSPEND"),
+            srow(30, "MATCH_OVER")]
+SCOUTING += [srow(m) for m in (3, 4, 6, 7, 8, 10, 12, 14, 16, 18, 19, 21, 25, 31, 32)]
 # prod publishes message m at 10 * m seconds
 PROD = [("M1", 50, at(10 * m), 50.0, None, None, m, "open", "true") for m in range(1, 33)]
 SCORES = [("M1", 1, 1, 0, 0, 0, 0), ("M1", 7, 1, 7, 0, 7, 0)]
-# the model cannot read the PLAY_OVER at 12
-BOOKS = {"M1": [5, 9, 17, 24, 28]}
+# the model cannot read the PLAY_OVER at 17
+BOOKS = {"M1": [5, 11, 22, 28]}
 
 
 def checks(books=BOOKS, guessed=()):
@@ -52,8 +53,9 @@ class TestFeed(unittest.TestCase):
     def test_the_start_two_minutes_and_match_over_are_read_off_the_feed(self):
         f = bet_checks.build_feeds(SCOUTING)["M1"]
         self.assertEqual((f.start, f.two_minutes, f.over, f.over_status), (1, 28, 30, "MATCH_OVER"))
-        self.assertEqual(f.play_overs, [5, 9, 12, 17, 24, 28])
+        self.assertEqual(f.play_overs, [5, 11, 17, 22, 28])
         self.assertEqual(f.late, {"PERMANENT_BET_SUSPEND": 29, "MATCH_OVER": 30})
+        self.assertNotIn(13, f.moves)
 
 
 class TestPhase(unittest.TestCase):
@@ -80,26 +82,29 @@ class TestState(unittest.TestCase):
 
     def test_the_model_matches_prod_only_with_the_same_information(self):
         c = checks()
-        ok = c.state("M1", 11)
-        self.assertEqual((ok["snapshot_message"], ok["skipped_play_overs"], ok["score_changed"],
-                          ok["state_ok"], ok["snapshot_age_seconds"]), (9, 0, False, True, 20.0))
-        scored = c.state("M1", 8)
-        self.assertEqual((scored["snapshot_message"], scored["score_changed"], scored["state_ok"]),
-                         (5, True, False))
-        older = c.state("M1", 14)
-        self.assertEqual((older["snapshot_message"], older["skipped_play_overs"], older["state_ok"]),
-                         (9, 1, False))
-        gap = c.state("M1", 23)
-        self.assertEqual((gap["snapshot_message"], gap["scouting_missing"], gap["state_ok"]),
-                         (17, 3, False))
-        self.assertIsNone(c.state("M1", 3)["snapshot_message"])
-        self.assertFalse(checks(guessed={"M1"}).state("M1", 11)["state_ok"])
+        ok = c.state("M1", 14)
+        self.assertEqual((ok["feed_from"], ok["feed_to"], ok["state_ok"], ok["snapshot_age_seconds"]),
+                         (11, 14, True, 30.0))
+        reasons = {m: c.state("M1", m)["state_reason"] for m in (8, 10, 18, 25, 3)}
+        self.assertEqual(reasons, {8: "score changed", 10: "feed moved on: PLAY_STARTED",
+                                   18: "the latest PLAY_OVER cannot be read",
+                                   25: "SCOUTING_FULL missing prod's messages",
+                                   3: "before the first PLAY_OVER"})
+        self.assertEqual(checks(guessed={"M1"}).state("M1", 14)["state_reason"],
+                         "TEAM_A's side not known")
+
+    def test_a_candidate_is_held_to_the_feed_between_its_quote_and_prods(self):
+        c = checks()
+        self.assertTrue(c.candidate("M1", 11, 14)["candidate_ok"])
+        self.assertEqual(c.candidate("M1", 5, 10)["candidate_reason"], "feed moved on: PLAY_STARTED")
+        self.assertEqual(c.candidate("M1", 15, 14)["candidate_reason"], "candidate's quote after prod's")
+        self.assertIsNone(c.candidate("M1", None, 14)["candidate_ok"])
 
     def test_the_allowed_gap_is_configurable(self):
         saved = config.MAX_SCOUTING_GAP
         try:
-            config.MAX_SCOUTING_GAP = 3
-            self.assertTrue(checks().state("M1", 23)["state_ok"])
+            config.MAX_SCOUTING_GAP = 2
+            self.assertTrue(checks().state("M1", 25)["state_ok"])
         finally:
             config.MAX_SCOUTING_GAP = saved
 
@@ -124,27 +129,38 @@ class TestJoin(unittest.TestCase):
                          checks(), same_state=same_state)
 
     def test_a_model_is_read_only_at_prods_information_and_stragglers_are_left_out(self):
-        rows = self.join([bet(110), bet(80), bet(140), bet(230), bet(400), bet(305), bet(30),
-                          bet(110, BET_CASHED_OUT="Yes")])
+        rows = self.join([bet(140), bet(80), bet(100), bet(180), bet(250), bet(400), bet(305),
+                          bet(30), bet(140, BET_CASHED_OUT="Yes")])
         self.assertEqual([bets.why_not(r) for r in rows],
-                         ["simulated", "score changed since the model's PLAY_OVER",
-                          "model on an older PLAY_OVER (the latest unpriceable)",
-                          "SCOUTING_FULL missing prod's messages", "placed after match over",
-                          "placed after two minutes", "before the model's first PLAY_OVER",
+                         ["simulated", "model: score changed", "model: feed moved on: PLAY_STARTED",
+                          "model: the latest PLAY_OVER cannot be read",
+                          "model: SCOUTING_FULL missing prod's messages", "placed after match over",
+                          "placed after two minutes", "model: before the first PLAY_OVER",
                           "cashed out"])
-        table = self.join([bet(80), bet(230)], same_state=False)
+        self.assertEqual((rows[0]["feed_from"], rows[0]["feed_to"], rows[0]["candidate_message"]),
+                         (11, 14, 14))
+        table = self.join([bet(80), bet(250)], same_state=False)
         self.assertEqual([bets.why_not(r) for r in table], ["simulated", "simulated"])
+
+    def test_a_candidate_quote_from_before_the_feed_moved_on_is_not_used(self):
+        cand = [r for r in PROD if r[6] in (5, 11)]
+        prod = bets.timeline(PROD)
+        rows = bets.join([bet(100), bet(140)], {}, {}, prod, bets.quote_index(cand),
+                         bets.timeline(cand), {"M1": (21, 17)}, checks())
+        self.assertEqual([bets.why_not(r) for r in rows],
+                         ["candidate: feed moved on: PLAY_STARTED", "simulated"])
 
     def test_the_report_names_what_it_found(self):
         c = checks()
         c.reasons.update({"priced": 5, "no_clock": 1})
-        rows = self.join([bet(5, in_play=False), bet(110), bet(80), bet(400), bet(305),
-                          bet(110, BET_CASHED_OUT="Yes")])
+        rows = self.join([bet(5, in_play=False), bet(140), bet(80), bet(400), bet(305),
+                          bet(140, BET_CASHED_OUT="Yes")])
         text = "\n".join(bet_checks.report(rows, c))
         self.assertIn("after match over (left out)", text)
         self.assertIn("match-over message: MATCH_OVER 1", text)
         self.assertIn("PERMANENT_BET_SUSPEND", text)
-        self.assertIn("score changed since the model's PLAY_OVER 1", text)
+        self.assertIn("same information 2 (66.7%)", text)
+        self.assertIn("score changed", text)
         self.assertIn("priced 5 (83.3%); not: no_clock 1", text)
         self.assertIn("M1", text)
 
@@ -155,7 +171,7 @@ class TestCommand(unittest.TestCase):
         from .. import snowflake_io
         cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
                 "ODDS", "STAKE_GBP", "REVENUE_GBP", "OPERATOR_NAME", "BET_IN_PLAY", "BET_CASHED_OUT"]
-        raw = [(1, "M1", at(110), 1, 1, 1.9, 10, 10, "FANDUEL", "Yes", "No"),
+        raw = [(1, "M1", at(140), 1, 1, 1.9, 10, 10, "FANDUEL", "Yes", "No"),
                (2, "M1", at(400), 1, 1, 1.9, 10, 10, "FANDUEL", "Yes", "No"),
                (3, "M1", at(130), 1, 1, 1.9, 10, 10, "FANDUEL", "Yes", "Yes")]
         with mock.patch.object(bets, "fetch_all", return_value=(cols, raw)), \

@@ -7,13 +7,15 @@
           minutes left (the operators suspend there) or after the match was
           over is left out: a resettlement or a trader review, not a price
           anyone took
-  state   whether a model's game state carries the same information as
-          prod's at the price the bet saw. The models price off the
-          PLAY_OVERs they can read (model_books: the same snapshots and the
-          same state reading, without simulating); the one priced at prod's
-          message must be the latest PLAY_OVER, TEAM_A's side must be known
-          (not guessed), SCOUTING_FULL must hold every message prod had since,
-          and no score may have changed in between
+  state   the exact SCOUTING_FULL messages behind every price. Prod's price
+          the bet saw was made at feed message m. A model prices off its
+          latest PLAY_OVER s; it is the same information only where s is a
+          PLAY_OVER the model can read (model_books: the same snapshots and
+          the same reading as v4-v6, without simulating), TEAM_A's side is
+          known, and the feed did not move on in (s, m]: no play started, no
+          status beyond config.NEUTRAL_FEED_MESSAGES, no score change, and
+          no message prod had that SCOUTING_FULL lacks. A candidate table's
+          quote at message c is held to the same (c, m] window.
 """
 
 import math
@@ -60,6 +62,8 @@ class MatchFeed:
     last: int = None
     late: dict = field(default_factory=dict)
     tail: tuple = ()
+    moves: list = field(default_factory=list)
+    move_labels: list = field(default_factory=list)
 
 
 def build_feeds(scouting_rows):
@@ -74,11 +78,15 @@ def build_feeds(scouting_rows):
     for match, rs in by.items():
         rs.sort(key=lambda r: int(r[1]))
         period = start = kick = two = over = over_status = None
-        msgs, overs, late, statuses = set(), [], {}, []
+        msgs, overs, late, statuses, moves = set(), [], {}, [], []
+        neutral = {x.upper() for x in config.NEUTRAL_FEED_MESSAGES}
         for r in rs:
             m = int(r[1])
             msgs.add(m)
             status, kind = _text(r[3]), _text(r[4])
+            for label in (kind, status):
+                if label and label not in neutral:
+                    moves.append((m, label))
             if status in PERIOD_START:
                 period = PERIOD_START[status]
                 if period == 1 and start is None:
@@ -99,7 +107,8 @@ def build_feeds(scouting_rows):
                 over, over_status = m, status
         start = start if start is not None and (kick is None or start <= kick) else kick
         out[match] = MatchFeed(frozenset(msgs), overs, start, two, over, over_status, int(rs[-1][1]),
-                               late, tuple(statuses[-3:]))
+                               late, tuple(statuses[-3:]), [m for m, _ in moves],
+                               [label for _, label in moves])
     return out
 
 
@@ -213,34 +222,60 @@ class Checks:
             return AFTER_TWO, after_two
         return IN_PLAY, None
 
+    def window(self, match, frm, to):
+        """(reason, prod messages SCOUTING_FULL lacks) for the feed from message frm to `to`: None
+        where it did not move on in (frm, to] -- no play or status beyond the neutral ones, no score
+        change, every prod message held."""
+        f = self.feeds.get(match)
+        msgs = self.times.get(match, ([], []))[0]
+        missing = sum(1 for m in msgs[bisect_right(msgs, frm):bisect_right(msgs, to)]
+                      if m not in f.messages)
+        i, j = bisect_right(f.moves, frm), bisect_right(f.moves, to)
+        if j > i:
+            return f"feed moved on: {f.move_labels[i]}", missing
+        if self.score_at(match, to) != self.score_at(match, frm):
+            return "score changed", missing
+        if missing > config.MAX_SCOUTING_GAP:
+            return "SCOUTING_FULL missing prod's messages", missing
+        return None, missing
+
     def state(self, match, message):
-        """The model's state at prod's message: the PLAY_OVER it prices off, how far behind, the
-        PLAY_OVERs since that it could not price, the messages prod had since that SCOUTING_FULL
-        lacks, and whether the score moved in between."""
-        out = dict(snapshot_message=None, snapshot_age_seconds=None, snapshot_age_messages=None,
-                   skipped_play_overs=None, side_guessed=match in self.guessed,
-                   scouting_missing=None, score_changed=None, state_ok=False)
+        """The model against prod's message m: the feed messages behind its price (its latest
+        PLAY_OVER s to m), and whether they carry the same information as prod's."""
+        out = dict(feed_from=None, feed_to=message, snapshot_age_seconds=None,
+                   scouting_missing=None, state_ok=False, state_reason=None)
         f = self.feeds.get(match)
         if f is None or message is None:
+            out["state_reason"] = "no scouting"
             return out
         message = int(message)
-        keys = f.play_overs if self.books is None else self.books.get(match, [])
-        i = bisect_right(keys, message) - 1
+        i = bisect_right(f.play_overs, message) - 1
         if i < 0:
+            out["state_reason"] = "before the first PLAY_OVER"
             return out
-        s = keys[i]
-        skipped = bisect_right(f.play_overs, message) - bisect_right(f.play_overs, s)
-        msgs = self.times.get(match, ([], []))[0]
-        missing = sum(1 for m in msgs[bisect_right(msgs, s):bisect_right(msgs, message)]
-                      if m not in f.messages)
-        changed = self.score_at(match, message) != self.score_at(match, s)
+        s = f.play_overs[i]
         t0, t1 = self.time_of(match, s), self.time_of(match, message)
-        out.update(snapshot_message=s, snapshot_age_messages=message - s,
-                   snapshot_age_seconds=(t1 - t0).total_seconds() if t0 and t1 else None,
-                   skipped_play_overs=skipped, scouting_missing=missing, score_changed=changed,
-                   state_ok=(missing <= config.MAX_SCOUTING_GAP and not changed and skipped == 0
-                             and not out["side_guessed"]))
+        reason, missing = self.window(match, s, message)
+        if match in self.guessed:
+            reason = "TEAM_A's side not known"
+        elif self.books is not None and s not in set(self.books.get(match, ())):
+            reason = "the latest PLAY_OVER cannot be read"
+        out.update(feed_from=s, snapshot_age_seconds=(t1 - t0).total_seconds() if t0 and t1 else None,
+                   scouting_missing=missing, state_ok=reason is None, state_reason=reason)
         return out
+
+    def candidate(self, match, cand_message, message):
+        """A candidate's quote at feed message c against prod's at m: the same information only
+        where the feed did not move on in (c, m]."""
+        if cand_message is None or message is None:
+            return dict(candidate_message=cand_message, candidate_ok=None, candidate_reason=None)
+        f = self.feeds.get(match)
+        if f is None:
+            return dict(candidate_message=cand_message, candidate_ok=False,
+                        candidate_reason="no scouting")
+        c, m = int(cand_message), int(message)
+        reason = "candidate's quote after prod's" if c > m else self.window(match, c, m)[0]
+        return dict(candidate_message=c, candidate_ok=reason is None, candidate_reason=reason)
 
     def for_bet(self, b, message):
         """Every check field for one bet, read at prod's message."""
@@ -262,21 +297,6 @@ class Checks:
             span = msgs[bisect_left(msgs, f.start):bisect_right(msgs, end)]
             out[match] = (len(span), sum(m in f.messages for m in span) / len(span) if span else 0.0)
         return out
-
-
-def state_reason(r):
-    """Why a model's state is not prod's at this bet, or None."""
-    if r.get("snapshot_message") is None:
-        return "before the model's first PLAY_OVER"
-    if r.get("side_guessed"):
-        return "TEAM_A's side guessed"
-    if r.get("skipped_play_overs"):
-        return "model on an older PLAY_OVER (the latest unpriceable)"
-    if r.get("score_changed"):
-        return "score changed since the model's PLAY_OVER"
-    if (r.get("scouting_missing") or 0) > config.MAX_SCOUTING_GAP:
-        return "SCOUTING_FULL missing prod's messages"
-    return None
 
 
 def _pct(xs, q):
@@ -367,32 +387,25 @@ def report(rows, checks):
                      f"{len(checks.guessed):,} of {len(checks.books):,}, in-play stake "
                      f"{sum(stake_by[m] for m in checks.guessed):,.0f}")
 
-    lines.append("\n  a model's game state against prod's at the price each in-play bet saw")
+    lines.append("\n  a model against prod's price at feed message m: priced off its latest PLAY_OVER s, "
+                 "the same information only where the feed did not move on in (s, m]")
     if live:
         n = len(live)
         ok = sum(bool(r["state_ok"]) for r in live)
-        why = Counter(state_reason(r) for r in live if not r["state_ok"])
-        lines.append(f"  {n:,} bets: same state {ok:,} ({100 * ok / n:.1f}%)"
-                     + "".join(f"; {k} {v:,}" for k, v in why.most_common()))
-        gaps = Counter()
-        for r in live:
-            g = r["scouting_missing"]
-            if g is not None:
-                gaps["0" if g == 0 else "1" if g == 1 else "2-5" if g <= 5 else "6-20" if g <= 20
-                     else "over 20"] += 1
-        lines.append("  prod messages since the PLAY_OVER that SCOUTING_FULL lacks: "
-                     + ", ".join(f"{k} {gaps[k]:,}" for k in ("0", "1", "2-5", "6-20", "over 20")
-                                 if gaps[k]) + f" (allowed: {config.MAX_SCOUTING_GAP})")
+        why = Counter(r["state_reason"] for r in live if not r["state_ok"])
+        lines.append(f"  {n:,} in-play bets: same information {ok:,} ({100 * ok / n:.1f}%)")
+        for k, v in why.most_common(12):
+            lines.append(f"    {str(k)[:60]:60s} {v:7,d}")
+        lines.append(f"  (neutral feed messages: {', '.join(config.NEUTRAL_FEED_MESSAGES)}; SCOUTING_FULL "
+                     f"may lack {config.MAX_SCOUTING_GAP} of prod's messages)")
         per = defaultdict(list)
         for r in live:
             per[r["period"]].append(r)
-        lines.append(f"  {'':12s} {'bets':>7s} {'same':>7s} {'older':>7s}   seconds since the model's "
-                     "PLAY_OVER (median 90th max)")
+        lines.append(f"  {'':12s} {'bets':>7s} {'same':>7s}   seconds from s to m (median 90th max)")
         for p, rs in sorted(per.items(), key=lambda kv: str(kv[0])):
             same = sum(bool(r["state_ok"]) for r in rs)
-            older = sum(bool(r["skipped_play_overs"]) for r in rs)
-            lines.append(f"  period {str(p):5s} {len(rs):7,d} {100 * same / len(rs):6.1f}% "
-                         f"{100 * older / len(rs):6.1f}%   {_secs(r['snapshot_age_seconds'] for r in rs)}")
+            lines.append(f"  period {str(p):5s} {len(rs):7,d} {100 * same / len(rs):6.1f}%   "
+                         f"{_secs(r['snapshot_age_seconds'] for r in rs if r['state_ok'])}")
 
     comp = checks.completeness()
     missing = [m for m, v in comp.items() if v is None]

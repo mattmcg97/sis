@@ -1652,22 +1652,30 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
   by operator and pre-match or in play: bets, stake, share of stake and
   margin. Payouts that are none of won, lost, push or cashed out are
   `payout not won, lost or push`.
-- **The same information.** The models price off the `PLAY_OVER`s they can
-  read. The check builds the same snapshots and reads them as v4–v6 do,
-  without simulating. It counts why the others can't be priced (`no_clock`,
-  `no_state`, ...), and which matches have TEAM_A's side guessed as home
-  (not tied to the scoreboard). At the prod message each bet saw, a model
-  is only read where all of these hold:
-  - the `PLAY_OVER` it prices off is the latest one (not an older one
-    because the latest can't be read);
-  - TEAM_A's side is known;
-  - no score changed since that `PLAY_OVER` (prod already knows it);
-  - SCOUTING_FULL holds every message prod had since then (at most
-    `MAX_SCOUTING_GAP`, `--gap N`, default 0, may be missing).
+- **The same information: the exact feed messages behind every price.**
+  Prod's price the bet saw was made at feed message m
+  (`EVENT_MESSAGE_COUNT`, the SCOUTING_FULL message count; `message`).
+  - **The models** (v4–v6) price off their latest `PLAY_OVER` s (`feed_from`
+    to `feed_to` = m). They now only price where they're sure of the state
+    (see eAMFModel's README): the latest `PLAY_OVER`, one they can read, with
+    TEAM_A's side known, until the next play starts. The check reads the
+    same snapshots the same way without simulating. It counts which
+    `PLAY_OVER`s can't be read and why, and the matches with TEAM_A's side
+    not known.
+  - **A candidate table's** quote at message c (`candidate_message`) is held
+    to the same rule.
+  - A price is only compared where the feed didn't move on between it and
+    m: no play started or other message in SCOUTING_FULL beyond
+    `NEUTRAL_FEED_MESSAGES` (`BET_SUSPEND`, `BET_UNSUSPEND`), no score
+    change, and no prod message SCOUTING_FULL lacks (at most
+    `MAX_SCOUTING_GAP`, `--gap N`, default 0).
 
-  Otherwise the bet isn't re-priced for that model, with the reason given.
-  The report gives the share with the same state and why not, by period
-  (with the share on an older `PLAY_OVER`), and the matches where
+  Anything else isn't re-priced, with the reason (`model: feed moved on:
+  PLAY_STARTED`, `model: the latest PLAY_OVER cannot be read`, `candidate:
+  score changed`, ...). The report gives the share with the same
+  information and the commonest reasons: a message that moved the feed on
+  but shouldn't have is one to add to `NEUTRAL_FEED_MESSAGES`. It also
+  gives, by period, the seconds from s to m, and the matches where
   SCOUTING_FULL holds under 99% of prod's messages. The side-by-side table
   is on bets every candidate re-priced, so every comparison there is on the
   same information.

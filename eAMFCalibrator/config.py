@@ -109,10 +109,13 @@ BET_PHASE_TOLERANCE = 10
 # The operators suspend at two minutes left in Q4; bets accepted after that
 # (and the tolerance) are left out too.
 EXCLUDE_AFTER_TWO_MINUTES = True
-# A model is read against a bet only where its game state carries the same
-# information as prod's: no score change since its latest PLAY_OVER, and at
-# most this many of prod's messages since then missing from SCOUTING_FULL.
+# A model or candidate is read against a bet only where its price carries the
+# same information as prod's: the feed did not move on between them, and at
+# most this many of prod's messages in between are missing from SCOUTING_FULL.
 MAX_SCOUTING_GAP = 0
+# SCOUTING_FULL messages that do not move the game on: a price made before
+# one of these still carries the same information after it.
+NEUTRAL_FEED_MESSAGES = ("BET_SUSPEND", "BET_UNSUSPEND")
 
 # A model quote is only paired with a snapshot if it lands within this many
 # seconds of it. The nearest surviving quote wins.

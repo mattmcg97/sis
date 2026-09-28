@@ -29,7 +29,11 @@ def bet(match, seconds, market_type=1, selection=1, odds=1.9, stake=10.0, revenu
                                 config.BET_IN_PLAY_COLUMN: in_play}, **extra))
 
 
-NO_CHECKS = bet_checks.Checks({}, {}, {})
+def _checks_for(quotes):
+    """Checks for M1 with every message in SCOUTING_FULL and nothing moving the game on."""
+    rows = [("M1", q[6], None, None, None, None, None, None, None, None) for q in quotes]
+    rows.append(("M1", 0, None, "FIRST_QUARTER_STARTED", None, None, None, None, None, None))
+    return bet_checks.Checks(bet_checks.build_feeds(rows), bet_checks.message_times(quotes), {})
 MARGIN = 1.05
 # prod's home moneyline: changes every 100s
 PRICES = [(0, 0.40), (100, 0.60), (200, 0.45), (300, 0.70), (400, 0.50)]
@@ -227,7 +231,7 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv"), mock.patch("builtins.print"), \
-                mock.patch("os.makedirs"), mock.patch.object(bets, "fetch_checks", return_value=NO_CHECKS), \
+                mock.patch("os.makedirs"), mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
                 mock.patch.object(config, "LAG_RANGE", (-20, 30)):
             out = bets.run(None, "out")
         self.assertEqual(len(out), 8)
@@ -238,7 +242,7 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
-                mock.patch.object(bets, "fetch_checks", return_value=NO_CHECKS), \
+                mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
                 mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]), \
                 mock.patch.object(bets, "check_models"):
             results = bets.run(None, "out")

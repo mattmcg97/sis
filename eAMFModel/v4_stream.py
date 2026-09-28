@@ -29,7 +29,7 @@ import numpy as np
 
 from . import playover, players, sim4 as sim, v4
 from .pricer import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
-from .stream import OPEN, _parse_line, description
+from .stream import OPEN, _parse_line, confident_windows, description, side_known
 
 DEFAULT_MODEL_DIR = "v4_model"
 DEFAULT_PATHS = 2000
@@ -109,7 +109,7 @@ def paired_prod_rows(prod_quote_rows):
 OWN, PROD_LINES = "own", "prod"
 
 
-def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN):
+def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None):
     """GAMEPLAI-shaped rows: at every (market, message) prod quoted from
     v4's first snapshot on, v4's latest book.
 
@@ -131,6 +131,8 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
             continue
         i = bisect_right(keys, message) - 1
         if i < 0:
+            continue
+        if windows is not None and not (keys[i] in windows and message < windows[keys[i]]):
             continue
         _, mpmf, tpmf = books[i]
         if market_id in (ML_HOME, ML_AWAY):
@@ -162,9 +164,12 @@ def _worker(job):
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
     for match_code, snaps, prod_rows, first_play, prof, means in items:
+        if not side_known(snaps):
+            continue
         books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
+        windows = confident_windows(snaps, [b[0] for b in books])
         for mode in modes:
-            out[mode].extend(quote_rows(match_code, books, prod_rows, first_play, mode))
+            out[mode].extend(quote_rows(match_code, books, prod_rows, first_play, mode, windows))
     return out
 
 

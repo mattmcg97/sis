@@ -958,6 +958,22 @@ python -m eAMFCalibrator report --candidate v5,v6 --v5-model v5_model --v6-model
 python -m unittest eAMFModel.tests.test_v6
 ```
 
+## Pricing only what the model is sure of (v4–v6 streams)
+
+A version quotes a prod message only where its state is the game's at that
+message:
+- its latest `PLAY_OVER` is one it can read (`playover.state_for`), not an
+  older one standing in for a play it can't;
+- the message is before the next `PLAY_STARTED` (a play under way is new
+  information);
+- TEAM_A's side is tied to the scoreboard. A match where it isn't isn't
+  priced at all; the side used to be guessed as home.
+
+`stream.confident_windows` gives each read `PLAY_OVER` the messages it's
+the state for, and `quote_rows(..., windows=...)` quotes only inside them.
+Coverage drops, but no price is stale. `eAMFCalibrator bets` checks the
+same against SCOUTING_FULL message by message.
+
 ## Run it
 
 ```bash
