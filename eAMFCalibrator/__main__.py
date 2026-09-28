@@ -811,7 +811,7 @@ def apply_overrides(args):
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
 
-    if getattr(args, "command", None) == "compare":
+    if getattr(args, "command", None) in ("compare", "totals-lines"):
         return
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
@@ -945,6 +945,18 @@ def build_parser():
                                 help="bootstrap resamples for the intervals "
                                      "(default 1000)")
 
+    tl_parser = sub.add_parser(
+        "totals-lines",
+        help="the totals lines value by value, off the report's directional_pairs*.csv (no Snowflake): "
+             "how far apart prod's and the candidate's lines sit, the points still to come between "
+             "them, and each line's P(over) against how often the game went over")
+    tl_parser.add_argument("paths", nargs="*", default=[DEFAULT_OUT],
+                           help=f"directional_pairs*.csv files, or folders holding them "
+                                f"(default {DEFAULT_OUT})")
+    tl_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    tl_parser.add_argument("--all-quotes", action="store_true",
+                           help="keep pairs where either quote was not live")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -983,6 +995,10 @@ def main(argv=None):
         return cmd_expected_points(args)
     if args.command == "bets":
         return cmd_bets(args)
+    if args.command == "totals-lines":
+        from . import totals_lines
+        totals_lines.run(args.paths, args.out or DEFAULT_OUT, live_only=not args.all_quotes)
+        return 0
     return 1
 
 

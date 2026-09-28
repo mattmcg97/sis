@@ -1529,6 +1529,37 @@ share a line.
   where the line sits and by quarter, coloured on the probability-gap
   ramp.
 
+## The totals lines, value by value: `totals-lines`
+
+```bash
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v5,v6 --v5-model v5_model --v6-model v6_model
+python -m eAMFCalibrator totals-lines                      # every out/directional_pairs*.csv
+python -m eAMFCalibrator totals-lines out/directional_pairs_v6.csv
+```
+
+This reads the report's `directional_pairs*.csv` (no Snowflake, seconds to
+run). At a snapshot with some points on the board, a total line asks for
+N = line − on board more. What the rest of the game produces, R, is lumpy
+(0, 3, 7, 10, 14 ...). So two lines a point apart can sit either side of a
+value R often takes: prod needs 6.5 (a touchdown goes over), the candidate
+7.5 (a touchdown and its kick stays under). For each candidate against prod,
+with both quotes live (`--all-quotes` keeps the rest):
+- **gaps:** the candidate's N minus prod's, overall and by quarter;
+- **straddles:** the lines grouped by the whole values between them (7;
+  8,9; 14 ...). For each group it gives prices, real over rates and each
+  stream's Brier at its own line. It also gives how often the game landed
+  exactly on a value between the lines, where the two settle differently,
+  and each stream's Brier there;
+- **by N:** at each points-needed value, each stream's number of lines,
+  mean P(over) and real over rate, and the gap between them;
+- **real:** the points the rest of the game made, share at each value, by
+  quarter and game state, beside the median N of each stream;
+- **one score:** each line's reach (within one score, two, beyond;
+  `totals_reach`) against the other's, and where the game really landed.
+
+`out/totals_lines_<name>.csv` has one row per snapshot: the score, one
+score's worth, each N, the straddled values, R and each P(over).
+
 ## Betting simulation: `bets`
 
 What would the book's margin have been had the candidate's prices been
