@@ -278,6 +278,7 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
         sds[i] = eff.sd() if v.react else 1.0 / math.sqrt(v.kappa)
         if v.profiles:
             start.aggression[i] = (prof[0].aggression, prof[1].aggression)
+            start.kick[i] = (prof[0].kick, prof[1].kick)
         if v.pace:
             start.pace[i] = (prof[0].pace, prof[1].pace)
     kw = dict(theta_sd=sds if v.theta_sd else None, seed=seed, **v.sim_kw)
@@ -843,7 +844,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             before = dt.datetime.combine(last + dt.timedelta(days=1), dt.time())
         pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2"), before)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
-    tables = sim.Tables.build(matches)
+    handles = dict(handles or {})
+    for code, rows in matches.items():
+        handles.setdefault(code, handles_of(rows))
+    handles = {c: h for c, h in handles.items() if h}
+    tables = sim.Tables.build(matches, handles=handles)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)),
@@ -877,6 +882,12 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f"{d:+.3f}" for d in (tables.period_theta - before_q)[1:5])
                   + ", last two minutes of each half " + " / ".join(
                       f"{tables.late_theta[q]:+.3f}" for q in (2, 4)))
+    if verbose and sim.FOURTH_JOINT:
+        go_sd = np.std(list(tables.player_go.values())) if tables.player_go else 0.0
+        kick_sd = np.std(list(tables.player_kick.values())) if tables.player_kick else 0.0
+        print(f"  4th downs: the league go curve, the part-of-game shifts and {len(tables.player_go):,}"
+              f" players' own go shifts fitted together (sd {go_sd:.2f} in log odds); kick rather than"
+              f" punt the same way ({len(tables.player_kick):,} players, sd {kick_sd:.2f})")
     if verbose and tables.backed is not None:
         print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
               + "; ".join(f"{name.replace('_', ' ')} "
@@ -927,12 +938,15 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print(f"  pre-match: NB2 fitted on {m['fitted_on']:,} matches before {before:%Y-%m-%d};"
                   f" its totals ran {ratio} x under the last {nb2_prior.SCALE_DAYS} days'"
                   f" ({m['scale_matches']} matches) -> expected points scaled {m['scale']:.3f}")
-    handles = dict(handles or {})
-    for code, rows in matches.items():
-        handles.setdefault(code, handles_of(rows))
-    handles = {c: h for c, h in handles.items() if h}
     if handles or form:
         book = players.build(matches, handles) if handles else players.Book()
+        if sim.FOURTH_JOINT:
+            for h, prof in book.players.items():
+                prof.aggression = tables.player_go.get(h, 0.0)
+                prof.kick = tables.player_kick.get(h, 0.0)
+            for h in set(tables.player_go) - set(book.players):
+                book.players[h] = players.Profile(aggression=tables.player_go[h],
+                                                  kick=tables.player_kick.get(h, 0.0))
         for h, f in form.items():
             book.players.setdefault(h, players.Profile()).form = f
         book.save(os.path.join(out_dir, "v6players.json"))

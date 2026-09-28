@@ -2,6 +2,7 @@
 
 import math
 from collections import Counter, defaultdict
+from dataclasses import replace
 
 import numpy as np
 
@@ -587,6 +588,105 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
     return go_shift, fg_shift
 
 
+FOURTH_JOINT = True
+CURVE_RIDGE = 0.01
+PLAYER_PRIOR = 2.0
+
+
+def _offense_handle(row, pair):
+    """The handle of the side with the ball, from (home handle, away handle)."""
+    if not pair or row.get("offense") not in ("TEAM_A", "TEAM_B"):
+        return None
+    a_home = (row.get("team_a_side") or "home") == "home"
+    return pair[0] if (row["offense"] == "TEAM_A") == a_home else pair[1]
+
+
+def fourth_down_records(rows, pair=None):
+    """Every 4th down the late-trailing rules do not decide: part of the game, margin bucket,
+    field, distance, choice and the handle of the side with the ball."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"] \
+                or not a["distance"]:
+            continue
+        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"]:
+            continue
+        p, c = _i(a["period"]), _f(a["clock_seconds"])
+        margin = _margin(a, a["offense"])
+        if margin is None:
+            continue
+        if margin < 0 and (p >= 5 or (p >= 4 and c <= 180)):
+            continue
+        choice = ("punt" if b["play_kind"] == "PUNT" else "fg" if b["play_kind"] == "FIELD_GOAL"
+                  else "go")
+        out.append((decision_phase(p, c), margin_bucket(margin), _i(a["field_position"]),
+                    max(1, _i(a["distance"])), choice, _offense_handle(a, pair)))
+    return out
+
+
+def _go_basis(y, t):
+    """The league go curve's terms: log distance, field position and the red zone."""
+    u = np.asarray(y, dtype=float) / 100.0
+    lt = np.log(np.maximum(1, np.asarray(t, dtype=float)))
+    red = (np.asarray(y) >= 80).astype(float)
+    return np.stack([np.ones_like(u), lt, u, u * u, lt * u, red, lt * red], axis=1)
+
+
+def _ridge_logistic(basis, cells, players, outcome, cell_prior, player_prior, iterations=25):
+    """Log-odds fit of `outcome` on the curve's basis, a shift per (phase, margin) cell and one per
+    player, each shift shrunk toward zero: (curve coefficients, 4x7 shifts, {player: shift})."""
+    names = sorted({h for h in players if h})
+    col = {h: i for i, h in enumerate(names)}
+    k, n = basis.shape[1], len(outcome)
+    x = np.zeros((n, k + 28 + len(names)))
+    x[:, :k] = basis
+    x[np.arange(n), k + cells] = 1.0
+    for i, h in enumerate(players):
+        if h:
+            x[i, k + 28 + col[h]] = 1.0
+    prec = np.concatenate([np.full(k, CURVE_RIDGE), np.full(28, cell_prior),
+                           np.full(len(names), player_prior)])
+    beta = np.zeros(x.shape[1])
+    yv = np.asarray(outcome, dtype=float)
+    for _ in range(iterations):
+        pr = 1.0 / (1.0 + np.exp(-np.clip(x @ beta, -30, 30)))
+        grad = x.T @ (yv - pr) - prec * beta
+        hess = (x * (pr * (1 - pr))[:, None]).T @ x + np.diag(prec)
+        step = np.linalg.solve(hess, grad)
+        beta += step
+        if np.max(np.abs(step)) < 1e-6:
+            break
+    shifts = beta[k:k + 28].reshape(4, 7)
+    return beta[:k], shifts, {h: float(beta[k + 28 + col[h]]) for h in names}
+
+
+def fit_fourth_downs(records, dp, cell_prior=DECISION_PRIOR, player_prior=PLAYER_PRIOR):
+    """One fit of the 4th-down choices: the league's go curve, a shift per part of the game and
+    margin, and each player's go shift, together (a player's shift is measured against the curve
+    and the shifts, not the curve alone); then the same for a kick being a field goal rather than
+    a punt. Returns (go coefficients, go shifts, {player: go shift}, kick coefficients, kick
+    shifts, {player: kick shift})."""
+    if not records:
+        return tuple(dp.go_coef), np.zeros((4, 7)), {}, tuple(dp.fg_kick_coef), np.zeros((4, 7)), {}
+    ph = np.array([r[0] for r in records])
+    mb = np.array([r[1] for r in records])
+    y = np.array([r[2] for r in records])
+    t = np.array([r[3] for r in records])
+    went = np.array([r[4] == "go" for r in records])
+    who = [r[5] for r in records]
+    go_coef, go_shift, go_players = _ridge_logistic(_go_basis(y, t), ph * 7 + mb, who, went,
+                                                    cell_prior, player_prior)
+    kick = np.flatnonzero(~went & (100 - y + 17 <= dp.fg_max_distance))
+    if not len(kick):
+        return (tuple(go_coef), go_shift, go_players, tuple(dp.fg_kick_coef), np.zeros((4, 7)), {})
+    kb = np.stack([np.ones(len(kick)), y[kick] / 100.0], axis=1)
+    fg = np.array([records[i][4] == "fg" for i in kick])
+    kick_coef, kick_shift, kick_players = _ridge_logistic(kb, ph[kick] * 7 + mb[kick],
+                                                          [who[i] for i in kick], fg,
+                                                          cell_prior, player_prior)
+    return tuple(go_coef), go_shift, go_players, tuple(kick_coef), kick_shift, kick_players
+
+
 LATE_DEFICITS = (-3, -8, -11, -16)
 KICK_RANGES = (45, 55)
 LATE_PRIOR = 10.0
@@ -697,13 +797,17 @@ class Tables:
         self.big_lead = BIG_LEAD
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
         self.fg_shift = np.zeros((4, 7))
+        self.player_go = {}
+        self.player_kick = {}
 
     @classmethod
-    def build(cls, matches, min_records=MIN_RECORDS, seed=0):
-        """Build every table from the export's matches."""
+    def build(cls, matches, min_records=MIN_RECORDS, seed=0, handles=None):
+        """Build every table from the export's matches; `handles` (match -> (home, away)) gives the
+        4th-down fit each player's own go and kick shifts."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
-        backed, late4 = [], []
-        for rows in matches.values():
+        backed, late4, fourth_recs = [], [], []
+        for code, rows in matches.items():
+            fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
             backed += backed_up_snaps(rows)
@@ -794,7 +898,12 @@ class Tables:
         kick = [good for _, _, went, good in conv if not went]
         t.two_good = float(np.mean(two)) if two else 0.57
         t.kick_good = float(np.mean(kick)) if kick else 0.98
-        t.go_shift, t.fg_shift = fit_decision_shifts(fourths, t.drive)
+        if FOURTH_JOINT:
+            go_coef, t.go_shift, t.player_go, kick_coef, t.fg_shift, t.player_kick = \
+                fit_fourth_downs(fourth_recs, t.drive)
+            t.drive = replace(t.drive, go_coef=go_coef, fg_kick_coef=kick_coef)
+        else:
+            t.go_shift, t.fg_shift = fit_decision_shifts(fourths, t.drive)
         n, k = np.zeros_like(t.early_fg), np.zeros_like(t.early_fg)
         for sit, cb, rb, kicked in early:
             n[sit, cb, rb] += 1
@@ -832,7 +941,8 @@ class Tables:
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
-                      inplay_theta=self.inplay_theta)
+                      inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
+                      fg_kick_coef=np.array(self.drive.fg_kick_coef))
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
         if self.backed is not None:
@@ -866,6 +976,9 @@ class Tables:
             t.go_shift, t.fg_shift = z["go_shift"], z["fg_shift"]
         if "late_fg" in z:
             t.late_fg = z["late_fg"]
+        if "go_coef" in z:
+            t.drive = replace(t.drive, go_coef=tuple(float(x) for x in z["go_coef"]),
+                              fg_kick_coef=tuple(float(x) for x in z["fg_kick_coef"]))
         t.big_lead = int(z["big_lead"][0]) if "big_lead" in z else None
         if t.big_lead is not None and t.big_lead < 0:
             t.big_lead = None
@@ -919,6 +1032,7 @@ class Start:
         self.kicks_second_half = np.full(n, -1, dtype=np.int8)
         self.theta = np.zeros((n, 2))
         self.aggression = np.zeros((n, 2))
+        self.kick = np.zeros((n, 2))
         self.pace = np.ones((n, 2))
         self.strength = np.zeros((n, 2))
         self.strength_game = np.zeros((n, 2))
@@ -980,6 +1094,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     late_exp = np.exp(tables.late_theta)
     inplay_exp = np.exp(tables.inplay_theta) if in_play else None
     agg = rep(start.aggression)
+    kick_pl = rep(getattr(start, "kick", np.zeros((S, 2))))
     pace = rep(start.pace)
     dp = tables.drive
     gc = dp.go_coef
@@ -1096,6 +1211,12 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         ix = live[ph == CONV]
         if len(ix):
             s_ = team[ix]
+            walk_off = (period[ix] >= 5) & ot_done[ix, 1 - s_] & (score[ix, s_] > score[ix, 1 - s_])
+            if walk_off.any():
+                phase[ix[walk_off]] = DONE
+                tally("ot_walk_off", walk_off.sum())
+                ix, s_ = ix[~walk_off], s_[~walk_off]
+        if len(ix):
             margin = np.clip(score[ix, s_] - score[ix, 1 - s_], -CONV_MARGIN, CONV_MARGIN)
             cp = np.where(period[ix] <= 2, 0, np.where(period[ix] == 3, 1,
                           np.where((period[ix] >= 5) | (clock[ix] <= 180), 3, 2)))
@@ -1196,7 +1317,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         kick_to_tie = (margin >= -3) & (make >= 0.3) & \
             (r1 < np.where(c <= 30, tables.late_fg[1], tables.late_fg[0]))
         go = np.where(late_trail, ~kick_to_tie, r1 < pgo)
-        kick_fg = np.where(late_trail, True, r2 < _sigmoid(ka + kb * u + tables.fg_shift[dph, mbk]))
+        kick_fg = np.where(late_trail, True,
+                           r2 < _sigmoid(ka + kb * u + tables.fg_shift[dph, mbk] + kick_pl[ix, o]))
         if tables.late_fourth is not None:
             band = np.select([margin >= e for e in LATE_DEFICITS], np.arange(len(LATE_DEFICITS)),
                              len(LATE_DEFICITS))
@@ -1205,6 +1327,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             table = late_trail & (margin < LATE_DEFICITS[0])
             go = np.where(table, r1 < lp[:, 0], go)
             kick_fg = np.where(table, r1 < lp[:, 0] + lp[:, 1], kick_fg)
+        ot_must = (p >= 5) & (margin < 0) & ot_done[ix, 1 - o]
+        go = np.where(ot_must & ((margin < -3) | (make <= 0)), True, go)
+        kick_fg = np.where(ot_must & (margin < -3), False, kick_fg)
         kick_fg = ~go & kick_fg & (make > 0)
         do_fg = fg_now | (fourth & kick_fg)
         do_punt = fourth & ~go & ~kick_fg
