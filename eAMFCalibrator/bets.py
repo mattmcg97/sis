@@ -14,6 +14,11 @@ bets -> latency -> join -> analysis
   analysis  the bet re-priced at the candidate's probability with the
             operator's own margin kept, and the margin both ways
 
+Several candidates (--candidate v4,v5,v6) share the bets, the lags and prod's
+messages: each is read at the prod message the bet saw, so every one is lagged
+the same. A model prices each prod message off its latest PLAY_OVER at or
+before it, at its own lines (v5@prod: at prod's), and has no pre-match price.
+
 The feeds carry no two-minute auto-suspend to measure the lag against, and
 per-match lags fitted off the lines (which agree for only a fifth of bets)
 made the odds follow prod worse than no lag at all; the odds are the signal.
@@ -487,19 +492,49 @@ def write_csv(path, rows, fields=None):
         w.writerows(rows)
 
 
-def candidate_stream():
-    """The candidate stream, a model that quotes its own lines read at prod's (bets were placed at
-    prod's line)."""
-    name = config.STREAMS["candidate"]
-    if snowflake_io.is_model(name) and "@" not in name:
-        version, _ = snowflake_io.model_version(name)
-        if version in snowflake_io.LINE_MODELS:
-            name = f"{name}@prod"
-    return name
+def candidate_streams():
+    """The candidates to re-price with: config.CANDIDATES (--candidate v4,v5,v6), else the candidate
+    stream. A model quotes its own lines, settled at them ('v5@prod' reads it at prod's)."""
+    return list(config.CANDIDATES or [config.STREAMS["candidate"]])
+
+
+def label(stream):
+    """'MODEL:v5' -> 'v5'; a table keeps its name."""
+    if snowflake_io.is_model(stream):
+        version, lines = snowflake_io.model_version(stream)
+        return version if lines is None else f"{version}@{lines}"
+    return stream
+
+
+CANDIDATE_FIELDS = ("candidate_prob", "candidate_line", "candidate_live", "same_line", "line_match",
+                    "candidate_result", "candidate_odds", "candidate_revenue", "simulated")
+
+
+def wide(results):
+    """One row per bet with every candidate's fields beside prod's, suffixed by its label."""
+    base = results[0][1]
+    out = []
+    for i, r in enumerate(base):
+        row = {k: v for k, v in r.items() if k not in CANDIDATE_FIELDS}
+        for name, rows in results:
+            row.update({f"{k}_{name}": rows[i].get(k) for k in CANDIDATE_FIELDS})
+        out.append(row)
+    return out
+
+
+def candidate_quotes(cur, stream, matches):
+    """A candidate's quote rows for these matches: a table in chunks; a model in one go (it chunks
+    its own reads, and prices every match at prod's messages and publish times)."""
+    if snowflake_io.is_model(stream):
+        return snowflake_io.fetch_quotes(cur, stream, matches)
+    rows = []
+    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
+        rows += snowflake_io.fetch_quotes(cur, stream, matches[start:start + config.MATCH_CHUNK_SIZE])
+    return rows
 
 
 def run(cur, out_dir):
-    """The whole pipeline: fetch, lag, join, write the CSVs and print the summary."""
+    """The whole pipeline: fetch, lag, join each candidate, write the CSVs and print the summary."""
     sql, params, _ = bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
@@ -508,30 +543,107 @@ def run(cur, out_dir):
           f"({sum(b.in_play for b in bets):,} in play)")
     if not bets:
         return None
-    prod_rows, cand_rows, finals = [], [], {}
-    cand_name = candidate_stream()
+    prod_rows, finals = [], {}
     chunk = config.MATCH_CHUNK_SIZE
     for start in range(0, len(matches), chunk):
         batch = matches[start:start + chunk]
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
-        cand_rows += snowflake_io.fetch_quotes(cur, cand_name, batch)
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
     prod_tl = timeline(prod_rows)
     lags = fit_lags(bets, prod_tl)
     signs = fit_line_signs(bets, prod_tl, lags)
-    rows = join(bets, lags, signs, prod_tl, quote_index(cand_rows), timeline(cand_rows), finals)
+    results = []
+    for stream in candidate_streams():
+        print(f"\n  pricing the bets with {label(stream)}", flush=True)
+        cand_rows = candidate_quotes(cur, stream, matches)
+        results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
+                                             timeline(cand_rows), finals)))
     os.makedirs(out_dir, exist_ok=True)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
                 for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0]))]
     write_csv(os.path.join(out_dir, "bets_latency.csv"), lag_rows)
-    write_csv(os.path.join(out_dir, "bets_sim.csv"), rows)
-    report(rows, lags, signs, cand_name)
-    return rows
+    if len(results) == 1:
+        write_csv(os.path.join(out_dir, "bets_sim.csv"), results[0][1])
+    else:
+        write_csv(os.path.join(out_dir, "bets_sim.csv"), wide(results))
+    report_prod(results[0][1], lags, signs)
+    for name, rows in results:
+        if len(results) > 1:
+            print(f"\n  ==== {name} ====")
+        report_candidate(rows, name)
+    if len(results) > 1:
+        print("\n".join(compare_report(results)))
+    return results[0][1] if len(results) == 1 else results
+
+
+def common(results):
+    """The bets (by position) every candidate re-priced."""
+    return [i for i in range(len(results[0][1])) if all(rows[i]["simulated"] for _, rows in results)]
+
+
+def compare(results, by=None, keep=None):
+    """{group: (bets, stake, prod margin %, [each candidate's margin %], [(price, result) effect])}
+    over the bets every candidate re-priced, so each is judged on the same money."""
+    base = results[0][1]
+    groups = defaultdict(list)
+    for i in common(results):
+        if keep is None or keep(base[i]):
+            groups["all" if by is None else base[i].get(by)].append(i)
+    out = {}
+    for g, ii in groups.items():
+        stake = sum(base[i]["stake"] for i in ii)
+        rev = sum(base[i]["revenue"] for i in ii)
+        margins, split = [], []
+        for _, rows in results:
+            margins.append(100 * sum(rows[i]["candidate_revenue"] for i in ii) / stake if stake else None)
+            split.append(effects([rows[i] for i in ii]))
+        out[g] = (len(ii), stake, 100 * rev / stake if stake else None, margins, split)
+    return out
+
+
+def compare_report(results):
+    """Lines of text: every candidate side by side on the bets they all re-priced."""
+    names = [n for n, _ in results]
+    lines = ["\n  side by side: the margin change on the bets every candidate re-priced "
+             "(each also alone above, on its own coverage)"]
+    for name, rows in results:
+        n = sum(r["simulated"] for r in rows)
+        stake = sum(r["stake"] for r in rows if r["simulated"])
+        lines.append(f"  {name:20s} re-priced {n:8,d} bets, {stake:12,.0f} stake")
+    lines.append(f"  {'':24s} {'bets':>7s} {'stake':>12s} {'prod':>7s} "
+                 + " ".join(f"{n[:9]:>9s}" for n in names))
+    vip = config.BET_VIP_VALUE.lower()
+    not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
+    cuts = [(None, None, ""), (None, not_vip, f"all but {config.BET_VIP_VALUE}"),
+            ("in_play", None, ""), (config.BET_GROUP_COLUMN, None, ""), ("market", None, ""),
+            ("period", None, "")]
+    for by, keep, name in cuts:
+        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep).items(),
+                                                     key=lambda kv: str(kv[0])):
+            if by == "in_play":
+                text = "in play" if g else "pre-match"
+            else:
+                text = name or (str(g) if by is None else f"{by.lower()} {g}")
+            lines.append(f"  {text[:24]:24s} {n:7,d} {stake:12,.0f} {m:6.2f}% "
+                         + " ".join(f"{c - m:+8.2f}" for c in margins))
+    lines.append("  (candidate columns: the change in margin, points, against prod's)")
+    lines.append("\n  change in revenue on those bets: from the candidate's odds on bets settled the "
+                 "same, and from bets its line settles differently")
+    for name, (price, result) in zip(names, compare(results).get("all", (0, 0, 0, [], []))[4]):
+        lines.append(f"  {name:20s} price {price:+12,.0f}   result {result:+12,.0f}   "
+                     f"total {price + result:+12,.0f}")
+    return lines
 
 
 def report(rows, lags, signs, cand_name):
     """Print the lag, the lines, where the money is and the margin both ways."""
+    report_prod(rows, lags, signs)
+    report_candidate(rows, cand_name)
+
+
+def report_prod(rows, lags, signs):
+    """Print the lag and the bets' lines against prod's: the same for every candidate."""
     print("\n  lag by operator: in-play moneyline odds against prod's probability, misfit at each lag "
           "(lower follows prod closer)")
     for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0])):
@@ -550,7 +662,11 @@ def report(rows, lags, signs, cand_name):
     for op, market, n, same, gaps in line_report(rows):
         print(f"  {str(op)[:22]:22s} {market:7s} {n:6,d} bets  on prod's line {100 * same:5.1f}%  "
               "commonest gaps " + ", ".join(f"{g:+g} ({c:,})" for g, c in gaps))
-    print("\n  where the money is, and how much the simulation re-prices:")
+
+
+def report_candidate(rows, cand_name):
+    """Print where the money is, what the candidate re-priced and the margin both ways."""
+    print(f"\n  where the money is, and how much {cand_name} re-prices:")
     print(f"  {'':22s} {'bets':>8s} {'stake':>12s} {'re-priced':>10s} {'of stake':>9s}")
     cov = coverage(rows)
     for (in_play, market), (n, stake, n_s, stake_s) in sorted(cov.items(), key=lambda kv: (not kv[0][0], str(kv[0][1]))):
