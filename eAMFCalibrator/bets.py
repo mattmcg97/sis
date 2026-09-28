@@ -38,7 +38,7 @@ from .pipeline import to_unit_probability
 from .snowflake_io import fetch_all
 
 FEED_MARKET = {(1, 1): 50, (1, 2): 51, (2, 1): 52, (2, 2): 53, (3, 1): 54, (3, 2): 55}
-WON, LOST, PUSH, OTHER = "won", "lost", "push", "other"
+WON, LOST, PUSH, OTHER, CASHED = "won", "lost", "push", "other", "cashed out"
 
 
 @dataclass
@@ -269,11 +269,11 @@ def fit_line_signs(bets, tl, lags):
 
 
 def result_of(bet):
-    """won / lost / push off the bet's revenue, stake and odds; other for anything else (cash out,
-    part settled)."""
-    if not bet.stake or not bet.odds:
-        return OTHER
+    """won / lost / push off the bet's revenue, stake and odds; cashed out by the operator's flag;
+    other for anything else (a payout that is none of them)."""
     if str(bet.extra.get("BET_CASHED_OUT", "")).strip().lower() == "yes":
+        return CASHED
+    if not bet.stake or not bet.odds:
         return OTHER
     payout = (bet.stake - bet.revenue) / bet.stake
     if abs(payout) < 0.01:
@@ -297,11 +297,13 @@ def settle(market, line, final):
     return PUSH if r is None else WON if r else LOST
 
 
-def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None):
+def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None, checks=None, same_state=False):
     """One row per bet: prod's quote as published one lag before the bet (at bet time pre-match), the
     candidate's quote at the same message (at the same time when prod's quote has none), and the bet
     placed with the candidate instead: the same selection at the candidate's line and probability,
-    the operator's margin kept, settled at that line."""
+    the operator's margin kept, settled at that line. `checks` (bet_checks.Checks) adds when in the
+    match the bet was placed and the model's state at prod's message; with same_state, a bet is
+    re-priced only where the model's state carries the same information as prod's."""
     finals = finals or {}
     rows = []
     for b in bets:
@@ -343,6 +345,9 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None):
             row["candidate_result"] = row["result"]
         else:
             row["candidate_result"] = settle(market, cand_line, final)
+        if checks is not None:
+            row.update(checks.for_bet(b, msg))
+        row["state_required"] = same_state
         row.update(reprice(row))
         row.update(b.extra)
         rows.append(row)
@@ -355,7 +360,10 @@ def reprice(row):
     settled at the candidate's line. Revenue as the book sees it."""
     p, c, odds, stake = row["stream_prob"], row["candidate_prob"], row["odds"], row["stake"]
     result, result_c = row["result"], row.get("candidate_result")
-    if not (p and c and odds and row["on_prod_line"]) or result == OTHER or result_c in (None, OTHER):
+    if row.get("excluded") or (row.get("state_required") and not row.get("state_ok")):
+        return dict(candidate_odds=None, candidate_revenue=None, simulated=False)
+    if not (p and c and odds and row["on_prod_line"]) or result in (OTHER, CASHED) \
+            or result_c in (None, OTHER, CASHED):
         return dict(candidate_odds=None, candidate_revenue=None, simulated=False)
     odds_c = odds * p / c
     revenue_c = stake - (stake * odds_c if result_c == WON else stake if result_c == PUSH else 0.0)
@@ -437,14 +445,23 @@ def why_not(r):
     """Why a bet was not re-priced."""
     if r["simulated"]:
         return "simulated"
+    if r.get("excluded"):
+        return f"placed {r['match_phase']}"
+    if r["result"] == CASHED:
+        return "cashed out"
     if r["stream_prob"] is None:
         return "no prod price"
+    if r.get("state_required") and r.get("snapshot_message") is None:
+        return "before the model's first PLAY_OVER"
     if r["candidate_prob"] is None:
         return "no candidate price"
+    if r.get("state_required") and not r.get("state_ok"):
+        return ("score changed since the model's PLAY_OVER" if r.get("score_changed")
+                else "SCOUTING_FULL missing prod's messages")
     if not r["on_prod_line"]:
         return "not on prod's line"
     if r["result"] == OTHER:
-        return "result other (cash out, part settled)"
+        return "payout not won, lost or push"
     return "no final score"
 
 
@@ -507,7 +524,8 @@ def label(stream):
 
 
 CANDIDATE_FIELDS = ("candidate_prob", "candidate_line", "candidate_live", "same_line", "line_match",
-                    "candidate_result", "candidate_odds", "candidate_revenue", "simulated")
+                    "candidate_result", "candidate_odds", "candidate_revenue", "state_required",
+                    "simulated")
 
 
 def wide(results):
@@ -546,9 +564,25 @@ def check_models(streams):
                 getattr(config, f"{version.upper()}_MODEL_DIR"))
 
 
-def run(cur, out_dir):
-    """The whole pipeline: fetch, lag, join each candidate, write the CSVs and print the summary."""
-    check_models(candidate_streams())
+def fetch_checks(cur, matches, prod_rows):
+    """bet_checks.Checks off SCOUTING_FULL and the scores for these matches, on prod's clock."""
+    from . import bet_checks, scouting
+    table = snowflake_io.scouting_table(cur)
+    rows, scores = [], []
+    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
+        batch = matches[start:start + config.MATCH_CHUNK_SIZE]
+        rows += scouting.fetch_scouting(cur, table, batch, windowed=False)
+        scores += snowflake_io.fetch_scores(cur, batch)
+    return bet_checks.Checks(bet_checks.build_feeds(rows), bet_checks.message_times(prod_rows),
+                             bet_checks.score_index(scores))
+
+
+def run(cur, out_dir, only_checks=False):
+    """The whole pipeline: fetch, lag, check, join each candidate, write the CSVs and print the
+    summary. only_checks stops after the checks (no candidate is priced)."""
+    from . import bet_checks
+    if not only_checks:
+        check_models(candidate_streams())
     sql, params, _ = bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
@@ -563,16 +597,24 @@ def run(cur, out_dir):
         batch = matches[start:start + chunk]
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
+    checks = fetch_checks(cur, matches, prod_rows)
     prod_tl = timeline(prod_rows)
+    del prod_rows
     lags = fit_lags(bets, prod_tl)
     signs = fit_line_signs(bets, prod_tl, lags)
+    os.makedirs(out_dir, exist_ok=True)
+    if only_checks:
+        rows = join(bets, lags, signs, prod_tl, {}, None, finals, checks)
+        write_csv(os.path.join(out_dir, "bets_checks.csv"), rows)
+        print("\n".join(bet_checks.report(rows, checks)))
+        return rows
     results = []
     for stream in candidate_streams():
         print(f"\n  pricing the bets with {label(stream)}", flush=True)
         cand_rows = candidate_quotes(cur, stream, matches)
         results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
-                                             timeline(cand_rows), finals)))
-    os.makedirs(out_dir, exist_ok=True)
+                                             timeline(cand_rows), finals, checks,
+                                             same_state=snowflake_io.is_model(stream))))
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
                 for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0]))]
@@ -582,6 +624,7 @@ def run(cur, out_dir):
     else:
         write_csv(os.path.join(out_dir, "bets_sim.csv"), wide(results))
     report_prod(results[0][1], lags, signs)
+    print("\n".join(bet_checks.report(results[0][1], checks)))
     for name, rows in results:
         if len(results) > 1:
             print(f"\n  ==== {name} ====")
