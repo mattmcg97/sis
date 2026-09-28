@@ -987,7 +987,18 @@ python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version
     --history eAMFCalibrator/out/match_history.csv --since 2026-09-10 --until 2026-09-22
 ```
 
-Build the model on matches before `--since`, or the comparison is in-sample.
+Build the model on matches before `--since`, or the comparison is in-sample:
+`vN-build --until DATE` builds everything (play tables, profiles and NB2) on
+the matches before DATE:
+
+```bash
+python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-10 \
+    --out v6_model_pre10 --history eAMFCalibrator/out/match_history.csv
+```
+
+Snapshots in one match share one final, so a cell's real sample is its
+matches, not its snapshots. Read cells with a few hundred matches behind
+them.
 By quarter and game state (level, one score or two+ apart, and whether the
 leader or the trailer has the ball), it prints:
 - **real:** the share of snapshots where the rest of the game made exactly
