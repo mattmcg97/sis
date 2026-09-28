@@ -37,6 +37,40 @@ SUSPENDED = "SUSPENDED"
 ELAPSED_STEP = 2
 
 
+def _message(value):
+    """A message count, or None."""
+    try:
+        return None if value in (None, "") else int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def side_known(snaps):
+    """Whether TEAM_A's side is tied to the scoreboard (home or away) for a match's snapshots."""
+    return bool(snaps) and all(str(s.get("team_a_side") or "").lower() in ("home", "away")
+                               for s in snaps)
+
+
+def confident_windows(snaps, book_messages):
+    """PLAY_OVER message -> the message its state lasts until (the next PLAY_STARTED, or the next
+    PLAY_OVER): the prod messages a book priced at that PLAY_OVER is the state for. Only
+    PLAY_OVERs with a book; none for a match whose TEAM_A side is not known."""
+    if not side_known(snaps):
+        return {}
+    booked = set(book_messages)
+    rows = sorted(snaps, key=lambda r: _message(r["message"]))
+    out = {}
+    for k, r in enumerate(rows):
+        m = _message(r["message"])
+        if m not in booked:
+            continue
+        ends = [e for e in (_message(r.get("next_start_message")),
+                            _message(rows[k + 1]["message"]) if k + 1 < len(rows) else None)
+                if e is not None]
+        out[m] = min(ends) if ends else float("inf")
+    return out
+
+
 def description(market_id, line):
     """MARKET_DESCRIPTION text the calibrator's parse_line reads back."""
     if market_id == ML_HOME:

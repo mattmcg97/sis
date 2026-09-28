@@ -1631,18 +1631,20 @@ python -m eAMFCalibrator bets check --since 2026-09-25 --until 2026-09-28
 `bets check` runs the checks alone (no candidate is priced, so it's quick)
 and writes `out/bets_checks.csv`. Every `bets` run prints them too.
 
-- **When in the match.** Kickoff (the first `PLAY_STARTED`), two minutes
-  left in Q4 (the first row in the fourth quarter with the clock at 120s or
-  under) and the match-over message are read off SCOUTING_FULL. They're put
-  on prod's clock through the message count (prod's first row on or after
-  that message). Each bet is placed pre-match, in play, after two minutes
-  left, or after match over. Bets marked pre-match after kickoff, marked in
-  play before kickoff, or placed after the match-over message are left out
-  (resettlements, trader reviews). `BET_PHASE_TOLERANCE` (10s) is allowed
-  either side. The report gives bets, stake, margin and seconds past the
-  bound for each, by operator. For bets after two minutes left, that's how
-  long after the mark they were accepted. It also names the match-over
-  message it found. Where none is found, the match's last feed message
+- **When in the match.** The start (the first quarter's start message, or
+  the first `PLAY_STARTED` without one), two minutes left in Q4 (the first
+  row in the fourth quarter with the clock at 120s or under) and the
+  match-over message are read off SCOUTING_FULL. They're put on prod's
+  clock through the message count (prod's first row on or after that
+  message). Each bet is placed pre-match, in play, after two minutes left,
+  or after match over. Bets marked pre-match after the start, marked in play
+  before it, accepted after two minutes left (the operators suspend there;
+  `EXCLUDE_AFTER_TWO_MINUTES`) or after the match-over message are left out
+  (resettlements, trader reviews). `BET_PHASE_TOLERANCE` (10s) is allowed.
+  The report gives bets, stake, margin and seconds past the bound for each,
+  by operator. It also lists the statuses seen from two minutes left
+  (seconds after the mark) and on the matches' last rows. That's how the
+  match-over message is found; where none is, the match's last feed message
   stands in.
 - **Cash-outs.** `BET_CASHED_OUT = Yes` is its own result (`cashed out`).
   They're settled at the operator's cash-out offer, and there's no candidate
@@ -1650,19 +1652,31 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
   by operator and pre-match or in play: bets, stake, share of stake and
   margin. Payouts that are none of won, lost, push or cashed out are
   `payout not won, lost or push`.
-- **The same information.** A model knows the plays up to its latest
-  `PLAY_OVER`. At the prod message each bet saw, a model is only read where
-  both of these hold:
-  - no score changed since that `PLAY_OVER` (prod already knows it);
-  - SCOUTING_FULL holds every message prod had since then (at most
-    `MAX_SCOUTING_GAP`, `--gap N`, default 0, may be missing).
+- **The same information: the exact feed messages behind every price.**
+  Prod's price the bet saw was made at feed message m
+  (`EVENT_MESSAGE_COUNT`, the SCOUTING_FULL message count; `message`).
+  - **The models** (v4–v6) price off their latest `PLAY_OVER` s (`feed_from`
+    to `feed_to` = m). They now only price where they're sure of the state
+    (see eAMFModel's README): the latest `PLAY_OVER`, one they can read, with
+    TEAM_A's side known, until the next play starts. The check reads the
+    same snapshots the same way without simulating. It counts which
+    `PLAY_OVER`s can't be read and why, and the matches with TEAM_A's side
+    not known.
+  - **A candidate table's** quote at message c (`candidate_message`) is held
+    to the same rule.
+  - A price is only compared where the feed didn't move on between it and
+    m: no play started or other message in SCOUTING_FULL beyond
+    `NEUTRAL_FEED_MESSAGES` (`BET_SUSPEND`, `BET_UNSUSPEND`), no score
+    change, and no prod message SCOUTING_FULL lacks (at most
+    `MAX_SCOUTING_GAP`, `--gap N`, default 0).
 
-  Otherwise the bet isn't re-priced for that model, with the reason given
-  (`score changed since the model's PLAY_OVER`, `SCOUTING_FULL missing
-  prod's messages`, `before the model's first PLAY_OVER`). The report
-  gives the share with the same state, the gaps, the seconds since the
-  `PLAY_OVER` by period, and the matches where SCOUTING_FULL holds under
-  99% of prod's messages from kickoff to match over. The side-by-side table
+  Anything else isn't re-priced, with the reason (`model: feed moved on:
+  PLAY_STARTED`, `model: the latest PLAY_OVER cannot be read`, `candidate:
+  score changed`, ...). The report gives the share with the same
+  information and the commonest reasons: a message that moved the feed on
+  but shouldn't have is one to add to `NEUTRAL_FEED_MESSAGES`. It also
+  gives, by period, the seconds from s to m, and the matches where
+  SCOUTING_FULL holds under 99% of prod's messages. The side-by-side table
   is on bets every candidate re-priced, so every comparison there is on the
   same information.
 

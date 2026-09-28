@@ -175,8 +175,8 @@ def price_at_time(tl, match, market, t):
 
 
 def quote_index(quote_rows):
-    """(match, market) -> (sorted message counts, [(probability, line, live)]) of its live rows, off
-    snowflake_io.fetch_quotes rows; the latest live row per message wins."""
+    """(match, market) -> (sorted message counts, [(probability, line, live, message)]) of its live
+    rows, off snowflake_io.fetch_quotes rows; the latest live row per message wins."""
     latest = {}
     for r in quote_rows:
         match, market, publish, prob, _, desc, msg, status, active = r[:9]
@@ -192,12 +192,13 @@ def quote_index(quote_rows):
     out = {}
     for key, qs in grouped.items():
         qs.sort(key=lambda q: q[0])
-        out[key] = ([q[0] for q in qs], [q[1:] for q in qs])
+        out[key] = ([q[0] for q in qs], [q[1:] + (q[0],) for q in qs])
     return out
 
 
 def price_at(index, match, market, message):
-    """(probability, line, live) of the latest live quote at or before this message, or None."""
+    """(probability, line, live, its message) of the latest live quote at or before this message,
+    or None."""
     entry = index.get((match, market))
     if entry is None or message is None:
         return None
@@ -317,7 +318,7 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None, checks=Non
             c = price_at(cand, b.match_code, market, msg)
         else:
             q = price_at_time(cand_tl or {}, b.match_code, market, seen)
-            c = q[1:] if q else None
+            c = q[1:] + (q[0],) if q else None
         sign = signs.get((b.operator, market), (1,))[0]
         line = None if b.line is None else sign * b.line
         final = finals.get(b.match_code)
@@ -347,6 +348,7 @@ def join(bets, lags, signs, prod_tl, cand, cand_tl=None, finals=None, checks=Non
             row["candidate_result"] = settle(market, cand_line, final)
         if checks is not None:
             row.update(checks.for_bet(b, msg))
+            row.update(checks.candidate(b.match_code, c[3] if c else None, msg))
         row["state_required"] = same_state
         row.update(reprice(row))
         row.update(b.extra)
@@ -360,7 +362,8 @@ def reprice(row):
     settled at the candidate's line. Revenue as the book sees it."""
     p, c, odds, stake = row["stream_prob"], row["candidate_prob"], row["odds"], row["stake"]
     result, result_c = row["result"], row.get("candidate_result")
-    if row.get("excluded") or (row.get("state_required") and not row.get("state_ok")):
+    if row.get("excluded") or row.get("candidate_ok") is False \
+            or (row.get("state_required") and not row.get("state_ok")):
         return dict(candidate_odds=None, candidate_revenue=None, simulated=False)
     if not (p and c and odds and row["on_prod_line"]) or result in (OTHER, CASHED) \
             or result_c in (None, OTHER, CASHED):
@@ -451,13 +454,12 @@ def why_not(r):
         return "cashed out"
     if r["stream_prob"] is None:
         return "no prod price"
-    if r.get("state_required") and r.get("snapshot_message") is None:
-        return "before the model's first PLAY_OVER"
+    if r.get("state_required") and not r.get("state_ok"):
+        return f"model: {r.get('state_reason') or 'not the same information'}"
     if r["candidate_prob"] is None:
         return "no candidate price"
-    if r.get("state_required") and not r.get("state_ok"):
-        return ("score changed since the model's PLAY_OVER" if r.get("score_changed")
-                else "SCOUTING_FULL missing prod's messages")
+    if r.get("candidate_ok") is False:
+        return f"candidate: {r.get('candidate_reason')}"
     if not r["on_prod_line"]:
         return "not on prod's line"
     if r["result"] == OTHER:
@@ -523,9 +525,9 @@ def label(stream):
     return stream
 
 
-CANDIDATE_FIELDS = ("candidate_prob", "candidate_line", "candidate_live", "same_line", "line_match",
-                    "candidate_result", "candidate_odds", "candidate_revenue", "state_required",
-                    "simulated")
+CANDIDATE_FIELDS = ("candidate_message", "candidate_prob", "candidate_line", "candidate_live",
+                    "candidate_ok", "candidate_reason", "same_line", "line_match", "candidate_result",
+                    "candidate_odds", "candidate_revenue", "state_required", "simulated")
 
 
 def wide(results):
@@ -565,16 +567,18 @@ def check_models(streams):
 
 
 def fetch_checks(cur, matches, prod_rows):
-    """bet_checks.Checks off SCOUTING_FULL and the scores for these matches, on prod's clock."""
-    from . import bet_checks, scouting
-    table = snowflake_io.scouting_table(cur)
-    rows, scores = [], []
-    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
-        batch = matches[start:start + config.MATCH_CHUNK_SIZE]
-        rows += scouting.fetch_scouting(cur, table, batch, windowed=False)
-        scores += snowflake_io.fetch_scores(cur, batch)
-    return bet_checks.Checks(bet_checks.build_feeds(rows), bet_checks.message_times(prod_rows),
-                             bet_checks.score_index(scores))
+    """bet_checks.Checks off SCOUTING_FULL, the scores and the models' PLAY_OVER snapshots (the
+    ones v4-v6 read) for these matches, on prod's clock."""
+    from . import bet_checks
+    prod_by = defaultdict(list)
+    for r in prod_rows:
+        prod_by[r[0]].append(r)
+    keep = {}
+    snapshots, _ = snowflake_io._play_over_snapshots(cur, matches, prod_by_match=prod_by, keep=keep)
+    books, guessed, reasons = bet_checks.model_books(snapshots)
+    return bet_checks.Checks(bet_checks.build_feeds(keep.get("scouting", [])),
+                             bet_checks.message_times(prod_rows),
+                             bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons)
 
 
 def run(cur, out_dir, only_checks=False):
