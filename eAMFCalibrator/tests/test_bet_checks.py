@@ -214,9 +214,27 @@ class TestCommand(unittest.TestCase):
             keep["scouting"], keep["scores"] = SCOUTING, SCORES
             self.assertEqual(len(prod_by_match["M1"]), len(PROD))
             return {"M1": [snap]}, []
-        with mock.patch.object(snowflake_io, "_play_over_snapshots", side_effect=fake):
+        with mock.patch.object(snowflake_io, "_play_over_snapshots", side_effect=fake), \
+                mock.patch.object(snowflake_io, "fetch_sports",
+                                  return_value=bet_checks.Counter({"AF": 1})) as sports:
             c = bets.fetch_checks(None, ["M1"], PROD)
         self.assertEqual((c.books, c.feeds["M1"].over), ({"M1": [5]}, 30))
+        sports.assert_called_once_with(None, ["M1"])
+        self.assertEqual(c.diag["vocab"][2], {"M1"})
+
+    def test_the_sport_check_shows_every_message_and_flags_another_sport(self):
+        rows = [srow(1, "FIRST_QUARTER_STARTED", match="AF001"), srow(2, kind="PLAY_STARTED", match="AF001"),
+                srow(3, kind="FOUL_COMMITTED_TEAM_A", match="AF001"),
+                srow(1, kind="FREE_THROW_MADE", match="EB001")]
+        vocab = bet_checks.vocabulary(rows)
+        self.assertEqual(vocab[2], {"EB001"})
+        c = checks()
+        c.diag = {"vocab": vocab, "sports": bet_checks.Counter({"AF": 1})}
+        text = "\n".join(bet_checks.report([], c))
+        self.assertIn("EVENT's SPORT_CODE for the bets' matches: AF 1", text)
+        self.assertIn("not starting AF: 1 (EB001)", text)
+        self.assertIn("another sport: FREE_THROW_MADE 1", text)
+        self.assertIn("FOUL_COMMITTED_TEAM_A 1/1", text)
 
 
 if __name__ == "__main__":

@@ -160,6 +160,29 @@ def model_books(snapshots, diag=None):
     return books, guessed, reasons
 
 
+OTHER_SPORT = re.compile(r"FREE_THROW|REBOUND|THREE_POINT|JUMP_BALL|DUNK|LAYUP|ASSIST|STEAL|"
+                         r"SHOT|BASKET|GOAL_SCORED|CORNER|OFFSIDE|YELLOW_CARD|RED_CARD|INNING|WICKET")
+
+
+def vocabulary(scouting_rows):
+    """(Counter of (column, message) -> rows, Counter of (column, message) -> matches, match codes
+    not starting with the AF prefix) over SCOUTING_FULL rows: the check that only Madden reached
+    the join."""
+    from .scouting import MATCH_PREFIX
+    rows, matches, seen = Counter(), Counter(), set()
+    odd = set()
+    for r in scouting_rows:
+        if not str(r[0]).upper().startswith(MATCH_PREFIX):
+            odd.add(r[0])
+        for col, value in (("status", _text(r[3])), ("in play", _text(r[4]))):
+            if value:
+                rows[(col, value)] += 1
+                if (r[0], col, value) not in seen:
+                    seen.add((r[0], col, value))
+                    matches[(col, value)] += 1
+    return rows, matches, odd
+
+
 def side_diagnosis(scouting_rows, score_rows, matches):
     """For matches whose TEAM_A side is not known: Counter of why (no scoring message by a score
     change, or votes split), and Counter of the feed messages at their score changes."""
@@ -373,7 +396,27 @@ def report(rows, checks):
     state against prod's, with SCOUTING_FULL's completeness by match."""
     from .bets import CASHED
     left_out = excluded_phases()
-    lines = ["\n  when the bets were placed, on prod's clock: seconds after the start (pre-match after "
+    lines = []
+    sports = checks.diag.get("sports")
+    vocab = checks.diag.get("vocab")
+    if sports is not None or vocab is not None:
+        lines.append("\n  sport check: only AF may reach the join")
+        if sports is not None:
+            lines.append("  EVENT's SPORT_CODE for the bets' matches: "
+                         + (", ".join(f"{k} {v:,}" for k, v in sports.most_common()) or "none found"))
+        if vocab is not None:
+            counts, seen_in, odd = vocab
+            lines.append(f"  SCOUTING_FULL match codes not starting AF: {len(odd):,}"
+                         + (f" ({', '.join(sorted(map(str, odd))[:5])})" if odd else ""))
+            flagged = [k for k in counts if OTHER_SPORT.search(k[1])]
+            lines.append("  messages that look like another sport: "
+                         + (", ".join(f"{v} {counts[(c, v)]:,}" for c, v in flagged) or "none"))
+            lines.append("  every SCOUTING_FULL message (rows / matches):")
+            for col in ("in play", "status"):
+                items = sorted(((k, n) for k, n in counts.items() if k[0] == col), key=lambda kv: -kv[1])
+                lines.append(f"    {col}: " + ", ".join(f"{v} {n:,}/{seen_in[(c, v)]:,}"
+                                                     for (c, v), n in items))
+    lines += ["\n  when the bets were placed, on prod's clock: seconds after the start (pre-match after "
              "the start), before it (in play before the start), after two minutes left in Q4, after "
              f"the match-over message; the (left out) ones allow {config.BET_PHASE_TOLERANCE}s",
              f"  {'':44s} {'bets':>7s} {'stake':>11s} {'margin':>8s}   seconds past the bound "

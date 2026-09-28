@@ -1631,6 +1631,13 @@ python -m eAMFCalibrator bets check --since 2026-09-25 --until 2026-09-28
 `bets check` runs the checks alone (no candidate is priced, so it's quick)
 and writes `out/bets_checks.csv`. Every `bets` run prints them too.
 
+- **Sport check.** Only AF may reach the join. The bets are filtered to
+  `SPORT_CODE = 'AF'`, and everything else is read by those bets' match
+  codes (SCOUTING_FULL also by `MATCH_CODE LIKE 'AF%'`). The check confirms
+  it from the data: EVENT's `SPORT_CODE` for the matches, any SCOUTING_FULL
+  match code not starting AF, messages that look like another sport
+  (free throws, rebounds, ...), and every SCOUTING_FULL message with its
+  rows and matches.
 - **When in the match.** The start (the first quarter's start message, or
   the first `PLAY_STARTED` without one), two minutes left in Q4 (the first
   row in the fourth quarter with the clock at 120s or under) and the

@@ -389,6 +389,24 @@ def _info_rows(rows, with_finals):
     return out
 
 
+def fetch_sports(cur, match_codes):
+    """SPORT_CODE -> matches, off EVENT, for these match codes (a check nothing else sneaks in)."""
+    from collections import Counter
+    out = Counter()
+    codes = list(match_codes)
+    for start in range(0, len(codes), config.MATCH_CHUNK_SIZE):
+        batch = codes[start:start + config.MATCH_CHUNK_SIZE]
+        _, rows = fetch_all(cur, f"""
+            SELECT SPORT_CODE, COUNT(DISTINCT MATCH_CODE)
+            FROM {qualified(EVENT_TABLE)}
+            WHERE MATCH_CODE IN ({_in_clause(batch)})
+            GROUP BY SPORT_CODE
+        """, tuple(batch))
+        for sport, n in rows:
+            out[sport] += n
+    return out
+
+
 def fetch_match_info(cur, match_codes):
     """AMFELO-shaped rows (no finals) for these matches: players, teams,
     stream and start time, off EVENT."""
