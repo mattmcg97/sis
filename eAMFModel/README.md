@@ -952,6 +952,35 @@ and a lead of 9–16: 3.6 more against a real 2.5, and 54% no more points
 against 67%. It isn't in the play tables (the lead split didn't move it) or
 in the 4th-down choices.
 
+**4th downs, fitted jointly (Sep 2026).** v6 went for it on 4th down too
+often inside field-goal range: 44% against a real 33% from 6–10 yards out,
+and 51% against 34% from 11–20. So it turned field goals into touchdown
+tries: too few games finished with exactly 3 or 10 more points, and too
+many with 7 or 14 (`remaining`). The league curve was a fixed constant.
+Each player's aggression and the part-of-game shifts were each measured
+against it separately, so the league's own difference from the curve was
+counted twice. Now each build fits the curve, the part-of-game and margin
+shifts, and every player's own go shift together (`sim6.fit_fourth_downs`).
+It does the same for a kick being a field goal rather than a punt, with
+each player's own kick shift (`Profile.kick`). The fitted curves are saved
+in the tables. Fitted before Sep 10 and checked on Sep 10–22 (players left
+out):
+- log loss per decision went from 0.534 to 0.529;
+- the go rate from 6–10 yards out went from 44% to 38%, and from 11–20
+  yards out from 51% to 40%.
+
+The overpriced overs at 3.5–13.5 points still to come shrank. A lone field
+goal in a level Q3 (too rare) and a lone touchdown when trailing by two
+scores in Q4 (too common) are still open.
+
+**Overtime (`OT_RULES`).** A touchdown that wins overtime ends the game
+with no conversion, which is 6, not 7. A side trailing once the other has
+had the ball never punts or kicks short of a tie. A side level or ahead
+before the other has had the ball goes for it in field-goal range at the
+rate real overtimes show (`ot_go`, about two in three). Only about 50
+overtimes a month are played, so the rest of the overtime gap to reality
+is within noise.
+
 ```bash
 python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --out v6_model --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv
 python -m eAMFCalibrator report --candidate v5,v6 --v5-model v5_model --v6-model v6_model --since 2026-09-18 --until 2026-09-25 --out eAMFCalibrator/out_v5_v6

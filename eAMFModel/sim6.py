@@ -589,6 +589,24 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
 
 
 FOURTH_JOINT = True
+OT_RULES = True
+OT_KICK_RANGE = 55
+OT_GO_PRIOR = 2.0
+
+
+def ot_first_fourths(rows):
+    """Every overtime 4th down in field-goal range by a side level or ahead: whether it went for
+    it (a field goal there does not end the game while the other side has yet to have the ball)."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"] \
+                or not a["period"] or a["period"] != b["period"] or _i(a["period"]) < 5:
+            continue
+        margin = _margin(a, a["offense"])
+        if margin is None or margin < 0 or 100 - _i(a["field_position"]) + 17 > OT_KICK_RANGE:
+            continue
+        out.append(b["play_kind"] not in ("PUNT", "FIELD_GOAL"))
+    return out
 CURVE_RIDGE = 0.01
 PLAYER_PRIOR = 2.0
 
@@ -799,15 +817,17 @@ class Tables:
         self.fg_shift = np.zeros((4, 7))
         self.player_go = {}
         self.player_kick = {}
+        self.ot_go = 0.5
 
     @classmethod
     def build(cls, matches, min_records=MIN_RECORDS, seed=0, handles=None):
         """Build every table from the export's matches; `handles` (match -> (home, away)) gives the
         4th-down fit each player's own go and kick shifts."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
-        backed, late4, fourth_recs = [], [], []
+        backed, late4, fourth_recs, ot_first = [], [], [], []
         for code, rows in matches.items():
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
+            ot_first += ot_first_fourths(rows)
             late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
             backed += backed_up_snaps(rows)
@@ -898,6 +918,7 @@ class Tables:
         kick = [good for _, _, went, good in conv if not went]
         t.two_good = float(np.mean(two)) if two else 0.57
         t.kick_good = float(np.mean(kick)) if kick else 0.98
+        t.ot_go = (sum(ot_first) + OT_GO_PRIOR * 0.5) / (len(ot_first) + OT_GO_PRIOR)
         if FOURTH_JOINT:
             go_coef, t.go_shift, t.player_go, kick_coef, t.fg_shift, t.player_kick = \
                 fit_fourth_downs(fourth_recs, t.drive)
@@ -942,7 +963,7 @@ class Tables:
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
                       inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
-                      fg_kick_coef=np.array(self.drive.fg_kick_coef))
+                      fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]))
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
         if self.backed is not None:
@@ -976,6 +997,8 @@ class Tables:
             t.go_shift, t.fg_shift = z["go_shift"], z["fg_shift"]
         if "late_fg" in z:
             t.late_fg = z["late_fg"]
+        if "ot_go" in z:
+            t.ot_go = float(z["ot_go"][0])
         if "go_coef" in z:
             t.drive = replace(t.drive, go_coef=tuple(float(x) for x in z["go_coef"]),
                               fg_kick_coef=tuple(float(x) for x in z["fg_kick_coef"]))
@@ -1211,7 +1234,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         ix = live[ph == CONV]
         if len(ix):
             s_ = team[ix]
-            walk_off = (period[ix] >= 5) & ot_done[ix, 1 - s_] & (score[ix, s_] > score[ix, 1 - s_])
+            walk_off = OT_RULES & (period[ix] >= 5) & ot_done[ix, 1 - s_] \
+                & (score[ix, s_] > score[ix, 1 - s_])
             if walk_off.any():
                 phase[ix[walk_off]] = DONE
                 tally("ot_walk_off", walk_off.sum())
@@ -1327,9 +1351,13 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             table = late_trail & (margin < LATE_DEFICITS[0])
             go = np.where(table, r1 < lp[:, 0], go)
             kick_fg = np.where(table, r1 < lp[:, 0] + lp[:, 1], kick_fg)
-        ot_must = (p >= 5) & (margin < 0) & ot_done[ix, 1 - o]
-        go = np.where(ot_must & ((margin < -3) | (make <= 0)), True, go)
-        kick_fg = np.where(ot_must & (margin < -3), False, kick_fg)
+        if OT_RULES:
+            ot_first = (p >= 5) & (margin >= 0) & ~ot_done[ix, 1 - o] & (kd_ <= OT_KICK_RANGE)
+            go = np.where(ot_first, r1 < tables.ot_go, go)
+            kick_fg = np.where(ot_first, True, kick_fg)
+            ot_must = (p >= 5) & (margin < 0) & ot_done[ix, 1 - o]
+            go = np.where(ot_must & ((margin < -3) | (make <= 0)), True, go)
+            kick_fg = np.where(ot_must & (margin < -3), False, kick_fg)
         kick_fg = ~go & kick_fg & (make > 0)
         do_fg = fg_now | (fourth & kick_fg)
         do_punt = fourth & ~go & ~kick_fg
