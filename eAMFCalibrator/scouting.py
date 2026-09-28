@@ -408,6 +408,16 @@ def _int(value):
 def team_a_side(rows, scores):
     """'home' / 'away' / None: which scoreboard side TEAM_A is in this match,
     read off its scoring messages against the next score change."""
+    votes = team_a_votes(rows, scores)
+    if not votes:
+        return None
+    side, n = votes.most_common(1)[0]
+    return side if n >= 0.8 * sum(votes.values()) else None
+
+
+def team_a_votes(rows, scores):
+    """Counter of the side TEAM_A's scoring messages put it on: each touchdown or
+    field goal against a score change within three messages after it."""
     changes = sorted((s[1], s[3] or 0, s[4] or 0) for s in scores if s[1] is not None)
     votes = Counter()
     for r in rows:
@@ -425,10 +435,7 @@ def team_a_side(rows, scores):
         if scorer:
             a_side = scorer if team == "TEAM_A" else ("away" if scorer == "home" else "home")
             votes[a_side] += 1
-    if not votes:
-        return None
-    side, n = votes.most_common(1)[0]
-    return side if n >= 0.8 * sum(votes.values()) else None
+    return votes
 
 
 def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch,

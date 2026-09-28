@@ -1641,6 +1641,7 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
   before it, accepted after two minutes left (the operators suspend there;
   `EXCLUDE_AFTER_TWO_MINUTES`) or after the match-over message are left out
   (resettlements, trader reviews). `BET_PHASE_TOLERANCE` (10s) is allowed.
+  The match-over message is `ENDED`.
   The report gives bets, stake, margin and seconds past the bound for each,
   by operator. It also lists the statuses seen from two minutes left
   (seconds after the mark) and on the matches' last rows. That's how the
@@ -1662,6 +1663,10 @@ and writes `out/bets_checks.csv`. Every `bets` run prints them too.
     same snapshots the same way without simulating. It counts which
     `PLAY_OVER`s can't be read and why, and the matches with TEAM_A's side
     not known.
+    The report breaks the unreadable ones down by play kind, reason and the
+    fields missing, and gives both by match day. For the matches with
+    TEAM_A's side not known it gives why (no scoring message by a score
+    change, or split) and the feed messages found at their score changes.
   - **A candidate table's** quote at message c (`candidate_message`) is held
     to the same rule.
   - A price is only compared where the feed didn't move on between it and
