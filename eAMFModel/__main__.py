@@ -208,6 +208,8 @@ def cmd_v4_build(args):
                          "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
         v4.IN_PLAY_FIT = True
+    if getattr(args, "red_zone", None):
+        v4.sim.RED_ZONE_FIT, v4.sim.RED_ZONE_MODE = True, args.red_zone
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
              history=history, before=before)
     players_file = f"{name}players.json"
@@ -482,6 +484,10 @@ def main(argv=None):
             p.add_argument("--in-play", action="store_true",
                            help="also fit the in-play total shift by segment of the game "
                                 "(see README: off by default, it has not held up out of sample)")
+        if name == "v6":
+            p.add_argument("--red-zone", choices=["hold", "tilt"],
+                           help="fit how often drives finish inside the 30 by quarter and lead "
+                                "(see README: off by default, level over the rest of the game)")
         p.set_defaults(func=cmd_v4_build, version=name)
 
         p = sub.add_parser(name, help=f"score {name} against prod on PLAY_OVER snapshots")
