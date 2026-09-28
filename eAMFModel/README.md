@@ -974,6 +974,37 @@ the state for, and `quote_rows(..., windows=...)` quotes only inside them.
 Coverage drops, but no price is stale. `eAMFCalibrator bets` checks the
 same against SCOUTING_FULL message by message.
 
+## Points still to come against reality: `remaining`
+
+Comparing a version with prod only says which is nearer. To find where a
+version itself is wrong, `remaining` sets it against what actually happened.
+At every `PLAY_OVER` in an export, the version's distribution of the final
+total, less the points on the board, is its distribution of the points
+still to come. The export's final gives what really came.
+
+```bash
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v6 --model v6_model \
+    --history eAMFCalibrator/out/match_history.csv --since 2026-09-10 --until 2026-09-22
+```
+
+Build the model on matches before `--since`, or the comparison is in-sample.
+By quarter and game state (level, one score or two+ apart, and whether the
+leader or the trailer has the ball), it prints:
+- **real:** the share of snapshots where the rest of the game made exactly
+  0, 3, 6, 7, 8, 10, 13, 14, 17 or 21 points, more than 21, and the mean;
+- **the version minus real** at each of those values, the mean, and the log
+  score of what really came (lower is sharper and right). For example, a
+  +8 at =3 in a level Q4 means a lone field goal is simulated 8 points of
+  probability more often than it happens;
+- **P(more than N):** at N = 0.5, 2.5, 3.5, 6.5 ... 20.5, the version's mean
+  against reality, by quarter, over every snapshot. Positive means the over
+  is priced too high there.
+
+`remaining_<version>.csv` has one row per snapshot: the state, the points
+on the board and still to come, and the version's probability of each
+value 0 to 36+. Matches whose TEAM_A side isn't known are left out, as the
+streams leave them.
+
 ## Run it
 
 ```bash
