@@ -456,8 +456,8 @@ def why_not(r):
     if r["candidate_prob"] is None:
         return "no candidate price"
     if r.get("state_required") and not r.get("state_ok"):
-        return ("score changed since the model's PLAY_OVER" if r.get("score_changed")
-                else "SCOUTING_FULL missing prod's messages")
+        from .bet_checks import state_reason
+        return state_reason(r) or "model's state not prod's"
     if not r["on_prod_line"]:
         return "not on prod's line"
     if r["result"] == OTHER:
@@ -565,16 +565,18 @@ def check_models(streams):
 
 
 def fetch_checks(cur, matches, prod_rows):
-    """bet_checks.Checks off SCOUTING_FULL and the scores for these matches, on prod's clock."""
-    from . import bet_checks, scouting
-    table = snowflake_io.scouting_table(cur)
-    rows, scores = [], []
-    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
-        batch = matches[start:start + config.MATCH_CHUNK_SIZE]
-        rows += scouting.fetch_scouting(cur, table, batch, windowed=False)
-        scores += snowflake_io.fetch_scores(cur, batch)
-    return bet_checks.Checks(bet_checks.build_feeds(rows), bet_checks.message_times(prod_rows),
-                             bet_checks.score_index(scores))
+    """bet_checks.Checks off SCOUTING_FULL, the scores and the models' PLAY_OVER snapshots (the
+    ones v4-v6 read) for these matches, on prod's clock."""
+    from . import bet_checks
+    prod_by = defaultdict(list)
+    for r in prod_rows:
+        prod_by[r[0]].append(r)
+    keep = {}
+    snapshots, _ = snowflake_io._play_over_snapshots(cur, matches, prod_by_match=prod_by, keep=keep)
+    books, guessed, reasons = bet_checks.model_books(snapshots)
+    return bet_checks.Checks(bet_checks.build_feeds(keep.get("scouting", [])),
+                             bet_checks.message_times(prod_rows),
+                             bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons)
 
 
 def run(cur, out_dir, only_checks=False):

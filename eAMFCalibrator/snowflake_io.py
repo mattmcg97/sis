@@ -441,10 +441,12 @@ def scouting_table(cur):
     return table
 
 
-def _play_over_snapshots(cur, match_codes, with_handles=False):
+def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=None, keep=None):
     """match -> PLAY_OVER snapshot rows off SCOUTING_FULL, built exactly as
     `scouting` exports them, and prod's quote rows for the same matches.
-    with_handles adds each match's player handles (home_handle/away_handle)."""
+    with_handles adds each match's player handles (home_handle/away_handle).
+    prod_by_match (match -> prod's rows) saves fetching prod again; `keep`
+    (a dict) collects the scouting and score rows read."""
     from collections import defaultdict
     from . import directional, scouting
     table = scouting_table(cur)
@@ -457,7 +459,13 @@ def _play_over_snapshots(cur, match_codes, with_handles=False):
         rows = scouting.fetch_scouting(cur, table, batch, windowed=False)
         scores = fetch_scores(cur, batch)
         finals = fetch_final_scores(cur, batch)
-        prod = fetch_quotes(cur, config.STREAMS["prod"], batch)
+        if prod_by_match is None:
+            prod = fetch_quotes(cur, config.STREAMS["prod"], batch)
+        else:
+            prod = [q for m in batch for q in prod_by_match.get(m, [])]
+        if keep is not None:
+            keep.setdefault("scouting", []).extend(rows)
+            keep.setdefault("scores", []).extend(scores)
         handles = scouting.fetch_handles(cur, batch) if with_handles else {}
         prod_all.extend(prod)
         index = directional.index_by_message(prod)
