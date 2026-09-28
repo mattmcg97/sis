@@ -127,12 +127,14 @@ UNCUT_SECONDS = 60.0
 STOP, RUNNING = 0, 1
 PLAY_CALLING = {"stop", "seconds", "band"}
 PLAY_CALLING_QUARTERS = (1, 2, 3)
+PLAY_CALLING_Q4 = set()
 
 
-def _quarter_mask():
-    """Which game-state cells the play-calling shifts apply in."""
+def _quarter_mask(item=None):
+    """Which game-state cells the play-calling shifts apply in: Q1-Q3, and Q4 for the items in
+    PLAY_CALLING_Q4."""
     q = np.arange(N_CELLS) // (CLOCK_CELLS * LEAD_CELLS) + 1
-    return np.isin(q, PLAY_CALLING_QUARTERS)
+    return np.isin(q, PLAY_CALLING_QUARTERS) | ((q == 4) & (item in PLAY_CALLING_Q4))
 
 
 def lead_cell(lead):
@@ -198,11 +200,79 @@ def fit_play_calling(tables, snaps):
         pa = np.exp(np.outer(np.exp(-grid), lf))
         ll = np.where(s_, np.log(np.clip(pa, 1e-12, 1)), np.log(np.clip(1 - pa, 1e-12, 1))).sum(1)
         eff_shift[c_] = grid[np.argmax(ll - 0.5 * EFF_PRIOR * grid ** 2)]
-    on = _quarter_mask()
-    tables.stop_shift = stop_shift * on if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
-    tables.sec_shift = sec_shift * on if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
-    tables.eff_shift = eff_shift * on if "band" in PLAY_CALLING else np.zeros(N_CELLS)
+    tables.stop_shift = (stop_shift * _quarter_mask("stop") if "stop" in PLAY_CALLING
+                         else np.zeros(N_CELLS))
+    tables.sec_shift = (sec_shift * _quarter_mask("seconds") if "seconds" in PLAY_CALLING
+                        else np.zeros((2, N_CELLS)))
+    tables.eff_shift = (eff_shift * _quarter_mask("band") if "band" in PLAY_CALLING
+                        else np.zeros(N_CELLS))
     return n
+
+
+RED_ZONE = 70
+RED_ZONE_FIT = True
+RED_ZONE_MODE = "hold"   # or "tilt"
+RED_ZONE_PRIOR = 40.0
+N_RZ = 4 * LEAD_CELLS * 2
+RZ_GRID = np.linspace(-1.5, 1.0, 51)
+HOLD_GRID = np.linspace(0.0, 0.8, 41)
+HOLD_TRIES = 3
+
+
+def rz_index(period, lead, y):
+    """The red-zone cell: quarter, the offense's lead, and the 11-30 or inside the 10."""
+    pq = np.clip(period, 1, 4) - 1
+    lc = np.where(lead <= -9, 0, np.where(lead < 0, 1, np.where(lead == 0, 2, np.where(lead <= 8, 3, 4))))
+    return (pq * LEAD_CELLS + lc) * 2 + (np.asarray(y) >= 90)
+
+
+def _td_chance(tables, key, cell, y, tilts):
+    """The chance a snap's draw scores, at each tilt: straight from the gain, or a touchdown seen
+    from further back running on."""
+    n, ns, a = tables.count[key], tables.n_stop[key], tables.start[key]
+    logit = np.log(max(ns, 0.5) / max(n - ns, 0.5)) + tables.stop_shift[cell]
+    ps = 0.0 if ns == 0 else 1.0 if ns == n else 1.0 / (1.0 + math.exp(-logit))
+    out = np.zeros(len(tilts))
+    for w, s0, sn in ((ps, a, ns), (1.0 - ps, a + ns, n - ns)):
+        if w == 0 or sn == 0:
+            continue
+        g = tables.gain[s0:s0 + sn]
+        tf = tables.td_from[s0:s0 + sn]
+        ok = tables.kind[s0:s0 + sn] == GAIN
+        ptd = np.where(ok & (g >= 100 - y), 1.0,
+                       np.where(ok & (tf >= 0) & (y < tf), np.exp(-(tf - y) / TD_TAIL), 0.0))
+        x = np.arange(sn + 1) / sn
+        cdf = 1.0 - (1.0 - x[None, :]) ** (1.0 / tilts[:, None])
+        out += w * (np.diff(cdf, axis=1) * ptd[None, :]).sum(1)
+    return out
+
+
+def fit_red_zone(tables, snaps):
+    """How often real snaps inside the 30 score, against the bins, by quarter, lead and zone: a
+    fourth-quarter leader there settles for the field goal far more than a third-quarter one."""
+    tables.rz_shift, tables.rz_hold = np.zeros(N_RZ), np.zeros(N_RZ)
+    if not RED_ZONE_FIT:
+        return
+    hold = RED_ZONE_MODE == "hold"
+    grid = HOLD_GRID if hold else RZ_GRID
+    ll = np.zeros((N_RZ, len(grid)))
+    for r in snaps:
+        y = r["field"]
+        if y < RED_ZONE:
+            continue
+        cell = cell_index(r["period"], r["clock"], r["margin"])
+        if hold:
+            p = _td_chance(tables, r["key"], cell, y, np.exp([tables.eff_shift[cell]]))[0] * (1 - grid)
+        else:
+            p = _td_chance(tables, r["key"], cell, y, np.exp(grid + tables.eff_shift[cell]))
+        p = np.clip(p, 1e-4, 1 - 1e-4)
+        scored = r["kind"] == GAIN and r["gain"] >= 100 - y
+        ll[int(rz_index(r["period"], r["margin"], y))] += np.log(p if scored else 1 - p)
+    fitted = grid[np.argmax(ll - 0.5 * RED_ZONE_PRIOR * grid ** 2, axis=1)]
+    if hold:
+        tables.rz_hold = fitted
+    else:
+        tables.rz_shift = fitted
 
 
 def _i(v):
@@ -796,6 +866,8 @@ class Tables:
         self.stop_shift = np.zeros(N_CELLS)
         self.sec_shift = np.zeros((2, N_CELLS))
         self.eff_shift = np.zeros(N_CELLS)
+        self.rz_shift = np.zeros(N_RZ)
+        self.rz_hold = np.zeros(N_RZ)
         self.fg_seconds = None
         self.fg_after = None
         self.go_for_two = None
@@ -942,6 +1014,7 @@ class Tables:
             t.backed, returns = fit_backed_up(backed)
             t.backed_return = returns if len(returns) >= BACKED_RETURNS_MIN else None
         fit_play_calling(t, snaps)
+        fit_red_zone(t, snaps)
         return t
 
     def success_of(self, key):
@@ -962,7 +1035,7 @@ class Tables:
                       safety_kick=self.safety_kick, n_stop=self.n_stop,
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
-                      inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
+                      rz_shift=self.rz_shift, rz_hold=self.rz_hold, inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
                       fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]))
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
@@ -1019,6 +1092,8 @@ class Tables:
         if "backed" in z:
             t.backed = z["backed"]
             t.backed_return = z["backed_return"] if "backed_return" in z else None
+        if "rz_shift" in z:
+            t.rz_shift, t.rz_hold = z["rz_shift"], z["rz_hold"]
         if "n_stop" in z:
             t.n_stop, t.stop_success, t.run_success = z["n_stop"], z["stop_success"], z["run_success"]
             t.stop_shift, t.sec_shift, t.eff_shift = z["stop_shift"], z["sec_shift"], z["eff_shift"]
@@ -1418,6 +1493,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         seg_n = np.maximum(1, np.where(stops, ns, n - ns))
         uu = rand(sx, 11)
         tilt = exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
+        rz = y[sx] >= RED_ZONE
+        if rz.any():
+            tilt = tilt * np.where(rz, np.exp(tables.rz_shift[rz_index(period[sx], lead, y[sx])]), 1.0)
         late = ((period[sx] == 2) | (period[sx] == 4)) & (clock[sx] <= LATE)
         if late.any():
             tilt = tilt * np.where(late, late_exp[np.minimum(period[sx], 5)], 1.0)
@@ -1426,6 +1504,17 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                                      _bands_np(score[sx, 0] - score[sx, 1])]
         uu = 1.0 - (1.0 - uu) ** tilt
         j = seg0 + np.minimum(seg_n - 1, (uu * seg_n).astype(np.int64))
+        if rz.any() and tables.rz_hold.any():
+            yy_ = y[sx]
+            scores = lambda jj: (tables.kind[jj] == GAIN) & ((tables.gain[jj] >= 100 - yy_)
+                                                             | (tables.td_from[jj] >= 0))
+            held_td = rz & scores(j) & (rand(sx, 19) < tables.rz_hold[rz_index(period[sx], lead, yy_)])
+            for attempt in range(HOLD_TRIES):
+                if not held_td.any():
+                    break
+                u2 = 1.0 - (1.0 - rand(sx, 20 + attempt)) ** tilt
+                j = np.where(held_td, seg0 + np.minimum(seg_n - 1, (u2 * seg_n).astype(np.int64)), j)
+                held_td &= scores(j)
         used = np.maximum(1.0, tables.seconds[j] + tables.sec_shift[np.where(stops, STOP, RUNNING), cell]) \
             * pace[sx, so]
         clock[sx] -= used

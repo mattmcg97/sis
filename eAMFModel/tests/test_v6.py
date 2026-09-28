@@ -135,13 +135,61 @@ class TestPlayCalling(unittest.TestCase):
         self.assertTrue(np.array_equal(a[0], b[0]))               # the same luck, call to call
         self.assertFalse(np.array_equal(a[0][0], a[0][1]))        # its own for each state
 
-    def test_the_fourth_quarter_is_left_to_the_end_game_tables(self):
+    def test_the_fourth_quarter_gets_the_items_switched_on_for_it(self):
         q4 = np.arange(sim6.N_CELLS) // (sim6.CLOCK_CELLS * sim6.LEAD_CELLS) == 3
-        t = self.tables
-        self.assertTrue((t.stop_shift[q4] == 0).all() and (t.sec_shift[:, q4] == 0).all()
-                        and (t.eff_shift[q4] == 0).all())
-        self.assertTrue(np.abs(t.sec_shift[:, ~q4]).sum() > 0)
-        self.assertTrue((v6._band_shift(np.array([0.3, 0.3]))[q4] == 0).all())
+        old = sim6.PLAY_CALLING_Q4
+        try:
+            sim6.PLAY_CALLING_Q4 = {"stop"}
+            self.assertTrue(sim6._quarter_mask("stop")[q4].all())
+            self.assertFalse(sim6._quarter_mask("band")[q4].any())
+            self.assertTrue(sim6._quarter_mask("band")[~q4].all())
+            self.assertFalse(sim6._quarter_mask()[q4].any())
+            self.assertTrue((v6._band_shift(np.array([0.3, 0.3]))[q4] == 0).all())
+            sim6.PLAY_CALLING_Q4 = set()
+            t = sim6.Tables.build(self.matches, min_records=20)
+            self.assertTrue((t.stop_shift[q4] == 0).all() and (t.sec_shift[:, q4] == 0).all()
+                            and (t.eff_shift[q4] == 0).all())
+            self.assertTrue(np.abs(t.sec_shift[:, ~q4]).sum() > 0)
+        finally:
+            sim6.PLAY_CALLING_Q4 = old
+
+    def test_red_zone_cells_split_quarter_lead_and_the_ten(self):
+        self.assertEqual(sim6.rz_index(1, -20, 70), 0)
+        self.assertEqual(sim6.rz_index(1, -20, 95), 1)
+        self.assertEqual(sim6.rz_index(4, 20, 95), sim6.N_RZ - 1)
+        self.assertEqual(list(sim6.rz_index(np.array([3, 5]), np.array([0, 0]), np.array([80, 80]))),
+                         [(2 * sim6.LEAD_CELLS + 2) * 2, (3 * sim6.LEAD_CELLS + 2) * 2])
+
+    def test_held_touchdowns_turn_into_field_goals_not_fewer_first_downs(self):
+        import copy
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 3, 200.0, sim6.SCRIM
+        st.team[:], st.y[:], st.dist[:], st.home[:], st.away[:] = 0, 80, 10, 10, 10
+        runs = {}
+        for hold in (0.0, 0.8):
+            t = copy.deepcopy(self.tables)
+            t.rz_hold = np.full(sim6.N_RZ, hold)
+            stats = {}
+            h, _ = sim6.simulate(t, st, 4000, np.random.default_rng(1), seed=5, one_drive=True,
+                                 stats=stats)
+            runs[hold] = (np.mean(h[0] - 10 >= 6), np.mean(h[0] - 10 == 3), stats)
+        self.assertLess(runs[0.8][0], runs[0.0][0] - 0.05)
+        self.assertGreater(runs[0.8][1], runs[0.0][1])
+        self.assertGreater(runs[0.8][2]["snaps"], runs[0.0][2]["snaps"])
+
+    def test_the_red_zone_fit_round_trips(self):
+        old = sim6.RED_ZONE_FIT
+        try:
+            sim6.RED_ZONE_FIT = True
+            t = sim6.Tables.build(self.matches, min_records=20)
+        finally:
+            sim6.RED_ZONE_FIT = old
+        self.assertEqual(t.rz_hold.shape, (sim6.N_RZ,))
+        self.assertTrue(((t.rz_hold >= 0) & (t.rz_hold <= sim6.HOLD_GRID[-1])).all())
+        with tempfile.TemporaryDirectory() as d:
+            t.save(os.path.join(d, "t.npz"))
+            back = sim6.Tables.load(os.path.join(d, "t.npz"))
+        self.assertTrue(np.array_equal(back.rz_hold, t.rz_hold))
 
     def _q3_leader_with_ball(self, n=3000, **shift):
         import copy
@@ -385,8 +433,10 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
-        big, joint, ot = sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES
-        sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES = None, False, False
+        saved = (sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES, sim6.PLAY_CALLING_Q4,
+                 sim6.RED_ZONE_FIT)
+        sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES, sim6.PLAY_CALLING_Q4, sim6.RED_ZONE_FIT = \
+            None, False, False, set(), False
         try:
             t6 = sim6.Tables.build(self.matches, min_records=20)
             t6.late_fourth = None
@@ -397,7 +447,8 @@ class TestLateGame(unittest.TestCase):
             a = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
             b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
         finally:
-            sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES = big, joint, ot
+            (sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES, sim6.PLAY_CALLING_Q4,
+             sim6.RED_ZONE_FIT) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_big_leads_have_their_own_situations(self):
