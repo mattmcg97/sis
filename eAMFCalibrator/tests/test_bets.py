@@ -232,6 +232,16 @@ class TestCommand(unittest.TestCase):
         self.assertEqual(len(out), 8)
         self.assertTrue(all(r["latency_seconds"] == 7 for r in out))
         self.assertTrue(all(r["simulated"] for r in out))
+        with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
+                mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE) as fq, \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
+                mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
+                mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]):
+            results = bets.run(None, "out")
+        self.assertEqual([n for n, _ in results], ["v4", "v5", "v6"])
+        self.assertIn(mock.call(None, "MODEL:v6", ["M1"]), fq.call_args_list)
+        self.assertIn("candidate_prob_v6", written.call_args_list[-1][0][1][0])
 
 
 class TestReading(unittest.TestCase):
@@ -260,15 +270,51 @@ class TestReading(unittest.TestCase):
         finally:
             config.BET_TABLE = saved
 
-    def test_a_model_candidate_is_read_at_prods_lines(self):
-        saved = config.STREAMS["candidate"]
+    def test_models_are_candidates_at_their_own_lines(self):
+        saved = config.STREAMS["candidate"], config.CANDIDATES
         try:
-            config.STREAMS["candidate"] = "MODEL:v6"
-            self.assertEqual(bets.candidate_stream(), "MODEL:v6@prod")
+            config.CANDIDATES = []
             config.STREAMS["candidate"] = "GAMEPLAI_STREAM_CANDIDATE"
-            self.assertEqual(bets.candidate_stream(), "GAMEPLAI_STREAM_CANDIDATE")
+            self.assertEqual(bets.candidate_streams(), ["GAMEPLAI_STREAM_CANDIDATE"])
+            config.CANDIDATES = ["MODEL:v4", "MODEL:v5", "MODEL:v6@prod"]
+            self.assertEqual([bets.label(s) for s in bets.candidate_streams()],
+                             ["v4", "v5", "v6@prod"])
         finally:
-            config.STREAMS["candidate"] = saved
+            config.STREAMS["candidate"], config.CANDIDATES = saved
+
+
+class TestCandidates(unittest.TestCase):
+
+    def test_each_model_is_read_at_prods_message_so_the_lag_is_the_same(self):
+        # prod's total moves 44.5 -> 47.5 at message 3; the model priced at PLAY_OVERs 1 and 3
+        # (its rows carry prod's messages and publish times), at its own lines
+        prod = [quote("M1", 54, 0, 0.50, 44.5, message=1), quote("M1", 54, 30, 0.50, 47.5, message=3)]
+        v5 = [quote("M1", 54, 0, 0.50, 45.5, message=1), quote("M1", 54, 30, 0.50, 48.5, message=3)]
+        lags = {"FANDUEL": bets.Lag(10)}
+        b = bet("M1", 35, market_type=3, selection=1, odds=1.9, line=44.5)    # seen at 25s: msg 1
+        (row,) = bets.join([b], lags, {}, bets.timeline(prod), bets.quote_index(v5),
+                           bets.timeline(v5), {"M1": (24, 22)})
+        self.assertEqual((row["message"], row["stream_line"], row["candidate_line"]), (1, 44.5, 45.5))
+        self.assertFalse(row["same_line"])
+        self.assertEqual(row["candidate_result"], bets.WON)     # 46 over 45.5
+        self.assertTrue(row["simulated"])
+
+    def test_candidates_are_compared_on_the_bets_they_all_priced(self):
+        def row(stake, rev, rev_c, simulated=True, market="total"):
+            return dict(stake=stake, revenue=rev, candidate_revenue=rev_c, simulated=simulated,
+                        market=market, result=bets.WON, candidate_result=bets.WON, in_play=True)
+        a = [row(10, 1, 2), row(10, 1, 3), row(10, 1, 4)]
+        b = [row(10, 1, 1), row(10, 1, 0, simulated=False), row(10, 1, 5)]
+        out = bets.compare([("v4", a), ("v5", b)])
+        n, stake, m, margins, split = out["all"]
+        self.assertEqual((n, stake, m), (2, 20, 10.0))
+        self.assertEqual(margins, [30.0, 30.0])
+        self.assertEqual(split, [(4.0, 0.0), (4.0, 0.0)])
+        text = "\n".join(bets.compare_report([("v4", a), ("v5", b)]))
+        self.assertIn("+20.00", text)
+        w = bets.wide([("v4", a), ("v5", b)])
+        self.assertEqual((w[1]["simulated_v4"], w[1]["simulated_v5"]), (True, False))
+        self.assertNotIn("simulated", w[1])
 
 
 if __name__ == "__main__":

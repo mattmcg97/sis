@@ -865,7 +865,8 @@ def build_parser():
     bets_parser = sub.add_parser(
         "bets", parents=[shared],
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
-             "candidate's probability at the moment it was priced (a lag per operator off its odds)")
+             "candidate's probability at the moment it was priced (a lag per operator off its odds); "
+             "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines"], default="run",
                              help="probe: print the columns it reads, to check the names; lines: "
                                   "prod's spread and total lines through each match against the "

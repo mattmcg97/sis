@@ -1569,6 +1569,30 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### Several candidates: the model versions
+
+```bash
+python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate v4,v5,v6 \
+    --v4-model v4_model --v5-model v5_model --v6-model v6_model
+```
+
+Every candidate shares the bets, the lags, the line signs and prod's quotes.
+Each is read at the prod message the bet saw (one lag before it), so the lag
+is the same for all of them. A model version prices every prod message off
+its latest PLAY_OVER at or before it, carrying prod's message and publish
+time. It quotes its own even lines and probabilities, and the bet is settled
+at that line. `v5@prod` reads it at prod's lines instead. A table
+(`GAMEPLAI_STREAM_CANDIDATE`) can sit in the list too.
+
+A model has no pre-match price (its first quote is the first PLAY_OVER), so
+its pre-match bets aren't re-priced. Each model simulates every match in the
+window (`--vN-paths` sets how many games per snapshot).
+
+The report prints the lag and line checks once, then each candidate's own
+sections as above. It ends side by side: the margin change of each candidate
+on the bets every one of them re-priced (the same money), by the same cuts,
+and each one's price and result effects.
+
 `bets lines` draws prod's spread and total lines through each match against
 the lines customers bet. If an operator only offers the lines GAMEPLAI
 sends, a bet on another line than prod's live one was placed on a line prod
@@ -1606,6 +1630,8 @@ Output:
 - `out/bets_sim.csv`, one row per bet: `in_play`, `stream_prob`,
   `candidate_prob`, `candidate_line`, `implied_prob`, `latency_seconds`,
   `result`, `candidate_result`, `candidate_odds`, `candidate_revenue`, the
-  final score, plus the bet source's own columns;
+  final score, plus the bet source's own columns. With several candidates,
+  each candidate's columns are suffixed by its name (`candidate_prob_v5`,
+  `candidate_line_v5`, `candidate_revenue_v5`, `simulated_v5`, ...);
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
