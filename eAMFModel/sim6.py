@@ -1098,8 +1098,10 @@ def strength_draw(tables, theta, form):
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
-             in_play=False, distinct=False):
-    """Play every starting state n_paths times to the end and return the final scores."""
+             in_play=False, distinct=False, one_drive=False):
+    """Play every starting state n_paths times to the end and return the final scores; with
+    one_drive, only to the end of the drive under way (the ball changes hands, a kick-off after a
+    score, or the half ends)."""
     rng = rng or np.random.default_rng()
     seed = int(rng.integers(0, 2 ** 62)) if seed is None else int(seed) % (2 ** 62)
     S = len(start.period)
@@ -1206,7 +1208,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         team[ix] = side
         phase[ix] = CONV
 
+    drive_team = team.copy()
     for _ in range(max_steps):
+        if one_drive:
+            phase[(phase != DONE) & ((phase == KICK) | (team != drive_team))] = DONE
         live = np.flatnonzero(phase != DONE)
         if not len(live):
             break

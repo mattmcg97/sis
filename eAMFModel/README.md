@@ -1040,6 +1040,15 @@ leader or the trailer has the ball), it prints:
   against reality, by quarter, over every snapshot. Positive means the over
   is priced too high there.
 
+**By drive: `--drive` (v6).** The rest-of-game view mixes up who scores and
+when. `--drive` narrows it to the drive under way. At each scrimmage
+`PLAY_OVER`, it compares the points scored on the rest of that drive (0, a
+safety, 3, 6, 7, 8) with what the version simulates to the end of the same
+drive. The drive ends when the ball changes hands, at the kick-off after a
+score, or when the half turns. Read by quarter and game state from the
+offense's side, it separates a leader that scores too often from a trailer
+that scores too rarely, and a touchdown drive from a field-goal one.
+
 `remaining_<version>.csv` has one row per snapshot: the state, the points
 on the board and still to come, and the version's probability of each
 value 0 to 36+. Matches whose TEAM_A side isn't known are left out, as the
