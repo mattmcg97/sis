@@ -127,12 +127,14 @@ UNCUT_SECONDS = 60.0
 STOP, RUNNING = 0, 1
 PLAY_CALLING = {"stop", "seconds", "band"}
 PLAY_CALLING_QUARTERS = (1, 2, 3)
+PLAY_CALLING_Q4 = set()
 
 
-def _quarter_mask():
-    """Which game-state cells the play-calling shifts apply in."""
+def _quarter_mask(item=None):
+    """Which game-state cells the play-calling shifts apply in: Q1-Q3, and Q4 for the items in
+    PLAY_CALLING_Q4."""
     q = np.arange(N_CELLS) // (CLOCK_CELLS * LEAD_CELLS) + 1
-    return np.isin(q, PLAY_CALLING_QUARTERS)
+    return np.isin(q, PLAY_CALLING_QUARTERS) | ((q == 4) & (item in PLAY_CALLING_Q4))
 
 
 def lead_cell(lead):
@@ -198,10 +200,12 @@ def fit_play_calling(tables, snaps):
         pa = np.exp(np.outer(np.exp(-grid), lf))
         ll = np.where(s_, np.log(np.clip(pa, 1e-12, 1)), np.log(np.clip(1 - pa, 1e-12, 1))).sum(1)
         eff_shift[c_] = grid[np.argmax(ll - 0.5 * EFF_PRIOR * grid ** 2)]
-    on = _quarter_mask()
-    tables.stop_shift = stop_shift * on if "stop" in PLAY_CALLING else np.zeros(N_CELLS)
-    tables.sec_shift = sec_shift * on if "seconds" in PLAY_CALLING else np.zeros((2, N_CELLS))
-    tables.eff_shift = eff_shift * on if "band" in PLAY_CALLING else np.zeros(N_CELLS)
+    tables.stop_shift = (stop_shift * _quarter_mask("stop") if "stop" in PLAY_CALLING
+                         else np.zeros(N_CELLS))
+    tables.sec_shift = (sec_shift * _quarter_mask("seconds") if "seconds" in PLAY_CALLING
+                        else np.zeros((2, N_CELLS)))
+    tables.eff_shift = (eff_shift * _quarter_mask("band") if "band" in PLAY_CALLING
+                        else np.zeros(N_CELLS))
     return n
 
 
