@@ -334,3 +334,24 @@ class TestCandidates(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHtmlSection(unittest.TestCase):
+
+    def test_the_section_shows_each_candidate_and_the_side_by_side(self):
+        def row(stake, rev, rev_c, simulated=True, market="total", op="FANDUEL_BET_BY_BET"):
+            return {"stake": stake, "revenue": rev, "candidate_revenue": rev_c, "simulated": simulated,
+                    "market": market, "result": bets.WON, "candidate_result": bets.WON, "in_play": True,
+                    "period": 2, config.BET_GROUP_COLUMN: op, "stream_prob": 0.5, "candidate_prob": 0.5,
+                    "on_prod_line": True}
+        a = [row(10, 1, 2), row(10, 1, 3)]
+        b = [row(10, 1, 1), row(10, 1, 0, simulated=False)]
+        html = bets.html_section({"results": [("GAMEPLAI_STREAM_CANDIDATE", a), ("v6", b)],
+                                  "lags": {"FANDUEL_BET_BY_BET": bets.Lag(1, 100)}, "bets": 2,
+                                  "matches": 1})
+        self.assertIn('id="bets"', html)
+        self.assertIn("Side by side, on the 1 bets every candidate re-priced", html)
+        self.assertIn("<th>v6</th>", html)
+        self.assertIn("Fanduel +1s (100 bets)", html)
+        self.assertIn('class="good">+10.00', html)
+        self.assertEqual(bets.html_section({}), "")

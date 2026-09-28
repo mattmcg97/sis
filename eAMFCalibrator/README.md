@@ -1621,6 +1621,26 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### In the calibration report: `report --bets`
+
+```bash
+python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v6 --v6-model v6_model --bets
+```
+
+`--bets` runs the betting simulation for the same window and candidates, and
+adds a "Betting simulation" section at the bottom of the report's HTML. The
+section has:
+- each candidate on the bets it re-priced: prod's margin, the candidate's,
+  the change, and the change split into odds and line;
+- every candidate side by side on the bets they all re-priced, by the same
+  cuts as the console;
+- why bets were not re-priced;
+- the lag by operator.
+
+The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
+`--out` folder. Models are priced again for the bets' matches, so the run
+takes longer.
+
 ### Several candidates: the model versions
 
 ```bash

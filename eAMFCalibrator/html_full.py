@@ -1219,8 +1219,9 @@ with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "report.js"),
     _SCRIPT = _fh.read()
 
 
-def render_sides(sides, dropped=None):
-    """The page for one or more candidates (multi.run + multi.build)."""
+def render_sides(sides, dropped=None, extra=""):
+    """The page for one or more candidates (multi.run + multi.build); `extra` is HTML for the
+    bottom of the page (the betting simulation)."""
     dropped = dropped or {}
     first = sides[0]
     axes = first["prob_full"]["axes"]
@@ -1257,6 +1258,7 @@ def render_sides(sides, dropped=None):
     {_both_sides_block(sides)}
   </details>
   {_pair_table(sides)}
+  {extra}
 </div>
 {_SCRIPT}
 </body>
@@ -1283,10 +1285,10 @@ def render(report, header, stats, pairs, handle_scan,
                                      labels.candidate_label())])
 
 
-def write_sides(path, sides, dropped=None):
+def write_sides(path, sides, dropped=None, extra=""):
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
-        fh.write(render_sides(sides, dropped))
+        fh.write(render_sides(sides, dropped, extra))
     return path
 
 
