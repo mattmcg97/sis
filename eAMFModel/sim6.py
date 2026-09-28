@@ -210,7 +210,7 @@ def fit_play_calling(tables, snaps):
 
 
 RED_ZONE = 70
-RED_ZONE_FIT = False
+RED_ZONE_FIT = True
 RED_ZONE_MODE = "hold"   # or "tilt"
 RED_ZONE_PRIOR = 40.0
 N_RZ = 4 * LEAD_CELLS * 2

@@ -981,7 +981,7 @@ rate real overtimes show (`ot_go`, about two in three). Only about 50
 overtimes a month are played, so the rest of the overtime gap to reality
 is within noise.
 
-**Q4 drives: tried and left off (Sep 2026).** Per drive (`remaining
+**Q4 drives and the red zone (Sep 2026).** Per drive (`remaining
 --drive`, built before Sep 10, scored on Sep 10–22), v6 turns Q4 drives
 into touchdowns where real ones settle for field goals. It's worst when the
 score is level (field goals 11.8 points too rare, touchdowns 6.6 too common)
@@ -1004,14 +1004,15 @@ or a side leads with the ball.
   the draw instead. That also cut first downs. Per drive, Q4 level went to
   −10.1 field goals and +4.8 touchdowns, and Q3 two scores up with the ball
   to +4.3 touchdowns from +8.2. The Q4 log score went from 1.095 to 1.092.
-- **Why it's off.** The quarter-points fit then raises Q4's level
-  (0.014 to 0.075), to keep kickoff-to-Q4 points on a target that counts
-  the quarter's last score twice (see v5's quarters' levels). Over the whole
+- **Why it's only a small gain.** The quarter-points fit then raises Q4's level
+  (0.014 to 0.075), to keep kickoff-to-Q4 points on a target about 0.5
+  points too high (see v5's quarters' levels). Over the whole
   rest of the game, the log score went from 2.966 to 2.965. It was better
   in Q1 and in Q4 for leaders and level scores, and worse in Q2, in Q3 and
   for Q4 trailers. Pinning Q4's level to the old value cost more (2.990).
-  To judge it on the report's markets, build with `v6-build ... --red-zone
-  hold` and run it as a candidate next to the default build.
+  It's on in v6 (`--red-zone off` builds without it): it moves the Q4
+  leader and level states toward real play at no cost overall. A model built before it has no `rz_hold` and plays as before
+  until it's rebuilt.
 
 ```bash
 python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --out v6_model --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv
