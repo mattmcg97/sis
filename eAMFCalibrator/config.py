@@ -207,6 +207,12 @@ MAX_PLAUSIBLE_DISTANCE = 40
 # "drive" (drive number within the match, pending drive reconciliation).
 TIME_AXIS = "period"
 
+# What the calibration pairs prod and the candidate at: "drive", one snapshot
+# per drive start off the play table (about 10 a match), or "play_over", every
+# SCOUTING_FULL PLAY_OVER (about 60 a match, the snapshots v4-v6 price off),
+# each at the first message both streams quoted before the next play starts.
+SNAPSHOTS = "drive"
+
 # Drive-number buckets, used only when TIME_AXIS == "drive".
 DRIVE_BUCKETS = [
     (1, 4, "drives 1-4"),
