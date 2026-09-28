@@ -17,6 +17,7 @@ than the price.
 """
 
 import math
+import re
 import statistics
 from bisect import bisect_right
 from collections import defaultdict
@@ -326,6 +327,12 @@ DIMENSIONS = (("moment", "the feed at bet time"), ("feed_suspended", "the feed's
 def _order(dim, g):
     if dim == "moment" and g in MOMENTS:
         return (0, MOMENTS.index(g))
+    if dim in ("price_age", "next_score"):
+        text = str(g)
+        if text.startswith("<"):
+            return (0, float(re.sub(r"[^0-9.]", "", text)) - 0.5)
+        num = re.match(r"(\d+)", text)
+        return (0, float(num.group(1))) if num else (1, text)
     return (1, str(g))
 
 
@@ -424,3 +431,34 @@ def from_csv(path):
             r["excluded"] = str(r.get("excluded")).lower() == "true"
             out.append(r)
     return out
+
+
+DERIVED = {"day": lambda r: _match_day(r.get("match_code"))}
+
+
+def _match_day(match):
+    from .bet_checks import _day
+    return _day(match)
+
+
+def _value(r, col):
+    return DERIVED[col](r) if col in DERIVED else r.get(col)
+
+
+def cross(rows, cols, min_bets=MIN_BETS):
+    """Lines of text: the book's margin by every combination of these columns (any bets_sim.csv
+    column, or `day`), costliest first, with the edge bettors had over prod's probability
+    (expected margin less the margin)."""
+    table = buckets(rows, lambda r: tuple(str(_value(r, c)) for c in cols))
+    scope = sum(v[1] for v in table.values())
+    lines = [f"\n  the book's margin by {' x '.join(cols)}, costliest first (edge = expected - margin: "
+             "how far bettors beat prod's probability)",
+             f"  {' / '.join(cols)[:50]:50s} {'bets':>7s} {'stake%':>7s} {'revenue':>11s} "
+             f"{'margin':>8s} {'+-2se':>6s} {'expected':>9s} {'edge':>7s}"]
+    for g, (n, stake, rev, m, se2, exp) in sorted(table.items(), key=lambda kv: kv[1][2]):
+        if n < min_bets:
+            continue
+        edge = "" if exp is None else f"{exp - m:+7.2f}"
+        lines.append(f"  {' / '.join(g)[:50]:50s} {n:7,d} {100 * stake / scope:6.1f}% {rev:+11,.0f} "
+                     f"{m:7.2f}% {se2:6.2f} {'' if exp is None else f'{exp:8.2f}%'} {edge}")
+    return lines

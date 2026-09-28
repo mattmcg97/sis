@@ -163,6 +163,19 @@ class TestBuckets(unittest.TestCase):
         text = "\n".join(bm.report([("prod", back)], candidates=False))
         self.assertIn("by the feed at bet time", text)
 
+    def test_crossing_columns_puts_the_costliest_first(self):
+        rows = self.rows()
+        for r in rows:
+            r["match_code"] = "AF001200926"
+        lines = bm.cross(rows, ["moment", "day"])
+        self.assertTrue(lines[2].strip().startswith(f"{bm.LIVE} / 2026-09-20"))
+        self.assertIn("+60.00", lines[2])
+
+    def test_bands_sort_by_their_seconds(self):
+        bands = ["60s+", "10-20s", "<0s", "0-2s", "2-5s", "none after", "unknown"]
+        self.assertEqual(sorted(bands, key=lambda g: bm._order("price_age", g)),
+                         ["<0s", "0-2s", "2-5s", "10-20s", "60s+", "none after", "unknown"])
+
 
 if __name__ == "__main__":
     unittest.main()

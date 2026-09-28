@@ -255,7 +255,12 @@ def cmd_bets(args):
         path = args.csv or os.path.join(out_dir, "bets_sim.csv")
         rows = bet_moments.from_csv(path)
         print(f"  {len(rows):,} bets from {path}")
-        print("\n".join(bet_moments.report([("prod", rows)], candidates=False)))
+        if args.by:
+            for spec in args.by:
+                cols = [c.strip() for c in spec.split(",") if c.strip()]
+                print("\n".join(bet_moments.cross(rows, cols, args.min_bets)))
+        else:
+            print("\n".join(bet_moments.report([("prod", rows)], args.min_bets, candidates=False)))
         return 0
     if args.bet_table:
         config.BET_TABLE = args.bet_table
@@ -924,6 +929,11 @@ def build_parser():
                                   f"lack and the bet still be re-priced (default {config.MAX_SCOUTING_GAP})")
     bets_parser.add_argument("--csv", metavar="PATH",
                              help="moments: the bets CSV to read (default <out>/bets_sim.csv)")
+    bets_parser.add_argument("--by", action="append", metavar="COLS",
+                             help="moments: cross these bets_sim.csv columns, comma-separated (or "
+                                  "day), costliest first; repeatable, e.g. --by clock_band,market,selection")
+    bets_parser.add_argument("--min-bets", type=int, default=100, metavar="N",
+                             help="moments: hide buckets with fewer bets (default 100)")
     bets_parser.add_argument("--extra-columns", metavar="COLS",
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")
