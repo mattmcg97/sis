@@ -164,6 +164,21 @@ OTHER_SPORT = re.compile(r"FREE_THROW|REBOUND|THREE_POINT|JUMP_BALL|DUNK|LAYUP|A
                          r"SHOT|BASKET|GOAL_SCORED|CORNER|OFFSIDE|YELLOW_CARD|RED_CARD|INNING|WICKET")
 
 
+def detail_presence(scouting_rows):
+    """(match day, PLAY_STARTED / PLAY_OVER) -> Counter of rows and rows carrying the offensive team
+    and field position: where SCOUTING_FULL's play detail is."""
+    out = defaultdict(Counter)
+    for r in scouting_rows:
+        kind = _text(r[4])
+        if kind not in ("PLAY_STARTED", "PLAY_OVER"):
+            continue
+        c = out[(_day(r[0]), kind)]
+        c["rows"] += 1
+        c["team"] += _text(r[5]) is not None
+        c["field"] += r[8] not in (None, "")
+    return out
+
+
 def vocabulary(scouting_rows):
     """(Counter of (column, message) -> rows, Counter of (column, message) -> matches, match codes
     not starting with the AF prefix) over SCOUTING_FULL rows: the check that only Madden reached
@@ -185,8 +200,9 @@ def vocabulary(scouting_rows):
 
 def side_diagnosis(scouting_rows, score_rows, matches):
     """For matches whose TEAM_A side is not known: Counter of why (no scoring message by a score
-    change, or votes split), and Counter of the feed messages at their score changes."""
-    from .scouting import team_a_votes
+    change, or votes split), and Counter of what their feed shows: score rows with empty change
+    columns, and each touchdown or field goal's distance to the nearest score change."""
+    from .scouting import TD_MESSAGES, score_steps, team_a_votes
     matches = set(matches)
     rows, scores = defaultdict(list), defaultdict(list)
     for r in scouting_rows:
@@ -195,21 +211,31 @@ def side_diagnosis(scouting_rows, score_rows, matches):
     for sc in score_rows:
         if sc[0] in matches:
             scores[sc[0]].append(sc)
-    why, near = Counter(), Counter()
+    why, seen = Counter(), Counter()
+    scoring = TD_MESSAGES | {"FIELD_GOAL_GOOD_TEAM_A", "FIELD_GOAL_GOOD_TEAM_B"}
     for match in matches:
         votes = team_a_votes(rows[match], scores[match])
         why["no scoring message by a score change" if not votes else
             "scoring messages split: " + ", ".join(f"{k} {v}" for k, v in sorted(votes.items()))
             if len(votes) > 1 else "one side only"] += 1
-        kinds = sorted((int(r[1]), _text(r[4])) for r in rows[match] if r[1] is not None and _text(r[4]))
-        msgs = [m for m, _ in kinds]
-        for sc in scores[match]:
-            if sc[1] is None or not ((sc[3] or 0) or (sc[4] or 0)):
+        seen["score rows"] += len(scores[match])
+        seen["score rows with empty change columns"] += sum(sc[3] is None and sc[4] is None
+                                                            for sc in scores[match])
+        steps = [m for m, _, _ in score_steps(scores[match])]
+        seen["score changes"] += len(steps)
+        for r in rows[match]:
+            if r[1] is None or _text(r[4]) not in scoring:
                 continue
-            m = int(sc[1])
-            for _, kind in kinds[bisect_left(msgs, m - 3):bisect_right(msgs, m)]:
-                near[kind] += 1
-    return why, near
+            if not steps:
+                seen["scoring message, no score change in the match"] += 1
+                continue
+            m = int(r[1])
+            gap = min(steps, key=lambda x: abs(x - m)) - m
+            seen["scoring message, nearest score change " + (
+                "0 to +3 after" if 0 <= gap <= 3 else "+4 to +20 after" if 4 <= gap <= 20 else
+                "over 20 after" if gap > 20 else "-1 to -20 before" if gap >= -20 else
+                "over 20 before")] += 1
+    return why, seen
 
 
 def message_times(quote_rows):
@@ -485,10 +511,17 @@ def report(rows, checks):
         lines.append(f"  matches with TEAM_A's side not known (no longer guessed; not priced): "
                      f"{len(checks.guessed):,} of {len(checks.books):,}, in-play stake "
                      f"{sum(stake_by[m] for m in checks.guessed):,.0f}")
-    for key, title in (("side_why", "    why"), ("side_near", "    feed messages at their score changes")):
+    for key, title in (("side_why", "    why"), ("side_near", "    what their feed shows")):
         c = checks.diag.get(key)
         if c:
             lines.append(f"{title}: " + ", ".join(f"{k} {v:,}" for k, v in c.most_common(10)))
+    presence = checks.diag.get("presence")
+    if presence:
+        lines.append("  SCOUTING_FULL play detail by match day: the share of rows carrying the offensive "
+                     "team / field position")
+        for (day, kind), c in sorted(presence.items()):
+            lines.append(f"    {day:12s} {kind:13s} {c['rows']:8,d} rows   team {100 * c['team'] / c['rows']:5.1f}%"
+                         f"   field {100 * c['field'] / c['rows']:5.1f}%")
     days = checks.diag.get("days")
     if days:
         lines.append(f"  by match day {'':3s} {'matches':>8s} {'side not known':>15s} {'PLAY_OVERs':>11s} "

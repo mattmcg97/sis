@@ -415,10 +415,25 @@ def team_a_side(rows, scores):
     return side if n >= 0.8 * sum(votes.values()) else None
 
 
+def score_steps(scores):
+    """[(message, player 1 points, player 2 points)] for every score change that moved the board,
+    in message order: off the change columns, or the step in the cumulative score where they are
+    empty."""
+    out, c1, c2 = [], 0, 0
+    for s in sorted((s for s in scores if s[1] is not None), key=lambda s: s[1]):
+        d1 = s[3] if s[3] is not None else ((s[5] - c1) if s[5] is not None else 0)
+        d2 = s[4] if s[4] is not None else ((s[6] - c2) if s[6] is not None else 0)
+        c1 = s[5] if s[5] is not None else c1 + (d1 or 0)
+        c2 = s[6] if s[6] is not None else c2 + (d2 or 0)
+        if d1 or d2:
+            out.append((s[1], d1 or 0, d2 or 0))
+    return out
+
+
 def team_a_votes(rows, scores):
     """Counter of the side TEAM_A's scoring messages put it on: each touchdown or
-    field goal against a score change within three messages after it."""
-    changes = sorted((s[1], s[3] or 0, s[4] or 0) for s in scores if s[1] is not None)
+    field goal against the first score change within three messages after it."""
+    changes = score_steps(scores)
     votes = Counter()
     for r in rows:
         message = _text(r[4])
