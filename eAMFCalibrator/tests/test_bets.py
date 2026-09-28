@@ -237,7 +237,8 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
                 mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
-                mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]):
+                mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]), \
+                mock.patch.object(bets, "check_models"):
             results = bets.run(None, "out")
         self.assertEqual([n for n, _ in results], ["v4", "v5", "v6"])
         self.assertIn(mock.call(None, "MODEL:v6", ["M1"]), fq.call_args_list)
@@ -298,6 +299,14 @@ class TestCandidates(unittest.TestCase):
         self.assertFalse(row["same_line"])
         self.assertEqual(row["candidate_result"], bets.WON)     # 46 over 45.5
         self.assertTrue(row["simulated"])
+
+    def test_a_missing_model_stops_the_run_before_any_fetching(self):
+        with mock.patch.object(config, "V6_MODEL_DIR", "no_such_v6_model"), \
+                mock.patch.object(config, "CANDIDATES", ["GAMEPLAI_STREAM_CANDIDATE", "MODEL:v6"]), \
+                mock.patch.object(bets, "fetch_all") as fetched:
+            with self.assertRaises(SystemExit):
+                bets.run(None, "out")
+        fetched.assert_not_called()
 
     def test_candidates_are_compared_on_the_bets_they_all_priced(self):
         def row(stake, rev, rev_c, simulated=True, market="total"):
