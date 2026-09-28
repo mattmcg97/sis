@@ -1641,6 +1641,42 @@ The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
 `--out` folder. Models are priced again for the bets' matches, so the run
 takes longer.
 
+### Where in the game the book loses
+
+Every run (`bets`, `bets check`, `report --bets`) tags each in-play bet
+with what the scouting feed was doing when the bet was struck. It then
+buckets the book's margin by each tag, on the console and in the HTML
+section. The same tags are added as columns to `bets_sim.csv`.
+
+| column | what it is |
+|---|---|
+| `moment` | the feed at bet time: play live, between plays, score in with the play not over, conversion to come or live, kick-off to come or live, timeout, quarter break |
+| `feed_suspended` | the feed's own BET_SUSPEND .. BET_UNSUSPEND was on (it suspends for every play) |
+| `moved` | what the feed did between the message the price came from and bet time: score, kick-off, play started, play over, timeout, possession, nothing |
+| `price_age` | seconds from the price's message to the bet |
+| `next_score` | seconds from the bet to the board's next move |
+| `clock_band`, `score_margin`, `down` | quarter and clock, the score, the down |
+
+Bet time is read on the feed's own clock. Prod only publishes on some
+messages; the feed carries every message's `FILE_TIME`. Each match's feed
+is moved onto prod's publishing clock by the median gap between the two.
+Each bucket shows:
+- its margin with ±2 standard errors;
+- the expected margin: what the book keeps if prod's probability were right
+  (1 − odds × prod's probability);
+- each candidate's change in margin on the bets they all re-priced.
+
+A bucket well below its expected margin is where bettors know more than the
+price. That can be a stale price (the feed moved on) or a bet struck while
+a play is live. The list of the costliest moments crosses the feed at bet
+time with what moved since the price and the next score.
+
+To bucket a CSV already written again, with no Snowflake:
+
+```bash
+python -m eAMFCalibrator bets moments --csv eAMFCalibrator/out/bets_sim.csv
+```
+
 ### Several candidates: the model versions
 
 ```bash

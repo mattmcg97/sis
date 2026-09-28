@@ -582,17 +582,20 @@ def fetch_checks(cur, matches, prod_rows):
     diag["vocab"] = bet_checks.vocabulary(keep.get("scouting", []))
     diag["presence"] = bet_checks.detail_presence(keep.get("scouting", []))
     diag["sports"] = snowflake_io.fetch_sports(cur, matches)
-    return bet_checks.Checks(bet_checks.build_feeds(keep.get("scouting", [])),
-                             bet_checks.message_times(prod_rows),
-                             bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons,
-                             diag)
+    from . import bet_moments
+    times = bet_checks.message_times(prod_rows)
+    checks = bet_checks.Checks(bet_checks.build_feeds(keep.get("scouting", [])), times,
+                               bet_checks.score_index(keep.get("scores", [])), books, guessed, reasons,
+                               diag)
+    checks.timelines = bet_moments.build(keep.get("scouting", []), times)
+    return checks
 
 
 def run(cur, out_dir, only_checks=False, summary=None):
     """The whole pipeline: fetch, lag, check, join each candidate, write the CSVs and print the
     summary. only_checks stops after the checks (no candidate is priced). `summary` (a dict)
     collects the candidates' rows and the lags, for html_section."""
-    from . import bet_checks
+    from . import bet_checks, bet_moments
     if not only_checks:
         check_models(candidate_streams())
     sql, params, _ = bets_sql()
@@ -617,8 +620,10 @@ def run(cur, out_dir, only_checks=False, summary=None):
     os.makedirs(out_dir, exist_ok=True)
     if only_checks:
         rows = join(bets, lags, signs, prod_tl, {}, None, finals, checks)
+        bet_moments.annotate([("prod", rows)], bets, checks, checks.timelines)
         write_csv(os.path.join(out_dir, "bets_checks.csv"), rows)
         print("\n".join(bet_checks.report(rows, checks)))
+        print("\n".join(bet_moments.report([("prod", rows)])))
         return rows
     results = []
     for stream in candidate_streams():
@@ -627,6 +632,7 @@ def run(cur, out_dir, only_checks=False, summary=None):
         results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
                                              timeline(cand_rows), finals, checks,
                                              same_state=snowflake_io.is_model(stream))))
+    bet_moments.annotate(results, bets, checks, checks.timelines)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
                 for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0]))]
@@ -643,6 +649,7 @@ def run(cur, out_dir, only_checks=False, summary=None):
         report_candidate(rows, name)
     if len(results) > 1:
         print("\n".join(compare_report(results)))
+    print("\n".join(bet_moments.report(results)))
     if summary is not None:
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches))
     return results[0][1] if len(results) == 1 else results
@@ -918,6 +925,8 @@ def html_section(summary):
                          f"({lag.bets:,} bets)" for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0])))
     head = "".join(f"<th>{_esc(n)}</th>" for n in names)
     common_n = split[0] if split else 0
+    from . import bet_moments
+    moments = bet_moments.html_tables(results, _esc, _change_cell)
     return f"""
   <section class="panel" id="bets">
     <h2>Betting simulation</h2>
@@ -942,6 +951,7 @@ def html_section(summary):
         differently)</th><th>Total</th></tr></thead>
       <tbody>{''.join(effect_rows)}</tbody>
     </table>
+    {moments}
     <h3>Why bets were not re-priced</h3>
     <table class="reach"><tbody>{''.join(why)}</tbody></table>
     <p class="dim">Lag by operator: {lag_line or 'none fitted'}</p>
