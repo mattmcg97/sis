@@ -385,19 +385,19 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
-        big, joint = sim6.BIG_LEAD, sim6.FOURTH_JOINT
-        sim6.BIG_LEAD, sim6.FOURTH_JOINT = None, False
+        big, joint, ot = sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES
+        sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES = None, False, False
         try:
             t6 = sim6.Tables.build(self.matches, min_records=20)
+            t6.late_fourth = None
+            t5 = sim5.Tables.build(self.matches, min_records=20)
+            st = sim6.Start(3)
+            st.period[:], st.clock[:], st.phase[:] = 4, 150.0, sim6.SCRIM
+            st.team[:], st.y[:], st.home[:], st.away[:] = 0, 50, [3, 17, 10], [10, 10, 30]
+            a = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
+            b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
         finally:
-            sim6.BIG_LEAD, sim6.FOURTH_JOINT = big, joint
-        t6.late_fourth = None
-        t5 = sim5.Tables.build(self.matches, min_records=20)
-        st = sim6.Start(3)
-        st.period[:], st.clock[:], st.phase[:] = 4, 150.0, sim6.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 50, [3, 17, 10], [10, 10, 30]
-        a = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
-        b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
+            sim6.BIG_LEAD, sim6.FOURTH_JOINT, sim6.OT_RULES = big, joint, ot
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_big_leads_have_their_own_situations(self):
@@ -462,6 +462,21 @@ class TestOvertimeRules(unittest.TestCase):
         self.assertGreater(stats.get("ot_walk_off", 0), 0)
         # a field goal answered by a touchdown ends at 9, never 10 with the kick
         self.assertLess(float((points == 10).mean()), 0.005)
+
+    def test_level_before_the_other_side_has_had_the_ball_it_goes_as_real_overtimes_do(self):
+        import copy
+        st = sim6.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 5, 200.0, sim6.SCRIM
+        st.team[:], st.home[:], st.away[:] = 0, 20, 20
+        st.down[:], st.dist[:], st.y[:] = 4, 5, 80
+        for ot_go in (0.9, 0.1):
+            t = copy.deepcopy(self.tables)
+            t.ot_go = ot_go
+            stats = {}
+            sim6.simulate(t, st, 4000, np.random.default_rng(1), seed=3, stats=stats, max_steps=1,
+                          common=False)
+            self.assertAlmostEqual(stats.get("fourth_go", 0) / 4000, ot_go, delta=0.03)
+            self.assertEqual(stats.get("punt", 0), 0)
 
     def test_behind_by_a_touchdown_after_the_other_side_had_the_ball_it_goes_for_it(self):
         st = sim6.Start(1)
