@@ -1719,6 +1719,31 @@ python -m eAMFCalibrator bets moments --by clock_band,market,selection --by scor
 `--by` crosses any `bets_sim.csv` columns (or `day`), costliest first, with
 the edge bettors had over prod's probability (the expected margin less the
 margin).
+- `--scope all|pre-match|in-play` picks the bets (default all). `when`
+  splits pre-match from in play by quarter and clock.
+- `--players CSV` takes the match history (`history`'s, shaped like
+  `nb2/AMFELO.csv`; PLAYER_1 is home). It adds columns to cut by:
+  - the gamer and NFL team backed and opposed (`backed_player`,
+    `opposed_player`, `backed_team`, `opposed_team`; `total` for totals);
+  - `matchup`, `team_matchup`, and the home and away gamers and teams;
+  - `gamer` and `team`, which count each bet once for each side of its
+    match, with `gamer_role` (backed, opposed or total).
+
+```bash
+python -m eAMFCalibrator bets moments --players eAMFCalibrator/out/match_history.csv --by when,market,selection --by backed_player --by gamer,gamer_role --by backed_team --by matchup
+```
+
+**Prod's pre-match by gamer (Aug 25–Sep 10, 1,424 matches).** Prod's
+pre-match misses by gamer are larger than chance. The mean z² runs
+1.8–2.5 against 1.0 for no signal, largest on totals. They also persist: a
+gamer's miss in the first half of the window carries into the second
+(correlation +0.2 to +0.36). By stream, there's nothing. The home side
+wins 51.1% of 24k matches, +0.3 points, and prod prices that right.
+- **NB2 fitted before each half beats prod on the second half:** margin
+  RMSE 9.46 against 9.76, total RMSE 11.86 against 11.97.
+- **Correcting by each gamer's first-half miss:** it helps prod a little
+  (margin 9.72, total 11.91) and NB2 barely (9.45, 11.85). So NB2 already
+  carries most of the gamer signal prod misses.
 
 **Sep 17–28, first run.** The in-play book kept −1.9% against an expected
 +7.6%, so bettors beat prod's probability by about 9.5 points.

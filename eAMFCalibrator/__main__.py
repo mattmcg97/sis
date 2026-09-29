@@ -255,10 +255,17 @@ def cmd_bets(args):
         path = args.csv or os.path.join(out_dir, "bets_sim.csv")
         rows = bet_moments.from_csv(path)
         print(f"  {len(rows):,} bets from {path}")
+        if args.players:
+            info = bet_moments.match_info(args.players)
+            bet_moments.add_players(rows, info)
+            print(f"  gamers and teams for {sum('home_player' in r for r in rows):,} bets from {args.players}")
+        keep = {"in-play": None, "pre-match": lambda r: bet_moments.settled(r) and not r.get("in_play"),
+                "all": bet_moments.settled}[args.scope]
         if args.by:
+            print(f"  bets: {args.scope}")
             for spec in args.by:
                 cols = [c.strip() for c in spec.split(",") if c.strip()]
-                print("\n".join(bet_moments.cross(rows, cols, args.min_bets)))
+                print("\n".join(bet_moments.cross(rows, cols, args.min_bets, keep)))
         else:
             print("\n".join(bet_moments.report([("prod", rows)], args.min_bets, candidates=False)))
         return 0
@@ -937,6 +944,14 @@ def build_parser():
     bets_parser.add_argument("--by", action="append", metavar="COLS",
                              help="moments: cross these bets_sim.csv columns, comma-separated (or "
                                   "day), costliest first; repeatable, e.g. --by clock_band,market,selection")
+    bets_parser.add_argument("--players", metavar="CSV",
+                             help="moments: a match history CSV (`history`'s, or nb2/AMFELO.csv) to cut by "
+                                  "gamer and NFL team: backed_player, opposed_player, backed_team, matchup, "
+                                  "team_matchup, home_player, away_team, ..., or gamer / team (each bet "
+                                  "once for each side) with gamer_role (backed, opposed, total)")
+    bets_parser.add_argument("--scope", choices=["all", "pre-match", "in-play"], default="all",
+                             help="moments --by: which bets (default all; `when` splits pre-match from "
+                                  "in play by quarter and clock)")
     bets_parser.add_argument("--min-bets", type=int, default=100, metavar="N",
                              help="moments: hide buckets with fewer bets (default 100)")
     bets_parser.add_argument("--extra-columns", metavar="COLS",

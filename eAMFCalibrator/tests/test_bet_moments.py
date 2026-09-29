@@ -177,5 +177,48 @@ class TestBuckets(unittest.TestCase):
                          ["<0s", "0-2s", "2-5s", "10-20s", "60s+", "none after", "unknown"])
 
 
+class TestPlayers(unittest.TestCase):
+    def rows(self):
+        out = []
+        for k in range(120):
+            out.append(_row(bm.BETWEEN, -10.0, selection="Home", match_code="M1"))
+            out.append(_row(bm.BETWEEN, 10.0, selection="Away", match_code="M1"))
+            out.append(_row(bm.BETWEEN, 10.0, selection="Over", match_code="M2", in_play=False))
+        return out
+
+    def info(self):
+        import os
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "history.csv")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("MATCH_CODE,PLAYER_1_HANDLE,PLAYER_1_TEAM,PLAYER_2_HANDLE,PLAYER_2_TEAM\n"
+                     "M1,ACE,Bills,ZED,Jets\nM2,ZED,Lions,ACE,Bears\n")
+        return bm.match_info(path)
+
+    def test_each_bet_knows_the_side_it_backed(self):
+        rows = bm.add_players(self.rows(), self.info())
+        self.assertEqual((rows[0]["backed_player"], rows[0]["opposed_team"], rows[0]["matchup"]),
+                         ("ACE", "Jets", "ACE v ZED"))
+        self.assertEqual((rows[1]["backed_player"], rows[2]["backed_player"]), ("ZED", "total"))
+
+    def test_a_gamer_gets_every_bet_of_its_matches_once(self):
+        rows = bm.add_players(self.rows(), self.info())
+        lines = bm.cross(rows, ["gamer", "gamer_role"], min_bets=50, keep=bm.settled)
+        text = "\n".join(lines)
+        self.assertIn("ACE / backed", text)
+        self.assertIn("ZED / total", text)
+        self.assertTrue(lines[2].strip().startswith(("ACE / backed", "ZED / backed")))
+        in_play = bm.cross(rows, ["gamer", "gamer_role"], min_bets=50)
+        self.assertNotIn("total", "\n".join(in_play[2:]))
+
+    def test_when_splits_pre_match_from_in_play(self):
+        rows = self.rows()
+        for r in rows:
+            r["clock_band"] = "Q1 before 2:00"
+        text = "\n".join(bm.cross(rows, ["when"], min_bets=50, keep=bm.settled))
+        self.assertIn("pre-match", text)
+        self.assertIn("Q1 before 2:00", text)
+
+
 if __name__ == "__main__":
     unittest.main()
