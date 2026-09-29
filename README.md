@@ -58,3 +58,10 @@ connected. `.env` is gitignored so credentials never get committed.
   backtests in both Python and R (`backtest_nb2_calibration.py`,
   `backtest_nb2_halflife.R`). `AMFELO.csv` is the full historical match
   dataset both the Python and R fits are trained and tested on.
+- `glmer/` — An alternative pre-match model in R (`lme4::glmer`): a global
+  mixed-effects model plus an attack and a defence model for every player
+  with enough matches, falling back to the global one for everyone else.
+  `backtest.R` grids feature sets x row weightings out of sample, `fit.R`
+  fits the chosen one, and `predict.R` prices a schedule into the same
+  expected-points columns NB2 gives the eAMFModel versions. See
+  `glmer/README.md`.
