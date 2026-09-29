@@ -296,12 +296,13 @@ def _in_scope(r):
             and r.get("stake"))
 
 
-def buckets(rows, by):
+def buckets(rows, by, keep=None):
     """{bucket: (bets, stake, revenue, margin %, 2 x its standard error, expected margin %)} over the
-    in-play bets the checks keep, settled won / lost / push."""
+    bets `keep` picks (default: in play, the checks keeping them, settled won / lost / push)."""
+    keep = keep or _in_scope
     groups = defaultdict(list)
     for r in rows:
-        if _in_scope(r):
+        if keep(r):
             groups[by(r) if callable(by) else r.get(by)].append(r)
     out = {}
     for g, rs in groups.items():
@@ -433,7 +434,9 @@ def from_csv(path):
     return out
 
 
-DERIVED = {"day": lambda r: _match_day(r.get("match_code"))}
+DERIVED = {"day": lambda r: _match_day(r.get("match_code")),
+           "when": lambda r: ("pre-match" if not r.get("in_play") else r.get("clock_band") or "in play")}
+PER_SIDE = ("gamer", "gamer_role", "team", "team_role")
 
 
 def _match_day(match):
@@ -445,14 +448,71 @@ def _value(r, col):
     return DERIVED[col](r) if col in DERIVED else r.get(col)
 
 
-def cross(rows, cols, min_bets=MIN_BETS):
+def match_info(path):
+    """match -> its two gamers and their NFL teams off a match history CSV (nb2/AMFELO.csv's shape,
+    as `history` writes it); PLAYER_1 is the home side."""
+    import csv
+    out = {}
+    with open(path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            out[r["MATCH_CODE"]] = dict(home_player=r.get("PLAYER_1_HANDLE") or "?",
+                                        home_team=r.get("PLAYER_1_TEAM") or "?",
+                                        away_player=r.get("PLAYER_2_HANDLE") or "?",
+                                        away_team=r.get("PLAYER_2_TEAM") or "?")
+    return out
+
+
+def add_players(rows, info):
+    """Add each bet's gamers and teams, the matchup, and the side it backed: the home or away gamer
+    for moneyline and spread, 'total' for the total."""
+    for r in rows:
+        i = info.get(r.get("match_code"))
+        if not i:
+            continue
+        r.update(i)
+        r["matchup"] = " v ".join(sorted((i["home_player"], i["away_player"])))
+        r["team_matchup"] = " v ".join(sorted((i["home_team"], i["away_team"])))
+        side = {"Home": "home", "Away": "away"}.get(r.get("selection"))
+        other = {"home": "away", "away": "home"}.get(side)
+        r["backed_player"] = i[f"{side}_player"] if side else "total"
+        r["backed_team"] = i[f"{side}_team"] if side else "total"
+        r["opposed_player"] = i[f"{other}_player"] if other else "total"
+        r["opposed_team"] = i[f"{other}_team"] if other else "total"
+    return rows
+
+
+def per_side(rows):
+    """Every bet twice, once for each gamer of its match: `gamer` and `team`, and `gamer_role` /
+    `team_role` whether the bet backed that side, opposed it, or was on the total."""
+    out = []
+    for r in rows:
+        if "home_player" not in r:
+            continue
+        side = {"Home": "home", "Away": "away"}.get(r.get("selection"))
+        for s in ("home", "away"):
+            role = "total" if side is None else "backed" if side == s else "opposed"
+            out.append(dict(r, gamer=r[f"{s}_player"], team=r[f"{s}_team"], gamer_role=role,
+                            team_role=role))
+    return out
+
+
+def settled(r):
+    """A bet the book settled won, lost or push (pre-match or in play), the checks keeping it."""
+    return (not r.get("excluded") and r.get("result") in ("won", "lost", "push") and r.get("stake"))
+
+
+def cross(rows, cols, min_bets=MIN_BETS, keep=None):
     """Lines of text: the book's margin by every combination of these columns (any bets_sim.csv
-    column, or `day`), costliest first, with the edge bettors had over prod's probability
-    (expected margin less the margin)."""
-    table = buckets(rows, lambda r: tuple(str(_value(r, c)) for c in cols))
+    column, `day`, `when`, or with match_info: the players' and teams' columns, `gamer` / `team`
+    counting each bet once for each side), costliest first, with the edge bettors had over prod's
+    probability (expected margin less the margin). `keep` picks the bets (default: in play)."""
+    if any(c in PER_SIDE for c in cols):
+        rows = per_side(rows)
+    table = buckets(rows, lambda r: tuple(str(_value(r, c)) for c in cols), keep)
     scope = sum(v[1] for v in table.values())
     lines = [f"\n  the book's margin by {' x '.join(cols)}, costliest first (edge = expected - margin: "
-             "how far bettors beat prod's probability)",
+             "how far bettors beat prod's probability)"
+             + ("; each bet counted once for each gamer" if any(c in PER_SIDE for c in cols) else ""),
              f"  {' / '.join(cols)[:50]:50s} {'bets':>7s} {'stake%':>7s} {'revenue':>11s} "
              f"{'margin':>8s} {'+-2se':>6s} {'expected':>9s} {'edge':>7s}"]
     for g, (n, stake, rev, m, se2, exp) in sorted(table.items(), key=lambda kv: kv[1][2]):
