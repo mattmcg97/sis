@@ -452,14 +452,16 @@ def _field(name, field):
 
 
 def candidate_change(rows, name):
-    """(bets re-priced, change in margin in points) of one candidate over these bets: its revenue
-    less the book's, over the stake, on the bets it re-priced."""
+    """(bets re-priced, change in margin in points, change in revenue) of one candidate over these
+    bets: its revenue less the book's on the bets it re-priced (the margin change over their
+    stake); (0, None, None) where it re-priced none."""
     sim, rev_c = _field(name, "simulated"), _field(name, "candidate_revenue")
     done = [r for r in rows if r.get(sim) and r.get(rev_c) is not None]
     stake = sum(r["stake"] for r in done)
     if not stake:
-        return 0, None
-    return len(done), 100 * (sum(r[rev_c] for r in done) - sum(r["revenue"] for r in done)) / stake
+        return 0, None, None
+    change = sum(r[rev_c] for r in done) - sum(r["revenue"] for r in done)
+    return len(done), 100 * change / stake, change
 
 
 DERIVED = {"day": lambda r: _match_day(r.get("match_code")),
@@ -560,20 +562,20 @@ def cross(rows, cols, min_bets=MIN_BETS, keep=None):
     scope = sum(v[1] for v in table.values())
     lines = [f"\n  the book's margin by {' x '.join(cols)}, costliest first (edge = expected - margin: "
              "how far bettors beat prod's probability"
-             + ("; each candidate: its change in margin, points, on the bets of the bucket it re-priced "
-                "(how many)" if names else "") + ")"
+             + ("; each candidate: its change in revenue against prod's on the bets of the bucket it "
+                "re-priced (how many)" if names else "") + ")"
              + ("; each bet counted once for each gamer" if any(c in PER_SIDE for c in cols) else ""),
              f"  {' / '.join(cols)[:50]:50s} {'bets':>7s} {'stake%':>7s} {'revenue':>11s} "
              f"{'margin':>8s} {'+-2se':>6s} {'expected':>9s} {'edge':>7s}"
-             + "".join(f" {(n or 'candidate')[:16]:>17s}" for n in names)]
+             + "".join(f" {(n or 'candidate')[:18]:>19s}" for n in names)]
     for g, (n, stake, rev, m, se2, exp) in sorted(table.items(), key=lambda kv: kv[1][2]):
         if n < min_bets:
             continue
         edge = "" if exp is None else f"{exp - m:+7.2f}"
         cells = ""
         for name in names:
-            k, change = candidate_change(groups[g], name)
-            cells += f" {'-':>17s}" if change is None else f" {change:+8.2f} ({k:6,d})"
+            k, _, change = candidate_change(groups[g], name)
+            cells += f" {'-':>19s}" if change is None else f" {change:+10,.0f} ({k:6,d})"
         lines.append(f"  {' / '.join(g)[:50]:50s} {n:7,d} {100 * stake / scope:6.1f}% {rev:+11,.0f} "
                      f"{m:7.2f}% {se2:6.2f} {'' if exp is None else f'{exp:8.2f}%'} {edge:>7s}{cells}")
     return lines

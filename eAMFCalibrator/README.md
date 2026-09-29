@@ -1734,8 +1734,8 @@ python -m eAMFCalibrator bets moments --players eAMFCalibrator/out/match_history
 ```
 
 When the CSV carries candidates, each `--by` row also shows each
-candidate's change in margin on the bets of that bucket it re-priced, with
-how many there were: a bucket where prod loses and v6 still loses is
+candidate's change in revenue against prod's on the bets of that bucket it
+re-priced, with how many there were: a bucket where prod loses and v6 still loses is
 somewhere v6 needs fixing too. The per-candidate columns are `simulated_v6`
 and `candidate_revenue_v6`. `line_gap_v6` buckets the bets by v6's line
 less the bet's (whole points, capped at ±3), to separate what moving the
