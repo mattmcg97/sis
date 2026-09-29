@@ -1518,6 +1518,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         used = np.maximum(1.0, tables.seconds[j] + tables.sec_shift[np.where(stops, STOP, RUNNING), cell]) \
             * pace[sx, so]
         clock[sx] -= used
+        tally("clock_used", used.sum())
         kd = tables.kind[j]
         held = np.zeros(len(sx), dtype=bool)
         if tables.backed is not None:

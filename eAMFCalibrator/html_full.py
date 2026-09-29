@@ -130,11 +130,13 @@ def _verdict(report):
 # Sections
 # ---------------------------------------------------------------------------
 
-def _delta_cells(value, delta, spec_value, spec_delta, extra=""):
+def _delta_cells(value, delta, spec_value, spec_delta, extra="", base=None):
     """A candidate's value, its difference from prod (positive: the
-    candidate did better), the 95% CI and p."""
+    candidate did better), the 95% CI and p; with `base` (n, prod's value),
+    its own N and prod baseline first."""
     d = delta or {}
-    return (f'<td class="grp{extra}">{_n(value, spec_value)}</td>'
+    lead = "" if base is None else _base_cells(base[0], base[1], spec_value)
+    return (lead + f'<td class="{"" if base is not None else "grp"}{extra}">{_n(value, spec_value)}</td>'
             f'<td class="{_cls(d.get("mean"))}">{_n(d.get("mean"), spec_delta)}</td>'
             f'<td class="dim">{_ci(d, spec_delta)}</td>'
             f'<td>{_p(d.get("p_value"))}</td>')
@@ -148,6 +150,32 @@ def _group_head(sides, cols):
         for s in sides)
 
 
+def _own(sides):
+    """Whether each candidate's group carries its own N and prod baseline. A candidate is compared
+    only on the pairs it can be (its own live rows; at prod's line, only where its line is prod's),
+    so two candidates' pairs differ and one shared baseline would sit beside gaps and deltas
+    computed on other pairs. With one candidate the baseline is shared as before."""
+    return len(sides) > 1
+
+
+def _count(n):
+    return "&mdash;" if n is None else f"{n:,}"
+
+
+def _base_cells(n, prod, spec):
+    """A candidate group's own N and prod baseline."""
+    return f'<td class="grp">{_count(n)}</td><td>{_n(prod, spec)}</td>'
+
+
+def _delta_head(sides, cols, prod="Prod"):
+    """The candidate groups' headers: with several candidates, each group opens with its own N and
+    prod baseline."""
+    if not _own(sides):
+        return _group_head(sides, cols)
+    return "".join(f'<th class="grp">{_name(s)} N</th><th>{prod}</th><th>{_name(s)}</th>'
+                   + "".join(f"<th>{c}</th>" for c in cols[1:]) for s in sides)
+
+
 def _headline(sides):
     """The comparison in five rows: Brier at prod's line, line error at each
     side's own line, how often the lines matched, and the match votes."""
@@ -156,11 +184,15 @@ def _headline(sides):
     le0 = first["line_full"]["line_error"]["all"].get("all")
 
     rows = []
-    cells = "".join(_delta_cells(s["prob_full"]["summary"]["same_line"]["overall"]["candidate_brier"],
-                                 s["prob_full"]["summary"]["same_line"]["brier"], ".4f", "+.4f")
-                    for s in sides)
+    own = _own(sides)
+    shared = lambda n, prod, spec: "" if own else f"<td>{_count(n)}</td><td>{_n(prod, spec)}</td>"
+    cells = ""
+    for s in sides:
+        o = s["prob_full"]["summary"]["same_line"]["overall"]
+        cells += _delta_cells(o["candidate_brier"], s["prob_full"]["summary"]["same_line"]["brier"],
+                              ".4f", "+.4f", base=(o["n"], o["prod_brier"]) if own else None)
     rows.append(f"""<tr><th>Brier at prod's line</th>
-        <td>{same0['overall']['n']:,}</td><td>{_n(same0['overall']['prod_brier'], '.4f')}</td>{cells}</tr>""")
+        {shared(same0['overall']['n'], same0['overall']['prod_brier'], '.4f')}{cells}</tr>""")
 
     if le0:
         cells = ""
@@ -169,13 +201,18 @@ def _headline(sides):
             cells += _delta_cells(c.get("candidate_line_error"),
                                   {"mean": c.get("points_delta"), "ci_low": c.get("ci_low"),
                                    "ci_high": c.get("ci_high"), "p_value": c.get("p_value")},
-                                  ".3f", "+.3f")
+                                  ".3f", "+.3f",
+                                  base=(c.get("n"), c.get("prod_line_error")) if own else None)
         rows.append(f"""<tr><th>Line error at own line (points)</th>
-            <td>{le0['n']:,}</td><td>{le0['prod_line_error']:.3f}</td>{cells}</tr>""")
-        cells = "".join(
-            f'<td class="grp">{_pct((s["line_full"]["line_error"]["all"].get("all") or {}).get("same_share"))}</td>'
-            + _dash(3) for s in sides)
-        rows.append(f"<tr><th>Same line as prod</th><td>{le0['n']:,}</td><td>&mdash;</td>{cells}</tr>")
+            {shared(le0['n'], le0['prod_line_error'], '.3f')}{cells}</tr>""")
+        cells = ""
+        for s in sides:
+            c = s["line_full"]["line_error"]["all"].get("all") or {}
+            lead = f'<td class="grp">{_count(c.get("n"))}</td><td>&mdash;</td><td>' if own \
+                else '<td class="grp">'
+            cells += lead + f'{_pct(c.get("same_share"))}</td>' + _dash(3)
+        same_n = "" if own else f"<td>{le0['n']:,}</td><td>&mdash;</td>"
+        rows.append(f"<tr><th>Same line as prod</th>{same_n}{cells}</tr>")
 
     def votes_row(label, get):
         cells = ""
@@ -183,11 +220,14 @@ def _headline(sides):
         for s in sides:
             v = get(s)
             n = n if n is not None else v.get("n_matches")
-            cells += (f'<td class="grp {_cls((v.get("candidate_win_rate") or 0.5) - 0.5)}">'
+            lead = (f'<td class="grp">{_count(v.get("n_matches"))}</td><td>&mdash;</td>'
+                    if own else "")
+            cells += (lead + f'<td class="{"" if own else "grp "}{_cls((v.get("candidate_win_rate") or 0.5) - 0.5)}">'
                       f'{v.get("candidate", 0)}&ndash;{v.get("prod", 0)}</td>'
                       f'<td>{_pct(v.get("candidate_win_rate"))}</td><td></td>'
                       f'<td>{_p(v.get("p_value"))}</td>')
-        return f"<tr><th>{label}</th><td>{(n or 0):,}</td><td>&mdash;</td>{cells}</tr>"
+        shared_cells = "" if own else f"<td>{(n or 0):,}</td><td>&mdash;</td>"
+        return f"<tr><th>{label}</th>{shared_cells}{cells}</tr>"
 
     rows.append(votes_row("Matches won at prod's line",
                           lambda s: s["prob_full"]["summary"]["same_line"]["votes"]))
@@ -197,7 +237,7 @@ def _headline(sides):
     <section class="panel" id="directional">
       <h2>Directional calibration</h2>
       <table>
-        <thead><tr><th>Reading</th><th>N</th><th>Prod</th>{_group_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
+        <thead><tr><th>Reading</th>{'' if _own(sides) else '<th>N</th><th>Prod</th>'}{_delta_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -205,42 +245,45 @@ def _headline(sides):
 
 def _market_block(sides):
     rows = []
-    first = sides[0]["prob_full"]["summary"]["same_line"]
+    own = _own(sides)
     for market in MARKET_ORDER:
-        tallied = first["by_market"].get(market)
-        if not tallied or not tallied["n"]:
+        tallies = [s["prob_full"]["summary"]["same_line"]["by_market"].get(market) or {} for s in sides]
+        tallied = next((t for t in tallies if t.get("n")), None)
+        if not tallied:
             continue
         cells = ""
-        for s in sides:
+        for s, t in zip(sides, tallies):
             block = s["prob_full"]["summary"]["same_line"]
-            t = block["by_market"].get(market) or {}
             cells += _delta_cells(t.get("candidate_brier"),
                                   block.get("markets", {}).get(market, {}).get("brier"),
-                                  ".4f", "+.4f")
+                                  ".4f", "+.4f",
+                                  base=(t.get("n"), t.get("prod_brier")) if own else None)
+        shared = "" if own else (f"<td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>"
+                                 f"<td>{_n(tallied['prod_brier'], '.4f')}</td>")
         rows.append(f"""<tr><td>Brier at prod's line</td><th>{MARKET_TITLES[market]}</th>
-            <td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>
-            <td>{_n(tallied['prod_brier'], '.4f')}</td>{cells}</tr>""")
-    first_le = sides[0]["line_full"]["line_error"]["market"]
+            {shared}{cells}</tr>""")
     for market in LINE_MARKETS:
-        c0 = first_le.get(market)
+        errors = [s["line_full"]["line_error"]["market"].get(market) or {} for s in sides]
+        c0 = next((c for c in errors if c), None)
         if not c0:
             continue
         cells = ""
-        for s in sides:
-            c = s["line_full"]["line_error"]["market"].get(market) or {}
+        for c in errors:
             cells += _delta_cells(c.get("candidate_line_error"),
                                   {"mean": c.get("points_delta"), "ci_low": c.get("ci_low"),
                                    "ci_high": c.get("ci_high"), "p_value": c.get("p_value")},
-                                  ".3f", "+.3f")
+                                  ".3f", "+.3f",
+                                  base=(c.get("n"), c.get("prod_line_error")) if own else None)
+        shared = "" if own else (f"<td>{c0['n']:,}</td><td>{c0['matches']:,}</td>"
+                                 f"<td>{c0['prod_line_error']:.3f}</td>")
         rows.append(f"""<tr><td>Line error (points)</td><th>{MARKET_TITLES[market]}</th>
-            <td>{c0['n']:,}</td><td>{c0['matches']:,}</td>
-            <td>{c0['prod_line_error']:.3f}</td>{cells}</tr>""")
+            {shared}{cells}</tr>""")
     return f"""
     <section class="panel">
       <h2>By market</h2>
       <table>
-        <thead><tr><th>Measure</th><th>Market</th><th>N</th><th>Matches</th><th>Prod</th>
-          {_group_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
+        <thead><tr><th>Measure</th><th>Market</th>{'' if own else '<th>N</th><th>Matches</th><th>Prod</th>'}
+          {_delta_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -248,11 +291,15 @@ def _market_block(sides):
 
 def _calibration_cells(sides, row):
     """Real, prod and its gap, then each candidate's prediction, gap,
-    Brier difference and p -- for one cell, off each side's own table."""
+    Brier difference and p -- for one cell, off each side's own table. With
+    several candidates each group carries its own N, real and prod: each
+    candidate's cell is built on the pairs it can be compared on."""
     base = next((r for r in row if r), None)
     if base is None:
         return None
-    out = (f'<td data-v="{base["n"]}">{base["n"]:,}</td>'
+    own = _own(sides)
+    out = "" if own else (
+           f'<td data-v="{base["n"]}">{base["n"]:,}</td>'
            f'<td data-v="{base["matches"]}">{base["matches"]:,}</td>'
            f'<td data-v="{base["realized"] or 0}"><b>{_n(base["realized"], ".3f")}</b></td>'
            f'<td data-v="{base["prod_predicted"] or 0}">{_n(base["prod_predicted"], ".3f")}</td>'
@@ -260,10 +307,18 @@ def _calibration_cells(sides, row):
            f'{_n(base["prod_gap"], "+.3f")}</td>')
     for r in row:
         if not r:
-            out += '<td class="grp">&mdash;</td>' + _dash(3)
+            out += '<td class="grp">&mdash;</td>' + _dash(7 if own else 3)
             continue
-        out += (f'<td class="grp" data-v="{r["candidate_predicted"] or 0}">{_n(r["candidate_predicted"], ".3f")}</td>'
-                f'<td data-v="{r["candidate_gap"] or 0}" class="{_gap(r["candidate_gap"], PROB_GAP)}">'
+        if own:
+            out += (f'<td class="grp" data-v="{r["n"]}">{r["n"]:,}</td>'
+                    f'<td data-v="{r["realized"] or 0}"><b>{_n(r["realized"], ".3f")}</b></td>'
+                    f'<td data-v="{r["prod_predicted"] or 0}">{_n(r["prod_predicted"], ".3f")}</td>'
+                    f'<td data-v="{r["prod_gap"] or 0}" class="{_gap(r["prod_gap"], PROB_GAP)}">'
+                    f'{_n(r["prod_gap"], "+.3f")}</td>'
+                    f'<td data-v="{r["candidate_predicted"] or 0}">{_n(r["candidate_predicted"], ".3f")}</td>')
+        else:
+            out += f'<td class="grp" data-v="{r["candidate_predicted"] or 0}">{_n(r["candidate_predicted"], ".3f")}</td>'
+        out += (f'<td data-v="{r["candidate_gap"] or 0}" class="{_gap(r["candidate_gap"], PROB_GAP)}">'
                 f'{_n(r["candidate_gap"], "+.3f")}</td>'
                 f'<td data-v="{r["brier_delta"] or 0}" class="{_cls(r["brier_delta"])}">{_n(r["brier_delta"])}</td>'
                 f'<td data-v="{r["p_value"] if r["p_value"] is not None else 1}">{_p(r["p_value"])}</td>')
@@ -271,6 +326,10 @@ def _calibration_cells(sides, row):
 
 
 def _calibration_head(sides):
+    if _own(sides):
+        return "".join(f'<th class="grp">{_name(s)} N</th><th>Real</th><th>Prod</th><th>Gap</th>'
+                       f'<th>{_name(s)}</th><th>Gap</th><th>&Delta;Brier</th><th>p</th>'
+                       for s in sides)
     return ("<th>N</th><th>Matches</th><th>Real</th><th>Prod</th><th>Gap</th>"
             + _group_head(sides, ["", "Gap", "&Delta;Brier", "p"]))
 
@@ -311,17 +370,20 @@ def _axis_section(sides, index):
         if base is None:
             continue
         cells = ""
+        own = _own(sides)
         for r in row:
             if not r:
-                cells += '<td class="grp">&mdash;</td>' + _dash(3)
+                cells += '<td class="grp">&mdash;</td>' + _dash(5 if own else 3)
                 continue
-            cells += (f'<td class="grp">{r["candidate_line_error"]:.3f}</td>'
+            lead = _base_cells(r["n"], r["prod_line_error"], ".3f") if own else ""
+            cells += (lead + f'<td class="{"" if own else "grp"}">{r["candidate_line_error"]:.3f}</td>'
                       f'<td>{_pct(r["same_share"])}</td>'
                       f'<td class="{_cls(r["points_delta"])}">{_n(r["points_delta"], "+.3f")}</td>'
                       f'<td>{_p(r["p_value"])}</td>')
+        shared = "" if own else (f"<td>{base['n']:,}</td><td>{base['matches']:,}</td>"
+                                 f"<td>{base['prod_line_error']:.3f}</td>")
         line_rows.append(f"""<tr><th>{html.escape(str(cell_label))}</th>
-            <td>{base['n']:,}</td><td>{base['matches']:,}</td>
-            <td>{base['prod_line_error']:.3f}</td>{cells}</tr>""")
+            {shared}{cells}</tr>""")
 
     name = html.escape(axis0["name"])
     return f"""
@@ -336,8 +398,8 @@ def _axis_section(sides, index):
       </div>
       <h3>Line error (points)</h3>
       <table>
-        <thead><tr><th>{name}</th><th>N</th><th>Matches</th><th>Prod</th>
-          {_group_head(sides, ['', 'Same line', '&Delta;points', 'p'])}</tr></thead>
+        <thead><tr><th>{name}</th>{'' if _own(sides) else '<th>N</th><th>Matches</th><th>Prod</th>'}
+          {_delta_head(sides, ['', 'Same line', '&Delta;points', 'p'])}</tr></thead>
         <tbody>{''.join(line_rows) or '<tr><td colspan="4" class="dim">no pairs</td></tr>'}</tbody>
       </table>
     </section>"""
@@ -391,14 +453,6 @@ def _prematch_block(sides):
         return ""
     base = next(x for x in summaries if x)
 
-    def cell_group(c):
-        if not c:
-            return '<td class="grp">&mdash;</td>' + _dash(3)
-        return (f'<td class="grp">{_n(c["candidate_predicted"], ".3f")}</td>'
-                f'<td class="{_gap(c["candidate_gap"], PROB_GAP)}">{_n(c["candidate_gap"], "+.3f")}</td>'
-                f'<td class="{_cls(c["brier_delta"])}">{_n(c["brier_delta"])}</td>'
-                f'<td>{_p(c["p_value"])}</td>')
-
     def rows_for(field, label_of, sort_key):
         keys = set()
         for x in summaries:
@@ -406,14 +460,9 @@ def _prematch_block(sides):
                 keys |= set(x[field])
         out = []
         for k in sorted(keys, key=sort_key):
-            cells = [x[field].get(k) if x else None for x in summaries]
-            c0 = next(c for c in cells if c)
-            out.append(f"""<tr><th>{label_of(k)}</th>
-                <td>{c0['n']:,}</td><td>{c0['matches']:,}</td>
-                <td><b>{_n(c0['realized'], '.3f')}</b></td>
-                <td>{_n(c0['prod_predicted'], '.3f')}</td>
-                <td class="{_gap(c0['prod_gap'], PROB_GAP)}">{_n(c0['prod_gap'], '+.3f')}</td>
-                {''.join(cell_group(c) for c in cells)}</tr>""")
+            cells = _calibration_cells(sides, [x[field].get(k) if x else None for x in summaries])
+            if cells is not None:
+                out.append(f"<tr><th>{label_of(k)}</th>{cells}</tr>")
         return "".join(out)
 
     head = f"<thead><tr><th>Selection</th>{_calibration_head(sides)}</tr></thead>"
@@ -909,26 +958,30 @@ def _selection_block(sides):
         if not tallied["n"]:
             continue
         cells = ""
+        own = _own(sides)
         for s in sides:
             r = s["prob_full"]["summary"]["same_line"].get("selections", {}).get(market_id)
             if not r:
-                cells += '<td class="grp">&mdash;</td>' + _dash(3)
+                cells += '<td class="grp">&mdash;</td>' + _dash(5 if own else 3)
                 continue
-            cells += _delta_cells(r["tally"]["candidate_brier"], r.get("brier"), ".4f", "+.4f")
+            cells += _delta_cells(r["tally"]["candidate_brier"], r.get("brier"), ".4f", "+.4f",
+                                  base=(r["tally"]["n"], r["tally"]["prod_brier"]) if own else None)
+        shared = "" if own else (f"<td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>"
+                                 f"<td>{_n(tallied['prod_brier'], '.4f')}</td>")
         rows.append(f"""<tr>
             <th>{MARKET_TITLES[row['market']]}</th>
             <td>{row['selection']}</td>
             <td class="dim">{'&check;' if row['canonical'] else ''}</td>
             <td data-v="{market_id}" class="dim">{market_id}</td>
-            <td>{tallied['n']:,}</td><td>{tallied['n_matches']:,}</td>
-            <td>{_n(tallied['prod_brier'], '.4f')}</td>{cells}</tr>""")
+            {shared}{cells}</tr>""")
     return f"""
     <section class="panel">
       <h2>By selection</h2>
       <div class="scroll">
       <table>
-        <thead><tr><th>Market</th><th>Sel</th><th>Used</th><th>ID</th><th>Pairs</th><th>Matches</th>
-          <th>Prod</th>{_group_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
+        <thead><tr><th>Market</th><th>Sel</th><th>Used</th><th>ID</th>
+          {'' if _own(sides) else '<th>Pairs</th><th>Matches</th><th>Prod</th>'}
+          {_delta_head(sides, ['', '&Delta;', '95% CI', 'p'])}</tr></thead>
         <tbody>{''.join(rows) or '<tr><td colspan="7" class="dim">no pairs</td></tr>'}</tbody>
       </table>
       </div>
@@ -945,36 +998,51 @@ def _both_sides_block(sides):
         group = by_market.get(market, [])
         for market_id, row in group:
             cells = ""
+            own = _own(sides)
             for t in tables:
                 r = t.get(market_id)
                 if not r:
-                    cells += '<td class="grp">&mdash;</td><td>&mdash;</td>'
+                    cells += '<td class="grp">&mdash;</td>' + _dash(5 if own else 1)
                     continue
-                cells += (f'<td class="grp">{_n(r["candidate_predicted"], ".3f")}</td>'
-                          f'<td class="{_gap(r["candidate_gap"], PROB_GAP)}">{_n(r["candidate_gap"], "+.3f")}</td>')
+                if own:
+                    cells += (f'<td class="grp">{r["n"]:,}</td><td>{_n(r["realized"], ".3f")}</td>'
+                              f'<td>{_n(r["prod_predicted"], ".3f")}</td>'
+                              f'<td class="{_gap(r["prod_gap"], PROB_GAP)}">{_n(r["prod_gap"], "+.3f")}</td>'
+                              f'<td>{_n(r["candidate_predicted"], ".3f")}</td>')
+                else:
+                    cells += f'<td class="grp">{_n(r["candidate_predicted"], ".3f")}</td>'
+                cells += f'<td class="{_gap(r["candidate_gap"], PROB_GAP)}">{_n(r["candidate_gap"], "+.3f")}</td>'
+            shared = "" if own else (
+                f"<td>{row['n']:,}</td><td>{row['matches']:,}</td>"
+                f"<td>{_n(row['realized'], '.3f')}</td>"
+                f"<td>{_n(row['prod_predicted'], '.3f')}</td>"
+                f"<td class=\"{_gap(row['prod_gap'], PROB_GAP)}\">{_n(row['prod_gap'], '+.3f')}</td>")
             rows.append(f"""<tr>
                 <th>{MARKET_TITLES[market]}</th><td>{row['selection']}</td>
                 <td class="dim">{'&check;' if row['canonical'] else ''}</td>
-                <td>{row['n']:,}</td><td>{row['matches']:,}</td>
-                <td>{_n(row['realized'], '.3f')}</td>
-                <td>{_n(row['prod_predicted'], '.3f')}</td>
-                <td class="{_gap(row['prod_gap'], PROB_GAP)}">{_n(row['prod_gap'], '+.3f')}</td>
-                {cells}</tr>""")
+                {shared}{cells}</tr>""")
         if len(group) == 2:
-            realized_sum = sum(r["realized"] for _, r in group if r["realized"] is not None)
-            ok = abs(realized_sum - 1.0) < 1e-9
+            sums = []
+            for t in tables:
+                pair = [t.get(m) for m, _ in group]
+                if all(pair):
+                    sums.append(sum(r["realized"] for r in pair if r["realized"] is not None))
+            realized_sum = sums[0] if sums else 0.0
+            ok = bool(sums) and all(abs(x - 1.0) < 1e-9 for x in sums)
+            width = (6 * len(tables)) if _own(sides) else (2 + 2 * len(tables))
             rows.append(f"""<tr class="subtotal">
-                <th></th><td colspan="4" class="dim">realized sums to</td>
+                <th></th><td colspan="{2 if _own(sides) else 4}" class="dim">realized sums to</td>
                 <td>{realized_sum:.3f}</td>
-                <td colspan="{2 + 2 * len(tables)}" class="{'good' if ok else 'bad'}">
+                <td colspan="{width - 1 if _own(sides) else width}" class="{'good' if ok else 'bad'}">
                   {'mirror ok' if ok else 'NOT MIRRORED'}</td>
             </tr>""")
     return f"""
     <section class="panel">
       <h2>Mirror check</h2>
       <table>
-        <thead><tr><th>Market</th><th>Sel</th><th>Used</th><th>N</th><th>Matches</th>
-          <th>Real</th><th>Prod</th><th>Gap</th>{_group_head(sides, ['', 'Gap'])}</tr></thead>
+        <thead><tr><th>Market</th><th>Sel</th><th>Used</th>
+          {''.join(f'<th class="grp">{_name(s)} N</th><th>Real</th><th>Prod</th><th>Gap</th><th>{_name(s)}</th><th>Gap</th>' for s in sides)
+           if _own(sides) else '<th>N</th><th>Matches</th><th>Real</th><th>Prod</th><th>Gap</th>' + _group_head(sides, ['', 'Gap'])}</tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
@@ -988,23 +1056,27 @@ def _daily(sides):
     rows = []
     for day in days:
         base = next(d[day] for d in dailies if day in d)
+        own = len(dailies) > 1
         cells = ""
         for d in dailies:
             row = d.get(day)
             if not row:
-                cells += '<td class="grp">&mdash;</td>' + _dash(2)
+                cells += '<td class="grp">&mdash;</td>' + _dash(3 if own else 2)
                 continue
             brier = row["brier"]
-            cells += (f'<td class="grp {_cls(brier.get("mean"))}">{_n(brier.get("mean"))}</td>'
+            lead = f'<td class="grp">{row["pairs"]:,}</td>' if own else ""
+            cells += (lead + f'<td class="{"" if own else "grp "}{_cls(brier.get("mean"))}">{_n(brier.get("mean"))}</td>'
                       f'<td class="dim">{_ci(brier)}</td><td>{_p(brier.get("p_value"))}</td>')
+        shared = "" if own else f"<td>{base['pairs']:,}</td><td>{base['matches']:,}</td>"
         rows.append(f"""<tr><th>{html.escape(day)}</th>
-            <td>{base['pairs']:,}</td><td>{base['matches']:,}</td>{cells}</tr>""")
+            {shared}{cells}</tr>""")
     return f"""
     <section class="panel" id="daily">
       <h2>By day</h2>
       <table>
-        <thead><tr><th>Day</th><th>Pairs</th><th>Matches</th>
-          {_group_head(sides, ['&Delta;Brier', '95% CI', 'p'])}</tr></thead>
+        <thead><tr><th>Day</th>{'' if len(dailies) > 1 else '<th>Pairs</th><th>Matches</th>'}
+          {''.join(f'<th class="grp">{_name(s)} pairs</th><th>&Delta;Brier</th><th>95% CI</th><th>p</th>' for s in sides)
+           if len(dailies) > 1 else _group_head(sides, ['&Delta;Brier', '95% CI', 'p'])}</tr></thead>
         <tbody>{''.join(rows)}</tbody>
       </table>
     </section>"""
