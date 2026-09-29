@@ -1641,6 +1641,44 @@ The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
 `--out` folder. Models are priced again for the bets' matches, so the run
 takes longer.
 
+### The lag, match by match: `bets lag`
+
+```bash
+python -m eAMFCalibrator bets lag --since 2026-09-17 --until 2026-09-24
+```
+
+This checks the bet-to-price matching for every match of the window
+(`--until` is a timestamp, so `2026-09-24` takes in all of the 23rd). It
+reads each operator's lag behind prod two ways, match by match.
+- **Lines.** A spread or total bet sits on the line the operator showed,
+  which is prod's live line one lag earlier. So each bet allows the lags at
+  which prod's line equals the bet's. A bet struck near a line move pins the
+  lag: on the old line after prod moved means the lag is *at least* the
+  time since the move; on the new line soon after means *at most*. Per
+  match: the share of line bets on prod's line at each lag, the best lag,
+  and whether one lag fits all its pinning bets (the largest "at least"
+  under the smallest "at most").
+- **Odds.** Each in-play bet's odds against prod's probability a lag
+  earlier, with the operator's margin taken out: the lag with the smallest
+  misfit.
+- **Held out.** A lag per match is fitted on alternate bets and scored on
+  the others, against the operator's one lag on the same bets. It shows
+  whether a lag per match beats one per operator on bets it wasn't fitted
+  to.
+- **By period.** Whether the lag drifts through a match.
+
+It writes:
+- `bets_lag.csv`: one row per match and operator;
+- `bets_lag.html`: the summary and a table linking every match;
+- `bets_lag_<day>.html`: every match drawn, with prod's line as a step and
+  each bet a dot. Green means on prod's line at the operator's lag, orange
+  only at another lag, red at none. Above each match, its lag curves.
+
+The per-match lags fitted off the lines were dropped once, when only a
+fifth of spread bets agreed with prod. That was before the spread line's
+sign was fitted per operator; now 99.8% of bets sit on prod's line, so the
+lines can be read again.
+
 ### Where in the game the book loses
 
 Every run (`bets`, `bets check`, `report --bets`) tags each in-play bet
