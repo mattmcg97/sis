@@ -5,11 +5,12 @@ import datetime as dt
 import math
 import multiprocessing as mp
 from collections import Counter
+from dataclasses import dataclass, fields
 
 import numpy as np
 
 from . import nb2_prior, playover, players, sim7 as sim
-from .pricer import HOME
+from .pricer import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
@@ -217,6 +218,22 @@ def fit_kappa(tables, grid, matches, kappas=(5, 10, 20, 40, 80, 160, 320, 1e9)):
     return out
 
 
+@dataclass(frozen=True)
+class FreshState(GameState):
+    """A game state that also says whether its next snap starts a possession with the clock
+    stopped (sim.is_fresh)."""
+    fresh: bool = False
+
+
+def state_for(row):
+    """playover.state_for, with whether the next snap is a fresh possession."""
+    state, why = playover.state_for(row)
+    if state is None:
+        return state, why
+    return FreshState(**{f.name: getattr(state, f.name) for f in fields(GameState)},
+                      fresh=sim.is_fresh(row)), why
+
+
 def start_from(state):
     """Simulation start fields for one game state."""
     side = lambda s: 0 if s == HOME else 1
@@ -231,7 +248,8 @@ def start_from(state):
         down, dist, y = state.down, max(1, state.distance), state.field_position
     return dict(period=state.period, clock=state.clock_seconds, phase=phase, team=team, down=down,
                 dist=dist, y=min(99, max(1, y)), home=state.home_score, away=state.away_score,
-                kicks_second_half=side(state.opening_receiver) if state.opening_receiver else -1)
+                kicks_second_half=side(state.opening_receiver) if state.opening_receiver else -1,
+                fresh=phase == sim.SCRIM and bool(getattr(state, "fresh", False)))
 
 
 def _fill(start, i, fields):
@@ -356,7 +374,7 @@ def _grade_matches(job):
             if require_live and not row.prod_live:
                 skipped["prod_not_live"] += 1
                 continue
-            state, why = playover.state_for(row.source)
+            state, why = state_for(row.source)
             if state is None:
                 skipped[why] += 1
                 continue
@@ -420,7 +438,7 @@ def quarter_start_states(matches, grid, priors=None):
             nxt = next((firsts[p] for p in sorted(firsts, key=int) if int(p) > q), None)
             if nxt is None and q < 4:
                 continue
-            state, _ = playover.state_for(firsts[str(q)])
+            state, _ = state_for(firsts[str(q)])
             if state is None:
                 continue
             end = int(nxt["score_p1"]) + int(nxt["score_p2"]) if nxt is not None else final
@@ -449,7 +467,7 @@ def late_start_states(matches, grid, priors=None):
                         and r["score_p1"] and r["score_p2"]), None)
             if nxt is None and q < 4:
                 continue
-            state, _ = playover.state_for(late)
+            state, _ = state_for(late)
             if state is None:
                 continue
             end = int(nxt["score_p1"]) + int(nxt["score_p2"]) if nxt is not None else final
@@ -540,7 +558,7 @@ def in_game_states(matches, grid, every=5, priors=None):
         theta0 = prior_theta(grid, None if priors is None else priors[code])
         final = int(float(rows[0]["final_p1"])) - int(float(rows[0]["final_p2"]))
         for r in rows[::every]:
-            state, _ = playover.state_for(r)
+            state, _ = state_for(r)
             if state is None or state.down is None or state.pending_conversion is not None \
                     or not 1 <= state.period <= 4:
                 continue
@@ -548,6 +566,80 @@ def in_game_states(matches, grid, every=5, priors=None):
             lead = sign * (state.home_score - state.away_score)
             out.append((state, theta0, lead, sign * final - lead))
     return out
+
+
+SETTLE_ROUNDS = 3
+SETTLE_OUTER = 2
+SETTLE_PATHS = 40
+SETTLE_PRIOR = 150.0
+
+
+def settle_states(matches, grid, priors=None):
+    """Every real snapshot with a snap to come as a simulation start: its settle cell, its start
+    fields, the match's prior strengths and whether the next play was the offense's touchdown."""
+    out = []
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
+            continue
+        rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        for r, nxt in zip(rows, rows[1:]):
+            if r["play_kind"] not in sim.SNAP_KINDS or r["period"] != nxt["period"]:
+                continue
+            state, _ = state_for(r)
+            if state is None or not state.has_snap or state.pending_conversion is not None \
+                    or state.clock_seconds is None:
+                continue
+            fields = start_from(state)
+            lead = (state.home_score - state.away_score) * (1 if state.offense == HOME else -1)
+            scorer = sim._scorer(nxt, "TOUCHDOWN_TEAM") or nxt["offense"]
+            td = nxt["play_kind"] == "TOUCHDOWN" and \
+                playover.side_of(scorer, r.get("team_a_side")) == state.offense
+            cell = int(sim.settle_index(state.period, state.clock_seconds, lead, fields["y"]))
+            out.append((cell, fields, theta0, bool(td)))
+    return out
+
+
+def fit_settle(tables, items, rounds=SETTLE_ROUNDS, n_paths=SETTLE_PATHS, prior=SETTLE_PRIOR,
+               seed=0):
+    """Each settle cell's share of would-be touchdowns held back, so that one snap played from
+    every real state scores a touchdown as often as the real next play did. A small cell's target
+    is shrunk toward what the simulation already gives. Returns {cell: (snaps, real, before,
+    after)} touchdown rates."""
+    by = {}
+    for it in items:
+        by.setdefault(it[0], []).append(it)
+    prepared = {}
+    for cell, its in by.items():
+        start = sim.Start(len(its))
+        for i, (_, fields, theta0, _) in enumerate(its):
+            _fill(start, i, fields)
+            start.theta[i] = theta0
+        team = start.team.astype(int)
+        base = np.where(team == 0, start.home, start.away)
+        prepared[cell] = (start, team, base, float(sum(it[3] for it in its)), len(its))
+
+    def scored(cell):
+        """The simulation's touchdown rate on one snap from the cell's states."""
+        start, team, base, _, _ = prepared[cell]
+        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed + cell),
+                                  max_steps=1, common=False)
+        own = np.where(team[:, None] == 0, home, away)
+        return float(((own - base[:, None]) == 6).mean())
+
+    out = {}
+    for rnd in range(rounds):
+        for cell, (_, _, _, real, n) in sorted(prepared.items()):
+            got = scored(cell)
+            if rnd == 0:
+                out[cell] = [n, real / n, got, got]
+            target = (real + prior * got) / (n + prior)
+            if got > 0:
+                h = tables.td_hold[cell]
+                tables.td_hold[cell] = float(np.clip(1.0 - (1.0 - h) * target / got, 0.0, sim.SETTLE_MAX))
+    for cell in out:
+        out[cell][3] = scored(cell)
+    return {c: tuple(v) for c, v in out.items()}
 
 
 BAND_LEAD = 7.0
@@ -607,11 +699,14 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
         return _slopes(sign[sel] * (home - away).mean(1) - leads[sel], leads[sel], groups[sel], n)
 
     def secant(pull, which, sel, start):
-        """Solve one group's pull so its leads come back as real ones do."""
+        """Solve one group's pull so its leads come back as real ones do; the iterate that comes
+        nearest wins (the simulated slopes are noisy)."""
         p0 = pull.copy()
         g0 = simulated(p0, sel, start)
         p1 = pull + 0.1 * which
         g1 = simulated(p1, sel, start)
+        q = int(np.argmax(which))
+        tried = [(p0, g0), (p1, g1)]
         for rnd in range(rounds):
             if verbose:
                 print(f"    round {rnd}: pull {p1} slopes real {real} simulated {g1}")
@@ -622,7 +717,8 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
             p0, g0 = p1, g1
             p1 = np.clip(p1 + step, -1.0, 1.0)
             g1 = simulated(p1, sel, start)
-        return p1, g1
+            tried.append((p1, g1))
+        return min(tried, key=lambda pg: abs(np.nan_to_num(pg[1][q] - real[q], nan=9.0)))
 
     if n == 2:
         every = np.arange(len(items))
@@ -664,7 +760,7 @@ def rest_of_game_states(matches, grid, priors=None, every=REST_EVERY):
         theta0 = prior_theta(grid, None if priors is None else priors[code])
         final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
         for r in rows[::every]:
-            state, _ = playover.state_for(r)
+            state, _ = state_for(r)
             if state is None or state.period < 1:
                 continue
             cell = (sim.inplay_segment(state.period, state.clock_seconds),
@@ -857,6 +953,27 @@ def fit_form(sides, var_fn, cov_fn):
     return game, max(0.0, league - game), form
 
 
+def _print_settle(settled, tables):
+    """The settle fit, by part of the game and the offense's lead: touchdowns per snap, real /
+    simulated before -> after, and the mean share held back."""
+    segs = ("Q1", "Q2", "Q2 last 2:00", "Q3", "Q4", "Q4 last 2:00")
+    leads = ("behind 9+", "behind 1-8", "level", "ahead 1-8", "ahead 9+")
+    print("  touchdowns per snap from real states, real / simulated before -> after the settle "
+          "fit (share of would-be touchdowns held back):")
+    for g, seg in enumerate(segs):
+        parts = []
+        for lc, lead in enumerate(leads):
+            cells = [(g * sim.LEAD_CELLS + lc) * 4 + z for z in range(4)]
+            rows = [settled[c] for c in cells if c in settled]
+            n = sum(r[0] for r in rows)
+            if not n:
+                continue
+            w = lambda k: sum(r[0] * r[k] for r in rows) / n
+            held = sum(settled[c][0] * tables.td_hold[c] for c in cells if c in settled) / n
+            parts.append(f"{lead} {w(1):.3f}/{w(2):.3f}->{w(3):.3f} ({held:.2f})")
+        print(f"    {seg}: " + "; ".join(parts))
+
+
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
           before=None):
     """Build the model: tables, fits, prior grid, NB2 and player profiles."""
@@ -878,8 +995,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     tables = sim.Tables.build(matches, handles=handles)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
-    items = in_game_states(matches, PriorGrid.build(tables, n_paths=max(500, grid_paths // 4)),
-                           priors=priors)
+    quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
+    items = in_game_states(matches, quick, priors=priors)
     if len(items) >= 200 and "band" in sim.PLAY_CALLING:
         pull, band_got, band_real = fit_rubber_band(tables, items)
         offsets, got = sim.fit_period_theta(tables, real)
@@ -890,6 +1007,13 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                   "real / simulated -- " + ", ".join(
                       f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
                   + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
+    if sim.SETTLE_FIT:
+        states = settle_states(matches, quick, priors)
+        for _ in range(SETTLE_OUTER):
+            settled = fit_settle(tables, states)
+            offsets, got = sim.fit_period_theta(tables, real)
+        if verbose:
+            _print_settle(settled, tables)
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "

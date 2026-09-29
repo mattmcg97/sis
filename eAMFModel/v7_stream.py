@@ -46,7 +46,7 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
-        state, _ = playover.state_for(r)
+        state, _ = v7.state_for(r)
         if state is not None:
             states.append(state)
             messages.append(int(r["message"]))

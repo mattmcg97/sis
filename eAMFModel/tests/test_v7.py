@@ -14,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import nb2_prior, players, pricer, sim, sim4, sim5, sim7, v7, v7_stream
+from .. import nb2_prior, players, pricer, sim, sim4, sim5, sim6, sim7, v7, v7_stream
 from .test_v3 import _matches
 
 
@@ -98,9 +98,10 @@ class TestPlayCalling(unittest.TestCase):
         sim7.fit_play_calling(self.tables, snaps)
         gained = t.sec_shift[sim7.RUNNING, target] - self.tables.sec_shift[sim7.RUNNING, target]
         n = sum(1 for r in snaps if sim7.cell_index(r["period"], r["clock"], r["margin"]) == target
-                and r["seconds"] > sim7.STOP_SECONDS and r["clock"] >= sim7.UNCUT_SECONDS)
+                and r["seconds"] > sim7.STOP_SECONDS and r["clock"] >= sim7.UNCUT_SECONDS
+                and not r["fresh"])
         self.assertGreater(n, 10)
-        # the 8 s, shrunk toward 0 by SECONDS_PRIOR snaps
+        # the 8 s, shrunk toward 0 by SECONDS_PRIOR snaps (a fresh possession's snap is left out)
         self.assertAlmostEqual(gained, 8 * n / (n + sim7.SECONDS_PRIOR), places=6)
         self.assertLess(abs(t.sec_shift[sim7.STOP, target] - self.tables.sec_shift[sim7.STOP, target]), 1e-9)
 
@@ -428,15 +429,34 @@ class TestLateGame(unittest.TestCase):
 
     def test_the_fitted_table_is_shaped_and_sums_to_one(self):
         lf = self.tables.late_fourth
-        self.assertEqual(lf.shape, (len(sim7.LATE_DEFICITS) + 1, len(sim7.KICK_RANGES) + 1, 3))
-        self.assertTrue(np.allclose(lf.sum(2), 1.0))
+        self.assertEqual(lf.shape, (2, len(sim7.LATE_DEFICITS) + 1, len(sim7.KICK_RANGES) + 1, 3))
+        self.assertTrue(np.allclose(lf.sum(3), 1.0))
+
+    def test_with_its_own_switches_off_v7_plays_as_v6(self):
+        saved = (sim7.FRESH_CLOCK, sim7.Q4_MODES, sim7.SETTLE_FIT, sim7.GO_AHEAD, sim7.PLAY_CALLING_Q4)
+        sim7.FRESH_CLOCK = sim7.Q4_MODES = sim7.SETTLE_FIT = sim7.GO_AHEAD = False
+        sim7.PLAY_CALLING_Q4 = set()
+        try:
+            t7 = sim7.Tables.build(self.matches, min_records=20)
+            t6 = sim6.Tables.build(self.matches, min_records=20)
+            st = sim7.Start(4)
+            st.period[:], st.clock[:], st.phase[:] = [3, 4, 4, 4], [150.0, 150.0, 50.0, 25.0], sim7.SCRIM
+            st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
+            st.down[:] = [1, 2, 4, 4]
+            st.fresh[:] = [True, False, True, False]
+            a = sim7.simulate(t7, st, 300, np.random.default_rng(1), seed=9)
+            b = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
+        finally:
+            sim7.FRESH_CLOCK, sim7.Q4_MODES, sim7.SETTLE_FIT, sim7.GO_AHEAD, sim7.PLAY_CALLING_Q4 = saved
+        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
         saved = (sim7.BIG_LEAD, sim7.FOURTH_JOINT, sim7.OT_RULES, sim7.PLAY_CALLING_Q4,
-                 sim7.RED_ZONE_FIT)
+                 sim7.RED_ZONE_FIT, sim7.FRESH_CLOCK, sim7.Q4_MODES, sim7.SETTLE_FIT, sim7.GO_AHEAD)
         sim7.BIG_LEAD, sim7.FOURTH_JOINT, sim7.OT_RULES, sim7.PLAY_CALLING_Q4, sim7.RED_ZONE_FIT = \
             None, False, False, set(), False
+        sim7.FRESH_CLOCK = sim7.Q4_MODES = sim7.SETTLE_FIT = sim7.GO_AHEAD = False
         try:
             t6 = sim7.Tables.build(self.matches, min_records=20)
             t6.late_fourth = None
@@ -448,7 +468,7 @@ class TestLateGame(unittest.TestCase):
             b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
         finally:
             (sim7.BIG_LEAD, sim7.FOURTH_JOINT, sim7.OT_RULES, sim7.PLAY_CALLING_Q4,
-             sim7.RED_ZONE_FIT) = saved
+             sim7.RED_ZONE_FIT, sim7.FRESH_CLOCK, sim7.Q4_MODES, sim7.SETTLE_FIT, sim7.GO_AHEAD) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_big_leads_have_their_own_situations(self):
@@ -459,6 +479,141 @@ class TestLateGame(unittest.TestCase):
         modes = sim7._modes_np(np.array([3, 4, 4]), np.array([100.0, 60.0, 60.0]), np.array([12, 12, 3]), 9)
         self.assertEqual(list(modes), [8, 9, 4])
         self.assertEqual(self.tables.big_lead, sim7.BIG_LEAD)
+
+
+class TestV7(unittest.TestCase):
+    """v7: a fresh possession's first snap is played with the clock stopped, the fourth quarter
+    has situations of its own, a side a touchdown behind late goes for it, and would-be
+    touchdowns are held back where the simulation scores too often."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.matches = _matches(60)
+        cls.tables = sim7.Tables.build(cls.matches, min_records=20)
+
+    def _snap(self, n=1, fresh=False, period=3, clock=150.0, y=40, down=1, dist=10, home=10, away=10):
+        st = sim7.Start(n)
+        st.period[:], st.clock[:], st.phase[:] = period, clock, sim7.SCRIM
+        st.team[:], st.y[:], st.down[:], st.dist[:] = 0, y, down, dist
+        st.home[:], st.away[:], st.fresh[:] = home, away, fresh
+        return st
+
+    def test_a_fresh_possession_is_marked_on_its_row(self):
+        row = lambda kind, messages="": dict(play_kind=kind, play_messages=messages)
+        for kind in ("KICKOFF", "PUNT", "TURNOVER_ON_DOWNS", "FIELD_GOAL"):
+            self.assertTrue(sim7.is_fresh(row(kind)))
+        self.assertTrue(sim7.is_fresh(row("SCRIMMAGE", "PASS_TEAM_A|POSSESSION_TEAM_B")))
+        self.assertFalse(sim7.is_fresh(row("SCRIMMAGE", "PASS_TEAM_A")))
+        rows = next(iter(self.matches.values()))
+        recs = sim7.snap_records(rows)
+        kicks = {int(a["message"]) for a in rows if a["play_kind"] == "KICKOFF"}
+        by_msg = {int(b["message"]): int(a["message"]) for a, b in zip(rows, rows[1:])}
+        self.assertTrue(any(r["fresh"] for r in recs))
+        self.assertTrue(all(r["fresh"] for r in recs if by_msg[r["message"]] in kicks))
+
+    def test_a_fresh_snap_draws_a_clock_stopped_play(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        t.stop_shift[:] = 0.0
+        t.n_fresh, t.n_fresh_stop = t.n_stop.copy(), t.n_stop.copy()
+        for fresh, want in ((True, 0.9), (False, 0.0)):
+            stats = {}
+            sim7.simulate(t, self._snap(200, fresh), 5, np.random.default_rng(1), max_steps=1, stats=stats)
+            share = stats.get("stop_calls", 0) / stats["snaps"]
+            if fresh:
+                self.assertGreater(share, want)
+            else:
+                self.assertEqual(share, want)
+
+    def test_kicks_turnovers_and_quarter_starts_leave_the_next_snap_fresh(self):
+        st = sim7.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 3, 200.0, sim7.KICK
+        stats = {}
+        sim7.simulate(self.tables, st, 300, np.random.default_rng(1), max_steps=2, stats=stats)
+        self.assertEqual(stats["fresh_snaps"], stats["snaps"])
+        stats = {}
+        sim7.simulate(self.tables, self._snap(1), 300, np.random.default_rng(1), max_steps=1, stats=stats)
+        self.assertEqual(stats.get("fresh_snaps", 0), 0)
+        stats = {}
+        sim7.simulate(self.tables, self._snap(1, clock=0.5), 300, np.random.default_rng(1), max_steps=3,
+                      stats=stats)
+        self.assertGreater(stats["fresh_snaps"], 0)
+
+    def test_the_clock_is_fitted_on_snaps_that_follow_a_scrimmage_play(self):
+        import copy
+        snaps = [r for rows in self.matches.values() for r in sim7.snap_records(rows)]
+        planted = [dict(r, seconds=59.0) if r["fresh"] else r for r in snaps]
+        a, b = copy.deepcopy(self.tables), copy.deepcopy(self.tables)
+        sim7.fit_play_calling(a, snaps)
+        sim7.fit_play_calling(b, planted)
+        self.assertTrue(np.allclose(a.sec_shift, b.sec_shift))
+        self.assertTrue(np.allclose(a.stop_shift, b.stop_shift))
+
+    def test_the_fourth_quarter_has_situations_of_its_own(self):
+        self.assertEqual([sim7.mode_of(4, 200.0, m, 9, True) for m in (3, 12, 0, -3, -12)],
+                         [10, 11, 12, 13, 14])
+        self.assertEqual([sim7.mode_of(4, 200.0, m, 9) for m in (3, 12, 0, -3, -12)], [3, 8, 5, 5, 5])
+        self.assertEqual(sim7.mode_of(4, 100.0, 3, 9, True), 4)       # its last two minutes as before
+        self.assertEqual(sim7.mode_of(4, 100.0, -3, 9, True), 6)
+        self.assertEqual(sim7.mode_of(4, 100.0, -12, 9, True), 15)    # but two scores behind is its own
+        self.assertEqual(sim7.mode_of(3, 200.0, 3, 9, True), 3)
+        self.assertEqual(sim7.mode_of(3, 200.0, -12, 9, True), 5)
+        period, clock = np.array([4, 4, 4, 4, 4, 4, 3]), np.array([200.0, 200, 200, 200, 100, 100, 200])
+        margin = np.array([3, 12, 0, -12, -3, -12, -12])
+        self.assertEqual(list(sim7._modes_np(period, clock, margin, 9, True)), [10, 11, 12, 14, 6, 15, 5])
+        self.assertTrue(self.tables.q4_modes)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.npz")
+            self.tables.save(path)
+            back = sim7.Tables.load(path)
+        self.assertTrue(back.q4_modes)
+        self.assertTrue(np.array_equal(back.n_fresh, self.tables.n_fresh))
+
+    def test_a_side_a_touchdown_behind_in_the_last_minute_goes_for_it(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        t.late_fourth = np.zeros_like(t.late_fourth)
+        t.late_fourth[..., 1] = 1.0                        # the table would kick
+        st = self._snap(1, period=4, clock=50.0, y=80, down=4, dist=8, home=10, away=16)
+        h, _ = sim7.simulate(t, st, 400, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertEqual(float((h == 13).mean()), 0.0)
+        saved = sim7.GO_AHEAD
+        sim7.GO_AHEAD = False
+        try:
+            h, _ = sim7.simulate(t, st, 400, np.random.default_rng(1), seed=3, max_steps=1)
+        finally:
+            sim7.GO_AHEAD = saved
+        self.assertGreater(float((h == 13).mean()), 0.8)
+        st = self._snap(1, period=4, clock=100.0, y=80, down=4, dist=8, home=10, away=16)
+        h, _ = sim7.simulate(t, st, 400, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertGreater(float((h == 13).mean()), 0.8)     # with time left, the table decides
+
+    def test_a_hold_redraws_would_be_touchdowns(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        st = self._snap(1, y=95, dist=5)
+        h0, _ = sim7.simulate(t, st, 2000, np.random.default_rng(1), seed=3, max_steps=1)
+        t.td_hold[:] = 0.8
+        h1, _ = sim7.simulate(t, st, 2000, np.random.default_rng(1), seed=3, max_steps=1)
+        self.assertLess(float((h1 == 16).mean()), 0.6 * float((h0 == 16).mean()))
+
+    def test_the_settle_fit_holds_back_touchdowns_where_real_snaps_score_less(self):
+        import copy
+        t = copy.deepcopy(self.tables)
+        grid = v7.PriorGrid.build(t, n_paths=60)
+        items = v7.settle_states(self.matches, grid)
+        self.assertTrue(items and all(0 <= c < sim7.N_SETTLE for c, *_ in items))
+        cells = {}
+        for c, *_ in items:
+            cells[c] = cells.get(c, 0) + 1
+        busy = max((c for c in cells if c % 4 >= 2), key=cells.get)     # inside the 30
+        planted = [(c, f, th, False if c == busy else td) for c, f, th, td in items]
+        fitted = v7.fit_settle(t, planted, rounds=3, n_paths=40, prior=0.0)
+        n, real, before, after = fitted[busy]
+        self.assertEqual(real, 0.0)
+        self.assertGreater(t.td_hold[busy], 0.3)
+        self.assertLess(after, before)
+        self.assertTrue(((t.td_hold >= 0) & (t.td_hold <= sim7.SETTLE_MAX)).all())
 
 
 class TestOvertime(unittest.TestCase):

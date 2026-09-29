@@ -1020,6 +1020,80 @@ python -m eAMFCalibrator report --candidate v5,v6 --v5-model v5_model --v6-model
 python -m unittest eAMFModel.tests.test_v6
 ```
 
+## v7: v6 plus fresh possessions, Q4's own play, leaders settling and the go-ahead check
+
+v7 (`sim7.py`, `v7.py`, `v7_stream.py`) is a copy of v6 with four changes. Each is
+behind a switch in `sim7` (`FRESH_CLOCK`, `Q4_MODES`, `SETTLE_FIT`, `GO_AHEAD`); with
+all four off, v7 plays exactly as v6 (`test_with_its_own_switches_off_v7_plays_as_v6`).
+They came from setting v6's play against real games from the same states, one snap at
+a time and one drive at a time (built before Sep 1, played on Sep 1–10).
+
+### What v6 got wrong in Q3 and Q4
+
+- **The clock mid-drive.** A snap takes the clock of real snaps in the same
+  situation. After a kick-off, a punt, a turnover on downs, a missed field goal or an
+  interception, the next snap starts with the clock stopped: it takes 7–9 seconds.
+  After a scrimmage play a snap takes about 23 (26.8 after a first down, 21.4
+  otherwise). v6's tables mixed the two, and in the own half 40% of the snaps are fresh
+  possessions. So v6 played the snaps of a drive under way 1.5–2.5 seconds too fast in
+  every quarter, and the first snap after a kick too slow. In-play prices start
+  mid-drive.
+
+  | seconds a snap, real / v6 | Q1 level | Q3 level | Q3 1 score ahead | Q4 level |
+  |---|---|---|---|---|
+  | Sep 1–10 | 28.4 / 27.0 | 26.6 / 24.6 | 28.7 / 26.7 | 24.0 / 21.5 |
+
+- **Q4 played as Q3.** Before the last two minutes, the second half's situations
+  (ahead, level, behind) pooled Q3's plays with Q4's. Real Q4 leaders score and turn the
+  ball over about half as often as Q3 leaders. Two scores up: 0.057 touchdowns and 0.011
+  turnovers a snap in Q4, against 0.093 and 0.023 in Q3. v6's Q4 leader scored on 0.099
+  a snap. The clock-stop and seconds shifts by game state were fitted in Q1–Q3 only, so
+  a Q4 side down 9+ played at the pace of one down 1.
+- **The red-zone hold saw part of the picture.** It was fitted against the tables'
+  own chance of a touchdown, without the team's strength or the quarter's scoring level,
+  and only inside the 30. Two scores up in Q4, v6 scored on 34% of snaps inside the 10
+  against a real 18%, with the hold on.
+- **Late 4th downs.** The table for a trailing side's late 4th down pooled the whole of
+  the last three minutes. In field-goal range, real players down 4–8 went for it on all
+  86 such 4th downs with a minute or less left, kicking on none. With 1–2 minutes left 6%
+  kicked, and with 2–3 minutes 16%. v6 kicked far more often.
+- **The rubber band's Q3 pull** could stop on a step that was worse than one before
+  it. One build ended with a Q3 pull that boosted leaders: Q3 comebacks of 0.096 of a
+  point per point of lead, against a real 0.146.
+
+### What v7 changes
+
+- **Fresh possessions (`FRESH_CLOCK`).** Every snap record and every priced state
+  knows whether its snap starts a possession with the clock stopped
+  (`sim7.is_fresh`). That's a KICKOFF, PUNT, TURNOVER_ON_DOWNS or FIELD_GOAL
+  PLAY_OVER, or a scrimmage one carrying the feed's POSSESSION message.
+  - A fresh snap draws a clock-stopped play at the rate fresh snaps do (95%).
+  - Every other snap draws from the bins with the fresh snaps left out.
+  - The play-calling fit (clock stops and seconds by game state) uses only snaps that
+    follow a scrimmage play.
+  - The simulation marks the next snap fresh after a kick-off, a punt, a turnover and a
+    missed field goal, and at the start of Q2 and Q4.
+- **Q4's own situations (`Q4_MODES`).** Before Q4's last two minutes, ahead 1–8,
+  ahead 9+, level and behind are situations of their own, drawn from real Q4 plays. A
+  sparse bin falls back to the second half's pooled plays, as in v6. The clock-stop and
+  seconds shifts by game state now run in Q4 too (`PLAY_CALLING_Q4`), so a side 9+
+  behind hurries and one 1–8 behind less.
+- **Leaders settle (`SETTLE_FIT`, `v7.fit_settle`).** The red-zone hold becomes a
+  hold on would-be touchdowns anywhere on the field (`td_hold`). It's kept by part of
+  the game (Q1, Q2, Q2's last two minutes, Q3, Q4, Q4's last two minutes), the
+  offense's lead and the field zone.
+  - The build simulates one snap from every real snap. Each start carries the match's
+    NB2 strengths, its fresh flag and every shift the simulation applies.
+  - It moves each cell's hold until the touchdown rate matches that of the real next
+    play. A small cell is shrunk toward no change.
+  - It alternates twice with the quarter-level fit, so kick-off totals stay on the
+    league's.
+- **The go-ahead check (`GO_AHEAD`).** The late 4th-down table is split into the last
+  minute and the two before it. In Q4, a side behind by 4–8 with a minute or less left,
+  or by more with 30 seconds or less, never kicks a field goal that can't tie: it goes
+  for it.
+- **The rubber band keeps its nearest step** (`v7.fit_rubber_band`).
+
 ## Pricing only what the model is sure of (v4–v6 streams)
 
 A version quotes a prod message only where its state is the game's at that

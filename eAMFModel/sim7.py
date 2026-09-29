@@ -9,8 +9,10 @@ import numpy as np
 from .drive import DriveParams
 
 MODES = ("q1", "first", "late1", "lead", "lead_late", "even", "trail_late", "tied_late", "lead_big",
-         "lead_late_big")
+         "lead_late_big", "lead_q4", "lead_big_q4", "level_q4", "trail_q4", "trail_big_q4",
+         "trail_late_big")
 BIG_LEAD = 9
+Q4_MODES = True
 N_KEYS = len(MODES) * 4 * 4 * 4
 MIN_RECORDS = 60
 MANAGED_SECONDS = 3.0
@@ -31,15 +33,22 @@ def half_left(period, clock):
     return clock + (QUARTER if period in (1, 3) else 0.0)
 
 
-def mode_of(period, clock, margin, big_lead=BIG_LEAD):
-    """The game situation for an offense: quarter, late in a half, and ahead, level or behind."""
+def mode_of(period, clock, margin, big_lead=BIG_LEAD, q4=False):
+    """The game situation for an offense: quarter, late in a half, and ahead, level or behind; with
+    `q4`, the fourth quarter before its last two minutes has situations of its own, and a side two
+    scores behind in the fourth quarter is one of its own before and in the last two minutes."""
     late = half_left(period, clock) <= LATE and period != 1 and period != 3
     if period == 1:
         return 0
     if period == 2:
         return 2 if late else 1
+    big = margin > 0 and big_lead is not None and margin >= big_lead
+    far = q4 and period >= 4 and big_lead is not None and margin <= -big_lead
+    if q4 and period >= 4 and not late:
+        return 11 if big else 10 if margin > 0 else 12 if margin == 0 else 14 if far else 13
+    if far:
+        return 15
     if margin > 0:
-        big = big_lead is not None and margin >= big_lead
         return (9 if big else 4) if late else (8 if big else 3)
     if late:
         return 6 if margin < 0 else 7
@@ -61,7 +70,7 @@ def key_index(mode, down, t, y):
     return ((mode * 4 + (min(4, max(1, down)) - 1)) * 4 + dist_bucket(t)) * 4 + zone(y)
 
 
-def _modes_np(period, clock, margin, big_lead=BIG_LEAD):
+def _modes_np(period, clock, margin, big_lead=BIG_LEAD, q4=False):
     """mode_of for arrays."""
     hl = clock + QUARTER * ((period == 1) | (period == 3))
     late = (hl <= LATE) & (period != 1) & (period != 3)
@@ -70,6 +79,12 @@ def _modes_np(period, clock, margin, big_lead=BIG_LEAD):
     out = np.where(period == 1, 0, np.where(first, np.where(late, 2, 1),
                    np.where(margin > 0, np.where(late, np.where(big, 9, 4), np.where(big, 8, 3)),
                             np.where(late, np.where(margin < 0, 6, 7), 5))))
+    if q4:
+        own = (period >= 4) & ~late
+        far = (margin <= -big_lead) if big_lead is not None else np.zeros(np.shape(margin), dtype=bool)
+        q4_mode = np.where(margin > 0, np.where(big, 11, 10),
+                           np.where(margin == 0, 12, np.where(far, 14, 13)))
+        out = np.where(own, q4_mode, np.where((period >= 4) & late & far, 15, out))
     return out
 
 
@@ -127,7 +142,7 @@ UNCUT_SECONDS = 60.0
 STOP, RUNNING = 0, 1
 PLAY_CALLING = {"stop", "seconds", "band"}
 PLAY_CALLING_QUARTERS = (1, 2, 3)
-PLAY_CALLING_Q4 = set()
+PLAY_CALLING_Q4 = {"stop", "seconds"}
 
 
 def _quarter_mask(item=None):
@@ -157,18 +172,26 @@ def _cells_np(period, clock, lead):
     return (pq * CLOCK_CELLS + cb) * LEAD_CELLS + lc
 
 
+def _running_logit(tables, key):
+    """The log-odds of drawing from a bin's clock-stopped plays for a snap that follows a scrimmage
+    play (the bin's fresh possessions left out), and the bin's counts without them."""
+    ns = tables.n_stop[key] - tables.n_fresh_stop[key]
+    n = tables.count[key] - tables.n_fresh[key]
+    return np.log(np.maximum(ns, 0.5) / np.maximum(n - ns, 0.5)), ns, n
+
+
 def fit_play_calling(tables, snaps):
     """By game state: how often clock-stopping plays are called, how long plays take, and the
-    rubber band."""
+    rubber band. The clock is fitted on snaps that follow a scrimmage play: a fresh possession's
+    first snap is played with the clock stopped whatever the state."""
     n = len(snaps)
-    key = np.array([r["key"] for r in snaps])
-    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in snaps])
-    stop = np.array([r["seconds"] <= STOP_SECONDS for r in snaps])
-    secs = np.array([r["seconds"] for r in snaps])
-    succ = np.array([bool(r["success"]) for r in snaps])
-    uncut = np.array([r["clock"] >= UNCUT_SECONDS for r in snaps])
-    ns, cnt = tables.n_stop[key].astype(float), tables.count[key].astype(float)
-    base = np.log(np.clip(ns, 0.5, None) / np.clip(cnt - ns, 0.5, None))
+    on = [r for r in snaps if not r.get("fresh")]
+    key = np.array([r["key"] for r in on])
+    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in on])
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in on])
+    secs = np.array([r["seconds"] for r in on])
+    uncut = np.array([r["clock"] >= UNCUT_SECONDS for r in on])
+    base = _running_logit(tables, key)[0]
     stop_shift = np.zeros(N_CELLS)
     for _ in range(10):
         p = _sigmoid(base + stop_shift[cell])
@@ -185,10 +208,14 @@ def fit_play_calling(tables, snaps):
     resid = secs - cls_mean[kind, key]
     sec_shift = np.zeros((2, N_CELLS))
     for c_ in (STOP, RUNNING):
-        on = (kind == c_) & uncut
-        tot = np.bincount(cell[on], resid[on], N_CELLS)
-        num = np.bincount(cell[on], minlength=N_CELLS)
+        sel = (kind == c_) & uncut
+        tot = np.bincount(cell[sel], resid[sel], N_CELLS)
+        num = np.bincount(cell[sel], minlength=N_CELLS)
         sec_shift[c_] = tot / (num + SECONDS_PRIOR)
+    key = np.array([r["key"] for r in snaps])
+    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in snaps])
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in snaps])
+    succ = np.array([bool(r["success"]) for r in snaps])
     f = np.clip(np.where(stop, tables.stop_success[key], tables.run_success[key]), 1e-3, 1 - 1e-3)
     grid = np.linspace(-1.0, 1.0, 201)
     eff_shift = np.zeros(N_CELLS)
@@ -219,6 +246,25 @@ HOLD_GRID = np.linspace(0.0, 0.8, 41)
 HOLD_TRIES = 3
 
 
+SETTLE_FIT = True
+N_SETTLE_SEGMENTS = 6
+N_SETTLE = N_SETTLE_SEGMENTS * LEAD_CELLS * 4
+SETTLE_MAX = 0.8
+
+
+def settle_index(period, clock, lead, y):
+    """The cell a would-be touchdown is held in: the part of the game (Q1, Q2, Q2's last two
+    minutes, Q3, Q4, Q4's last two minutes and overtime), the offense's lead and the field zone."""
+    period, clock = np.asarray(period), np.asarray(clock)
+    late = clock <= LATE
+    seg = np.where(period <= 1, 0, np.where(period == 2, np.where(late, 2, 1),
+                   np.where(period == 3, 3, np.where(late, 5, 4))))
+    lc = np.where(lead <= -9, 0, np.where(lead < 0, 1, np.where(lead == 0, 2, np.where(lead <= 8, 3, 4))))
+    yy = np.asarray(y)
+    z = np.where(yy < 40, 0, np.where(yy < 70, 1, np.where(yy < 90, 2, 3)))
+    return (seg * LEAD_CELLS + lc) * 4 + z
+
+
 def rz_index(period, lead, y):
     """The red-zone cell: quarter, the offense's lead, and the 11-30 or inside the 10."""
     pq = np.clip(period, 1, 4) - 1
@@ -230,8 +276,8 @@ def _td_chance(tables, key, cell, y, tilts):
     """The chance a snap's draw scores, at each tilt: straight from the gain, or a touchdown seen
     from further back running on."""
     n, ns, a = tables.count[key], tables.n_stop[key], tables.start[key]
-    logit = np.log(max(ns, 0.5) / max(n - ns, 0.5)) + tables.stop_shift[cell]
-    ps = 0.0 if ns == 0 else 1.0 if ns == n else 1.0 / (1.0 + math.exp(-logit))
+    logit, ns0, n0 = _running_logit(tables, key)
+    ps = 0.0 if ns == 0 else 1.0 if ns == n else 1.0 / (1.0 + math.exp(-(logit + tables.stop_shift[cell])))
     out = np.zeros(len(tilts))
     for w, s0, sn in ((ps, a, ns), (1.0 - ps, a + ns, n - ns)):
         if w == 0 or sn == 0:
@@ -294,6 +340,21 @@ def _scorer(row, prefix):
 
 
 SNAP_KINDS = ("SCRIMMAGE", "KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
+FRESH_KINDS = ("KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
+FRESH_CLOCK = True
+FRESH_STOP = 0.955
+FRESH_PRIOR = 20.0
+
+
+def is_fresh(row):
+    """Whether the next snap after this PLAY_OVER starts a possession with the clock stopped: after
+    a kick-off, a punt, a turnover on downs, a missed field goal or a turnover on a scrimmage play
+    (the feed's POSSESSION message)."""
+    kind = row["play_kind"]
+    if kind in FRESH_KINDS or kind == "FIELD_GOAL":
+        return True
+    return kind == "SCRIMMAGE" and any(m.startswith("POSSESSION")
+                                       for m in (row.get("play_messages") or "").split("|"))
 
 
 def _margin(row, team):
@@ -305,7 +366,8 @@ def _margin(row, team):
 
 
 def snap_records(rows):
-    """Every scrimmage snap of a match: its state, what came of it and the clock it used."""
+    """Every scrimmage snap of a match: its state, what came of it, the clock it used and whether
+    it started a possession with the clock stopped."""
     out = []
     for a, b in zip(rows, rows[1:]):
         if a["play_kind"] not in SNAP_KINDS or not a["down"] or not a["field_position"]:
@@ -320,7 +382,8 @@ def snap_records(rows):
         rec = dict(offense=a["offense"], period=_i(a["period"]), clock=_f(a["clock_seconds"]),
                    margin=_margin(a, a["offense"]),
                    down=down, distance=t, field=y, seconds=seconds, message=_i(b["message"]),
-                   kind=GAIN, gain=0, new_field=0, replay=False)
+                   kind=GAIN, gain=0, new_field=0, replay=False,
+                   fresh=is_fresh(a))
         if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
             continue
         bk = b["play_kind"]
@@ -349,7 +412,7 @@ def snap_records(rows):
                 and rec["gain"] < t and not rec["replay"]:
             continue
         rec["success"] = rec["kind"] == GAIN and (rec["gain"] >= t or rec["gain"] >= 100 - y)
-        rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD)
+        rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD, Q4_MODES)
         rec["key"] = key_index(rec["mode"], down, t, y)
         out.append(rec)
     return out
@@ -779,6 +842,15 @@ LATE_DEFICITS = (-3, -8, -11, -16)
 KICK_RANGES = (45, 55)
 LATE_PRIOR = 10.0
 CHOICES = ("go", "fg", "punt")
+LATE_TIME = 60.0
+GO_AHEAD = True
+GO_AHEAD_ONE_SCORE = 60.0
+GO_AHEAD_ANY = 30.0
+
+
+def late_time(clock):
+    """The time left as a bin for a late 4th down: the last minute, or before it."""
+    return 0 if clock <= LATE_TIME else 1
 
 
 def late_band(margin):
@@ -796,8 +868,8 @@ def kick_range(y):
 
 
 def late_fourth_choices(rows):
-    """Every 4th down by a trailing side in the last three minutes or overtime: deficit band, kick
-    range and what it chose."""
+    """Every 4th down by a trailing side in the last three minutes or overtime: the last minute or
+    not, deficit band, kick range and what it chose."""
     out = []
     for a, b in zip(rows, rows[1:]):
         if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or not a["field_position"]:
@@ -809,19 +881,34 @@ def late_fourth_choices(rows):
         if margin is None or margin >= 0 or not (p >= 5 or (p == 4 and c <= 180)):
             continue
         choice = "punt" if b["play_kind"] == "PUNT" else "fg" if b["play_kind"] == "FIELD_GOAL" else "go"
-        out.append((late_band(margin), kick_range(_i(a["field_position"])), CHOICES.index(choice)))
+        out.append((late_time(c), late_band(margin), kick_range(_i(a["field_position"])),
+                    CHOICES.index(choice)))
     return out
 
 
-def fit_late_fourths(records, prior=LATE_PRIOR):
-    """The chance of going for it, kicking and punting by deficit band and kick range, shrunk toward
-    the kick range's rate over all deficits."""
+def _fit_late_fourths_pooled(records, prior=LATE_PRIOR):
+    """v6's table: by deficit band and kick range over the whole of the last three minutes."""
     n = np.zeros((len(LATE_DEFICITS) + 1, len(KICK_RANGES) + 1, len(CHOICES)))
-    for band, rng_, choice in records:
+    for _, band, rng_, choice in records:
         n[band, rng_, choice] += 1
     pooled = n.sum(0, keepdims=True)
     pooled = (pooled + 1.0) / (pooled.sum(2, keepdims=True) + len(CHOICES))
     return (n + prior * pooled) / (n.sum(2, keepdims=True) + prior)
+
+
+def fit_late_fourths(records, prior=LATE_PRIOR):
+    """The chance of going for it, kicking and punting by the last minute or not, deficit band and
+    kick range, shrunk toward the same minute and kick range's rate over all deficits."""
+    n = np.zeros((2, len(LATE_DEFICITS) + 1, len(KICK_RANGES) + 1, len(CHOICES)))
+    for tb, band, rng_, choice in records:
+        n[tb, band, rng_, choice] += 1
+    pooled = n.sum(1, keepdims=True)
+    pooled = (pooled + 1.0) / (pooled.sum(3, keepdims=True) + len(CHOICES))
+    return (n + prior * pooled) / (n.sum(3, keepdims=True) + prior)
+
+
+BASE_MODE = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6, 8: 5, 9: 4, 10: 5, 11: 5, 12: 5, 13: 5,
+             14: 5, 15: 6}
 
 
 def _fallbacks(key):
@@ -830,7 +917,7 @@ def _fallbacks(key):
     rest, db = divmod(rest, 4)
     mode, d = divmod(rest, 4)
     zc = 0 if z < 2 else 1
-    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6, 8: 5, 9: 4}[mode]
+    base = BASE_MODE[mode]
     return [("k", key), ("zc", mode, d, db, zc), ("mdb", mode, d, db), ("m2", base, d, db, z),
             ("m2zc", base, d, db, zc), ("any", d, db, z), ("anyzc", d, db, zc), ("d", d, db),
             ("dd", min(d, 2))]
@@ -840,7 +927,7 @@ def _group_of(rec, level):
     """The bin of a snap at a given level of coarseness."""
     mode, d, db, z = rec["mode"], min(4, rec["down"]) - 1, dist_bucket(rec["distance"]), zone(rec["field"])
     zc = 0 if z < 2 else 1
-    base = {0: 1, 1: 1, 2: 2, 3: 5, 4: 4, 5: 5, 6: 6, 7: 6, 8: 5, 9: 4}[mode]
+    base = BASE_MODE[mode]
     return {"k": ("k", rec["key"]), "zc": ("zc", mode, d, db, zc), "mdb": ("mdb", mode, d, db),
             "m2": ("m2", base, d, db, z),
             "m2zc": ("m2zc", base, d, db, zc), "any": ("any", d, db, z), "anyzc": ("anyzc", d, db, zc),
@@ -862,12 +949,15 @@ class Tables:
         self.backed = None
         self.backed_return = None
         self.n_stop = None
+        self.n_fresh = self.n_fresh_stop = None
+        self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
         self.sec_shift = np.zeros((2, N_CELLS))
         self.eff_shift = np.zeros(N_CELLS)
         self.rz_shift = np.zeros(N_RZ)
         self.rz_hold = np.zeros(N_RZ)
+        self.td_hold = np.zeros(N_SETTLE)
         self.fg_seconds = None
         self.fg_after = None
         self.go_for_two = None
@@ -899,9 +989,13 @@ class Tables:
         backed, late4, fourth_recs, ot_first = [], [], [], []
         for code, rows in matches.items():
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
+            snaps_before = len(snaps)
             ot_first += ot_first_fourths(rows)
             late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
+            if not FRESH_CLOCK:
+                for rec in snaps[snaps_before:]:
+                    rec["fresh"] = False
             backed += backed_up_snaps(rows)
             free += safety_kicks(rows)
             kicks += kick_records(rows)
@@ -926,7 +1020,7 @@ class Tables:
                 bins[g] = recs
             chosen.append(g)
         order = list(bins)
-        start, count, succ, nstop, ssucc, rsucc = {}, {}, {}, {}, {}, {}
+        start, count, succ, nstop, ssucc, rsucc, nfresh, nfstop = {}, {}, {}, {}, {}, {}, {}, {}
         kind, gain, newf, secs, rep, tdf = [], [], [], [], [], []
         for g in order:
             recs = list(bins[g])
@@ -939,6 +1033,8 @@ class Tables:
             succ[g] = sum(r["success"] for r in recs) / len(recs)
             stops = [r for r in recs if r["seconds"] <= STOP_SECONDS]
             nstop[g] = len(stops)
+            nfresh[g] = sum(1 for r in recs if r.get("fresh"))
+            nfstop[g] = sum(1 for r in stops if r.get("fresh"))
             ssucc[g] = sum(r["success"] for r in stops) / max(1, len(stops))
             rsucc[g] = (sum(r["success"] for r in recs) - sum(r["success"] for r in stops)) \
                 / max(1, len(recs) - len(stops))
@@ -953,6 +1049,9 @@ class Tables:
         t.count = np.array([count[g] for g in chosen], dtype=np.int64)
         t.success = np.array([succ[g] for g in chosen])
         t.n_stop = np.array([nstop[g] for g in chosen], dtype=np.int64)
+        t.n_fresh = np.array([nfresh[g] for g in chosen], dtype=np.int64)
+        t.n_fresh_stop = np.array([nfstop[g] for g in chosen], dtype=np.int64)
+        t.q4_modes = Q4_MODES
         t.stop_success = np.array([ssucc[g] for g in chosen])
         t.run_success = np.array([rsucc[g] for g in chosen])
         t.kind = np.array(kind, dtype=np.int8)
@@ -1009,12 +1108,15 @@ class Tables:
                 t.late_fg[i] = (sum(c == "fg" for c in ch) + 1) / (len(ch) + 2)
         t.n_snaps = len(snaps)
         if late4:
-            t.late_fourth = fit_late_fourths(late4)
+            t.late_fourth = fit_late_fourths(late4) if GO_AHEAD else _fit_late_fourths_pooled(late4)
         if backed:
             t.backed, returns = fit_backed_up(backed)
             t.backed_return = returns if len(returns) >= BACKED_RETURNS_MIN else None
         fit_play_calling(t, snaps)
-        fit_red_zone(t, snaps)
+        if SETTLE_FIT:
+            t.rz_shift, t.rz_hold = np.zeros(N_RZ), np.zeros(N_RZ)
+        else:
+            fit_red_zone(t, snaps)
         return t
 
     def success_of(self, key):
@@ -1032,10 +1134,12 @@ class Tables:
                       strength_theta=self.strength_theta, strength_slope=self.strength_slope,
                       go_for_two=self.go_for_two, go_shift=self.go_shift, fg_shift=self.fg_shift,
                       late_fg=self.late_fg, early_fg=self.early_fg, big_lead=np.array([-1 if self.big_lead is None else self.big_lead]), conv_rates=np.array([self.two_good, self.kick_good]),
-                      safety_kick=self.safety_kick, n_stop=self.n_stop,
+                      safety_kick=self.safety_kick, n_stop=self.n_stop, n_fresh=self.n_fresh,
+                      n_fresh_stop=self.n_fresh_stop, q4_modes=np.array([int(self.q4_modes)]),
                       stop_success=self.stop_success, run_success=self.run_success,
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
-                      rz_shift=self.rz_shift, rz_hold=self.rz_hold, inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
+                      rz_shift=self.rz_shift, rz_hold=self.rz_hold, td_hold=self.td_hold,
+                      inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
                       fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]))
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
@@ -1094,12 +1198,19 @@ class Tables:
             t.backed_return = z["backed_return"] if "backed_return" in z else None
         if "rz_shift" in z:
             t.rz_shift, t.rz_hold = z["rz_shift"], z["rz_hold"]
+        if "td_hold" in z and z["td_hold"].shape == (N_SETTLE,):
+            t.td_hold = z["td_hold"]
         if "n_stop" in z:
             t.n_stop, t.stop_success, t.run_success = z["n_stop"], z["stop_success"], z["run_success"]
             t.stop_shift, t.sec_shift, t.eff_shift = z["stop_shift"], z["sec_shift"], z["eff_shift"]
         else:
             t.n_stop = t.count.copy()
             t.stop_success = t.run_success = t.success
+        if "n_fresh" in z:
+            t.n_fresh, t.n_fresh_stop = z["n_fresh"], z["n_fresh_stop"]
+        else:
+            t.n_fresh, t.n_fresh_stop = np.zeros_like(t.count), np.zeros_like(t.count)
+        t.q4_modes = bool(z["q4_modes"][0]) if "q4_modes" in z else False
         return t
 
 
@@ -1134,6 +1245,7 @@ class Start:
         self.pace = np.ones((n, 2))
         self.strength = np.zeros((n, 2))
         self.strength_game = np.zeros((n, 2))
+        self.fresh = np.zeros(n, dtype=bool)
 
 
 def _sigmoid(z):
@@ -1196,6 +1308,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     agg = rep(start.aggression)
     kick_pl = rep(getattr(start, "kick", np.zeros((S, 2))))
     pace = rep(start.pace)
+    fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
     dp = tables.drive
     gc = dp.go_coef
     ka, kb = dp.fg_kick_coef
@@ -1255,6 +1368,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         c = ix[carry]
         period[c] += 1
         clock[c] = QUARTER
+        fresh[c] = True
         h = ix[p == 2]
         period[h] = 3
         clock[h] = QUARTER
@@ -1276,6 +1390,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         y[ix] = np.clip(field, 1, 99)
         down[ix] = 1
         dist[ix] = np.minimum(10, 100 - y[ix])
+        fresh[ix] = True
 
     def score_td(ix, side):
         """Six points to this side, then the conversion."""
@@ -1356,6 +1471,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     dist[sub] = 10
                     clock[sub] -= secs[j]
                     phase[sub] = SCRIM
+                    fresh[sub] = True
                 sub = ix[fk]
                 if len(sub):
                     _, _, secs = tables.kick[False]
@@ -1367,6 +1483,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     clock[sub] -= secs[j]
                     phase[sub] = SCRIM
                     free[sub] = False
+                    fresh[sub] = True
 
         ix = live[ph == SCRIM]
         if not len(ix):
@@ -1427,10 +1544,19 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             band = np.select([margin >= e for e in LATE_DEFICITS], np.arange(len(LATE_DEFICITS)),
                              len(LATE_DEFICITS))
             kr = np.where(kd_ <= KICK_RANGES[0], 0, np.where(kd_ <= KICK_RANGES[1], 1, 2))
-            lp = tables.late_fourth[band, kr]
+            if tables.late_fourth.ndim == 4:
+                lp = tables.late_fourth[np.where(c <= LATE_TIME, 0, 1), band, kr]
+            else:
+                lp = tables.late_fourth[band, kr]
             table = late_trail & (margin < LATE_DEFICITS[0])
             go = np.where(table, r1 < lp[:, 0], go)
             kick_fg = np.where(table, r1 < lp[:, 0] + lp[:, 1], kick_fg)
+        if GO_AHEAD:
+            pointless = (p == 4) & (margin < LATE_DEFICITS[0]) & (
+                (c <= GO_AHEAD_ANY) | ((margin >= LATE_DEFICITS[1]) & (c <= GO_AHEAD_ONE_SCORE)))
+            go = np.where(pointless, True, go)
+            kick_fg = np.where(pointless, False, kick_fg)
+            tally("go_ahead", (fourth & pointless).sum())
         if OT_RULES:
             ot_first = (p >= 5) & (margin >= 0) & ~ot_done[ix, 1 - o] & (kd_ <= OT_KICK_RANGE)
             go = np.where(ot_first, r1 < tables.ot_go, go)
@@ -1481,13 +1607,17 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             continue
         so = team[sx]
         lead = score[sx, so] - score[sx, 1 - so]
-        mode = _modes_np(period[sx], clock[sx], lead, tables.big_lead)
+        mode = _modes_np(period[sx], clock[sx], lead, tables.big_lead, tables.q4_modes)
         key = _keys_np(mode, down[sx], dist[sx], y[sx])
         n = tables.count[key]
         cell = _cells_np(period[sx], clock[sx], lead)
         ns = tables.n_stop[key]
-        logit = np.log(np.maximum(ns, 0.5) / np.maximum(n - ns, 0.5)) + tables.stop_shift[cell]
-        p_stop = np.where(ns == 0, 0.0, np.where(ns == n, 1.0, _sigmoid(logit)))
+        fr = fresh[sx] & tables.n_fresh.any()
+        run_logit, ns0, n0 = _running_logit(tables, key)
+        p_run = np.where(ns0 <= 0, 0.0, np.where(ns0 >= n0, 1.0,
+                                                 _sigmoid(run_logit + tables.stop_shift[cell])))
+        p_fresh = (tables.n_fresh_stop[key] + FRESH_PRIOR * FRESH_STOP) / (tables.n_fresh[key] + FRESH_PRIOR)
+        p_stop = np.where(ns == 0, 0.0, np.where(ns == n, 1.0, np.where(fr, p_fresh, p_run)))
         stops = rand(sx, 15) < p_stop
         seg0 = tables.start[key] + np.where(stops, 0, ns)
         seg_n = np.maximum(1, np.where(stops, ns, n - ns))
@@ -1504,21 +1634,26 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                                      _bands_np(score[sx, 0] - score[sx, 1])]
         uu = 1.0 - (1.0 - uu) ** tilt
         j = seg0 + np.minimum(seg_n - 1, (uu * seg_n).astype(np.int64))
-        if rz.any() and tables.rz_hold.any():
+        if (rz.any() and tables.rz_hold.any()) or tables.td_hold.any():
             yy_ = y[sx]
             scores = lambda jj: (tables.kind[jj] == GAIN) & ((tables.gain[jj] >= 100 - yy_)
                                                              | (tables.td_from[jj] >= 0))
-            held_td = rz & scores(j) & (rand(sx, 19) < tables.rz_hold[rz_index(period[sx], lead, yy_)])
+            hold = np.where(rz, tables.rz_hold[rz_index(period[sx], lead, yy_)], 0.0)
+            if tables.td_hold.any():
+                hold = 1.0 - (1.0 - hold) * (1.0 - tables.td_hold[settle_index(period[sx], clock[sx] + 0.0, lead, yy_)])
+            held_td = scores(j) & (rand(sx, 19) < hold)
             for attempt in range(HOLD_TRIES):
                 if not held_td.any():
                     break
                 u2 = 1.0 - (1.0 - rand(sx, 20 + attempt)) ** tilt
                 j = np.where(held_td, seg0 + np.minimum(seg_n - 1, (u2 * seg_n).astype(np.int64)), j)
                 held_td &= scores(j)
-        used = np.maximum(1.0, tables.seconds[j] + tables.sec_shift[np.where(stops, STOP, RUNNING), cell]) \
-            * pace[sx, so]
+        shift = np.where(fr, 0.0, tables.sec_shift[np.where(stops, STOP, RUNNING), cell])
+        used = np.maximum(1.0, tables.seconds[j] + shift) * pace[sx, so]
         clock[sx] -= used
+        fresh[sx] = False
         tally("clock_used", used.sum())
+        tally("fresh_snaps", fr.sum())
         kd = tables.kind[j]
         held = np.zeros(len(sx), dtype=bool)
         if tables.backed is not None:
@@ -1613,9 +1748,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         first = gain >= dist[gx]
         nd = np.where(first, 1, np.where(rp, down[gx], down[gx] + 1))
         nt = np.where(first, np.minimum(10, 100 - y2), dist[gx] - gain)
-        fresh = nt <= 0
-        nd = np.where(fresh, 1, nd)
-        nt = np.where(fresh, np.minimum(10, 100 - y2), nt)
+        reset = nt <= 0
+        nd = np.where(reset, 1, nd)
+        nt = np.where(reset, np.minimum(10, 100 - y2), nt)
         y[gx] = y2
         down[gx] = nd
         dist[gx] = nt
