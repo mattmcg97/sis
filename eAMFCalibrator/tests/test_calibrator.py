@@ -5557,6 +5557,45 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertAlmostEqual(cell["points_delta"], -1.0)
         self.assertEqual(cell["same_share"], 0.0)
 
+    def test_every_gap_sits_beside_the_real_and_prod_it_was_taken_from(self):
+        # Two candidates compared on different pairs: T2 quotes another line
+        # than prod's on AF1 (which went under), so at prod's line it has
+        # AF0 alone and v4 has both. Each group carries its own N, real and
+        # prod, and every gap is that group's real less its prediction.
+        import re
+        from .. import html_full, multi
+        a = [line_pair(0.50, 0.60, 44.5, 44.5, 24, 21, match="AF0"),
+             line_pair(0.50, 0.60, 44.5, 44.5, 20, 21, match="AF1")]
+        b = [line_pair(0.50, 0.40, 44.5, 44.5, 24, 21, match="AF0"),
+             line_pair(0.50, 0.40, 44.5, 46.5, 20, 21, match="AF1")]
+        sides = [{"name": "v4", "stream": "MODEL:v4", "line": self._passed(a), "prob": None},
+                 {"name": "T2", "stream": "T2", "line": self._passed(b), "prob": None}]
+        for s in sides:
+            s["prob"] = s["line"]
+        dropped = multi.build(sides, n_bootstrap=20)
+        page = html_full.render_sides(sides, dropped)
+        table = page[page.index('id="crossTable"'):]
+        table = table[:table.index("</table>")]
+        head = re.findall(r"<th[^>]*>([^<]*)</th>", table[:table.index("</thead>")])
+        self.assertEqual(head[5:13], ["v4 N", "Real", "Prod", "Gap", "v4", "Gap", "&Delta;Brier", "p"])
+        body = table[table.index("<tbody>"):]
+        rows = [re.findall(r"<t[dh][^>]*>(?:<b>)?([^<]*)", r) for r in body.split("</tr>") if "<td" in r]
+        num = lambda x: float(x.replace(",", ""))
+        checked = 0
+        for cells in rows:
+            for g in range(2):
+                n, real, prod, prod_gap, cand, gap = cells[5 + 8 * g: 11 + 8 * g]
+                if real in ("&mdash;", "—"):
+                    continue
+                self.assertAlmostEqual(num(prod_gap), num(real) - num(prod), places=3)
+                self.assertAlmostEqual(num(gap), num(real) - num(cand), places=3)
+                checked += 1
+            self.assertEqual((cells[5], cells[13]), ("2", "1"))
+        self.assertGreater(checked, 0)
+        headline = page[page.index('id="directional"'):]
+        headline = headline[:headline.index("</thead>")]
+        self.assertIn('<th class="grp">v4 N</th><th>Prod</th><th>v4</th>', headline)
+
     def test_the_page_names_every_candidate_in_every_section(self):
         from .. import html_full
         sides, dropped = self._sides()

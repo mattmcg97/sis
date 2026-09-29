@@ -1621,6 +1621,26 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### Several candidates: each group carries its own baseline
+
+Each candidate is compared with prod only on the pairs it can be compared on:
+- its own live rows;
+- at prod's line, only the pairs where its line is prod's.
+
+So two candidates' pairs differ. The GAMEPLAI candidate quotes prod's line on
+about 56% of pairs; v6 is read at prod's line on all of them. With several
+candidates, every candidate group in the HTML therefore carries its own N,
+real rate and prod figure: every gap and Δ sits beside the numbers it was
+taken from. The tables affected are the headline, by market, the
+cross-section and axes, line error, by selection, pre-match, the mirror check
+and by day.
+
+Before this, the shared Real / Prod / N columns were the first candidate's.
+The other candidates' gaps and Δs were right but sat beside the wrong
+baseline: in the Sep 17–22 report, 133 of 203 cross-section cells had a
+different real rate on v6's pairs. The per-candidate `cross_cells_*.csv`
+files were always right. With one candidate the layout is as before.
+
 ### In the calibration report: `report --bets`
 
 ```bash
