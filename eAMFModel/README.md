@@ -1146,8 +1146,8 @@ A quarter's mean miss moves about ±0.3 points between halves of the same week's
   made 8.84 points against 9.43 in the weeks before. No in-play fit follows that.
 
 ```bash
-python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 --out v7_model --history nb2/AMFELO.csv --handles nb2/AMFELO.csv
-python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v7 --model v7_model --history nb2/AMFELO.csv --handles nb2/AMFELO.csv --since 2026-09-17 --until 2026-09-22
+python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 --out v7_model --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v7 --model v7_model --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --since 2026-09-17 --until 2026-09-22
 python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v6,v7 --v6-model v6_model --v7-model v7_model
 python -m unittest eAMFModel.tests.test_v7
 ```
