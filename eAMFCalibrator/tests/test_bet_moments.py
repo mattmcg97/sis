@@ -202,8 +202,8 @@ class TestCandidates(unittest.TestCase):
         self.assertIn("Over / -2", text)
         self.assertIn("Under / +1", text)
         row = next(l for l in lines if "Over / -2" in l)
-        self.assertIn("-60.00 (   150)", row)        # v6 keeps 4 of every 10 the book kept
-        self.assertIn("+20.00 (    75)", row)        # the other candidate, on the half it priced
+        self.assertIn("-900 (   150)", row)          # v6 keeps 4 of every 10 the book kept
+        self.assertIn("+150 (    75)", row)          # the other candidate, on the half it priced
 
 
 class TestPlayers(unittest.TestCase):
