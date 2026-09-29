@@ -877,7 +877,8 @@ def html_section(summary):
     """The betting simulation as a section of the calibration page: each candidate on its own
     coverage, then every candidate side by side on the bets they all re-priced, the price and
     result effects, why bets were not re-priced, and the lag by operator."""
-    results = summary.get("results") or []
+    from .html_full import SHORT_NAMES
+    results = [(SHORT_NAMES.get(str(n).upper(), n), rows) for n, rows in summary.get("results") or []]
     if not results:
         return ""
     names = [n for n, _ in results]

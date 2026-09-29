@@ -38,7 +38,7 @@
 })();
 
 Array.prototype.forEach.call(document.querySelectorAll('table.sortable'), function (table) {
-  var headers = table.tHead.rows[0].cells;
+  var headers = table.tHead.rows[table.tHead.rows.length - 1].cells;
   var body = table.tBodies[0];
   Array.prototype.forEach.call(headers, function (header, index) {
     header.addEventListener('click', function () {
