@@ -970,6 +970,46 @@ class TestBuild(unittest.TestCase):
             on_board = board[max(m for m in board if m <= message)]
             self.assertGreater(line, on_board - 1)
 
+    def test_the_kick_off_is_priced_off_the_pre_match_means(self):
+        rng = np.random.default_rng(3)
+        prof = (players.Profile(), players.Profile())
+        strong = v6.price_kickoff(self.tables, v6.prior_theta(self.grid, (26.0, 12.0)), v6.Variant("v6"),
+                                  prof, 600, rng, seed=1)
+        weak = v6.price_kickoff(self.tables, v6.prior_theta(self.grid, (12.0, 26.0)), v6.Variant("v6"),
+                                prof, 600, rng, seed=1)
+        for margin, total in (strong, weak):
+            self.assertAlmostEqual(margin.sum(), 1.0, places=6)
+            self.assertAlmostEqual(total.sum(), 1.0, places=6)
+        home_win = lambda book: v6.market_prob(50, 0.0, book[0], book[1])
+        self.assertGreater(home_win(strong), 0.5)
+        self.assertLess(home_win(weak), 0.5)
+
+    def test_pre_match_and_pre_play_rows_get_the_kick_off_price(self):
+        margin = np.zeros(2 * v6.MARGIN_MAX + 1)
+        margin[v6.MARGIN_MAX + 7] = 1.0
+        total = np.zeros(v6.TOTAL_MAX + 1)
+        total[40] = 1.0
+        kick_margin = np.zeros_like(margin)
+        kick_margin[v6.MARGIN_MAX - 3] = 1.0
+        row = lambda m: ("M", 50, None, 50.0, 2.0, "PLAYER 1 to win", m, "OPEN", "true")
+        prod = [row(None), row(3), row(7), row(12)]
+        out = v6_stream.quote_rows("M", [(10, margin, total)], prod, first_play_message=5,
+                                   kickoff=(kick_margin, total))
+        got = {q[6]: q[3] for q in out}
+        self.assertEqual(set(got), {None, 3, 12})           # 7: the first play is under way
+        self.assertEqual((got[None], got[3], got[12]), (0.01, 0.01, 99.99))
+        self.assertEqual({q[6] for q in v6_stream.quote_rows("M", [(10, margin, total)], prod, 5)},
+                         {12})
+
+    def test_a_match_whose_side_is_not_known_still_gets_its_pre_match_price(self):
+        rows = [dict(r, team_a_side="") for r in next(iter(self.matches.values()))]
+        code = rows[0]["match_code"]
+        prod = [(code, 50, None, 50.0, 2.0, "PLAYER 1 to win", None, "OPEN", "true")] + \
+               [(code, 50, None, 50.0, 2.0, "PLAYER 1 to win", int(r["message"]), "OPEN", "true")
+                for r in rows]
+        quotes = v6_stream.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=50, workers=1)
+        self.assertEqual([q[6] for q in quotes], [None])
+
     def test_a_missing_model_says_how_to_build_it(self):
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(SystemExit) as caught:

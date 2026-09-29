@@ -89,9 +89,17 @@ class TestState(unittest.TestCase):
         self.assertEqual(reasons, {8: "score changed", 10: "feed moved on: PLAY_STARTED",
                                    18: "the latest PLAY_OVER cannot be read",
                                    25: "SCOUTING_FULL missing prod's messages",
-                                   3: "before the first PLAY_OVER"})
+                                   3: "feed moved on: PLAY_STARTED"})
         self.assertEqual(checks(guessed={"M1"}).state("M1", 14)["state_reason"],
                          "TEAM_A's side not known")
+
+    def test_pre_match_and_the_kick_off_are_the_same_information(self):
+        c = checks()
+        self.assertTrue(c.state("M1", None)["state_ok"])
+        self.assertTrue(c.state("M1", 1)["state_ok"])
+        self.assertTrue(checks(guessed={"M1"}).state("M1", 1)["state_ok"])
+        self.assertFalse(c.state("M1", 3)["state_ok"])
+        self.assertEqual(bet_checks.build_feeds(SCOUTING)["M1"].first_play, 2)
 
     def test_a_candidate_is_held_to_the_feed_between_its_quote_and_prods(self):
         c = checks()
@@ -170,7 +178,7 @@ class TestJoin(unittest.TestCase):
                          ["simulated", "model: score changed", "model: feed moved on: PLAY_STARTED",
                           "model: the latest PLAY_OVER cannot be read",
                           "model: SCOUTING_FULL missing prod's messages", "placed after match over",
-                          "placed after two minutes", "model: before the first PLAY_OVER",
+                          "placed after two minutes", "model: feed moved on: PLAY_STARTED",
                           "cashed out"])
         self.assertEqual((rows[0]["feed_from"], rows[0]["feed_to"], rows[0]["candidate_message"]),
                          (11, 14, 14))

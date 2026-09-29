@@ -64,6 +64,7 @@ class MatchFeed:
     tail: tuple = ()
     moves: list = field(default_factory=list)
     move_labels: list = field(default_factory=list)
+    first_play: int = None
 
 
 def build_feeds(scouting_rows):
@@ -108,7 +109,7 @@ def build_feeds(scouting_rows):
         start = start if start is not None and (kick is None or start <= kick) else kick
         out[match] = MatchFeed(frozenset(msgs), overs, start, two, over, over_status, int(rs[-1][1]),
                                late, tuple(statuses[-3:]), [m for m, _ in moves],
-                               [label for _, label in moves])
+                               [label for _, label in moves], first_play=kick)
     return out
 
 
@@ -345,14 +346,22 @@ class Checks:
         PLAY_OVER s to m), and whether they carry the same information as prod's."""
         out = dict(feed_from=None, feed_to=message, snapshot_age_seconds=None,
                    scouting_missing=None, state_ok=False, state_reason=None)
+        if message is None:
+            out["state_ok"] = True            # pre-match: neither has seen a play
+            return out
         f = self.feeds.get(match)
-        if f is None or message is None:
+        if f is None:
             out["state_reason"] = "no scouting"
             return out
         message = int(message)
         i = bisect_right(f.play_overs, message) - 1
         if i < 0:
-            out["state_reason"] = "before the first PLAY_OVER"
+            if f.first_play is not None and message < f.first_play \
+                    and self.score_at(match, message) == (0, 0):
+                out["state_ok"] = True        # the kick-off: nothing played yet
+            else:
+                out["state_reason"] = ("before the first PLAY_OVER" if f.first_play is None
+                                       else "feed moved on: PLAY_STARTED")
             return out
         s = f.play_overs[i]
         t0, t1 = self.time_of(match, s), self.time_of(match, message)

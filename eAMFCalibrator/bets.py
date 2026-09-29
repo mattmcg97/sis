@@ -17,7 +17,9 @@ bets -> latency -> join -> analysis
 Several candidates (--candidate v4,v5,v6) share the bets, the lags and prod's
 messages: each is read at the prod message the bet saw, so every one is lagged
 the same. A model prices each prod message off its latest PLAY_OVER at or
-before it, at its own lines (v5@prod: at prod's), and has no pre-match price.
+before it, at its own lines (v5@prod: at prod's). v6 also prices pre-match,
+and every message before the first play starts, off the kick-off (its NB2
+pre-match view): the same information as prod's there.
 
 The feeds carry no two-minute auto-suspend to measure the lag against, and
 per-match lags fitted off the lines (which agree for only a fifth of bets)

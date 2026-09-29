@@ -12,6 +12,7 @@ from .stream import OPEN, _parse_line, confident_windows, description, side_know
 
 DEFAULT_MODEL_DIR = "v6_model"
 DEFAULT_PATHS = 2000
+PREMATCH = True
 
 
 def model_paths(model_dir=None):
@@ -58,6 +59,18 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
     return [(m, mp_, tp) for m, (mp_, tp) in zip(messages, dists)]
 
 
+def kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof=None, means=None):
+    """v6's pre-match margin and total distributions: the kick-off priced off the NB2 prior."""
+    prof = prof or (players.Profile(), players.Profile())
+    return v6.price_kickoff(tables, v6.prior_theta(grid, means), variant, prof, n_paths, rng,
+                            seed=v6.match_seed(match_code))
+
+
+def _before_play(message, first_play_message):
+    """Whether a prod message is pre-match: no message, or one before the first play started."""
+    return message is None or (first_play_message is not None and message < first_play_message)
+
+
 def paired_prod_rows(prod_quote_rows):
     """The prod row each quote is paired with, per market and message."""
     chosen = {}
@@ -75,40 +88,60 @@ def paired_prod_rows(prod_quote_rows):
 OWN, PROD_LINES = "own", "prod"
 
 
-def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None):
-    """Prod-shaped quote rows from v6's distributions."""
-    if not books:
-        return []
+def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message):
+    """One prod-shaped quote row off a margin and total distribution, at v6's own line or prod's;
+    None where it cannot be priced."""
+    if market_id in (ML_HOME, ML_AWAY):
+        line = None
+    elif lines == OWN:
+        if market_id in (SPREAD_HOME, SPREAD_AWAY):
+            home = v6.even_line(mpmf, v6.MARGIN_MAX)
+            line = home if market_id == SPREAD_HOME else -home
+        else:
+            line = v6.even_line(tpmf, 0)
+    else:
+        line = _parse_line(prod_row[5])
+        if line is None:
+            return None
+    p = float(v6.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
+    if not math.isfinite(p):
+        return None
+    p = min(0.9999, max(0.0001, p))
+    return (match_code, market_id, prod_row[2], round(100.0 * p, 2), round(1.0 / p, 4),
+            description(market_id, line), message, OPEN, "true")
+
+
+def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
+               kickoff=None):
+    """Prod-shaped quote rows from v6's distributions. With `kickoff` (the pre-match margin and
+    total distributions), every prod row published before the first play started -- no message,
+    or one below first_play_message -- gets v6's pre-match price, on its own message (none for
+    none) and publish time."""
     keys = [b[0] for b in books]
     out = []
+    if kickoff is not None:
+        for r in prod_quote_rows:
+            if r[1] in MARKET_IDS and r[3] is not None and r[6] is None:
+                q = _quote(match_code, r[1], r, kickoff[0], kickoff[1], lines, None)
+                if q:
+                    out.append(q)
     for (market_id, message), prod_row in sorted(paired_prod_rows(prod_quote_rows).items(),
                                                  key=lambda kv: (kv[0][1], kv[0][0])):
         if market_id not in MARKET_IDS:
             continue
         i = bisect_right(keys, message) - 1
         if i < 0:
+            if kickoff is not None and _before_play(message, first_play_message):
+                q = _quote(match_code, market_id, prod_row, kickoff[0], kickoff[1], lines, message)
+                if q:
+                    out.append(q)
             continue
         if windows is not None and not (keys[i] in windows and message < windows[keys[i]]):
             continue
         _, mpmf, tpmf = books[i]
-        if market_id in (ML_HOME, ML_AWAY):
-            line = None
-        elif lines == OWN:
-            if market_id in (SPREAD_HOME, SPREAD_AWAY):
-                home = v6.even_line(mpmf, v6.MARGIN_MAX)
-                line = home if market_id == SPREAD_HOME else -home
-            else:
-                line = v6.even_line(tpmf, 0)
-        else:
-            line = _parse_line(prod_row[5])
-            if line is None:
-                continue
-        p = float(v6.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
-        if not math.isfinite(p):
-            continue
-        p = min(0.9999, max(0.0001, p))
-        out.append((match_code, market_id, prod_row[2], round(100.0 * p, 2),
-                    round(1.0 / p, 4), description(market_id, line), message, OPEN, "true"))
+        q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message)
+        if q:
+            out.append(q)
     return out
 
 
@@ -121,12 +154,16 @@ def _worker(job):
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
     for match_code, snaps, prod_rows, first_play, prof, means in items:
-        if not side_known(snaps):
-            continue
-        books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
-        windows = confident_windows(snaps, [b[0] for b in books])
+        kickoff = (kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof, means)
+                   if PREMATCH else None)
+        if side_known(snaps):
+            books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
+            windows = confident_windows(snaps, [b[0] for b in books])
+        else:
+            books, windows = [], {}
         for mode in modes:
-            out[mode].extend(quote_rows(match_code, books, prod_rows, first_play, mode, windows))
+            out[mode].extend(quote_rows(match_code, books, prod_rows, first_play, mode, windows,
+                                        kickoff))
     return out
 
 

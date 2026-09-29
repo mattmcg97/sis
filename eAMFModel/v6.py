@@ -290,6 +290,33 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
     return [(mp_, _distributions(home[i], away[i])[1]) for i, (mp_, _) in enumerate(books)]
 
 
+def price_kickoff(tables, theta0, variant, prof, n_paths, rng, seed=None):
+    """Margin and total distributions from the kick-off, before anything is known of the game:
+    v6's pre-match price. Each side receives the opening kick in half the paths."""
+    v = variant
+    start = sim.Start(2)
+    start.team[:] = (0, 1)
+    start.kicks_second_half[:] = (1, 0)
+    sds = np.full((2, 2), 1.0 / math.sqrt(v.kappa))
+    forms = [tables.strength_league if p.form is None else p.form for p in prof]
+    for i in range(2):
+        start.theta[i], start.strength[i], start.strength_game[i] = sim.strength_draw(
+            tables, theta0, forms)
+        if v.profiles:
+            start.aggression[i] = (prof[0].aggression, prof[1].aggression)
+            start.kick[i] = (prof[0].kick, prof[1].kick)
+        if v.pace:
+            start.pace[i] = (prof[0].pace, prof[1].pace)
+    kw = dict(theta_sd=sds if v.theta_sd else None, seed=seed)
+    half = max(1, n_paths // 2)
+    home, away = sim.simulate(tables, start, half, rng, **kw)
+    margin, total = _distributions(home.ravel(), away.ravel())
+    if np.any(tables.inplay_theta):
+        home, away = sim.simulate(tables, start, half, rng, in_play=True, **kw)
+        total = _distributions(home.ravel(), away.ravel())[1]
+    return margin, total
+
+
 def pool_context():
     """The multiprocessing start method for this platform."""
     return mp.get_context("fork" if "fork" in mp.get_all_start_methods() else "spawn")

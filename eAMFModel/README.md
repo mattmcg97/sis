@@ -1036,6 +1036,24 @@ the state for, and `quote_rows(..., windows=...)` quotes only inside them.
 Coverage drops, but no price is stale. `eAMFCalibrator bets` checks the
 same against SCOUTING_FULL message by message.
 
+**v6 before the first play (`v6_stream.PREMATCH`, on).** Before a snap
+nothing is known of the game but who is playing. So v6 prices the kick-off
+(`v6.price_kickoff`) and quotes it on every prod row published before the
+first play started: prod's pre-match rows (no message) and in-play rows
+below the first `PLAY_STARTED`.
+- The kick-off is simulated off the NB2 prior with the players' profiles.
+  Each side receives the opening kick in half the paths.
+- It needs no play state, so a match whose TEAM_A side isn't known still
+  gets its pre-match price.
+- Between the first `PLAY_STARTED` and the first `PLAY_OVER` nothing is
+  quoted.
+
+In the bet sim these are the same information as prod's: pre-match, and
+before the first play with the score 0–0. So v6 is now tested on the
+pre-match bets and on the bets struck before the first snap. The
+calibration report's pre-match section pairs v6's closing pre-match price
+with prod's on the same line (v6@prod).
+
 ## Points still to come against reality: `remaining`
 
 Comparing a version with prod only says which is nearer. To find where a
