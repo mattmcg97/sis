@@ -273,7 +273,11 @@ def cmd_bets(args):
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
-            if args.action == "lines":
+            if args.action == "lag":
+                from . import bet_lag
+                paths = bet_lag.run(cur, out_dir)
+                print(f"\n  -> {os.path.join(out_dir, 'bets_lag.csv')}, {paths[0]} and one page a day")
+            elif args.action == "lines":
                 from . import bet_lines
                 path, _ = bet_lines.run(cur, out_dir, n_matches=args.matches, only=args.match)
                 print(f"\n  -> {path}")
@@ -904,9 +908,10 @@ def build_parser():
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
-    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check", "moments"],
+    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check", "moments", "lag"],
                              default="run",
-                             help="moments: where in the game the book loses, bucketed again off a "
+                             help="lag: the lag match by match off the lines and the odds, every match of "
+                                  "the window drawn (out/bets_lag.html); moments: where in the game the book loses, bucketed again off a "
                                   "bets_sim.csv already written (no Snowflake); check: the checks alone (when in the match each bet was placed, "
                                   "cash-outs, SCOUTING_FULL against prod), quick, no candidate "
                                   "priced; probe: print the columns it reads, to check the names; lines: "
