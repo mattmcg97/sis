@@ -357,9 +357,24 @@ re_sd <- function(fit, group) {
   if (length(s)) s[1] else 0
 }
 
+# New rows with every numeric fixed-effect covariate held to the range the
+# fit saw in training, so a slope estimated on a feature that barely moved
+# (a new player's form, say) can't be extrapolated into absurd predictions.
+clamp_to_frame <- function(fit, newdata) {
+  vars <- setdiff(all.vars(nobars(formula(fit))[[3]]), "GlobalEta")
+  fr <- fit@frame
+  for (v in vars) {
+    if (v %in% names(fr) && is.numeric(fr[[v]]) && v %in% names(newdata)) {
+      newdata[[v]] <- pmin(pmax(newdata[[v]], min(fr[[v]])), max(fr[[v]]))
+    }
+  }
+  newdata
+}
+
 # The fit's linear predictor for new rows, without the per-row and per-match
 # noise terms. Random-effect levels the fit hasn't seen count as 0.
 fit_eta <- function(fit, newdata) {
+  newdata <- clamp_to_frame(fit, newdata)
   bars <- findbars(formula(fit))
   keep <- Filter(function(b) !deparse(b[[3]]) %in% c("ObsID", "MatchId"), bars)
   re <- if (length(keep)) {
@@ -476,8 +491,9 @@ predict_sources <- function(bundle, newdata) {
   s_match2 <- g$sigma_match^2
   out <- data.frame(MatchId = newdata$MatchId, Side = newdata$Side,
                     eta_global = newdata$GlobalEta, s_global = g$sigma_obs,
-                    eta_attack = NA_real_, s_attack = NA_real_,
-                    eta_defence = NA_real_, s_defence = NA_real_, stringsAsFactors = FALSE)
+                    eta_attack = NA_real_, s_attack = NA_real_, capped_attack = FALSE,
+                    eta_defence = NA_real_, s_defence = NA_real_, capped_defence = FALSE,
+                    stringsAsFactors = FALSE)
   for (role in c("attack", "defence")) {
     col <- if (role == "attack") "Player" else "OpponentPlayer"
     for (p in intersect(unique(newdata[[col]]), names(bundle$players))) {
@@ -488,7 +504,12 @@ predict_sources <- function(bundle, newdata) {
       ok <- fixed_levels_ok(m$fit, view)
       rows <- rows[ok]
       if (!length(rows)) next
-      out[[paste0("eta_", role)]][rows] <- fit_eta(m$fit, view[ok, , drop = FALSE])
+      eta <- fit_eta(m$fit, view[ok, , drop = FALSE])
+      # Held within PLAYER_MAX_SHIFT of the global model's prediction.
+      lo <- out$eta_global[rows] - PLAYER_MAX_SHIFT
+      hi <- out$eta_global[rows] + PLAYER_MAX_SHIFT
+      out[[paste0("capped_", role)]][rows] <- eta < lo | eta > hi
+      out[[paste0("eta_", role)]][rows] <- pmin(pmax(eta, lo), hi)
       # A per-player model has no match term, so its row sd also carries the
       # match-level swing; take that out, it's added back once per match.
       out[[paste0("s_", role)]][rows] <- sqrt(max(0, m$sigma_obs^2 - s_match2))
@@ -597,4 +618,18 @@ score_predictions <- function(p) {
     MarginCorr = suppressWarnings(cor(margin, p$Pred_Spread)),
     SideRMSE = sqrt(mean(side_err^2)),
     SideMAE = mean(abs(side_err)))
+}
+
+# Moneyline calibration in equal-count buckets of the predicted home win
+# probability, as nb2/backtest_nb2_calibration.py prints it: gap_pp is
+# realised minus predicted, in percentage points.
+calibration_table <- function(p, n_buckets = 10) {
+  won <- ifelse(p$P1Score > p$P2Score, 1, ifelse(p$P1Score < p$P2Score, 0, 0.5))
+  breaks <- unique(quantile(p$P1_Win_Prob, seq(0, 1, length.out = n_buckets + 1)))
+  bucket <- cut(p$P1_Win_Prob, breaks, include.lowest = TRUE)
+  out <- data.frame(Bucket = levels(bucket), N = as.vector(table(bucket)),
+                    Predicted = as.vector(tapply(p$P1_Win_Prob, bucket, mean)),
+                    Realized = as.vector(tapply(won, bucket, mean)), stringsAsFactors = FALSE)
+  out$GapPP <- 100 * (out$Realized - out$Predicted)
+  out
 }

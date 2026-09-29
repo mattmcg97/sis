@@ -6,7 +6,8 @@
 # weighting (pick them with backtest.R). Saves the lot for predict.R.
 #
 # Usage (from the repo root):
-#   Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=pair
+#   Rscript glmer/fit.R                                     # form / hl60 / global
+#   Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 #   Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924
 #
 # In RStudio: set the defaults just below and Source the file.
@@ -20,9 +21,9 @@
 DEFAULTS <- list(
   history = "",             # "" = first of HISTORY_CANDIDATES in config.R
   out = "",                 # "" = glmer/out/model
-  feature_set = "home",
+  feature_set = "form",     # best out of sample so far -- see README.md's findings
   weighting = "hl60",
-  mode = "pair",            # predict.R's default mode for this model
+  mode = "global",          # predict.R's default mode for this model
   before = "",              # "YYYY-MM-DD"; "" = fit on every settled match
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
   nagq = "",                # "" = GLMER_NAGQ

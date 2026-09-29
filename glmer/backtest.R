@@ -21,6 +21,7 @@
 #
 # Writes (to --out, default glmer/out/backtest/):
 #   summary.csv      one row per feature set x weighting x mode x subset
+#   calibration.csv  moneyline calibration in probability deciles, per configuration
 #   predictions.csv.gz  every priced test match, every configuration (gzipped)
 #   by_player.csv    per-player errors, and how each mode compares with global
 #   fits.csv         what each fit saw: rows, variance components, warnings, time
@@ -148,6 +149,7 @@ run_job <- function(j) {
       FailedPlayerFits = b$failed_player_fits,
       PlayerFitsWithWarnings = sum(unlist(lapply(b$players, function(p)
         vapply(p, function(m) length(m$warnings) > 0, logical(1))))),
+      CappedPlayerPreds = sum(src$capped_attack) + sum(src$capped_defence),
       Seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
       Error = "", stringsAsFactors = FALSE)
     list(preds = preds, info = info)
@@ -156,7 +158,7 @@ run_job <- function(j) {
       FeatureSet = job$feature_set, Weighting = job$weighting, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = NA, GlobalFormula = NA, SigmaMatch = NA,
       SigmaObs = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
-      FailedPlayerFits = NA, PlayerFitsWithWarnings = NA,
+      FailedPlayerFits = NA, PlayerFitsWithWarnings = NA, CappedPlayerPreds = NA,
       Seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
       Error = conditionMessage(e), stringsAsFactors = FALSE))
   })
@@ -231,6 +233,13 @@ summary_df <- do.call(rbind, summary_rows)
 summary_df <- summary_df[order(summary_df$Subset, summary_df$LogLoss), ]
 write.csv(summary_df, file.path(out_dir, "summary.csv"), row.names = FALSE)
 
+calibration <- do.call(rbind, lapply(split(seq_len(nrow(preds)), cfg), function(rows) {
+  p <- preds[rows, ]
+  cbind(FeatureSet = p$FeatureSet[1], Weighting = p$Weighting[1], Mode = p$Mode[1],
+        calibration_table(p), stringsAsFactors = FALSE)
+}))
+write.csv(calibration, file.path(out_dir, "calibration.csv"), row.names = FALSE)
+
 # Per player: errors on the points they scored and conceded, per mode, and
 # the change against the same fit's global-only prediction.
 side_key <- function(player, role) paste(preds$FeatureSet, preds$Weighting, preds$Mode, player, role, sep = "\r")
@@ -275,6 +284,11 @@ seen_rows <- summary_df[summary_df$Subset == "seen", ]
 show(do.call(rbind, lapply(split(seen_rows, seen_rows$Mode), function(x) x[1, cols])))
 
 best <- all_rows[1, ]
+cat(sprintf("\n=== Moneyline calibration, %s / %s / %s (gap = realised - predicted, points) ===\n",
+            best$FeatureSet, best$Weighting, best$Mode))
+show(calibration[calibration$FeatureSet == best$FeatureSet & calibration$Weighting == best$Weighting &
+                 calibration$Mode == best$Mode, c("Bucket", "N", "Predicted", "Realized", "GapPP")])
+
 bp <- by_player[by_player$FeatureSet == best$FeatureSet & by_player$Weighting == best$Weighting &
                 by_player$Mode != "global" & by_player$N >= 30, ]
 if (nrow(bp)) {
@@ -293,4 +307,4 @@ if (nrow(bp)) {
 
 cat(sprintf("\n(Brier 0.25 = always 50%%. Lower Brier / LogLoss / RMSE is better. OwnModelShare = share\n"))
 cat(sprintf(" of sides priced by a per-player model rather than the global one.)\n"))
-cat(sprintf("\nWritten to %s: summary.csv, predictions.csv.gz, by_player.csv, fits.csv\n", out_dir))
+cat(sprintf("\nWritten to %s: summary.csv, calibration.csv, predictions.csv.gz, by_player.csv, fits.csv\n", out_dir))

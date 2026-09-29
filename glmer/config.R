@@ -33,6 +33,14 @@ MIN_PLAYER_MATCHES <- 60
 PREDICT_MODES <- c("global", "attack", "defence", "pair", "blend")
 BLEND_WEIGHT <- 0.5
 
+# Guard rails on a player's own models. At prediction time every numeric
+# covariate is held to the range that model saw in training (a slope fitted
+# on a feature that barely moved can't extrapolate), and a player's own
+# linear predictor may sit at most PLAYER_MAX_SHIFT from the global model's
+# on the log scale (0.5 = expected points x/÷ 1.65). Sides that hit the cap
+# are counted in the backtest's fits.csv and predict.R's log.
+PLAYER_MAX_SHIFT <- 0.5
+
 # ---------------------------------------------------------------------------
 # Feature sets
 # ---------------------------------------------------------------------------

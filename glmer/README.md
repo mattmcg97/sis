@@ -108,7 +108,8 @@ It writes these files to `glmer/out/backtest/`:
 ### 2. Fit the chosen configuration: `fit.R`
 
 ```bash
-Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=pair
+Rscript glmer/fit.R                                                  # form / hl60 / global: best so far
+Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924   # fit only on matches before a date
 ```
 
@@ -178,6 +179,70 @@ Two options work with any type:
   every rating is shrunk.
 - **`drop_before`** drops the early rows, such as the launch period where
   scoring ran wild.
+
+## First findings (29 Sep 2026, `nb2/AMFELO.csv`)
+
+These are out of sample on NB2's own split: train on the first 75% of
+matches (to 6 Jul 2026), test on the 5,988 after it (6 Jul – 10 Sep).
+Settings were `--nagq=0` and 5,000 draws per match. "Totals bias" is actual
+minus predicted.
+
+**One fit at the split**, as `nb2/backtest_nb2_calibration.py` does it.
+Scored on the 5,919 test matches whose players and teams were all in
+training, which is the subset NB2 prices:
+
+| model                     | Brier      | log loss   | totals bias | totals RMSE | totals corr |
+|---------------------------|------------|------------|-------------|-------------|-------------|
+| NB2 (`NBRatingTrial.py`)  | 0.2422     | 0.6782     | +1.68       | 12.72       | 0.269       |
+| glmer `nb2` / hl60 global | 0.2427     | 0.6793     | +0.70       | 12.63       | 0.270       |
+| glmer `nb2` / hl60 blend  | 0.2411     | 0.6751     | +0.91       | 12.64       | 0.264       |
+| glmer `form` / hl60 global| **0.2371** | **0.6669** | +0.52       | **12.40**   | **0.316**   |
+| glmer `form` / hl60 blend | 0.2384     | 0.6694     | +0.35       | 12.41       | 0.313       |
+
+**Refit every 14 days** (`--refit-days=14`), scored on all 5,988 test
+matches:
+
+| model                     | Brier      | log loss   | totals bias | totals RMSE | totals corr |
+|---------------------------|------------|------------|-------------|-------------|-------------|
+| glmer `nb2` / hl60 global | 0.2384     | 0.6695     | +0.50       | 12.48       | 0.294       |
+| glmer `nb2` / hl60 blend  | 0.2386     | 0.6700     | +0.64       | 12.48       | 0.291       |
+| glmer `form` / hl60 global| **0.2357** | **0.6638** | +0.22       | **12.32**   | **0.327**   |
+| glmer `form` / hl60 blend | 0.2373     | 0.6672     | +0.07       | 12.32       | 0.325       |
+| glmer `form` / hl60 pair  | 0.2423     | 0.6790     | −0.16       | 12.46       | 0.297       |
+
+What the numbers say:
+
+- **The form features are the gain.** These are both sides'
+  recency-weighted points scored and conceded, updated after every result.
+  - With one fit, form keeps updating through the test window while static
+    ratings can't, and it beats NB2 by 0.011 in log loss.
+  - Refitting every 14 days narrows the gap, but form still wins
+    (0.6638 against 0.6695).
+  - It is also the best calibrated: each probability decile is within ~4
+    points. NB2's outer deciles are off by +9.4 and −6.5, overconfident at
+    both ends.
+- **Per-player models don't beat the global model.**
+  - On their own (`attack`, `defence`, `pair`) they are worse in every
+    feature set. Each sees only its own player's matches, so it judges
+    opponents from a handful of meetings, and its intercept and slopes
+    aren't shrunk.
+  - Blended with global, they help only where the global model has no form
+    and isn't refitted (one-fit `nb2`: 0.6751 against 0.6793), which means
+    what they add is recent form. The `form` global model captures that
+    better.
+  - `backtest.R`'s per-player table still shows which individual players'
+    own models beat the global one.
+- **The other features add nothing measurable.** Home/away, rest, session,
+  time of day and team matchups make no difference. A 60-day half-life and a
+  150-match one are within noise of each other.
+- **Guard rails.** SHARK had just passed 60 matches and had a conceding
+  form that had barely moved. Their defence model fitted a slope of −9.5 on
+  it, then extrapolated to 90+ expected points against them. Every model's
+  numeric covariates are now clamped to its own training range, and a
+  player's own prediction is capped within `PLAYER_MAX_SHIFT` of the global
+  one. In the refit run the cap bound on 2–79 per-player predictions per
+  fold, out of ~5,000. The per-player rows in the one-fit table predate the
+  guards; the global rows don't depend on them.
 
 ## Speed
 

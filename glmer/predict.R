@@ -114,6 +114,11 @@ out_path <- if (nzchar(args$out)) args$out else file.path(.here, "out", "predict
 dir.create(dirname(out_path), recursive = TRUE, showWarnings = FALSE)
 write.csv(out, out_path, row.names = FALSE)
 
+capped <- sum(src$capped_attack) + sum(src$capped_defence)
+if (capped) {
+  log_line("note: %d per-player prediction(s) hit PLAYER_MAX_SHIFT and were held to within %.2f of the global model",
+           capped, PLAYER_MAX_SHIFT)
+}
 srcs <- table(c(out$P1_Source, out$P2_Source))
 log_line("priced %d matches; sides by source: %s; %d side(s) with a player the model has never seen",
          nrow(out), paste(names(srcs), srcs, sep = " ", collapse = ", "),
