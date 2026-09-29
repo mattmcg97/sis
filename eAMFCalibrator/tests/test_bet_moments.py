@@ -177,6 +177,35 @@ class TestBuckets(unittest.TestCase):
                          ["<0s", "0-2s", "2-5s", "10-20s", "60s+", "none after", "unknown"])
 
 
+class TestCandidates(unittest.TestCase):
+    def test_a_wide_csv_shows_each_candidates_change_by_bucket_and_line_gap(self):
+        import os
+        import tempfile
+        from .. import bets
+        rows = []
+        for k in range(150):
+            for sel, line_v6 in (("Over", 38.5), ("Under", 41.5)):
+                r = _row(bm.BETWEEN, 10.0, selection=sel)
+                r.update(bet_line_prod_side=40.5, simulated_v6=True, candidate_revenue_v6=4.0,
+                         candidate_line_v6=line_v6, simulated_GAME=k % 2 == 0,
+                         candidate_revenue_GAME=12.0)
+                for key in ("simulated", "candidate_revenue", "candidate_result", "candidate_odds"):
+                    r.pop(key, None)
+                rows.append(r)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "bets_sim.csv")
+            bets.write_csv(path, rows)
+            back = bm.from_csv(path)
+        self.assertEqual(sorted(bm.candidate_names(back)), ["GAME", "v6"])
+        lines = bm.cross(back, ["selection", "line_gap_v6"], min_bets=50)
+        text = "\n".join(lines)
+        self.assertIn("Over / -2", text)
+        self.assertIn("Under / +1", text)
+        row = next(l for l in lines if "Over / -2" in l)
+        self.assertIn("-60.00 (   150)", row)        # v6 keeps 4 of every 10 the book kept
+        self.assertIn("+20.00 (    75)", row)        # the other candidate, on the half it priced
+
+
 class TestPlayers(unittest.TestCase):
     def rows(self):
         out = []
