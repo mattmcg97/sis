@@ -1093,8 +1093,66 @@ a time and one drive at a time (built before Sep 1, played on Sep 1–10).
   or by more with 30 seconds or less, never kicks a field goal that can't tie: it goes
   for it.
 - **The rubber band keeps its nearest step** (`v7.fit_rubber_band`).
+- **A side 9+ behind in Q4 is a situation of its own**, before and in the last two
+  minutes. Real sides that far behind turn the ball over 0.065–0.073 a snap, against
+  0.037–0.050 when pooled with one-score trailers.
 
-## Pricing only what the model is sure of (v4–v6 streams)
+### Held out
+
+Points still to come (`remaining`), every PLAY_OVER snapshot, built before Sep 17 and
+played on Sep 17–22 (26,734 snapshots). "Mean" is the version's mean minus the real
+one; "rps" is the ranked probability score over 0–35 points (lower is better).
+
+| | v6 mean | v7 mean | v6 rps | v7 rps |
+|---|---|---|---|---|
+| all | +0.85 | +0.66 | 3.937 | 3.920 |
+| Q2 | +1.10 | +0.80 | 4.867 | 4.847 |
+| Q3 | +1.29 | +1.15 | 4.417 | 4.385 |
+| Q3 level | +1.98 | +1.26 | 4.254 | 4.158 |
+| Q3 1 score, trailer has ball | +1.65 | +1.17 | 4.290 | 4.223 |
+| Q4 | +0.32 | +0.14 | 2.393 | 2.385 |
+| Q4 level | +1.03 | +0.47 | 2.056 | 1.957 |
+| Q3 2+ scores, leader has ball | +1.72 | +2.13 | 4.248 | 4.301 |
+| Q4 1 score, trailer has ball | −0.07 | −0.54 | 2.999 | 3.007 |
+| Q4 2+ scores, trailer has ball | +0.29 | +0.54 | 2.480 | 2.507 |
+
+Q4 level, P(more than N still to come) minus reality moved from +6 to +7 points of %
+to +2 to +3. On Sep 1–10 (built before Sep 1), v7 without the 9+-behind split took the
+rps from 3.901 to 3.889, and the Q4 level mean from +0.57 to −0.15.
+
+Per snap on Sep 17–22 (real / v6 / v7):
+
+| | seconds a snap | touchdowns a snap |
+|---|---|---|
+| Q3 level | 26.8 / 25.2 / 26.7 | |
+| Q3 2+ ahead | 29.1 / 26.9 / 28.1 | 0.064 / 0.071 / 0.073 |
+| Q4 level | 24.5 / 21.6 / 24.2 | 0.061 / 0.091 / 0.081 |
+| Q4 2+ ahead | 22.0 / 23.8 / 22.7 | 0.060 / 0.079 / 0.062 |
+| Q4 2+ behind | 15.3 / 21.2 / 16.7 | 0.106 / 0.120 / 0.111 |
+
+A quarter's mean miss moves about ±0.3 points between halves of the same week's matches
+(snapshots in a match move together), so read single cells with care.
+
+### Still open
+
+- **Two scores apart.** With the leader on the ball, both v6 and v7 give too many
+  points still to come (Q3 +1.7 / +2.1, Q4 +1.2), and in Q4 "no more points" is 9–10
+  points of % too rare. The leader's own snaps are now about right, so what's left is in
+  the sequence: more trailer possessions, and trailers scoring too easily late.
+- **A one-score trailer in the last two minutes** converts fewer first downs in the
+  simulation than real ones do (0.27 against 0.31 a snap on Sep 1–10). Since the
+  go-ahead check correctly sends it for it, "no more points" comes out too likely.
+- **The league's level moves between weeks.** From real Q4 starts on Sep 1–10, real Q4s
+  made 8.84 points against 9.43 in the weeks before. No in-play fit follows that.
+
+```bash
+python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 --out v7_model --history nb2/AMFELO.csv --handles nb2/AMFELO.csv
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v7 --model v7_model --history nb2/AMFELO.csv --handles nb2/AMFELO.csv --since 2026-09-17 --until 2026-09-22
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v6,v7 --v6-model v6_model --v7-model v7_model
+python -m unittest eAMFModel.tests.test_v7
+```
+
+## Pricing only what the model is sure of (v4–v7 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
