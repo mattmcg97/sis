@@ -78,6 +78,7 @@ CSS = r'''<style>
             letter-spacing:0.04em;background:var(--head)}
   tbody th,tfoot th{text-align:left;font-weight:600}
   thead th:first-child{text-align:left}
+  thead th[colspan]{text-align:center;color:var(--ink)}
   tbody td:first-child,tbody th:first-child{text-align:left}
   tr.subtotal td,tr.subtotal th{border-bottom:2px solid var(--line);font-size:11px}
   .good{color:var(--good);font-weight:600}
