@@ -1733,6 +1733,15 @@ margin).
 python -m eAMFCalibrator bets moments --players eAMFCalibrator/out/match_history.csv --by when,market,selection --by backed_player --by gamer,gamer_role --by backed_team --by matchup
 ```
 
+When the CSV carries candidates, each `--by` row also shows each
+candidate's change in margin on the bets of that bucket it re-priced, with
+how many there were: a bucket where prod loses and v6 still loses is
+somewhere v6 needs fixing too. The per-candidate columns are `simulated_v6`
+and `candidate_revenue_v6`. `line_gap_v6` buckets the bets by v6's line
+less the bet's (whole points, capped at ±3), to separate what moving the
+line did from what the probability did. Running `--candidate v6,v6@prod`
+prices both from one simulation.
+
 **Prod's pre-match by gamer (Aug 25–Sep 10, 1,424 matches).** Prod's
 pre-match misses by gamer are larger than chance. The mean z² runs
 1.8–2.5 against 1.0 for no signal, largest on totals. They also persist: a

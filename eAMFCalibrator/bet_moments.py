@@ -430,8 +430,36 @@ def from_csv(path):
                 r[k] = _num(r.get(k))
             r["in_play"] = str(r.get("in_play")).lower() == "true"
             r["excluded"] = str(r.get("excluded")).lower() == "true"
+            for k in list(r):
+                if k.startswith("candidate_revenue"):
+                    r[k] = _num(r[k])
+                elif k.startswith("simulated"):
+                    r[k] = str(r[k]).lower() == "true"
             out.append(r)
     return out
+
+
+def candidate_names(rows):
+    """The candidates a bets CSV carries: `v6` for its simulated_v6 / candidate_revenue_v6 columns
+    (several candidates), '' for plain simulated / candidate_revenue (one)."""
+    keys = list(rows[0]) if rows else []
+    names = [k[len("simulated_"):] for k in keys if k.startswith("simulated_")]
+    return names or ([""] if "simulated" in keys else [])
+
+
+def _field(name, field):
+    return f"{field}_{name}" if name else field
+
+
+def candidate_change(rows, name):
+    """(bets re-priced, change in margin in points) of one candidate over these bets: its revenue
+    less the book's, over the stake, on the bets it re-priced."""
+    sim, rev_c = _field(name, "simulated"), _field(name, "candidate_revenue")
+    done = [r for r in rows if r.get(sim) and r.get(rev_c) is not None]
+    stake = sum(r["stake"] for r in done)
+    if not stake:
+        return 0, None
+    return len(done), 100 * (sum(r[rev_c] for r in done) - sum(r["revenue"] for r in done)) / stake
 
 
 DERIVED = {"day": lambda r: _match_day(r.get("match_code")),
@@ -444,8 +472,22 @@ def _match_day(match):
     return _day(match)
 
 
+def line_gap(r, name):
+    """A candidate's line less the bet's (prod's side), rounded to whole points and capped at 3 either
+    way: where it moved the bet to an easier or harder line. 'no line' for moneyline."""
+    c, b = _num(r.get(_field(name, "candidate_line"))), _num(r.get("bet_line_prod_side"))
+    if c is None or b is None:
+        return "no line"
+    gap = max(-3, min(3, round(c - b)))
+    return f"{gap:+d}" if abs(gap) < 3 else f"{gap:+d} or more"
+
+
 def _value(r, col):
-    return DERIVED[col](r) if col in DERIVED else r.get(col)
+    if col in DERIVED:
+        return DERIVED[col](r)
+    if col.startswith("line_gap"):
+        return line_gap(r, col[len("line_gap_"):] if col.startswith("line_gap_") else "")
+    return r.get(col)
 
 
 def match_info(path):
@@ -508,17 +550,30 @@ def cross(rows, cols, min_bets=MIN_BETS, keep=None):
     probability (expected margin less the margin). `keep` picks the bets (default: in play)."""
     if any(c in PER_SIDE for c in cols):
         rows = per_side(rows)
-    table = buckets(rows, lambda r: tuple(str(_value(r, c)) for c in cols), keep)
+    key = lambda r: tuple(str(_value(r, c)) for c in cols)
+    table = buckets(rows, key, keep)
+    names = candidate_names(rows)
+    groups = defaultdict(list)
+    for r in rows:
+        if (keep or _in_scope)(r):
+            groups[key(r)].append(r)
     scope = sum(v[1] for v in table.values())
     lines = [f"\n  the book's margin by {' x '.join(cols)}, costliest first (edge = expected - margin: "
-             "how far bettors beat prod's probability)"
+             "how far bettors beat prod's probability"
+             + ("; each candidate: its change in margin, points, on the bets of the bucket it re-priced "
+                "(how many)" if names else "") + ")"
              + ("; each bet counted once for each gamer" if any(c in PER_SIDE for c in cols) else ""),
              f"  {' / '.join(cols)[:50]:50s} {'bets':>7s} {'stake%':>7s} {'revenue':>11s} "
-             f"{'margin':>8s} {'+-2se':>6s} {'expected':>9s} {'edge':>7s}"]
+             f"{'margin':>8s} {'+-2se':>6s} {'expected':>9s} {'edge':>7s}"
+             + "".join(f" {(n or 'candidate')[:16]:>17s}" for n in names)]
     for g, (n, stake, rev, m, se2, exp) in sorted(table.items(), key=lambda kv: kv[1][2]):
         if n < min_bets:
             continue
         edge = "" if exp is None else f"{exp - m:+7.2f}"
+        cells = ""
+        for name in names:
+            k, change = candidate_change(groups[g], name)
+            cells += f" {'-':>17s}" if change is None else f" {change:+8.2f} ({k:6,d})"
         lines.append(f"  {' / '.join(g)[:50]:50s} {n:7,d} {100 * stake / scope:6.1f}% {rev:+11,.0f} "
-                     f"{m:7.2f}% {se2:6.2f} {'' if exp is None else f'{exp:8.2f}%'} {edge}")
+                     f"{m:7.2f}% {se2:6.2f} {'' if exp is None else f'{exp:8.2f}%'} {edge:>7s}{cells}")
     return lines
