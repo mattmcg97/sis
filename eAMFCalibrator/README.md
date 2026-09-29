@@ -1675,7 +1675,28 @@ To bucket a CSV already written again, with no Snowflake:
 
 ```bash
 python -m eAMFCalibrator bets moments --csv eAMFCalibrator/out/bets_sim.csv
+python -m eAMFCalibrator bets moments --by clock_band,market,selection --by score_margin,selection --by day,market
 ```
+
+`--by` crosses any `bets_sim.csv` columns (or `day`), costliest first, with
+the edge bettors had over prod's probability (the expected margin less the
+margin).
+
+**Sep 17–28, first run.** The in-play book kept −1.9% against an expected
++7.6%, so bettors beat prod's probability by about 9.5 points.
+- **It isn't timing.** The edge is about the same between plays and during
+  them. Bets struck under 10 s before a score made the book money (+10.6%).
+  Bets across a score, or with a conversion to come, number fewer than 100
+  (the operators suspend there).
+- **Small leaks:**
+  - prices over 60 s old (−48%, 177 bets);
+  - a price from before a kick-off (−30%, 308 bets);
+  - timeouts (−8.7%, 2.3% of stake).
+- **Where the money goes.** Level scores (−6.1%, 54% of stake, −204k), the
+  first two minutes of Q1 (−7.8%, −104k), unders (−8.5%, −130k) and the home
+  side (−4.5%).
+- A third of in-play stake is struck while the feed has betting suspended
+  (a play is live).
 
 ### Several candidates: the model versions
 
