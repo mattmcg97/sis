@@ -1,0 +1,26 @@
+{
+ "prior": "glmer",
+ "fitted_on": 24416,
+ "before": "2026-09-17T00:00:00",
+ "scale": 1.0,
+ "scale_matches": 0,
+ "scale_raw_ratio": null,
+ "league_average": [
+  17.83326779394416,
+  17.487219819111285
+ ],
+ "model": {
+  "feature_set": "form",
+  "weighting": "hl60",
+  "mode": "global",
+  "form_half_life": 10,
+  "per_player_models": false,
+  "before": "2026-09-17 00:00:00",
+  "fitted_on": 24416,
+  "first_match": "2025-12-10 16:10:00",
+  "last_match": "2026-09-16 23:59:00",
+  "sigma_match": 0.1995619566,
+  "sigma_obs": 0.3532099521,
+  "history": "C:/Users/MMcguinness/sis/v7_glmer_917/glmer/history.csv"
+ }
+}
