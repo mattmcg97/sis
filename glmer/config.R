@@ -163,7 +163,9 @@ WEIGHTINGS <- list(
   m150         = list(type = "exp_matches", half_life = 150),
   win120       = list(type = "window", days = 120),
   hl60_burnin  = list(type = "exp_days", half_life = 60, drop_before = "2026-01-15"),
-  hl60_x2      = list(type = "exp_days", half_life = 60, scalar = 2)
+  hl60_x0.5    = list(type = "exp_days", half_life = 60, scalar = 0.5),
+  hl60_x2      = list(type = "exp_days", half_life = 60, scalar = 2),
+  hl60_x4      = list(type = "exp_days", half_life = 60, scalar = 4)
 )
 
 # ---------------------------------------------------------------------------

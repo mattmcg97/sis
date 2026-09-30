@@ -26,7 +26,7 @@
 #   calibration.csv  moneyline calibration in probability deciles, per configuration
 #   predictions.csv.gz  every priced test match, every configuration (gzipped)
 #   by_player.csv    per-player errors, and how each mode compares with global
-#   fits.csv         what each fit saw: rows, variance components, warnings, time
+#   fits.csv         what each fit saw: rows, every variance component, warnings, time
 
 DEFAULTS <- list(
   history = "",             # "" = first of HISTORY_CANDIDATES in config.R
@@ -159,6 +159,8 @@ run_job <- function(j) {
       FoldStart = format(fold$start), GlobalRows = b$global$n,
       GlobalFormula = b$global$formula,
       SigmaMatch = b$global$sigma_match, SigmaObs = b$global$sigma_obs,
+      VarComp = with(as.data.frame(VarCorr(b$global$fit)),
+                     paste(sprintf("%s %.4f", grp, sdcor)[is.na(var2)], collapse = "; ")),
       GlobalWarnings = paste(b$global$warnings, collapse = " | "),
       AttackModels = sum(vapply(b$players, function(p) !is.null(p$attack), logical(1))),
       DefenceModels = sum(vapply(b$players, function(p) !is.null(p$defence), logical(1))),
@@ -173,7 +175,7 @@ run_job <- function(j) {
     list(preds = NULL, info = data.frame(
       FeatureSet = job$label, Weighting = job$weighting, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = NA, GlobalFormula = NA, SigmaMatch = NA,
-      SigmaObs = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
+      SigmaObs = NA, VarComp = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
       FailedPlayerFits = NA, PlayerFitsWithWarnings = NA, CappedPlayerPreds = NA,
       Seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
       Error = conditionMessage(e), stringsAsFactors = FALSE))
