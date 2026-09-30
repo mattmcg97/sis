@@ -87,6 +87,8 @@ if (nzchar(args$schedule)) {
 FORM_HALF_LIFE_MATCHES <- bundle$features$form_half_life
 SESSION_HOURS <- bundle$features$session_hours
 REST_CAP_HOURS <- bundle$features$rest_cap_hours
+SESSION_GAP_HOURS <- bundle$features$session_gap_hours %||% SESSION_GAP_HOURS
+SESSION_SHRINK_MATCHES <- bundle$features$session_shrink %||% SESSION_SHRINK_MATCHES
 long <- to_long(combine_matches(history, schedule))
 rows <- long[long$MatchId %in% schedule$MATCH_CODE, ]
 
