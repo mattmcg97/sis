@@ -1407,6 +1407,8 @@ def both_sides_calibration(pairs, n_bootstrap=200):
             "prod_gap": prod_stats["gap"],
             "candidate_predicted": candidate_stats["mean_predicted"],
             "candidate_gap": candidate_stats["gap"],
+            "prod_brier": prod_stats["brier"],
+            "candidate_brier": candidate_stats["brier"],
             "canonical": market_id in config.CANONICAL_SELECTIONS,
         }
     return out
@@ -1557,6 +1559,8 @@ def daily_breakdown(pairs, n_bootstrap=300):
             "pairs": tallied["n"],
             "matches": tallied["n_matches"],
             "win_rate": tallied["candidate_win_rate"],
+            "prod_brier": tallied["prod_brier"],
+            "candidate_brier": tallied["candidate_brier"],
             "brier": paired_delta_summary(subset, SQUARED, PROBABILITY, n_bootstrap),
         }
     return out

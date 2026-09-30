@@ -5219,38 +5219,33 @@ class TestReportShape(unittest.TestCase):
         body = body[:body.index("</table>")]
         self.assertIn('class="ax" data-v=', body)
 
-    def test_the_directional_result_is_one_table(self):
+    def test_the_directional_result_is_brier_then_line_error(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
-        self.assertEqual(head.count("<table>"), 1)
-        self.assertEqual(head.count("<dl"), 0)
-        for label in ("Brier at prod's line", "Line error at own line (points)",
-                      "Same line as prod", "Matches won at prod's line",
-                      "Matches won, line first"):
+        self.assertEqual(head.count("<table>"), 2)
+        for label in ("All markets", "All lines"):
             self.assertIn(f"<th>{label}</th>", head)
+        for group in ("Brier", "Line error (points)", "Same line as prod"):
+            self.assertIn(f">{group}</th>", head)
 
-    def test_the_directional_table_carries_five_columns(self):
+    def test_the_directional_table_carries_n_and_each_streams_brier(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
         columns = re.findall(r"<th[^>]*>([^<]+)</th>",
                              head[head.index("<thead>"):head.index("</thead>")])
-        self.assertEqual(columns,
-                         ["Reading", "N", "Prod", "candidate", "&Delta;", "95% CI", "p"])
+        self.assertEqual(columns, ["Brier", "At prod's line", "N", "Prod", "candidate"])
 
-    def test_the_brier_delta_is_dashed_where_it_does_not_apply(self):
-        # A different line is a different question, so there is no shared
-        # 0/1 to square an error against. A number there would invite the
-        # comparison the line rule exists to prevent.
+    def test_the_page_carries_no_intervals_or_p_values(self):
+        heads = "".join(re.findall(r"<thead>.*?</thead>", self.rendered, flags=re.S))
+        self.assertNotIn("95% CI", heads)
+        self.assertNotIn("<th>p</th>", heads)
+        self.assertNotIn("&Delta;Brier", heads)
+
+    def test_a_streams_brier_is_green_where_it_beats_prods(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
-        head = head[:head.index("</section>")]
         body = head[head.index("<tbody>"):head.index("</tbody>")]
-        rows = body.split("<tr>")[1:]
-        share = next(r for r in rows if "<th>Same line as prod</th>" in r)
-        brier = next(r for r in rows if "<th>Brier at prod's line</th>" in r)
-        self.assertIn("&mdash;", share)
-        # the Brier row carries its numbers (p is dashed only where every
-        # match moved by the same amount, as in this fixture)
-        self.assertIn('<td class="good">+0.0600</td>', brier)
+        row = next(r for r in body.split("</tr>") if "<th>All markets</th>" in r)
+        self.assertIn('class="good"', row)
 
     def test_report_carries_no_explanatory_prose(self):
         # The report is a dashboard, not a write-up: headings, tables and
@@ -5576,25 +5571,52 @@ class TestSeveralCandidates(unittest.TestCase):
         page = html_full.render_sides(sides, dropped)
         table = page[page.index('id="crossTable"'):]
         table = table[:table.index("</table>")]
-        head = re.findall(r"<th[^>]*>([^<]*)</th>", table[:table.index("</thead>")])
-        self.assertEqual(head[5:13], ["v4 N", "Real", "Prod", "Gap", "v4", "Gap", "&Delta;Brier", "p"])
+        thead = table[:table.index("</thead>")]
+        self.assertEqual(re.findall(r'<th colspan="\d+" class="grp">([^<]*)</th>', thead),
+                         ["N", "Mean", "Gap", "Brier"])
+        self.assertIn('N <span class="dim">&middot; v4</span>', thead)
+        self.assertIn('Real <span class="dim">&middot; T2</span>', thead)
         body = table[table.index("<tbody>"):]
         rows = [re.findall(r"<t[dh][^>]*>(?:<b>)?([^<]*)", r) for r in body.split("</tr>") if "<td" in r]
         num = lambda x: float(x.replace(",", ""))
         checked = 0
         for cells in rows:
+            # N v4, N T2 | Real v4, Real T2, Prod v4, Prod T2, v4, T2 | gaps the same way
+            n = cells[5:7]
+            real, prod, cand = cells[7:9], cells[9:11], cells[11:13]
+            prod_gap, cand_gap = cells[13:15], cells[15:17]
+            self.assertEqual(n, ["2", "1"])
             for g in range(2):
-                n, real, prod, prod_gap, cand, gap = cells[5 + 8 * g: 11 + 8 * g]
-                if real in ("&mdash;", "—"):
+                if real[g] in ("&mdash;", "—"):
                     continue
-                self.assertAlmostEqual(num(prod_gap), num(real) - num(prod), places=3)
-                self.assertAlmostEqual(num(gap), num(real) - num(cand), places=3)
+                self.assertAlmostEqual(num(prod_gap[g]), num(real[g]) - num(prod[g]), places=3)
+                self.assertAlmostEqual(num(cand_gap[g]), num(real[g]) - num(cand[g]), places=3)
                 checked += 1
-            self.assertEqual((cells[5], cells[13]), ("2", "1"))
         self.assertGreater(checked, 0)
         headline = page[page.index('id="directional"'):]
         headline = headline[:headline.index("</thead>")]
-        self.assertIn('<th class="grp">v4 N</th><th>Prod</th><th>v4</th>', headline)
+        self.assertIn('<th class="grp">N <span class="dim">&middot; v4</span></th>', headline)
+
+    def test_streams_on_the_same_rows_share_one_n_real_and_prod(self):
+        import re
+        from .. import html_full, multi
+        a = [line_pair(0.50, 0.60, 44.5, 44.5, 24, 21, match="AF0"),
+             line_pair(0.50, 0.60, 44.5, 44.5, 20, 21, match="AF1")]
+        b = [line_pair(0.50, 0.40, 44.5, 44.5, 24, 21, match="AF0"),
+             line_pair(0.50, 0.45, 44.5, 44.5, 20, 21, match="AF1")]
+        sides = [{"name": "GAMEPLAI_STREAM_CANDIDATE", "stream": "GAMEPLAI_STREAM_CANDIDATE",
+                  "line": self._passed(a), "prob": None},
+                 {"name": "v6", "stream": "MODEL:v6", "line": self._passed(b), "prob": None}]
+        for side in sides:
+            side["prob"] = side["line"]
+        dropped = multi.build(sides, n_bootstrap=20)
+        page = html_full.render_sides(sides, dropped)
+        table = page[page.index('id="crossTable"'):]
+        thead = table[:table.index("</thead>")]
+        leaf = re.findall(r"<th[^>]*>([^<]*)</th>", thead.split("</tr>")[1])
+        self.assertEqual(leaf[5:], ["N", "Real", "Prod", "Cand", "v6", "Prod", "Cand", "v6",
+                                    "Prod", "Cand", "v6"])
+        self.assertNotIn("GAMEPLAI_STREAM_CANDIDATE", page[:page.index('id="pairs"')])
 
     def test_the_page_names_every_candidate_in_every_section(self):
         from .. import html_full
