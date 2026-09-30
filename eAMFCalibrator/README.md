@@ -1629,6 +1629,12 @@ Every comparison table reads the same way. It opens with N, then grouped columns
 - **Brier:** Prod, then each stream, green where the stream beats prod.
 
 Line-error tables use Line error (Prod, then each stream) and Same line as prod.
+The top table puts both readings side by side, all markets then each market: Brier
+at prod's line, and line error at each stream's own line. Pre-match reads a model
+at prod's closing line (its prod-line pass), so every match pairs, not only those
+where its own line happened to be prod's. The page no longer carries the pair by
+pair table; the pairs CSVs still have every pair. The betting simulation is added
+at the bottom with `report --bets`.
 There are no confidence intervals or p-values. `GAMEPLAI_STREAM_CANDIDATE` is
 shown as Cand.
 
