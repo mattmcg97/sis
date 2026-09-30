@@ -5,8 +5,10 @@ and the rubber band (sim7.py, v7.py, v7_stream.py)."""
 import csv
 import datetime as dt
 import inspect
+import json
 import os
 import random
+import sys
 import tempfile
 import textwrap
 import unittest
@@ -14,7 +16,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import nb2_prior, players, pricer, sim, sim4, sim5, sim6, sim7, v7, v7_stream
+from .. import glmer_prior, nb2_prior, players, pricer, sim, sim4, sim5, sim6, sim7, v7, v7_stream
 from .test_v3 import _matches
 
 
@@ -1292,6 +1294,140 @@ class TestNB2Prior(unittest.TestCase):
             fh.write("MATCH_CODE,SPORT_CODE\nAF1,AF\n")
         with self.assertRaises(SystemExit):
             nb2_prior.load_history(path)
+
+
+_GLMER_FIT_STUB = """
+    import argparse, csv, json, os
+    p = argparse.ArgumentParser()
+    for k in ("history", "before", "out"):
+        p.add_argument("--" + k)
+    a = p.parse_args()
+    rows = list(csv.DictReader(open(a.history)))
+    home = sum(float(r["PLAYER_1_FINAL_SCORE"]) for r in rows) / len(rows)
+    away = sum(float(r["PLAYER_2_FINAL_SCORE"]) for r in rows) / len(rows)
+    open(os.path.join(a.out, "model.rds"), "w").write(f"{home},{away}")
+    json.dump({"feature_set": "form", "weighting": "hl60", "mode": "global", "form_half_life": 10,
+               "before": a.before, "fitted_on": len(rows)},
+              open(os.path.join(a.out, "model_info.json"), "w"))
+"""
+
+_GLMER_PREDICT_STUB = """
+    import argparse, csv, json, os
+    p = argparse.ArgumentParser()
+    for k in ("model", "schedule", "history", "n-sims", "out"):
+        p.add_argument("--" + k)
+    a = p.parse_args()
+    json.dump(vars(a), open(os.path.join(os.path.dirname(a.out), "args.json"), "w"))
+    home, away = open(a.model).read().split(",")
+    with open(a.out, "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["MATCH_CODE", "Pred_P1_Points", "Pred_P2_Points", "Prediction_Status"])
+        for r in csv.DictReader(open(a.schedule)):
+            if r["PLAYER_1_HANDLE"] != "NOBODY":
+                w.writerow([r["MATCH_CODE"], home, away, "OK"])
+"""
+
+
+class TestGlmerPrior(unittest.TestCase):
+    """The bridge to glmer/'s R scripts, run against Python stand-ins (so R isn't needed): the
+    history it fits on, what predict.R is handed, the league-average fallback, and a v7 build
+    that records which prior it prices off."""
+
+    BEFORE = dt.datetime(2026, 9, 20)
+    history = TestNB2Prior.history
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        stub = os.path.join(self.tmp.name, "glmer")
+        os.makedirs(stub)
+        with open(os.path.join(stub, glmer_prior.FIT_SCRIPT), "w") as fh:
+            fh.write(textwrap.dedent(_GLMER_FIT_STUB))
+        with open(os.path.join(stub, glmer_prior.PREDICT_SCRIPT), "w") as fh:
+            fh.write(textwrap.dedent(_GLMER_PREDICT_STUB))
+        self.patches = [mock.patch.object(glmer_prior, "GLMER_DIR", stub),
+                        mock.patch.object(glmer_prior, "RSCRIPT", sys.executable)]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_builds_on_the_history_before_the_cut_off_only(self):
+        history = self.history()
+        out = os.path.join(self.tmp.name, "model")
+        pre = glmer_prior.Prematch.build(history, out, self.BEFORE)
+        fitted = [r for r in history if r["PLAYER_1_FINAL_SCORE"]
+                  and nb2_prior._start(r) < self.BEFORE]
+        self.assertEqual(pre.meta["fitted_on"], len(fitted))
+        self.assertEqual(pre.meta["model"]["fitted_on"], len(fitted))
+        self.assertEqual(pre.scale, 1.0)
+        home = sum(float(r["PLAYER_1_FINAL_SCORE"]) for r in fitted) / len(fitted)
+        away = sum(float(r["PLAYER_2_FINAL_SCORE"]) for r in fitted) / len(fitted)
+        schedule = [dict(history[-1], MATCH_CODE="NEW1"),
+                    dict(history[-1], MATCH_CODE="NEW2", PLAYER_1_HANDLE="NOBODY")]
+        means = glmer_prior.Prematch(out).means(schedule)
+        self.assertAlmostEqual(means["NEW1"][0], home, places=6)
+        self.assertAlmostEqual(means["NEW1"][1], away, places=6)
+        self.assertEqual(means["NEW2"], pre.league)           # not priced: the league's average
+        self.assertTrue(glmer_prior.Prematch.exists(out))
+        self.assertFalse(glmer_prior.Prematch.exists(self.tmp.name))
+        self.assertIn("glmer form / hl60", pre.describe())
+
+    def test_predict_gets_the_models_history_and_skips_the_simulation(self):
+        out = os.path.join(self.tmp.name, "model")
+        pre = glmer_prior.Prematch.build(self.history(), out, self.BEFORE)
+        last = self.history()[-1]
+        pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
+        with open(os.path.join(out, "predict", "args.json")) as fh:
+            args = json.load(fh)
+        self.assertEqual(args["n_sims"], "0")                 # expected points only
+        self.assertEqual(os.path.normcase(args["history"]),
+                         os.path.normcase(os.path.abspath(os.path.join(out, glmer_prior.HISTORY))))
+        with open(args["schedule"], newline="") as fh:
+            row = next(csv.DictReader(fh))
+        # finals the rows carry reach the form features; the R side reads only earlier matches
+        self.assertEqual(row["PLAYER_1_FINAL_SCORE"], last["PLAYER_1_FINAL_SCORE"])
+
+    def test_v7_build_prices_off_the_prior_it_was_built_with(self):
+        out = os.path.join(self.tmp.name, "v7")
+        v7.build(_matches(12), out, grid_paths=40, verbose=False, history=self.history(),
+                 before=self.BEFORE, prior="glmer")
+        self.assertIsInstance(v7.prematch_model(out), glmer_prior.Prematch)
+        self.assertIsInstance(v7.prematch_model(os.path.join(out, "v7tables.npz")),
+                              glmer_prior.Prematch)
+        self.assertFalse(os.path.exists(os.path.join(out, "nb2")))
+        with open(os.path.join(out, v7.PRIOR_FILE)) as fh:
+            self.assertEqual(json.load(fh), {"prior": "glmer"})
+
+    def test_a_model_built_before_the_choice_still_reads_nb2(self):
+        old = os.path.join(self.tmp.name, "old")
+        os.makedirs(os.path.join(old, "nb2"))
+        with mock.patch.object(nb2_prior.Prematch, "exists", return_value=True), \
+                mock.patch.object(nb2_prior.Prematch, "__init__", return_value=None):
+            self.assertIsInstance(v7.prematch_model(old), nb2_prior.Prematch)
+        self.assertIsNone(v7.prematch_model(self.tmp.name))  # nothing built here
+
+    def test_an_unknown_prior_is_refused(self):
+        with self.assertRaises(ValueError):
+            v7.build(_matches(2), os.path.join(self.tmp.name, "x"), verbose=False, prior="elo")
+
+    def test_a_failing_script_says_what_went_wrong(self):
+        with open(os.path.join(glmer_prior.GLMER_DIR, glmer_prior.FIT_SCRIPT), "w") as fh:
+            fh.write("raise SystemExit('bad input')\n")
+        with self.assertRaises(SystemExit) as caught:
+            glmer_prior.fit(self.history(), os.path.join(self.tmp.name, "x"), self.BEFORE)
+        self.assertIn("bad input", str(caught.exception))
+
+    def test_without_r_it_says_how_to_get_it(self):
+        with mock.patch.object(glmer_prior, "RSCRIPT", None), \
+                mock.patch.dict(os.environ, {"RSCRIPT": ""}), \
+                mock.patch.object(glmer_prior.shutil, "which", return_value=None), \
+                mock.patch.object(glmer_prior.sys, "platform", "linux"):
+            with self.assertRaises(SystemExit) as caught:
+                glmer_prior.rscript()
+        self.assertIn("install_packages.R", str(caught.exception))
 
 
 if __name__ == "__main__":
