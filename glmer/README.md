@@ -262,6 +262,32 @@ That is about the size of the difference between two machines fitting the
 same model: fits are exact on one machine, but the optimiser stops a hair
 apart on another.
 
+**Weight scalar.** Same model and refits: form half-life 10 matches, rows
+60 days. The scalar multiplies every row weight after the weights are
+normalised to mean 1:
+
+| scalar | Brier  | log loss | vs scalar 1 (t, fortnights better) | totals RMSE | totals bias | sd of win prob |
+|--------|--------|----------|------------------------------------|-------------|-------------|----------------|
+| 0.5    | 0.2352 | 0.6628   | −0.0006 (−1.1, 4 of 5)             | 12.31       | +0.15       | 0.121          |
+| 1      | 0.2355 | 0.6634   | n/a                                | 12.32       | +0.22       | 0.107          |
+| 2      | 0.2360 | 0.6643   | +0.0009 (+2.5, 0 of 5)             | 12.34       | −0.06       | 0.100          |
+| 4      | 0.2364 | 0.6653   | +0.0019 (+3.7, 0 of 5)             | 12.40       | −0.83       | 0.096          |
+
+- **What a bigger scalar does.** It tells the model it has more data than it
+  really does. From scalar 0.5 to 4, the player ratings spread further
+  (player sd 0.160 → 0.204, opponent 0.125 → 0.155). The per-row
+  overdispersion grows much more (0.25 → 0.55). Our pricing simulates with
+  that overdispersion, so moneylines drift toward 50% and expected totals
+  rise.
+- **The data's real weight.** The 60-day weights' effective sample size
+  (Kish) is only 62–71% of the rows. A scalar of about 0.65 would count the
+  data at its true weight.
+- **So 0.5 edges 1,** though not significantly on log loss. It is
+  significantly better on totals (t −2.4).
+- **Stream is noise here.** Its variance component isn't identified with
+  only three streams: it jumps between 0 and 2.5 across refits, while the
+  stream effects stay near 0.
+
 What the numbers say:
 
 - **The form features are the gain.** These are both sides'
