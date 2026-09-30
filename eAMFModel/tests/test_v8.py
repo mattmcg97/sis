@@ -435,9 +435,9 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_its_own_switches_off_v8_plays_as_v6(self):
         saved = (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS)
+                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
         sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = False
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
         sim8.PLAY_CALLING_Q4 = set()
         try:
             t7 = sim8.Tables.build(self.matches, min_records=20)
@@ -451,18 +451,18 @@ class TestLateGame(unittest.TestCase):
             b = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
         finally:
             (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS) = saved
+             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
         saved = (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
                  sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS)
+                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
         sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4, sim8.RED_ZONE_FIT = \
             None, False, False, set(), False
         sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = False
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
         try:
             t6 = sim8.Tables.build(self.matches, min_records=20)
             t6.late_fourth = None
@@ -475,7 +475,7 @@ class TestLateGame(unittest.TestCase):
         finally:
             (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
              sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS) = saved
+             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_big_leads_have_their_own_situations(self):
@@ -498,8 +498,8 @@ class TestClockToTheEnd(unittest.TestCase):
 
     def test_with_its_own_switches_off_v8_plays_as_v7(self):
         from .. import sim7
-        saved = (sim8.LATE_CLOCK, sim8.TIMEOUTS)
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = False
+        saved = (sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
         try:
             t8 = sim8.Tables.build(self.matches, min_records=20)
             t7 = sim7.Tables.build(self.matches, min_records=20)
@@ -510,7 +510,7 @@ class TestClockToTheEnd(unittest.TestCase):
             a = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
             b = sim7.simulate(t7, st, 300, np.random.default_rng(1), seed=9)
         finally:
-            sim8.LATE_CLOCK, sim8.TIMEOUTS = saved
+            sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def _row(self, message, period, clock, down=1, kind="SCRIMMAGE", offense="TEAM_A"):
@@ -542,14 +542,14 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertLess(with_ends, dropped)
         self.assertAlmostEqual(with_ends, as_runs, delta=0.2)
 
-    def test_the_timeout_fit_finds_how_often_and_how_many(self):
+    def test_the_timeout_fit_finds_the_leader_s_own_clock_stops(self):
         rng = np.random.default_rng(3)
-        own, use, left = 0.15, 0.6, np.array([0.1, 0.1, 0.3, 0.5])
+        own, use, left = 0.25, 1.0, sim8.timeouts_left_pmf(0.75)
         seqs = []
         for _ in range(1500):
             k = rng.choice(4, p=left)
             seq = []
-            for _ in range(rng.integers(1, 6)):
+            for _ in range(rng.integers(1, 7)):
                 if rng.random() < own:
                     seq.append(True)
                 elif k > 0 and rng.random() < use:
@@ -558,10 +558,45 @@ class TestClockToTheEnd(unittest.TestCase):
                 else:
                     seq.append(False)
             seqs.append(seq)
-        got_use, got_left, got_own = sim8.fit_timeouts(seqs)
-        self.assertAlmostEqual(got_use, use, delta=0.1)
-        self.assertAlmostEqual(got_own, own, delta=0.06)
-        self.assertAlmostEqual(float(got_left @ np.arange(4)), float(left @ np.arange(4)), delta=0.35)
+        self.assertAlmostEqual(sim8.fit_timeouts(seqs, use, left), own, delta=0.05)
+        self.assertTrue(np.isclose(sim8.timeouts_left_pmf(0.75).sum(), 1.0))
+        self.assertAlmostEqual(float(sim8.timeouts_left_pmf(0.75) @ np.arange(4)), 2.25)
+
+    def test_the_build_picks_the_timeouts_left_that_match_real_late_points(self):
+        t = self.tables
+        t.timeout_use = 1.0
+        rho, pts = v8.fit_timeouts_left(t, [((False, 1), 60.0, 1, 40, 3, 0.0, 0.0)] * 120,
+                                        rhos=(0.1, 0.9), n_paths=100)
+        self.assertEqual(rho, 0.1)             # nothing more was scored: the fewest timeouts
+        self.assertEqual(v8.fit_timeouts_left(t, [], rhos=(0.1, 0.9))[0], sim8.TIMEOUT_RHO)
+
+    def test_a_kneel_is_a_leader_s_small_loss_in_the_fourth_quarter(self):
+        rec = dict(period=4, margin=3, down=1, kind=sim8.GAIN, gain=-1)
+        self.assertTrue(sim8.is_kneel(rec))
+        self.assertFalse(sim8.is_kneel(dict(rec, margin=-3)))
+        self.assertFalse(sim8.is_kneel(dict(rec, period=3)))
+        self.assertFalse(sim8.is_kneel(dict(rec, gain=4)))
+        self.assertFalse(sim8.is_kneel(dict(rec, down=4)))
+        big, d, cb = sim8.kneel_index(np.array([3, 12]), np.array([1, 3]), np.array([230.0, 10.0]))
+        self.assertEqual((list(big), list(d), list(cb)), ([0, 1], [0, 2], [0, 5]))
+
+    def test_the_leader_kneels_as_often_as_the_table_says(self):
+        t = self.tables
+        saved = t.kneel_p.copy(), t.timeout_use
+        try:
+            t.timeout_use = 0.0
+            t.kneel_p[:] = 1.0
+            stats = {}
+            sim8.simulate(t, self._late_lead(200.0), 200, np.random.default_rng(1), seed=4,
+                          stats=stats, max_steps=1)
+            self.assertEqual(stats.get("kneel_plays", 0), 200)
+            t.kneel_p[:] = 0.0
+            stats = {}
+            sim8.simulate(t, self._late_lead(200.0), 200, np.random.default_rng(1), seed=4,
+                          stats=stats, max_steps=1)
+            self.assertEqual(stats.get("kneel_plays", 0), 0)
+        finally:
+            t.kneel_p, t.timeout_use = saved
 
     def _late_lead(self, clock, down=1, timeouts=-1):
         st = sim8.Start(1)
