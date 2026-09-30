@@ -542,44 +542,45 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertLess(with_ends, dropped)
         self.assertAlmostEqual(with_ends, as_runs, delta=0.2)
 
-    def test_who_calls_a_timeout(self):
-        who = sim8.timeout_caller
-        self.assertEqual(int(who(2, 100.0, 7)), sim8.DEFENCE)        # Q2: the side without the ball
-        self.assertEqual(int(who(2, 100.0, -7)), sim8.DEFENCE)
-        self.assertEqual(int(who(2, 130.0, 0)), sim8.NOBODY)
-        self.assertEqual(int(who(4, 110.0, 3)), sim8.DEFENCE)        # Q4: trailing, from 2:00
-        self.assertEqual(int(who(4, 170.0, 3)), sim8.NOBODY)
-        self.assertEqual(int(who(4, 170.0, 10)), sim8.DEFENCE)       # ... from 3:00 down 2+ scores
-        self.assertEqual(int(who(4, 190.0, 10)), sim8.NOBODY)
-        self.assertEqual(int(who(4, 50.0, -3)), sim8.OFFENCE)        # trailing, driving in the last minute
-        self.assertEqual(int(who(4, 90.0, -3)), sim8.NOBODY)
-        self.assertEqual(int(who(4, 50.0, 0)), sim8.NOBODY)          # level: nobody
-        self.assertEqual(int(who(3, 50.0, 3)), sim8.NOBODY)
+    def test_real_timeouts_are_placed_before_their_snaps(self):
+        from .. import playover
+        rows = [self._row(10, 2, 100), self._row(20, 2, 70), self._row(30, 2, 40), self._row(40, 3, 240)]
+        by = {"M": rows}
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "timeouts.csv")
+            with open(path, "w", newline="") as fh:
+                w = csv.writer(fh)
+                w.writerow(["match_code", "message", "period", "caller", "prev_play"])
+                w.writerow(["M", 12, 2, "TEAM_B", "in play"])
+                w.writerow(["M", 33, 2, "TEAM_A", "incomplete"])
+            self.assertEqual(playover.annotate_timeouts(by, path), 2)
+        self.assertEqual([r["timeout_after"] for r in rows], ["TEAM_B", "", "TEAM_A", ""])
+        self.assertEqual([(r["timeouts_used_a"], r["timeouts_used_b"]) for r in rows],
+                         [(0, 0), (0, 1), (0, 1), (0, 0)])        # the new half starts afresh
+        rec = dict(period=2, offense="TEAM_A")
+        sim8._timeouts_at(rec, rows[1])
+        self.assertEqual((rec["timeouts_left"], rec.get("timeout_role")), ((3, 2), None))
+        sim8._timeouts_at(rec, rows[0])
+        self.assertEqual(rec["timeout_role"], sim8.DEFENCE)
+        rec = dict(period=2, offense="TEAM_A")
+        sim8._timeouts_at(rec, rows[2])                          # after an incompletion: not needed
+        self.assertIsNone(rec.get("timeout_role"))
 
-    def test_the_hidden_count_runs_out(self):
-        got = sim8._timeout_filter([True, True, True, True], [0.0] * 4, 1.0, [0, 0, 0, 1.0])
-        self.assertEqual([round(w, 3) for w, _ in got], [1.0, 1.0, 1.0, 0.0])
-        self.assertTrue(np.isclose(sim8.timeouts_left_pmf(0.75).sum(), 1.0))
-        self.assertAlmostEqual(float(sim8.timeouts_left_pmf(0.75) @ np.arange(4)), 2.25)
+    def test_call_rates_come_from_the_running_clocks_real_sides_stopped(self):
+        base = dict(period=4, clock=50.0, margin=3, fresh=False, timeouts_left=(3, 3))
+        snaps = ([dict(base, seconds=35.0)] * 60 + [dict(base, seconds=4.0, timeout_role=sim8.DEFENCE)] * 40
+                 + [dict(base, seconds=5.0)] * 50)               # stopped by themselves: not counted
+        p = sim8.fit_timeout_calls(snaps)
+        got = p[sim8.call_index(4, 50.0, -3, sim8.DEFENCE)]
+        self.assertAlmostEqual(float(got), 0.4, delta=0.05)
+        self.assertLess(float(p[sim8.call_index(4, 50.0, 3, sim8.OFFENCE)]), 0.05)
+        self.assertEqual(float(sim8.fit_timeout_calls([dict(base, timeouts_left=None, seconds=30.0)]).sum()), 0.0)
 
-    def test_each_side_s_window_snaps_share_its_budget_through_the_half(self):
-        base = dict(match="M", kind=sim8.GAIN, gain=3, field=40, fresh=False, key=0)
-        recs = [dict(base, period=2, clock=100.0, margin=0, offense="TEAM_A", message=1),
-                dict(base, period=2, clock=90.0, margin=0, offense="TEAM_A", message=2),
-                dict(base, period=4, clock=110.0, margin=3, offense="TEAM_A", message=3),
-                dict(base, period=4, clock=40.0, margin=-3, offense="TEAM_B", message=4),
-                dict(base, period=4, clock=150.0, margin=3, offense="TEAM_A", message=5)]
-        seqs = sim8.timeout_sequences(recs)
-        got = sorted([(q[0]["period"], [r["message"] for r in q]) for q in seqs])
-        self.assertEqual(got, [(2, [1, 2]), (4, [3, 4])])
-
-    def test_the_build_picks_the_timeouts_left_that_match_real_late_points(self):
-        t = self.tables
-        t.timeout_use = 1.0
-        rho, pts = v8.fit_timeouts_left(t, [((False, 1), 60.0, 1, 40, 3, 0.0, 0.0)] * 120,
-                                        rhos=(0.1, 0.9), n_paths=100)
-        self.assertEqual(rho, 0.1)             # nothing more was scored: the fewest timeouts
-        self.assertEqual(v8.fit_timeouts_left(t, [], rhos=(0.1, 0.9))[0], sim8.TIMEOUT_RHO)
+    def test_a_play_stopped_by_a_timeout_gets_a_running_play_s_time(self):
+        base = dict(key=7, mode=1, down=2)
+        snaps = [dict(base, seconds=33.0)] * 10 + [dict(base, seconds=3.0, timeout_role=sim8.OFFENCE)]
+        sim8.natural_seconds(snaps)
+        self.assertEqual((snaps[-1]["seconds"], snaps[-1]["seconds_real"]), (33.0, 3.0))
 
     def test_a_kneel_is_a_leader_s_small_loss_in_the_fourth_quarter(self):
         rec = dict(period=4, margin=3, down=1, kind=sim8.GAIN, gain=-1)
@@ -593,9 +594,9 @@ class TestClockToTheEnd(unittest.TestCase):
 
     def test_the_leader_kneels_as_often_as_the_table_says(self):
         t = self.tables
-        saved = t.kneel_p.copy(), t.timeout_use
+        saved = t.kneel_p.copy(), t.call_p.copy()
         try:
-            t.timeout_use = 0.0
+            t.call_p[:] = 0.0
             t.kneel_p[:] = 1.0
             stats = {}
             sim8.simulate(t, self._late_lead(200.0), 200, np.random.default_rng(1), seed=4,
@@ -607,7 +608,7 @@ class TestClockToTheEnd(unittest.TestCase):
                           stats=stats, max_steps=1)
             self.assertEqual(stats.get("kneel_plays", 0), 0)
         finally:
-            t.kneel_p, t.timeout_use = saved
+            t.kneel_p, t.call_p = saved
 
     def _late_lead(self, clock, down=1, timeouts=-1):
         st = sim8.Start(1)
@@ -618,22 +619,22 @@ class TestClockToTheEnd(unittest.TestCase):
 
     def test_the_leader_kneels_it_out_only_when_the_timeouts_cannot_stop_it(self):
         t = self.tables
-        t.timeout_use = 0.6
+        t.call_p[:] = 0.6
         for left, clock, ends in ((0, 150.0, True), (3, 150.0, False), (3, 35.0, True), (2, 90.0, False)):
             stats = {}
             h, a = sim8.simulate(t, self._late_lead(clock, timeouts=left), 200, np.random.default_rng(1),
                                  seed=4, stats=stats, max_steps=1)
             self.assertEqual(stats.get("kneel", 0) == 200, ends, (left, clock))
 
-    def test_the_trailing_team_spends_its_timeouts_on_the_leaders_running_plays(self):
+    def test_a_side_spends_only_the_timeouts_it_has(self):
         t = self.tables
-        t.timeout_use = 1.0
+        t.call_p[:] = 1.0
         stats = {}
         sim8.simulate(t, self._late_lead(115.0, timeouts=2), 300, np.random.default_rng(1), seed=4,
                       stats=stats)
         self.assertGreater(stats.get("timeouts", 0), 0)
-        self.assertLessEqual(stats.get("timeouts", 0), 2 * 300)
-        t.timeout_use = 0.0
+        self.assertLessEqual(stats.get("timeouts", 0), (2 + 3) * 300)
+        t.call_p[:] = 0.0
         stats = {}
         sim8.simulate(t, self._late_lead(115.0, timeouts=2), 300, np.random.default_rng(1), seed=4,
                       stats=stats)
@@ -642,12 +643,17 @@ class TestClockToTheEnd(unittest.TestCase):
     def test_timeouts_give_the_trailing_team_more_of_the_clock(self):
         t = self.tables
         pts = {}
-        for use in (0.0, 1.0):
-            t.timeout_use = use
+        for p in (0.0, 1.0):
+            t.call_p[:] = 0.0
+            t.call_p[1, sim8.DEFENCE] = p
             h, a = sim8.simulate(t, self._late_lead(118.0, down=2, timeouts=3), 2000,
                                  np.random.default_rng(1), seed=4)
-            pts[use] = float((h + a).mean())
-        self.assertGreater(pts[1.0], pts[0.0])
+            pts[p] = float((h + a).mean())
+        t.call_p[:] = 0.0
+        t.call_p[1, sim8.DEFENCE] = 1e-9                         # on, but calls nothing
+        h, a = sim8.simulate(t, self._late_lead(118.0, down=2, timeouts=3), 2000,
+                             np.random.default_rng(1), seed=4)
+        self.assertGreater(pts[1.0], float((h + a).mean()))
 
     def test_the_export_s_timeouts_become_each_side_s_timeouts_left(self):
         row = {"timeouts_used_a": "1", "timeouts_used_b": "3", "team_a_side": "away", "period": "4"}
@@ -658,31 +664,28 @@ class TestClockToTheEnd(unittest.TestCase):
         state = v8.FreshState(**{f.name: None for f in v8.fields(v8.GameState)}, timeouts=(2, 0))
         self.assertEqual(state.timeouts, (2, 0))
 
-    def test_in_q2_the_side_without_the_ball_stops_the_clock(self):
+    def test_in_q2_the_side_with_the_ball_stops_it_at_the_end(self):
         t = self.tables
-        t.timeout_use = 1.0
+        t.call_p[:] = 0.0
+        t.call_p[0, sim8.OFFENCE, :, -1] = 1.0                   # Q2, last 40 seconds, with the ball
         st = sim8.Start(1)
-        st.period[:], st.clock[:], st.phase[:] = 2, 100.0, sim8.SCRIM
+        st.period[:], st.clock[:], st.phase[:] = 2, 30.0, sim8.SCRIM
         st.team[:], st.y[:], st.down[:], st.home[:], st.away[:] = 0, 30, 1, 7, 7
-        st.timeouts[:] = [0, 3]
         stats = {}
         sim8.simulate(t, st, 300, np.random.default_rng(1), seed=4, stats=stats)
         self.assertGreater(stats.get("timeouts", 0), 0)
-        st.timeouts[:] = [3, 0]
+        st.timeouts[:] = [0, 3]
         stats = {}
         sim8.simulate(t, st, 300, np.random.default_rng(1), seed=4, stats=stats, max_steps=1)
-        self.assertEqual(stats.get("timeouts", 0), 0)       # the side with the ball doesn't
+        self.assertEqual(stats.get("timeouts", 0), 0)
 
     def test_the_tables_keep_the_timeouts(self):
         t = self.tables
-        t.timeout_use, t.timeouts_left = 0.55, np.array([0.1, 0.2, 0.3, 0.4])
-        t.timeouts_left_q2 = np.array([0.0, 0.1, 0.2, 0.7])
+        t.call_p = np.random.default_rng(2).random(sim8.N_CALL)
         with tempfile.TemporaryDirectory() as d:
             t.save(os.path.join(d, "t.npz"))
             u = sim8.Tables.load(os.path.join(d, "t.npz"))
-        self.assertEqual(u.timeout_use, 0.55)
-        self.assertTrue(np.allclose(u.timeouts_left, [0.1, 0.2, 0.3, 0.4]))
-        self.assertTrue(np.allclose(u.timeouts_left_q2, [0.0, 0.1, 0.2, 0.7]))
+        self.assertTrue(np.allclose(u.call_p, t.call_p))
 
 
 class TestV8(unittest.TestCase):

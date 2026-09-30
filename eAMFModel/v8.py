@@ -1001,136 +1001,6 @@ def _print_settle(settled, tables):
         print(f"    {seg}: " + "; ".join(parts))
 
 
-TIMEOUT_RHOS = (0.6, 0.675, 0.75, 0.825, 0.9)
-TIMEOUT_RHOS_Q2 = (0.6, 0.75, 0.9, 1.0)
-TIMEOUT_PATHS = 200
-TIMEOUT_CLOCK = 160.0
-
-
-def late_leader_states(matches):
-    """The fourth-quarter leader with the ball on downs 1-3 in the last 2:40: each match's first
-    such snap in each 40-second slice, one score or more, with the points each side really made
-    after it."""
-    out = []
-    for rows in matches.values():
-        seen = set()
-        for a in rows:
-            if a["play_kind"] not in sim.SNAP_KINDS or a["period"] != "4" or not a["down"] \
-                    or not a["clock_seconds"] or not a["field_position"] \
-                    or a.get("final_p1") in ("", None) or a.get("final_p2") in ("", None):
-                continue
-            m, c, dn = sim._margin(a, a["offense"]), sim._f(a["clock_seconds"]), sim._i(a["down"])
-            if m is None or m <= 0 or not 0 < c <= TIMEOUT_CLOCK or dn > 3:
-                continue
-            cell = (m >= sim.BIG_LEAD, int(c // 40))
-            if cell in seen:
-                continue
-            seen.add(cell)
-            home = a["offense"] == "TEAM_A"
-            h, w = sim._i(a["score_p1"]), sim._i(a["score_p2"])
-            fh, fw = sim._f(a["final_p1"]), sim._f(a["final_p2"])
-            lead, trail = (fh - h, fw - w) if home else (fw - w, fh - h)
-            out.append((cell, c, dn, sim._i(a["field_position"]), m, lead, trail))
-    return out
-
-
-def fit_timeouts_left(tables, states, rhos=TIMEOUT_RHOS, n_paths=TIMEOUT_PATHS):
-    """How many timeouts the trailing team has left coming into the last two minutes: the chance
-    each of its three is still in hand, picked so that from real late leader snaps the leader and
-    the trailer score what they really scored after them, slice by slice. Returns the chance and
-    the (real leader, simulated leader, real trailer, simulated trailer) points at it."""
-    if len(states) < 100:
-        return sim.TIMEOUT_RHO, None
-    st = sim.Start(len(states))
-    st.period[:], st.phase[:], st.team[:] = 4, sim.SCRIM, 0
-    st.clock[:] = [s[1] for s in states]
-    st.down[:] = [s[2] for s in states]
-    st.y[:] = [min(99, max(1, s[3])) for s in states]
-    st.home[:] = [20 + s[4] for s in states]
-    st.away[:] = 20
-    cells = sorted({s[0] for s in states})
-    idx = np.array([cells.index(s[0]) for s in states])
-    real_l = np.bincount(idx, [s[5] for s in states], len(cells))
-    real_t = np.bincount(idx, [s[6] for s in states], len(cells))
-    n = np.bincount(idx, minlength=len(cells))
-    saved = tables.timeouts_left.copy()
-    best = None
-    for rho in rhos:
-        tables.timeouts_left = sim.timeouts_left_pmf(rho)
-        h, a = sim.simulate(tables, st, n_paths, np.random.default_rng(0), seed=11)
-        sim_l = np.bincount(idx, (h - st.home[:, None]).mean(1), len(cells))
-        sim_t = np.bincount(idx, (a - 20).mean(1), len(cells))
-        err = (((sim_l - real_l) ** 2 + (sim_t - real_t) ** 2) / np.maximum(n, 1)).sum()
-        if best is None or err < best[0]:
-            best = (err, rho, (real_l.sum(), sim_l.sum(), real_t.sum(), sim_t.sum()))
-    tables.timeouts_left = saved
-    return best[1], tuple(x / len(states) for x in best[2])
-
-
-def late_half_states(matches):
-    """The last two minutes of the second quarter: each match's first scrimmage snap in each
-    40-second slice, with the points both sides really made before the half."""
-    out = []
-    for rows in matches.values():
-        half = next((r for r in rows if r["period"] == "3" and r["score_p1"] not in ("", None)), None)
-        if half is None:
-            continue
-        seen = set()
-        for a in rows:
-            if a["play_kind"] not in sim.SNAP_KINDS or a["period"] != "2" or not a["down"] \
-                    or not a["clock_seconds"] or not a["field_position"]:
-                continue
-            m, c, dn = sim._margin(a, a["offense"]), sim._f(a["clock_seconds"]), sim._i(a["down"])
-            if m is None or not 0 < c <= sim.TIMEOUT_WINDOW or dn > 4:
-                continue
-            cell = int(c // 40)
-            if cell in seen:
-                continue
-            seen.add(cell)
-            made = (sim._i(half["score_p1"]) + sim._i(half["score_p2"])
-                    - sim._i(a["score_p1"]) - sim._i(a["score_p2"]))
-            out.append((cell, c, dn, sim._i(a["field_position"]), m, sim._i(a["distance"]) or 10,
-                        max(0, made)))
-    return out
-
-
-def fit_timeouts_left_q2(tables, states, rhos=TIMEOUT_RHOS_Q2, n_paths=TIMEOUT_PATHS):
-    """How many timeouts the side without the ball has left in the last two minutes of the half:
-    picked so that from real snaps there the points to the half, slice by slice, come out as
-    real. Returns the chance each of three is in hand and the (real, simulated) points to the
-    half at it."""
-    if len(states) < 100:
-        return sim.TIMEOUT_RHO_Q2, None
-    cells = sorted({s[0] for s in states})
-    saved = tables.timeouts_left_q2.copy()
-    best = None
-    for rho in rhos:
-        tables.timeouts_left_q2 = sim.timeouts_left_pmf(rho)
-        err, tot_r, tot_s = 0.0, 0.0, 0.0
-        for cell in cells:
-            sub = [s for s in states if s[0] == cell]
-            st = sim.Start(len(sub))
-            st.period[:], st.phase[:], st.team[:] = 2, sim.SCRIM, 0
-            st.clock[:] = [s[1] for s in sub]
-            st.down[:] = [s[2] for s in sub]
-            st.y[:] = [min(99, max(1, s[3])) for s in sub]
-            st.dist[:] = [max(1, s[5]) for s in sub]
-            st.home[:] = [max(0, 14 + s[4]) for s in sub]
-            st.away[:] = [max(0, 14 + s[4]) - s[4] for s in sub]
-            stats = {}
-            sim.simulate(tables, st, n_paths, np.random.default_rng(0), seed=12, stats=stats)
-            on_board = float((st.home + st.away).sum()) * n_paths
-            got = (stats.get("points_by_q2", on_board) - on_board) / (len(sub) * n_paths)
-            real = float(np.mean([s[6] for s in sub]))
-            err += len(sub) * (got - real) ** 2
-            tot_r += real * len(sub)
-            tot_s += got * len(sub)
-        if best is None or err < best[0]:
-            best = (err, rho, (tot_r / len(states), tot_s / len(states)))
-    tables.timeouts_left_q2 = saved
-    return best[1], best[2]
-
-
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
           before=None, prior="nb2"):
     """Build the model: tables, fits, prior grid, the pre-match model (`prior`: "nb2" or
@@ -1178,20 +1048,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             offsets, got = sim.fit_period_theta(tables, real)
         if verbose:
             _print_settle(settled, tables)
-    if sim.TIMEOUTS:
-        rho, pts = fit_timeouts_left(tables, late_leader_states(matches))
-        tables.timeouts_left = sim.timeouts_left_pmf(rho)
-        rho2, pts2 = fit_timeouts_left_q2(tables, late_half_states(matches))
-        tables.timeouts_left_q2 = sim.timeouts_left_pmf(rho2)
-        if verbose and pts:
-            print(f"  timeouts, Q4: the trailing side has each of its three in hand {100 * rho:.0f}% of the"
-                  f" time ({3 * rho:.2f} on average) when its first call comes -- from the leader's late"
-                  f" snaps the leader then scores {pts[1]:.2f} (real {pts[0]:.2f}) and the trailer"
-                  f" {pts[3]:.2f} (real {pts[2]:.2f})")
-        if verbose and pts2:
-            print(f"  timeouts, Q2: the side without the ball has each of its three in hand"
-                  f" {100 * rho2:.0f}% of the time ({3 * rho2:.2f}) -- points to the half from the last"
-                  f" two minutes {pts2[1]:.2f} (real {pts2[0]:.2f})")
+    if verbose and sim.TIMEOUTS:
+        if tables.call_p.any():
+            p = tables.call_p
+            print("  timeouts, share of running clocks a side stops before the snap in each 40-second"
+                  " slice (4:00 -> 0:00), level score: Q2 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[0, 0, 2])
+                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[0, 1, 2])
+                  + "; Q4 trailing 1-8 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[1, 0, 1])
+                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[1, 1, 1]) + " %")
+        else:
+            print("  timeouts: none known (build with --timeouts, the calibrator's timeouts.csv) --"
+                  " the leader kneels out as v7 did")
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "

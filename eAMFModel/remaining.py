@@ -139,7 +139,7 @@ def _job(job):
 
 
 def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, workers=4,
-          history=None, handles=None, limit=None, drive=False):
+          history=None, handles=None, limit=None, drive=False, timeouts=None):
     """[(match, message, quarter, state, points on board, points still to come, the version's pmf
     of them)] over the matches in [since, until] whose TEAM_A side is known; with `drive`, the
     points on the rest of the drive under way at each scrimmage PLAY_OVER (v6 to v8)."""
@@ -149,6 +149,8 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
     stream = importlib.import_module(f"eAMFModel.{name}_stream")
     tables_path, _ = stream.model_paths(model_dir)
     by_match = playover.load(snapshots_path)
+    if timeouts:
+        playover.annotate_timeouts(by_match, timeouts)
     codes = [c for c in sorted(by_match)
              if (since is None or day(c) >= since) and (until is None or day(c) <= until)
              and all(str(r.get("team_a_side") or "") in ("home", "away") for r in by_match[c])]
