@@ -43,10 +43,25 @@ def is_model(stream_table):
 def stream_name(value):
     """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table.
     A model with its own lines (v4, v5) read at prod's line instead is
-    'v4@prod'."""
+    'v4@prod'.
+
+    A second build of a version is named '<version>-<tag>=<model dir>', e.g.
+    'v7-glmer=v7_glmer_917': it prices with v7's code off that build, under
+    the name 'v7-glmer'. Its directory is kept in config.MODEL_DIRS."""
+    name, eq, directory = value.partition("=")
+    if eq:
+        stream = stream_name(name.strip())
+        if not is_model(stream):
+            raise ValueError(f"{value!r}: only a model version takes a build directory")
+        label = model_version(stream)[0]
+        if label == model_base(label):
+            raise ValueError(f"{value!r}: name the second build '{label}-<tag>', e.g. "
+                             f"'{label}-glmer={directory.strip()}'")
+        config.MODEL_DIRS[label] = directory.strip()
+        return stream
     if is_model(value):
         return MODEL_PREFIX + value.split(":", 1)[1].lower()
-    version = value.lower().split("@", 1)[0]
+    version = model_base(value.lower().split("@", 1)[0])
     if version.startswith("v") and version[1:].isdigit():
         return MODEL_PREFIX + value.lower()
     return value
@@ -62,8 +77,20 @@ def model_version(stream_table):
     return name, (lines or None)
 
 
+def model_base(name):
+    """'v7-glmer' -> 'v7': the version whose code a named build prices with."""
+    return name.split("-", 1)[0]
+
+
+def build_dir(name):
+    """The build a model version prices off: its own (--candidate v7-glmer=<dir>), else the
+    version's --vN-model."""
+    return (getattr(config, "MODEL_DIRS", {}).get(name)
+            or getattr(config, f"{model_base(name).upper()}_MODEL_DIR"))
+
+
 def has_own_lines(stream_table):
-    return is_model(stream_table) and model_version(stream_table)[0] in LINE_MODELS
+    return is_model(stream_table) and model_base(model_version(stream_table)[0]) in LINE_MODELS
 
 
 def source_table(stream_table):
@@ -351,7 +378,7 @@ def _model_quotes(cur, stream_table, match_codes):
     version, lines = model_version(stream_table)
     if version == "v3":
         return _v3_quotes(cur, match_codes)
-    if version in LINE_MODELS:
+    if model_base(version) in LINE_MODELS:
         return _v4_quotes(cur, match_codes, version, lines)
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
@@ -540,10 +567,11 @@ def _v4_quotes(cur, match_codes, name="v4", lines=None):
     model both ways does not simulate it twice."""
     import importlib
     _need_numpy(name)
-    model = importlib.import_module(f"eAMFModel.{name}")
-    stream = importlib.import_module(f"eAMFModel.{name}_stream")
-    key = name.upper()
-    model_dir = getattr(config, f"{key}_MODEL_DIR")
+    base = model_base(name)
+    model = importlib.import_module(f"eAMFModel.{base}")
+    stream = importlib.import_module(f"eAMFModel.{base}_stream")
+    key = base.upper()
+    model_dir = build_dir(name)
     paths = getattr(config, f"{key}_PATHS")
     lines = lines or getattr(config, f"{key}_LINES")
     cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END)

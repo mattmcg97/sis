@@ -5532,6 +5532,54 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertFalse(sio.has_own_lines("MODEL:v3"))
         self.assertFalse(sio.has_own_lines("GAMEPLAI_STREAM_CANDIDATE"))
 
+    def test_a_second_build_of_a_version_is_named_with_its_directory(self):
+        from ..__main__ import build_parser, apply_overrides
+        from .. import snowflake_io as sio, multi, bets
+        saved = (list(config.CANDIDATES), dict(config.STREAMS), dict(config.MODEL_DIRS),
+                 config.V7_MODEL_DIR)
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                apply_overrides(build_parser().parse_args(
+                    ["report", "--candidate", "v7,v7-glmer=Out/V7_Glmer", "--v7-model", "v7_nb2"]))
+            self.assertEqual(config.CANDIDATES, ["MODEL:v7", "MODEL:v7-glmer"])
+            self.assertEqual(config.MODEL_DIRS, {"v7-glmer": "Out/V7_Glmer"})
+            self.assertEqual(sio.build_dir("v7"), "v7_nb2")
+            self.assertEqual(sio.build_dir("v7-glmer"), "Out/V7_Glmer")
+            self.assertEqual(sio.model_version("MODEL:v7-glmer@prod"), ("v7-glmer", "prod"))
+            self.assertTrue(sio.has_own_lines("MODEL:v7-glmer"))
+            self.assertEqual(multi.display_name("MODEL:v7-glmer"), "v7-glmer")
+            self.assertEqual(bets.label("MODEL:v7-glmer"), "v7-glmer")
+            for bad in ("v7=Out/x", "GAMEPLAI_STREAM_CANDIDATE=Out/x"):
+                with self.assertRaises(SystemExit):
+                    apply_overrides(build_parser().parse_args(["report", "--candidate", bad]))
+        finally:
+            config.CANDIDATES = saved[0]
+            config.STREAMS.clear()
+            config.STREAMS.update(saved[1])
+            config.MODEL_DIRS.clear()
+            config.MODEL_DIRS.update(saved[2])
+            config.V7_MODEL_DIR = saved[3]
+
+    def test_a_named_build_prices_with_its_versions_code_off_its_own_directory(self):
+        from .. import snowflake_io as sio, bets
+        import importlib
+        stream = importlib.import_module("eAMFModel.v7_stream")
+        seen = []
+
+        def fake_paths(model_dir):
+            seen.append(model_dir)
+            raise RuntimeError("stop")
+        with mock.patch.dict(config.MODEL_DIRS, {"v7-glmer": "v7_glmer"}), \
+                mock.patch.object(config, "V7_MODEL_DIR", "v7_nb2"), \
+                mock.patch.object(sio, "_need_numpy"), \
+                mock.patch.object(stream, "model_paths", side_effect=fake_paths):
+            for name in ("v7-glmer", "v7"):
+                with self.assertRaises(RuntimeError):
+                    sio._model_quotes(None, "MODEL:" + name, ["M1"])
+            with self.assertRaises(RuntimeError):
+                bets.check_models(["MODEL:v7-glmer"])
+        self.assertEqual(seen, ["v7_glmer", "v7_nb2", "v7_glmer"])
+
     def test_repeated_queries_are_answered_once_while_the_cache_is_on(self):
         from .. import snowflake_io as sio
         cur = RecordingCursor([("A", 1)])

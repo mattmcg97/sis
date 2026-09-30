@@ -18,6 +18,8 @@ STREAMS = {
 # (`--candidate v4,v5`): each is paired with prod in turn and every table
 # shows them side by side. Empty: just STREAMS["candidate"].
 CANDIDATES = []
+# A second build of a model version, by name: --candidate v7-glmer=<dir> -> {"v7-glmer": "<dir>"}
+MODEL_DIRS = {}
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
 FETCH_CACHE = False

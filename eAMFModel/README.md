@@ -1196,8 +1196,12 @@ built with. A model built before `--prior` existed reads as NB2.
 ```bash
 python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 --out v7_glmer --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --prior glmer
 python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v7 --model v7_glmer --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --since 2026-09-17 --until 2026-09-22
-python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v7 --v7-model v7_glmer
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate v7,v7-glmer=v7_glmer --v7-model v7_model
 ```
+
+The report line sets the NB2 build (`--v7-model`) and the glmer build side by
+side; both need building on the same `--until`. The report prices with R as
+well, because the glmer prior predicts each match through `glmer/predict.R`.
 
 ## Pricing only what the model is sure of (v4–v7 streams)
 
