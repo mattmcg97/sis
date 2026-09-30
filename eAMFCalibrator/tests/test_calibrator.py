@@ -3812,33 +3812,6 @@ class TestMatchClock(unittest.TestCase):
         self.assertEqual(len(clocks["AF1"]), 1)
 
 
-def pair_table_spec(rendered):
-    """The pair table's column kinds and headers, as the page embeds them."""
-    import json
-    spec = json.loads(re.search(r'<script type="application/json" id="pairSpec">(.*?)</script>',
-                                rendered, re.S).group(1))
-    head = rendered[rendered.index('id="pairTable"'):]
-    head = head[:head.index("</thead>")]
-    spec["heads"] = [re.sub(r"<[^>]+>", "", h).strip()
-                     for h in re.findall(r"<th[^>]*>(.*?)</th>", head, re.S)]
-    return spec
-
-
-def pair_table_rows(rendered):
-    """The pair table's rows, header -> value (the page draws them in JS)."""
-    import json
-    spec = pair_table_spec(rendered)
-    data = re.search(r'<script type="application/json" id="pairData">(.*?)</script>',
-                     rendered, re.S).group(1)
-    rows = []
-    for row in json.loads(data):
-        named = {}
-        for head, value in zip(spec["heads"], row):
-            named.setdefault(head, value)          # the first "Closer" is the first candidate's
-        rows.append(named)
-    return rows
-
-
 def pair(prod, candidate, outcome, match="AF1", market_id=50, drive=1,
          period=1, score_diff=0, team="Home Team", message=100, gap=0,
          home=None, away=None):
@@ -4811,168 +4784,21 @@ class TestReportRendering(unittest.TestCase):
         self.assertIn("folded", script)
         self.assertIn("if (!button) return;", script)
 
-    def test_pair_table_carries_the_message_columns(self):
+    def test_the_page_carries_no_pair_by_pair_table(self):
         rendered = self._render()
-        self.assertIn("<th>Msg</th>", rendered)
-        self.assertIn("&plusmn;Msg</th>", rendered)
+        self.assertNotIn('id="pairs"', rendered)
+        self.assertNotIn('id="pairData"', rendered)
 
-    def test_message_gap_is_shaded_by_how_far_off_it_is(self):
-        offset = [pair(0.6, 0.8, True, match="AF9", market_id=50, message=100, gap=2)]
-        report = directional.build_full_report(offset, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats, offset,
-                                         self.scan)
-        self.assertEqual(pair_table_rows(rendered)[0]["&plusmn;Msg"], 2)
-        spec = pair_table_spec(rendered)
-        self.assertEqual(spec["kinds"][spec["heads"].index("&plusmn;Msg")], "mg")
-        self.assertEqual(spec["message_gap"], list(self.html_full.MESSAGE_GAP))
-        self.assertEqual(self.html_full._gap(2, self.html_full.MESSAGE_GAP), "g2")
-        self.assertIn("gap(v, spec.message_gap)", rendered)
 
     def test_an_exact_message_match_sits_on_the_green_end(self):
         self.assertEqual(self.html_full._gap(0, self.html_full.MESSAGE_GAP), "g0")
 
-    def test_every_pair_reaches_the_table(self):
-        self.assertEqual(len(pair_table_rows(self._render())), len(self.pairs))
-
-    def test_pair_rows_carry_both_totals_not_just_the_difference(self):
-        # 7-7 and 21-21 are the same difference and very different games.
-        pairs = [pair(0.6, 0.8, True, match="AF1", home=21, away=14)]
-        report = directional.build_full_report(pairs, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats,
-                                         pairs, self.scan)
-        row = pair_table_rows(rendered)[0]
-        self.assertEqual((row["Home"], row["Away"], row["Diff"]), (21, 14, 7))
 
     def test_score_diff_cannot_drift_from_the_totals(self):
         p = pair(0.6, 0.8, True, home=24, away=10)
         self.assertEqual(p.score_diff, 14)
         self.assertEqual((p.score_p1, p.score_p2), (24, 10))
 
-    def test_every_row_carries_its_match_id_for_the_filter(self):
-        pairs = [pair(0.6, 0.8, True, match="AF-Upper"),
-                 pair(0.6, 0.8, True, match="af-lower")]
-        report = directional.build_full_report(pairs, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats,
-                                         pairs, self.scan)
-        matches = {r["Match"] for r in pair_table_rows(rendered)}
-        self.assertEqual(matches, {"AF-Upper", "af-lower"})
-        # the filter compares case-blind
-        self.assertIn(".toLowerCase().indexOf(needle)", rendered)
-
-    def test_the_filter_box_is_wired_to_the_pair_table(self):
-        rendered = self._render()
-        self.assertIn('id="pairFilter"', rendered)
-        self.assertIn('id="pairCount"', rendered)
-        script = rendered.split("<script>")[1]
-        self.assertIn("pairFilter", script)
-        self.assertIn("pairData", script)
-        self.assertIn("pairTable", script)
-
-    def _rows_for(self, pairs):
-        """The pair table's rows, as the page embeds them: header -> value."""
-        report = directional.build_full_report(pairs, n_bootstrap=20)
-        rendered = self.html_full.render(report, self.header, self.stats,
-                                         pairs, self.scan)
-        return pair_table_rows(rendered)
-
-    def _cells_for(self, pairs):
-        return self._rows_for(pairs)[0]
-
-    def test_probability_columns_are_blank_when_the_lines_differ(self):
-        # A probability that refers to a different line is not comparable to
-        # one that refers to another, and a line error is in points -- so a
-        # number here would invite exactly the wrong comparison.
-        cells = self._cells_for(
-            [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21, match="AF041170926")])
-        # the candidate's probability answers a different question, so it
-        # has none for prod's line and no difference from prod's
-        for column in ("candidate at prod&#39;s line", "candidate &Delta;prob"):
-            self.assertIsNone(cells[column], column)
-        # The two lines and each stream's own probability still show -- they
-        # are facts about the row.
-        self.assertEqual(cells["Prod line"], 44.5)
-        self.assertEqual(cells["candidate line"], 60.5)
-        self.assertEqual(cells["Prod prob"], 0.5)
-        self.assertEqual(cells["candidate prob"], 0.01)
-        # each error is against the stream's own line, never the line error
-        self.assertEqual(cells["Prod err"], 0.5)
-        self.assertEqual(cells["candidate err"], 0.01)
-
-    def test_the_closer_column_uses_the_line_when_the_lines_differ(self):
-        pairs = [line_pair(0.50, 0.01, 44.5, 60.5, 24, 21)]
-        # Prod's line is nearer, so prod is closer -- despite the candidate
-        # having much the better probability against its own outcome.
-        self.assertEqual(self._cells_for(pairs)["Closer"], ["prod", "bad"])
-
-    def test_same_line_rows_keep_their_probability_columns(self):
-        cells = self._cells_for([line_pair(0.55, 0.62, 44.5, 44.5, 24, 21)])
-        self.assertAlmostEqual(cells["candidate &Delta;prob"], 0.07)
-        self.assertAlmostEqual(cells["Prod err"], 0.45)
-        self.assertAlmostEqual(cells["candidate err"], 0.38)
-
-    def test_pair_rows_carry_the_game_state(self):
-        p = directional.PairedObservation(
-            match_code="AF1", drive_number=1, period_number=4,
-            score_p1=21, score_p2=22, offensive_team="Away Team",
-            market_id=50, message_count=428, message_gap=0,
-            prod_probability=0.08, candidate_probability=0.664,
-            prod_line=None, candidate_line=None, prod_outcome=False,
-            candidate_outcome=False, realized=None,
-            publish_time=dt.datetime(2026, 9, 17, 20, 5),
-            field_position=55, down_number=3, distance=2)
-        cells = self._cells_for([p])
-        self.assertEqual(cells["Field"], 55)
-        self.assertEqual(cells["D&amp;D"][0], "3&2")
-
-    def test_missing_state_shows_a_dash_not_a_zero(self):
-        cells = self._cells_for([pair(0.5, 0.6, True)])
-        self.assertIsNone(cells["Field"])
-        self.assertIsNone(cells["D&amp;D"])
-        self.assertIn("dash(td)", self._render())
-
-    def test_to_end_counts_down_to_the_match_last_quote(self):
-        # No game clock exists in the feed, so this is the wall-clock proxy:
-        # seconds from each snapshot to the last quote of its own match.
-        base = dt.datetime(2026, 9, 17, 20, 0)
-        early = pair(0.5, 0.6, True, match="AF1", message=100, drive=1)
-        late = pair(0.5, 0.6, True, match="AF1", message=428, drive=2)
-        early = dataclasses.replace(early, publish_time=base)
-        late = dataclasses.replace(late, publish_time=base + dt.timedelta(seconds=300))
-        rows = self._rows_for([early, late])
-        self.assertEqual(sorted(r["To end"] for r in rows), [0, 300])
-
-    def test_the_final_snapshot_of_a_match_is_flagged_as_near_the_end(self):
-        base = dt.datetime(2026, 9, 17, 20, 0)
-        p = dataclasses.replace(pair(0.5, 0.6, True, match="AF1"),
-                                publish_time=base)
-        self.assertEqual(self._cells_for([p])["To end"], 0)
-        self.assertIn("if (v <= 120) td.className = 'warn'", self._render())
-
-    def test_a_non_live_pair_shows_but_compares_nothing(self):
-        p = dataclasses.replace(pair(0.9, 0.1, True), prod_live=False)
-        cells = self._cells_for([p])
-        self.assertEqual(cells["Live"], "prod")
-        for column in ("candidate &Delta;prob", "candidate at prod&#39;s line", "Prod err"):
-            self.assertIsNone(cells[column], column)
-        self.assertEqual(cells["Closer"], ["level", ""])
-        # The two probabilities are still facts about the row.
-        self.assertEqual(cells["Prod prob"], 0.9)
-        self.assertIn("tr.className = 'notlive'", self._render())
-
-    def test_a_live_pair_is_not_marked(self):
-        cells = self._cells_for([pair(0.9, 0.1, True)])
-        self.assertEqual(cells["Live"], "live")
-
-    def test_off_anchor_rows_flag_their_down_and_distance(self):
-        p = dataclasses.replace(
-            pair(0.5, 0.6, True), down_number=2, distance=7,
-            anchor=drives.MID_DRIVE)
-        self.assertEqual(self._cells_for([p])["D&amp;D"], ["2&7", 2, 1])
-
-    def test_clean_anchor_rows_are_not_flagged(self):
-        p = dataclasses.replace(pair(0.5, 0.6, True), down_number=1,
-                                distance=10, anchor=drives.FIRST_DOWN)
-        self.assertEqual(self._cells_for([p])["D&amp;D"], ["1&10", 1, 0])
 
     def test_the_anchor_panel_reports_the_split(self):
         pairs = [dataclasses.replace(pair(0.5, 0.6, True, match=f"AF{i}"),
@@ -5219,21 +5045,22 @@ class TestReportShape(unittest.TestCase):
         body = body[:body.index("</table>")]
         self.assertIn('class="ax" data-v=', body)
 
-    def test_the_directional_result_is_brier_then_line_error(self):
+    def test_the_directional_result_is_one_table_by_market(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
-        self.assertEqual(head.count("<table>"), 2)
-        for label in ("All markets", "All lines"):
-            self.assertIn(f"<th>{label}</th>", head)
-        for group in ("Brier", "Line error (points)", "Same line as prod"):
+        self.assertEqual(head.count("<table>"), 1)
+        self.assertIn("<th>All markets</th>", head)
+        for group in ("At prod's line", "Brier", "At own line", "Line error (points)",
+                      "Same line as prod"):
             self.assertIn(f">{group}</th>", head)
 
-    def test_the_directional_table_carries_n_and_each_streams_brier(self):
+    def test_the_directional_table_lines_brier_up_with_line_error(self):
         head = self.rendered[self.rendered.index('id="directional"'):]
         head = head[:head.index("</section>")]
-        columns = re.findall(r"<th[^>]*>([^<]+)</th>",
-                             head[head.index("<thead>"):head.index("</thead>")])
-        self.assertEqual(columns, ["Brier", "At prod's line", "N", "Prod", "candidate"])
+        leaf = head[head.index("<thead>"):head.index("</thead>")].split("</tr>")[1]
+        columns = re.findall(r"<th[^>]*>([^<]+)</th>", leaf)
+        self.assertEqual(columns, ["Market", "N", "Prod", "candidate", "N", "Prod", "candidate",
+                                   "candidate"])
 
     def test_the_page_carries_no_intervals_or_p_values(self):
         heads = "".join(re.findall(r"<thead>.*?</thead>", self.rendered, flags=re.S))
@@ -5616,24 +5443,19 @@ class TestSeveralCandidates(unittest.TestCase):
         leaf = re.findall(r"<th[^>]*>([^<]*)</th>", thead.split("</tr>")[1])
         self.assertEqual(leaf[5:], ["N", "Real", "Prod", "Cand", "v6", "Prod", "Cand", "v6",
                                     "Prod", "Cand", "v6"])
-        self.assertNotIn("GAMEPLAI_STREAM_CANDIDATE", page[:page.index('id="pairs"')])
+        self.assertNotIn("GAMEPLAI_STREAM_CANDIDATE", page)
 
     def test_the_page_names_every_candidate_in_every_section(self):
         from .. import html_full
         sides, dropped = self._sides()
         page = html_full.render_sides(sides, dropped)
         self.assertIn("<title>eAMF prod vs v4 &middot; T2</title>", page)
-        for section in ('id="directional"', 'id="cross"', "<h2>By market</h2>",
+        for section in ('id="directional"', 'id="cross"',
                         "<h2>Mirror check</h2>", "<h2>By selection</h2>"):
             block = page[page.index(section):]
             block = block[:block.index("</section>")]
             self.assertIn(">v4", block, section)
             self.assertIn(">T2", block, section)
-        rows = pair_table_rows(page)
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0]["v4 line"], 46.5)
-        self.assertEqual(rows[0]["v4 at prod&#39;s line"], 0.6)
-        self.assertEqual(rows[0]["T2 line"], 44.5)
 
     def test_score_quarter_and_possession_are_sections_of_their_own(self):
         from .. import html_full

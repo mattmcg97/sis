@@ -249,18 +249,35 @@ def _columns(sides, groups, measures):
     return cols
 
 
-def _table(sides, lead, rows, measures, table_class="", table_id=""):
-    """A comparison table. `lead` is the leading headers (text, class); `rows` is
-    (leading cells html, one record per side or None, row class), or a string for a
-    full-width note row."""
-    data = [r for r in rows if not isinstance(r, str) and any(r[1])]
-    if not data:
-        return ""
+def _block_columns(sides, data, measures, title=None, key=None):
+    """The columns for one set of measures; with `key`, each side's record is taken from its
+    row's dict under that key, and the N columns are headed by `title`."""
+    pick = (lambda recs: recs) if key is None else \
+        (lambda recs: [None if r is None else r.get(key) for r in recs])
+    rows = [(c, pick(recs), t) for c, recs, t in data]
+    rows = [r for r in rows if any(r[1])]
+    if not rows:
+        return []
     fields = ["n"] + [MEASURES[m][1] for m in measures if MEASURES[m][1]]
     if "mean" in measures:
         fields.append("real")
-    groups = _groups(data, len(sides), fields)
-    cols = _columns(sides, groups, measures)
+    cols = _columns(sides, _groups(rows, len(sides), fields), measures)
+    return [((title if t == "" and title else t), h,
+             (lambda recs, cell=cell: cell(pick(recs)))) for t, h, cell in cols]
+
+
+def _table(sides, lead, rows, measures, table_class="", table_id="", blocks=None):
+    """A comparison table. `lead` is the leading headers (text, class); `rows` is
+    (leading cells html, one record per side or None, row class), or a string for a
+    full-width note row. With `blocks` [(title, key, measures)], each side's record is a
+    dict of records by key, and each block has its own N."""
+    data = [r for r in rows if not isinstance(r, str) and any(r[1])]
+    if not data:
+        return ""
+    if blocks is None:
+        cols = _block_columns(sides, data, measures)
+    else:
+        cols = [c for title, key, ms in blocks for c in _block_columns(sides, data, ms, title, key)]
     top = "".join(f'<th class="{c}"></th>' for _, c in lead)
     i = 0
     while i < len(cols):
@@ -302,39 +319,30 @@ def _table(sides, lead, rows, measures, table_class="", table_id=""):
 # Sections
 # ---------------------------------------------------------------------------
 
+def _summary_rec(side, market=None):
+    """A side's Brier at prod's line and line error at its own line, over every market or one."""
+    same = side["prob_full"]["summary"]["same_line"]
+    errors = side["line_full"]["line_error"]
+    if market is None:
+        prob, line = same["overall"], errors["all"].get("all")
+    else:
+        prob, line = same["by_market"].get(market), errors["market"].get(market)
+    rec = {"prob": _brier_rec(prob), "line": _line_rec(line)}
+    return rec if any(rec.values()) else None
+
+
 def _headline(sides):
-    """Brier at prod's line and line error at each side's own line, over every market."""
-    brier = _table(sides, [("At prod's line", "")],
-                   [("<th>All markets</th>",
-                     [_brier_rec(s["prob_full"]["summary"]["same_line"]["overall"]) for s in sides],
-                     "")], ["brier"])
-    line = _table(sides, [("At its own line", "")],
-                  [("<th>All lines</th>",
-                    [_line_rec(s["line_full"]["line_error"]["all"].get("all")) for s in sides], "")],
-                  ["line", "same"])
+    """Brier at prod's line and line error at each side's own line: every market, then each."""
+    rows = [("<th>All markets</th>", [_summary_rec(s) for s in sides], "")]
+    rows += [(f"<th>{MARKET_TITLES[m]}</th>", [_summary_rec(s, m) for s in sides], "")
+             for m in MARKET_ORDER]
+    table = _table(sides, [("Market", "")], rows, None,
+                   blocks=[("At prod's line", "prob", ["brier"]),
+                           ("At own line", "line", ["line", "same"])])
     return f"""
     <section class="panel" id="directional">
       <h2>Directional calibration</h2>
-      {brier}
-      {line}
-    </section>"""
-
-
-def _market_block(sides):
-    """The same two readings by market."""
-    rows = [(f"<th>{MARKET_TITLES[market]}</th>",
-             [_brier_rec(s["prob_full"]["summary"]["same_line"]["by_market"].get(market))
-              for s in sides], "") for market in MARKET_ORDER]
-    brier = _table(sides, [("At prod's line", "")], rows, ["brier"])
-    line_rows = [(f"<th>{MARKET_TITLES[market]}</th>",
-                  [_line_rec(s["line_full"]["line_error"]["market"].get(market)) for s in sides], "")
-                 for market in LINE_MARKETS]
-    line = _table(sides, [("At its own line", "")], line_rows, ["line", "same"])
-    return f"""
-    <section class="panel" id="markets">
-      <h2>By market</h2>
-      {brier}
-      {line}
+      {table}
     </section>"""
 
 
@@ -418,7 +426,9 @@ def _full_cell(sides):
 def _prematch_block(sides):
     """Calibration of the closing price, each candidate that quotes before
     kickoff against prod."""
-    summaries = [s["line"].get("prematch") for s in sides]
+    # at prod's line: a model with lines of its own is read at prod's closing line, so every
+    # match pairs, not only those where its own line happened to be prod's
+    summaries = [s["prob"].get("prematch") for s in sides]
     summaries = [x if x and x.get("n") else None for x in summaries]
     if not any(summaries):
         return ""
@@ -1028,157 +1038,6 @@ def _integrity_block(sides):
 
 
 # ---------------------------------------------------------------------------
-# Every pair
-# ---------------------------------------------------------------------------
-
-def _down(pair):
-    if pair.down_number is None and pair.distance is None:
-        return "&mdash;"
-    down = "?" if pair.down_number is None else pair.down_number
-    distance = "?" if pair.distance is None else pair.distance
-    return f"{down}&amp;{distance}"
-
-
-def _joined(sides):
-    """Every common snapshot once: prod's quote, and each candidate's quote
-    as it was published (own line) with its probability at prod's line
-    beside it. Widest disagreement with prod first."""
-    from .multi import pair_key
-    line_maps = [{pair_key(p): p for p in s["line_pairs"]} for s in sides]
-    prob_maps = [{pair_key(p): p for p in s["prob_pairs"]} for s in sides]
-    keys = list(line_maps[0])
-
-    def spread_of(key):
-        base = line_maps[0][key]
-        gaps = [abs(m[key].candidate_probability - m[key].prod_probability)
-                for m in prob_maps if key in m]
-        return (-(max(gaps) if gaps else 0.0), base.match_code, base.drive_number, base.market_id)
-
-    keys.sort(key=spread_of)
-    return keys, line_maps, prob_maps
-
-
-def _live_state(p_prod_live, not_live_names):
-    if not not_live_names and p_prod_live:
-        return "live"
-    return ", ".join((["prod"] if not p_prod_live else []) + not_live_names)
-
-
-def _won(outcome):
-    return None if outcome is None else (1 if outcome else 0)
-
-
-def _r(v, digits=4):
-    return None if v is None else round(float(v), digits)
-
-
-# The pair table is drawn in the browser from compact rows: tens of
-# thousands of snapshots times a group of columns per candidate is too much
-# markup to ship as HTML. Each column is (header, kind, starts a group);
-# the kinds are formatted by report.js (PAIR_KINDS).
-def _pair_data(sides):
-    keys, line_maps, prob_maps = _joined(sides)
-    base_map = line_maps[0]
-    dual = [s["line"] is not s["prob"] for s in sides]
-    last_quote = {}
-    for p in base_map.values():
-        if p.publish_time is None:
-            continue
-        seen = last_quote.get(p.match_code)
-        if seen is None or p.publish_time > seen:
-            last_quote[p.match_code] = p.publish_time
-    columns = [("Time", "t", 0), ("Match", "t", 0), ("Drive", "i", 0), ("Msg", "i", 0),
-               ("&plusmn;Msg", "mg", 0), ("Qtr", "t", 0), ("Home", "i", 0), ("Away", "i", 0),
-               ("Diff", "sd", 0), ("Poss", "t", 0), ("Field", "i", 0), ("D&amp;D", "dd", 0),
-               ("To end", "te", 0), ("Market", "t", 0), ("Sel", "t", 0), ("Result", "b", 0),
-               ("Prod line", "l", 1), ("Prod prob", "p4", 0), ("Prod won", "o", 0),
-               ("Prod err", "p4", 0)]
-    for s in sides:
-        n = _name(s)
-        columns += [(f"{n} line", "l", 1), (f"{n} prob", "p4", 0),
-                    (f"{n} at prod&#39;s line", "p4", 0), (f"{n} &Delta;prob", "dp", 0),
-                    (f"{n} won", "o", 0), (f"{n} err", "p4", 0), ("Closer", "c", 0)]
-    columns.append(("Live", "live", 0))
-
-    rows = []
-    for key in keys:
-        p = base_map[key]
-        cand_dead = [s["name"] for s, m in zip(sides, line_maps)
-                     if key in m and not m[key].candidate_live]
-        end = last_quote.get(p.match_code)
-        to_end = (None if end is None or p.publish_time is None
-                  else round((end - p.publish_time).total_seconds()))
-        prod_error = None if (p.prod_outcome is None or not p.prod_live) else \
-            abs(p.prod_probability - (1.0 if p.prod_outcome else 0.0))
-        down = None
-        if p.down_number is not None or p.distance is not None:
-            down = [f"{'?' if p.down_number is None else p.down_number}&"
-                    f"{'?' if p.distance is None else p.distance}",
-                    p.down_number if p.down_number is not None else "",
-                    0 if p.anchor in (drives.FIRST_DOWN, drives.PLAY_OVER) else 1]
-        quarter = ("Q" + str(p.period_number) if p.period_number and p.period_number <= 4
-                   else ("OT" if p.period_number else "?"))
-        row = [None if p.publish_time is None else str(p.publish_time)[:19], p.match_code,
-               p.drive_number, p.message_count, p.message_gap, quarter,
-               p.score_p1, p.score_p2, p.score_diff,
-               "H" if p.offensive_team == "Home Team" else ("A" if p.offensive_team == "Away Team" else "?"),
-               p.field_position, down, to_end,
-               MARKET_TITLES.get(markets.market_group(p.market_id), "?"),
-               markets.selection_label(p.market_id) or "",
-               None if p.realized is None else round(p.realized),
-               _r(p.prod_line, 1), _r(p.prod_probability), _won(p.prod_outcome), _r(prod_error)]
-        for side, lm, pm, both in zip(sides, line_maps, prob_maps, dual):
-            c = lm.get(key)
-            if c is None:
-                row += [None] * 7
-                continue
-            dead = c.not_live
-            error = None if (c.candidate_outcome is None or not c.candidate_live) else \
-                abs(c.candidate_probability - (1.0 if c.candidate_outcome else 0.0))
-            # its probability for prod's question: read at prod's line when
-            # it has lines of its own, or its quote when that is prod's line
-            at_prod = pm.get(key) if both else (c if c.same_line else None)
-            q = None if (at_prod is None or dead) else at_prod.candidate_probability
-            winner = c.decisive_winner if not dead else None
-            closer = (["level", ""] if winner in (None, "tie") else
-                      ["prod", "bad"] if winner == "prod" else [side["name"], "good"])
-            row += [_r(c.candidate_line, 1), _r(c.candidate_probability), _r(q),
-                    None if q is None else _r(q - p.prod_probability), _won(c.candidate_outcome),
-                    _r(error), closer]
-        row.append(_live_state(p.prod_live, cand_dead))
-        rows.append(row)
-    return columns, rows
-
-
-def _pair_table(sides):
-    import json
-    columns, rows = _pair_data(sides)
-    grp = ' class="grp"'
-    head = "".join(f"<th{grp if g else ''}>{h}</th>" for h, _, g in columns)
-    spec = json.dumps({"kinds": [k for _, k, _ in columns], "groups": [g for _, _, g in columns],
-                       "prob_delta": PROB_DELTA, "message_gap": MESSAGE_GAP},
-                      separators=(",", ":"))
-    data = json.dumps(rows, separators=(",", ":")).replace("</", "<\\/")
-    return f"""
-    <section class="panel" id="pairs">
-      <h2>Every pair</h2>
-      <div class="filter">
-        <input id="pairFilter" type="search" autocomplete="off" spellcheck="false"
-               placeholder="filter by match id" aria-label="Filter rows by match id">
-        <span id="pairCount" class="count">{len(rows):,} rows</span>
-      </div>
-      <div class="scroll">
-      <table class="datatable" id="pairTable">
-        <thead><tr>{head}</tr></thead>
-        <tbody></tbody>
-      </table>
-      </div>
-      <script type="application/json" id="pairSpec">{spec}</script>
-      <script type="application/json" id="pairData">{data}</script>
-    </section>"""
-
-
-# ---------------------------------------------------------------------------
 
 def _title(sides):
     return "eAMF prod vs " + " &middot; ".join(_name(s) for s in sides)
@@ -1210,7 +1069,7 @@ def render_sides(sides, dropped=None, extra=""):
     <h1>{_title(sides)}</h1>
   </header>
 
-  <div id="headline">{_headline(sides)}{_market_block(sides)}</div>
+  <div id="headline">{_headline(sides)}</div>
   {_full_cell(sides)}
   {axis_sections}
   {_prematch_block(sides)}
@@ -1227,7 +1086,6 @@ def render_sides(sides, dropped=None, extra=""):
     {_integrity_block(sides)}
     {_both_sides_block(sides)}
   </details>
-  {_pair_table(sides)}
   {extra}
 </div>
 {_SCRIPT}
