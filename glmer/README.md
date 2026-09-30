@@ -291,6 +291,30 @@ normalised to mean 1:
   only three streams: it jumps between 0 and 2.5 across refits, while the
   stream effects stay near 0.
 
+**Scalar × half-life sweep.** Scalars 0.25 / 0.5 / 0.75 crossed with form
+half-life 5 / 10 / 20 matches and row half-life 30 / 60 / 120 days: 135
+fits, same refits as above. The scalar-1 rows come from the half-life
+sweep. Log loss, averaged over the three form half-lives:
+
+| scalar | rows 30 days | rows 60 days | rows 120 days |
+|--------|--------------|--------------|---------------|
+| 0.25   | 0.6642       | 0.6669       | 0.6674        |
+| 0.5    | **0.6633**   | **0.6630**   | **0.6637**    |
+| 0.75   | 0.6638       | 0.6633       | 0.6638        |
+| 1      | 0.6639       | 0.6635       | 0.6639        |
+| ESS / rows | 0.39     | 0.67         | 0.88          |
+
+- **Best single setting: form 10 matches / rows 60 days / scalar 0.5.**
+  Log loss 0.6628, −0.0006 against the defaults (t −1.1, better in 4 of 5
+  fortnights); totals RMSE 12.31 (t −2.4).
+- **Scalar 0.25 is too low** unless the rows decay fast. With 60- or
+  120-day rows it costs 0.003–0.004 (t ≈ +2).
+- **The pattern follows the effective sample size.** The faster the rows
+  decay, the less real data there is, and the lower the scalar the model
+  wants. At 120 days, 0.5–1 are level.
+- **The half-lives stay flat at every scalar.** Form 5–20 matches and rows
+  30–120 days all land within about 0.001 once the scalar is 0.5 or more.
+
 What the numbers say:
 
 - **The form features are the gain.** These are both sides'
