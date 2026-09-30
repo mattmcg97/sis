@@ -170,7 +170,8 @@ combine_matches <- function(history, schedule) {
 # features use only matches that started strictly before it, so a side's own
 # result (or anything later) never leaks into its features.
 to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
-                    session_hours = SESSION_HOURS, rest_cap_hours = REST_CAP_HOURS) {
+                    session_hours = SESSION_HOURS, rest_cap_hours = REST_CAP_HOURS,
+                    session_gap_hours = SESSION_GAP_HOURS, session_shrink = SESSION_SHRINK_MATCHES) {
   home <- data.frame(MatchId = m$MATCH_CODE, Time = m$Time, Side = "H", IsHome = 1,
                      Player = m$P1, OpponentPlayer = m$P2, Team = m$P1Team, OpponentTeam = m$P2Team,
                      Stream = m$Stream, Score = m$P1Score, OppScore = m$P2Score,
@@ -236,6 +237,53 @@ to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
   d$OppSession <- d$Session[opp]
   d$OppExpLog <- d$ExpLog[opp]
 
+  # Session form. A session is a side's run of matches with gaps under
+  # session_gap_hours. Each settled match in it is scored against a rough
+  # pre-match expectation from the form features -- the side's own scoring
+  # (conceding) form times the opponent's conceding (scoring) form -- and a
+  # match's SessFormFor / SessFormAgainst is the mean log ratio over the
+  # session's earlier matches, shrunk toward 0 by session_shrink matches.
+  # Earlier in the session means the side's previous matches, which have all
+  # finished before this one starts.
+  expect_for <- (league + 1) * exp(d$FormFor + d$OppFormAgainst)
+  expect_against <- (league + 1) * exp(d$FormAgainst + d$OppFormFor)
+  res_for <- ifelse(done, log((d$Score + 1) / expect_for), 0)
+  res_against <- ifelse(done, log((d$OppScore + 1) / expect_against), 0)
+  sess_pos <- sess_for <- sess_against <- numeric(n)
+  gap <- session_gap_hours * 3600
+  for (idx in split(seq_len(n), d$Player)) {
+    idx <- idx[order(tnum[idx])]
+    prev_t <- -Inf
+    pos <- k <- 0
+    sum_for <- sum_against <- 0
+    for (i in idx) {
+      if (tnum[i] - prev_t > gap) {
+        pos <- k <- 0
+        sum_for <- sum_against <- 0
+      }
+      pos <- pos + 1
+      sess_pos[i] <- pos
+      if (k > 0) {
+        sess_for[i] <- sum_for / (k + session_shrink)        # = mean * k / (k + shrink)
+        sess_against[i] <- sum_against / (k + session_shrink)
+      }
+      if (done[i]) {
+        sum_for <- sum_for + res_for[i]
+        sum_against <- sum_against + res_against[i]
+        k <- k + 1
+      }
+      prev_t <- tnum[i]
+    }
+  }
+  d$SessPos <- sess_pos
+  d$SessBand <- as.character(cut(sess_pos, c(0, 1, 2, 4, 6, 8, Inf),
+                                 labels = c("s1", "s2", "s3_4", "s5_6", "s7_8", "s9p")))
+  d$SessFormFor <- sess_for
+  d$SessFormAgainst <- sess_against
+  d$OppSessBand <- d$SessBand[opp]
+  d$OppSessFormFor <- d$SessFormFor[opp]
+  d$OppSessFormAgainst <- d$SessFormAgainst[opp]
+
   hour <- as.integer(format(d$Time, "%H", tz = "UTC"))
   d$HourBlock <- sprintf("h%02d", 4L * (hour %/% 4L))
   d$Weekday <- paste0("d", format(d$Time, "%u", tz = "UTC"))
@@ -258,7 +306,8 @@ role_view <- function(d, role) {
   d$RivalTeam <- pick(d$OpponentTeam, d$Team)
   d$Matchup <- paste(d$OwnTeam, "v", d$RivalTeam)
   d$OwnHome <- pick(d$IsHome, 1 - d$IsHome)
-  for (f in c("FormFor", "FormAgainst", "RestLog", "Session", "ExpLog")) {
+  for (f in c("FormFor", "FormAgainst", "RestLog", "Session", "ExpLog", "SessBand", "SessFormFor",
+               "SessFormAgainst")) {
     opp <- paste0("Opp", f)
     d[[paste0("Own", f)]] <- pick(d[[f]], d[[opp]])
     d[[paste0("Rival", f)]] <- pick(d[[opp]], d[[f]])
@@ -351,11 +400,11 @@ build_formula <- function(rhs, d, extra = character(), offset = FALSE) {
 # glmer(poisson) with warnings collected rather than printed (singular fits
 # and convergence notes are routine with this many variance components)
 # and errors turned into NULL.
-fit_glmer <- function(formula, d) {
+fit_glmer <- function(formula, d, start = NULL) {
   warns <- character()
   fit <- tryCatch(
     withCallingHandlers(
-      glmer(formula, data = d, family = poisson, weights = .w, nAGQ = GLMER_NAGQ,
+      glmer(formula, data = d, family = poisson, weights = .w, nAGQ = GLMER_NAGQ, start = start,
             control = glmerControl(optimizer = GLMER_OPTIMIZER, calc.derivs = FALSE,
                                    check.conv.singular = "ignore",
                                    optCtrl = if (GLMER_OPTIMIZER == "nloptwrap") {
@@ -421,13 +470,16 @@ fixed_levels_ok <- function(fit, newdata) {
   ok
 }
 
-# The global model on every settled row before as_of.
-fit_global <- function(train, fs, wspec, as_of) {
+# The global model on every settled row before as_of. `start` (optional): the
+# variance parameters (theta) of an earlier fit of the same formula, a warm
+# start for a refit on a little more data.
+fit_global <- function(train, fs, wspec, as_of, start = NULL) {
   train$.w <- row_weights(train, wspec, as_of, group = "Player")
   train <- train[train$.w > 0, ]
   extra <- c(if (isTRUE(fs$match_re)) "(1|MatchId)", if (isTRUE(fs$olre)) "(1|ObsID)")
   f <- build_formula(fs$global, train, extra)
-  res <- fit_glmer(f, train)
+  res <- fit_glmer(f, train, start = if (is.null(start)) NULL else list(theta = start))
+  if (is.null(res$fit) && !is.null(start)) res <- fit_glmer(f, train)   # the warm start didn't fit
   if (is.null(res$fit)) stop(sprintf("global model failed: %s", paste(res$warnings, collapse = "; ")))
   list(fit = res$fit, formula = deparse1(f), n = nrow(train),
        sigma_obs = re_sd(res$fit, "ObsID"), sigma_match = re_sd(res$fit, "MatchId"),
@@ -456,9 +508,10 @@ fit_player <- function(train, player, role, fs, wspec, as_of, min_matches) {
 # that have already sourced this file.
 fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES,
                        cluster = NULL, verbose = TRUE, fs_name = NA, w_name = NA,
-                       with_players = TRUE, form_half_life = FORM_HALF_LIFE_MATCHES) {
+                       with_players = TRUE, form_half_life = FORM_HALF_LIFE_MATCHES,
+                       start = NULL) {
   t0 <- Sys.time()
-  global <- fit_global(train, fs, wspec, as_of)
+  global <- fit_global(train, fs, wspec, as_of, start = start)
   if (verbose) {
     log_line("  global: %d rows, sd(match)=%.3f sd(obs)=%.3f, %.0fs%s", global$n,
              global$sigma_match, global$sigma_obs, as.numeric(difftime(Sys.time(), t0, units = "secs")),
@@ -501,7 +554,8 @@ fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES
        weighting = w_name, wspec = wspec, as_of = as_of, min_matches = min_matches,
        n_train_rows = nrow(train), failed_player_fits = failed,
        features = list(form_half_life = form_half_life, session_hours = SESSION_HOURS,
-                       rest_cap_hours = REST_CAP_HOURS),
+                       rest_cap_hours = REST_CAP_HOURS, session_gap_hours = SESSION_GAP_HOURS,
+                       session_shrink = SESSION_SHRINK_MATCHES),
        fitted_at = Sys.time())
 }
 
