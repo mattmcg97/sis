@@ -45,6 +45,49 @@ def load(path):
     return by_match
 
 
+TIMEOUTS_PER_HALF = 3
+
+
+def _half(period):
+    """1 for the first half, 2 for the second, the period itself in overtime."""
+    return 1 if period <= 2 else 2 if period <= 4 else period
+
+
+def annotate_timeouts(by_match, path):
+    """Mark each PLAY_OVER row with the timeouts around it, off the calibrator's timeouts.csv
+    (`python -m eAMFCalibrator timeouts`): the side that called one before the next snap
+    (timeout_after: TEAM_A/TEAM_B, blank for none; timeout_prev: the play before it) and how many
+    each side had called in the half at the row (timeouts_used_a/b, the scouting export's own
+    columns). Returns how many calls found their row."""
+    calls = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            m, p = _int(r.get("message")), _int(r.get("period"))
+            if m is not None and p is not None and r.get("caller") in ("TEAM_A", "TEAM_B"):
+                calls[r["match_code"]].append((m, p, r["caller"], r.get("prev_play") or ""))
+    found = 0
+    for code, rows in by_match.items():
+        mine = sorted(calls.get(code, []))
+        used = Counter()
+        k = 0
+        for i, row in enumerate(rows):
+            row["timeouts_used_a"] = used[(_half(_int(row["period"]) or 1), "TEAM_A")]
+            row["timeouts_used_b"] = used[(_half(_int(row["period"]) or 1), "TEAM_B")]
+            row["timeout_after"], row["timeout_prev"] = "", ""
+            msg = _int(row["message"])
+            nxt = _int(rows[i + 1]["message"]) if i + 1 < len(rows) else None
+            while k < len(mine) and (nxt is None or mine[k][0] < nxt):
+                m, p, team, prev = mine[k]
+                k += 1
+                if msg is None or m < msg:
+                    continue
+                used[(_half(p), team)] += 1
+                if not row["timeout_after"]:
+                    row["timeout_after"], row["timeout_prev"] = team, prev
+                    found += 1
+    return found
+
+
 def side_of(team, team_a_side):
     """TEAM_A or TEAM_B as home or away."""
     if team not in ("TEAM_A", "TEAM_B") or team_a_side not in ("home", "away"):

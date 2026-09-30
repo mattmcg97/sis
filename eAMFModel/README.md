@@ -1203,7 +1203,107 @@ The report line sets the NB2 build (`--v7-model`) and the glmer build side by
 side; both need building on the same `--until`. The report prices with R as
 well, because the glmer prior predicts each match through `glmer/predict.R`.
 
-## Pricing only what the model is sure of (v4–v7 streams)
+## v8: v7 plus the clock to the last second, timeouts, kneels and overtime
+
+v8 (`sim8.py`, `v8.py`, `v8_stream.py`) is a copy of v7 with five changes, each behind a
+switch in `sim8` (`LATE_CLOCK`, `TIMEOUTS`, `KNEELS`, `OT_CARRY`, and overtime's own clock
+shift under `TIMEOUTS`). With all of them off, v8 plays exactly as v7
+(`test_with_its_own_switches_off_v8_plays_as_v7`).
+
+```bash
+python -m eAMFCalibrator timeouts --since 2026-08-24          # every real timeout -> out/timeouts.csv
+python -m eAMFModel v8-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 \
+    --out v8_model --history eAMFCalibrator/out/match_history.csv \
+    --handles eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
+python -m eAMFCalibrator report --candidate v7,v8 --v7-model v7_model --v8-model v8_model
+```
+
+### What v7 got wrong
+
+Set against real snaps from the same states (built before Sep 10, played Sep 10–22, 44,002
+snaps), v7's clock was within 0.3 seconds a snap everywhere except:
+
+- **The last 40 seconds of each half.** Real sides stop the clock on 86–88% of snaps; v7 did on
+  74%, and each snap took 2 seconds too long. The clock-stopped share was fitted only on snaps
+  with a minute or more left: a snap that ran the quarter out was dropped. The last 40-second
+  slice of every quarter was never fitted.
+- **Kneels.** v7 ended the game once the leader had the ball with 20 seconds or less a down.
+  582 of 905 matches reached that, and 0.47 points a match still came after it.
+- **Timeouts** were not there at all. The feed has them (`TIMEOUT_CALLED_TEAM_A/B`), but
+  the PLAY_OVER export dropped them.
+- **Overtime.** When a period's clock ran out, a lead ended the game even if the side behind
+  hadn't had the ball, and a level score kicked off again. In real games play carries on into
+  the next period with the same ball, down and spot, until a side leads and the other has had
+  its possession. 39% of real overtimes reach a second period; none ends level.
+
+### What v8 changes
+
+- **The clock to the last second** (`LATE_CLOCK`). A snap that ran its quarter out is kept as a
+  censored observation: it used at least the time that was left. The clock-stopped share is
+  fitted by maximum likelihood on every snap, so the last 40 seconds have their own share and
+  stopped-play time.
+- **Timeouts** (`TIMEOUTS`). Three a side each half, two each overtime period. Before a snap,
+  with the clock running after the last play, a side stops it at the rate real sides do:
+  - The rate is split by quarter (2 or 4), 40-second slice, with or without the ball, and
+    the side's own score, while it has a timeout left.
+  - It is fitted on the real calls (`v8-build --timeouts timeouts.csv`), else read from
+    `sim8.DEFAULT_CALL_P` (12,000 calls, 24 Aug – 22 Sep).
+  - The snap then takes only its own play's time.
+  - A real play that followed a timeout goes back in the tables with a clock-running play's
+    time, so the calls are not counted twice.
+  - Overtime reads the fourth quarter's rates scaled by one fitted factor (0.23; 35 real calls
+    in 75 periods).
+  - States know each side's timeouts left where the export carries them
+    (`timeouts_used_a/b`).
+- **Kneels** (`KNEELS`). A fourth-quarter leader's kneel is a play of its own:
+  - It is called as often as real leaders call it, by down, 40-second slice and one score or
+    more.
+  - It takes a 36-second play clock, unless the trailing side calls a timeout.
+  - The leader kneels the game out only when its downs left, less the trailing side's
+    timeouts (a 40-second play clock each), outlast the clock.
+- **Overtime carries on** (`OT_CARRY`). An expiring period ends the game only when a side leads
+  and the side behind has had its possession; otherwise play goes on into the next period.
+  Overtime also gets its own clock-stopped shift, since real sides hardly call timeouts there.
+
+What the real timeouts showed (`python -m eAMFCalibrator timeouts`; see its README section):
+- Nearly all come in the last four minutes of Q2 and Q4.
+- Q2: from 3:00 to 1:00 the side without the ball calls them. In the last 30 seconds the side
+  with the ball calls 69% of them, at any score.
+- Q4: sides without the ball call them from about 3:00, whether down one score or more, and so
+  do level sides and sides a score ahead. Trailing sides with the ball call them in the last
+  minute.
+
+### Held out
+
+Points still to come (`remaining`), every PLAY_OVER snapshot, built before Sep 10 and played
+on Sep 10–22 (56,890 snapshots, 905 matches). "Mean" is the version's mean minus the real one;
+"rps" is the ranked probability score over 0–35 points (lower is better).
+
+| | v7 mean | v8 mean | v7 rps | v8 rps |
+|---|---|---|---|---|
+| all | +0.09 | +0.14 | 3.851 | 3.841 |
+| Q2 | +0.04 | +0.12 | 4.759 | 4.757 |
+| Q3 | +0.44 | +0.43 | 4.418 | 4.413 |
+| Q4 | −0.11 | +0.01 | 2.416 | 2.384 |
+| Q4 level | −0.02 | +0.14 | 2.102 | 2.080 |
+| Q4 1 score, trailer has ball | −0.74 | −0.46 | 2.911 | 2.877 |
+| Q4 2+ scores, leader has ball | +0.65 | +0.55 | 1.725 | 1.656 |
+| Q4 last 2:00, 1 score, leader has ball | −0.13 | −0.03 | 1.333 | 1.257 |
+| Q4 last 2:00, 2+ scores, leader has ball | +0.23 | +0.23 | 1.015 | 0.961 |
+| OT | −1.14 | +0.45 | 2.182 | 2.282 |
+
+The log loss over all snapshots goes from 2.551 to 2.538, and in Q4 from 1.806 to 1.747.
+Overtime is 24 matches: its mean miss is gone, but its rps is still above v7's.
+
+Per snap (real / v7 / v8, seconds), the last 40 seconds of Q2: 6.5 / 8.4 / 6.8.
+
+### Still open
+
+- The trailer one score down with the ball in the last two minutes of Q4 goes on to make
+  5.0 points; v8 gives 4.6 (v7 4.3).
+- Q3 and Q2 two scores apart still run a point high, as in v7.
+
+## Pricing only what the model is sure of (v4–v8 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:

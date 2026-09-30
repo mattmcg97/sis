@@ -185,6 +185,22 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_timeouts(args):
+    """Every timeout in SCOUTING_FULL over the window: who called it, when, at what score, and
+    how many each side had left at the end of each half -- what the model's timeout windows are
+    set from."""
+    from . import timeouts
+    out_dir = args.out or DEFAULT_OUT
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            timeouts.run(cur, table, out_dir)
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_drive_audit(args):
     """Every drive the play feed yields in the window, checked, and each
     one's end compared with SCOUTING_FULL where it can be reached."""
@@ -754,7 +770,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2, v3, v4, v5, v6, v7 -- see eAMFModel) priced "
+                             "or a model version (v1, v2, v3, v4, v5, v6, v7, v8 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
                              "several, comma-separated (v4,v5), set each against prod "
@@ -801,6 +817,14 @@ def common_options():
                              f"(default {config.V7_PATHS})")
     tuning.add_argument("--v7-lines", choices=["own", "prod"],
                         help=f"--candidate v7: its own even lines or prod's (default {config.V7_LINES})")
+    tuning.add_argument("--v8-model", metavar="DIR",
+                        help="eAMFModel v8-build's output, for --candidate v8 "
+                             "(default $EAMF_V8_MODEL, then ./v8_model)")
+    tuning.add_argument("--v8-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v8 "
+                             f"(default {config.V8_PATHS})")
+    tuning.add_argument("--v8-lines", choices=["own", "prod"],
+                        help=f"--candidate v8: its own even lines or prod's (default {config.V8_LINES})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -841,7 +865,10 @@ def apply_overrides(args):
                            ("v6_lines", "V6_LINES"),
                            ("v7_model", "V7_MODEL_DIR"),
                            ("v7_paths", "V7_PATHS"),
-                           ("v7_lines", "V7_LINES")):
+                           ("v7_lines", "V7_LINES"),
+                           ("v8_model", "V8_MODEL_DIR"),
+                           ("v8_paths", "V8_PATHS"),
+                           ("v8_lines", "V8_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
@@ -990,6 +1017,15 @@ def build_parser():
     sc_parser.add_argument("--no-probe", action="store_true")
     sc_parser.add_argument("--no-export", action="store_true")
 
+    to_parser = sub.add_parser(
+        "timeouts", parents=[shared],
+        help="every timeout in SCOUTING_FULL: who called it (with or without the ball), when and "
+             "at what score, and how many each side had left late in each half "
+             "(-> timeouts.csv, timeouts_summary.txt; last 30 days by default)")
+    to_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    to_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE")
+
     dump_parser = sub.add_parser(
         "dump", parents=[shared],
         help="write the drive-detection working out to CSV for inspection")
@@ -1038,7 +1074,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if args.command == "scouting" and not (args.days or args.since):
+    if args.command in ("scouting", "timeouts") and not (args.days or args.since):
         args.days = 30          # the scouting export defaults to the last month
     apply_overrides(args)
     if args.command == "preflight":
@@ -1053,6 +1089,8 @@ def main(argv=None):
         return cmd_dump(args)
     if args.command == "scouting":
         return cmd_scouting(args)
+    if args.command == "timeouts":
+        return cmd_timeouts(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":

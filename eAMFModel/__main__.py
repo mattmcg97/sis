@@ -19,6 +19,8 @@
                          fitted to real play)
   v7-build / v7          the same for v7 (v6 plus leaders settling, clock bleed
                          by lead and a go-ahead check)
+  v8-build / v8          the same for v8 (v7 plus the end-of-half clock, timeouts
+                         and kneels)
   v5-build / v5          the same for v5 (v4 plus run/pass play calling and the
                          rubber band)
 
@@ -192,6 +194,9 @@ def cmd_v4_build(args):
     v4 = _v4_module(name)
     import datetime as dt
     data = playover.load(args.snapshots)
+    if getattr(args, "timeouts", None):
+        found = playover.annotate_timeouts(data, args.timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({args.timeouts})")
     keep = set(_half(args.snapshots, args.half))
     if args.until:
         from .remaining import day
@@ -205,7 +210,7 @@ def cmd_v4_build(args):
         history = nb2_prior.load_history(args.history)
         if args.before or args.until:
             before = dt.datetime.fromisoformat(args.before or args.until)
-    if name in ("v5", "v6", "v7") and history is None:
+    if name in ("v5", "v6", "v7", "v8") and history is None:
         raise SystemExit(f"{name}-build needs --history: {name} takes every match's prior from its own "
                          "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
@@ -267,7 +272,8 @@ def cmd_remaining(args):
                            since=dt.date.fromisoformat(args.since) if args.since else None,
                            until=dt.date.fromisoformat(args.until) if args.until else None,
                            n_paths=args.paths, workers=args.workers, history=history,
-                           handles=handles, limit=args.limit, drive=args.drive)
+                           handles=handles, limit=args.limit, drive=args.drive,
+                           timeouts=getattr(args, "timeouts", None))
     print(f"\n  {args.version}: {len(rows):,} PLAY_OVER snapshots across "
           f"{len({r[0] for r in rows}):,} matches")
     if args.drive:
@@ -472,7 +478,8 @@ def main(argv=None):
                        ("v6", "v6: v5 plus late 4th downs and kneels as real players play them "
                               "(see README)"),
                        ("v7", "v7: v6 plus leaders settling, clock bleed by lead and a go-ahead "
-                              "check (see README)")):
+                              "check (see README)"),
+                       ("v8", "v8: v7 plus the end-of-half clock, timeouts and kneels (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -487,15 +494,18 @@ def main(argv=None):
         p.add_argument("--until", help="build everything -- play tables, profiles and NB2 -- on the "
                                        "matches before this date (YYYY-MM-DD), so a test after it is "
                                        "out of sample")
-        if name in ("v5", "v6", "v7"):
+        if name in ("v5", "v6", "v7", "v8"):
             p.add_argument("--in-play", action="store_true",
                            help="also fit the in-play total shift by segment of the game "
                                 "(see README: off by default, it has not held up out of sample)")
-        if name == "v7":
+        if name == "v8":
+            p.add_argument("--timeouts", help="the calibrator's timeouts.csv (`python -m eAMFCalibrator "
+                                              "timeouts`): every real timeout, to fit when sides call them")
+        if name in ("v7", "v8"):
             p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
                            help="the pre-match model --history fits: nb2 (nb2/, the default) or "
                                 "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
-        if name in ("v6", "v7"):
+        if name in ("v6", "v7", "v8"):
             p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
                            help="how drives finish inside the 30 by quarter and lead: hold (the "
                                 "default), tilt, or off (see README)")
@@ -521,7 +531,7 @@ def main(argv=None):
                                          "of each game really made, value by value, by quarter and "
                                          "game state (see remaining.py)")
     p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--version", choices=["v4", "v5", "v6", "v7"], default="v6")
+    p.add_argument("--version", choices=["v4", "v5", "v6", "v7", "v8"], default="v6")
     p.add_argument("--model", help="the version's build directory (default <version>_model)")
     p.add_argument("--since", help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD")
@@ -532,8 +542,10 @@ def main(argv=None):
     p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
     p.add_argument("--limit", type=int, help="first N matches only")
     p.add_argument("--out", help="per-snapshot CSV (default remaining_<version>.csv)")
+    p.add_argument("--timeouts", help="v8: the calibrator's timeouts.csv, so each state knows the "
+                                      "timeouts each side has left")
     p.add_argument("--drive", action="store_true",
-                   help="v6, v7: the points on the rest of the drive under way at each scrimmage PLAY_OVER "
+                   help="v6 to v8: the points on the rest of the drive under way at each scrimmage PLAY_OVER "
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
 
