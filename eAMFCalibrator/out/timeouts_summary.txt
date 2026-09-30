@@ -1,0 +1,88 @@
+15,612 timeouts in 2,977 matches (5.24 a match)
+by quarter: Q1 90, Q2 7,387, Q3 158, Q4 7,942, OT1 27, OT2 8
+
+Q1: by clock and by who called it (share of the quarter's calls), and the play before it (incomplete: the clock had stopped already)
+  clock         calls  offense  defense  in play 1st down  incompl poss chg
+  3:00-4:00        21      43%      43%      33%      19%      29%       5%
+  2:00-3:00        22      68%      23%      55%      14%      18%       5%
+  1:30-2:00         8      62%      25%      50%      38%       0%       0%
+  1:00-1:30        13      46%      23%      46%       0%      15%       8%
+  0:30-1:00        12      42%      50%      58%       8%      17%       8%
+  0:00-0:30        14      64%      21%      50%       7%      21%       7%
+  (earlier than 4:00: 0)
+  by the caller's score, last 4:00 -- offense / defense calls
+    down 9+        1 /      1
+    down 1-8      10 /      1
+    level         36 /     17
+    up 1-8         1 /      8
+    up 9+          0 /      1
+
+Q2: by clock and by who called it (share of the quarter's calls), and the play before it (incomplete: the clock had stopped already)
+  clock         calls  offense  defense  in play 1st down  incompl poss chg
+  3:00-4:00        63      40%      37%      40%      10%      21%       6%
+  2:00-3:00       264       6%      75%      54%      19%       8%       1%
+  1:30-2:00       424       5%      79%      53%      21%      10%       0%
+  1:00-1:30       862      15%      67%      51%      24%       7%       1%
+  0:30-1:00      1517      42%      41%      45%      32%       6%       0%
+  0:00-0:30      4257      69%      14%      38%      39%       4%       2%
+  (earlier than 4:00: 0)
+  by the caller's score, last 4:00 -- offense / defense calls
+    down 9+      516 /    105
+    down 1-8    1232 /    515
+    level        981 /    744
+    up 1-8       849 /    795
+    up 9+        166 /    151
+
+Q3: by clock and by who called it (share of the quarter's calls), and the play before it (incomplete: the clock had stopped already)
+  clock         calls  offense  defense  in play 1st down  incompl poss chg
+  3:00-4:00        34      26%      53%      21%      41%      12%       6%
+  2:00-3:00        25      36%      32%      36%      20%       8%       4%
+  1:30-2:00        20      55%      40%      40%      10%      30%      15%
+  1:00-1:30        21      48%      38%      52%      10%      19%       5%
+  0:30-1:00        24      71%      21%      42%      17%      29%       4%
+  0:00-0:30        34      35%      53%      26%      26%      26%       9%
+  (earlier than 4:00: 0)
+  by the caller's score, last 4:00 -- offense / defense calls
+    down 9+       18 /     15
+    down 1-8      18 /     16
+    level          8 /      7
+    up 1-8        16 /     15
+    up 9+          8 /     11
+
+Q4: by clock and by who called it (share of the quarter's calls), and the play before it (incomplete: the clock had stopped already)
+  clock         calls  offense  defense  in play 1st down  incompl poss chg
+  3:00-4:00       196      15%      66%      47%      15%      11%       7%
+  2:00-3:00       773       7%      75%      46%      25%       6%       5%
+  1:30-2:00      1490       6%      77%      44%      29%       7%       3%
+  1:00-1:30      1765       9%      76%      45%      29%       6%       5%
+  0:30-1:00      1651      22%      62%      41%      31%       6%       6%
+  0:00-0:30      2067      48%      35%      42%      29%       6%       5%
+  (earlier than 4:00: 0)
+  by the caller's score, last 4:00 -- offense / defense calls
+    down 9+      431 /   1398
+    down 1-8     859 /   1899
+    level        248 /    769
+    up 1-8        80 /    808
+    up 9+         33 /     30
+
+Q2, last 3:00, calls by role x caller's score x clock (offense | defense)
+                2:00-3:00     1:30-2:00     1:00-1:30     0:30-1:00     0:00-0:30
+  down 9+       1 |     5     2 |    10    14 |    28    83 |    27   415 |    35
+  down 1-8      5 |    38    10 |    82    59 |   122   254 |   137   898 |   132
+  level         7 |    71     7 |   102    31 |   199   160 |   177   760 |   187
+  up 1-8        4 |    70     3 |   119    22 |   203   121 |   238   697 |   156
+  up 9+         0 |     8     0 |    19     4 |    26    14 |    35   148 |    62
+
+Q4, last 3:00, calls by role x caller's score x clock (offense | defense)
+                2:00-3:00     1:30-2:00     1:00-1:30     0:30-1:00     0:00-0:30
+  down 9+      31 |   182    37 |   393    77 |   390   127 |   282   152 |    95
+  down 1-8      9 |   215    29 |   442    49 |   540   180 |   413   586 |   249
+  level         2 |    83     6 |   157     4 |   204    21 |   141   212 |   176
+  up 1-8        8 |    87     7 |   138    15 |   203    20 |   176    17 |   189
+  up 9+         5 |     5     5 |     5     8 |     5     8 |     2     7 |     6
+
+timeouts a side had already called in the half, at each cut-off (share of sides)
+  Q2 2:00  0 called 93.5%  1 called  6.1%  2 called  0.3%  3+ called  0.1%
+  Q4 3:00  0 called 94.8%  1 called  4.5%  2 called  0.7%  3+ called  0.1%
+  Q4 2:00  0 called 85.3%  1 called 11.5%  2 called  2.3%  3+ called  1.0%
+  Q4 1:00  0 called 60.2%  1 called 16.8%  2 called 12.2%  3+ called 10.8%
