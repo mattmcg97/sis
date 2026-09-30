@@ -758,7 +758,9 @@ def common_options():
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
                              "several, comma-separated (v4,v5), set each against prod "
-                             f"side by side in the report (default {config.STREAMS['candidate']})")
+                             "side by side in the report; a second build of a version is "
+                             "NAME=DIR, e.g. v7,v7-glmer=v7_glmer_917 "
+                             f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
                              "model version when one stands in, e.g. v3; else 'candidate')")
@@ -849,7 +851,10 @@ def apply_overrides(args):
 
     candidate = getattr(args, "candidate", None)
     if candidate:
-        names = [snowflake_io.stream_name(c.strip()) for c in candidate.split(",") if c.strip()]
+        try:
+            names = [snowflake_io.stream_name(c.strip()) for c in candidate.split(",") if c.strip()]
+        except ValueError as error:
+            raise SystemExit(f"--candidate {error}")
         config.CANDIDATES = names
         config.STREAMS["candidate"] = names[0]
 

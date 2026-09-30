@@ -1499,6 +1499,20 @@ version, change the names on the command line.
 
 With one candidate the page is the same with one group of columns.
 
+### Two builds of the same version: `v7,v7-glmer=DIR`
+
+```bash
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate v7,v7-glmer=v7_glmer_917 --v7-model v7_model_917 --bets
+```
+
+- `v7` is priced off `--v7-model` as usual.
+- `v7-glmer=v7_glmer_917` is a second candidate. It runs v7's code off the
+  build in `v7_glmer_917`, and its columns are headed `v7-glmer`.
+- The name is the version, a dash, then any tag (`v7-glmer`, `v6-old`).
+  Paths and lines follow the version (`--v7-paths`, `--v7-lines`).
+- Use this to compare two builds that differ only in what they were built
+  with, e.g. `--prior nb2` against `--prior glmer`.
+
 ### Totals line within 1 and 2 scores
 
 The totals line test is now a section of its own, after In-drive, rather

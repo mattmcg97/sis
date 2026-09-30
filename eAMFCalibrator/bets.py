@@ -563,9 +563,10 @@ def check_models(streams):
         if not snowflake_io.is_model(stream):
             continue
         version, _ = snowflake_io.model_version(stream)
-        if version in snowflake_io.LINE_MODELS:
-            importlib.import_module(f"eAMFModel.{version}_stream").model_paths(
-                getattr(config, f"{version.upper()}_MODEL_DIR"))
+        base = snowflake_io.model_base(version)
+        if base in snowflake_io.LINE_MODELS:
+            importlib.import_module(f"eAMFModel.{base}_stream").model_paths(
+                snowflake_io.build_dir(version))
 
 
 def fetch_checks(cur, matches, prod_rows):
