@@ -361,7 +361,7 @@ EXPORT_FIELDS = [
     "score_p1", "score_p2", "score_p1_at_start", "score_p2_at_start", "play_messages",
     "final_p1", "final_p2",
     "first_play_message", "opening_offense", "home_handle", "away_handle",
-    "next_start_clock", "quoted",
+    "next_start_clock", "quoted", "timeouts_used_a", "timeouts_used_b",
 ]
 for _m in markets.MARKET_IDS:
     EXPORT_FIELDS += [f"line_{_m}", f"prob_{_m}", f"live_{_m}", f"outcome_{_m}"]
@@ -472,12 +472,19 @@ def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch,
     out = []
     starts = [(r[1], i) for i, r in enumerate(rows) if _text(r[4]) == "PLAY_STARTED"]
     start_msgs = [m for m, _ in starts]
+    timeouts = {"TEAM_A": 0, "TEAM_B": 0}          # called so far this half (or overtime period)
 
     for i, r in enumerate(rows):
         message = r[1]
         status, kind = _text(r[3]), _text(r[4])
         if status in PERIOD_START:
             period = PERIOD_START[status]
+            if period in (3, 5, 6):
+                timeouts = {"TEAM_A": 0, "TEAM_B": 0}
+        if kind and kind.startswith("TIMEOUT_CALLED_TEAM_"):
+            team = kind[len("TIMEOUT_CALLED_"):]
+            if team in timeouts:
+                timeouts[team] += 1
         if status in ("BET_SUSPEND", "BET_UNSUSPEND", "PERMANENT_BET_SUSPEND"):
             bet_state = status
         if kind == "PLAY_STARTED":
@@ -530,6 +537,7 @@ def snapshots_for_match(match_code, rows, scores, final, quotes_index, prematch,
             "final_p1": final[0] if final else None, "final_p2": final[1] if final else None,
             "first_play_message": first_play, "opening_offense": opening,
             "quoted": int(any(q is not None for q in quoted.values())),
+            "timeouts_used_a": timeouts["TEAM_A"], "timeouts_used_b": timeouts["TEAM_B"],
         }
         live_markets = 0
         for m, q in quoted.items():

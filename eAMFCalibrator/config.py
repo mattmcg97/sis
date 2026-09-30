@@ -72,6 +72,11 @@ V6_LINES = "own"
 V7_MODEL_DIR = None
 V7_PATHS = 2000
 V7_LINES = "own"
+# The same for --candidate v8 (`python -m eAMFModel v8-build`; None:
+# $EAMF_V8_MODEL, then ./v8_model).
+V8_MODEL_DIR = None
+V8_PATHS = 2000
+V8_LINES = "own"
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

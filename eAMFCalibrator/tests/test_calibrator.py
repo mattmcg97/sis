@@ -1268,6 +1268,18 @@ class TestScoutingPlayOver(unittest.TestCase):
         self.assertEqual(scouting.classify_play(["PLAY_STARTED"], ["EXTRA_POINT_GOOD_TEAM_A"]),
                          "CONVERSION")
 
+    def test_timeouts_are_counted_by_team_through_the_half(self):
+        rows = TestScoutingPlayOver.rows(self)
+        at = next(i for i, r in enumerate(rows) if r[1] == 6)
+        rows.insert(at, (self.MC, 5, 236, None, "TIMEOUT_CALLED_TEAM_A", None, None, None, None,
+                         "2026-09-20 10:00:00"))
+        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
+        snaps, _ = scouting.snapshots_for_match(self.MC, rows, scores, (14, 21),
+                                                TestScoutingPlayOver.quotes(self), {})
+        self.assertEqual([(s["timeouts_used_a"], s["timeouts_used_b"]) for s in snaps],
+                         [(0, 0), (1, 0), (1, 0)])
+        self.assertIn("timeouts_used_a", scouting.EXPORT_FIELDS)
+
     def test_state_score_clock_and_outcomes(self):
         snaps, _ = self.build()
         s = snaps[1]
