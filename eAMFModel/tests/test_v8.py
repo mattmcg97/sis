@@ -584,6 +584,16 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertGreater(d[0, sim8.OFFENCE, 2, -1], 0.5)      # Q2, last 40 s: the side with the ball
         self.assertGreater(d[1, sim8.DEFENCE, 1, 3], 0.4)       # Q4, trailing without it, 2:00-1:20
 
+    def test_overtime_fits_its_own_clock_stops(self):
+        t = self.tables
+        key = int(np.argmax(np.minimum(t.n_stop, t.count - t.n_stop)))
+        rec = lambda secs: dict(period=5, clock=100.0, margin=0, key=key, seconds=secs)
+        many_stops = sim8.fit_ot_stop(t, [rec(5.0)] * 80 + [rec(30.0)] * 20, np.zeros(sim8.N_CELLS))
+        few_stops = sim8.fit_ot_stop(t, [rec(5.0)] * 20 + [rec(30.0)] * 80, np.zeros(sim8.N_CELLS))
+        sl = int(sim8._slice_of(100.0))
+        self.assertGreater(many_stops[sl], few_stops[sl])
+        self.assertEqual(float(sim8.fit_ot_stop(t, [], np.zeros(sim8.N_CELLS)).sum()), 0.0)
+
     def test_a_play_stopped_by_a_timeout_gets_a_running_play_s_time(self):
         base = dict(key=7, mode=1, down=2)
         snaps = [dict(base, seconds=33.0)] * 10 + [dict(base, seconds=3.0, timeout_role=sim8.OFFENCE)]

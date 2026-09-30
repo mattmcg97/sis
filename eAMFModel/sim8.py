@@ -376,6 +376,36 @@ def fit_kneels(snaps):
     return p, (np.array(secs) if len(secs) >= 20 else np.array([PLAY_CLOCK - 3.0]))
 
 
+def _slice_of(clock):
+    """The 40-second slice of a quarter, 0 (4:00) to 5 (the last 40 seconds)."""
+    return np.clip(((QUARTER - np.asarray(clock, dtype=float)) // (QUARTER / CLOCK_CELLS)).astype(np.int64),
+                   0, CLOCK_CELLS - 1)
+
+
+def fit_ot_stop(tables, on, stop_shift):
+    """v8: overtime's own shift to the clock-stopped share, by 40-second slice. Overtime reads the
+    fourth quarter's cells, whose shares no longer hold the timeouts' stops (the calls add them
+    back in the fourth quarter); real sides hardly call timeouts in overtime, so its clock stops
+    on its own more than the fourth quarter's natural share."""
+    ot = [r for r in on if r["period"] >= 5]
+    shift = np.zeros(CLOCK_CELLS)
+    if not ot:
+        return shift
+    base = (_running_logit(tables, np.array([r["key"] for r in ot], dtype=np.int64))[0]
+            + stop_shift[np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in ot])])
+    sl = _slice_of([r["clock"] for r in ot])
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in ot])
+    pen = 0.5 * STOP_PRIOR * 0.25 * STOP_GRID ** 2
+    for c_ in range(CLOCK_CELLS):
+        ix = np.flatnonzero(sl == c_)
+        if not len(ix):
+            continue
+        p = np.clip(_sigmoid(base[ix, None] + STOP_GRID[None, :]), 1e-9, 1 - 1e-9)
+        ll = np.where(stop[ix, None], np.log(p), np.log(1 - p)).sum(0)
+        shift[c_] = STOP_GRID[np.argmax(ll - pen)]
+    return shift
+
+
 def clock_end_records(rows):
     """v8: every scrimmage snap on downs 1-3 that ran its quarter out -- the next PLAY_OVER is in a
     later quarter, or it was the game's last -- with its state and the seconds it had left."""
@@ -425,6 +455,8 @@ def fit_play_calling(tables, snaps, ends=(), kneels=()):
     if LATE_CLOCK:
         ends_on = [r for r in ends if not r.get("fresh")]
         stop_shift = _fit_stop_censored(tables, on, ends_on)
+        if TIMEOUTS:
+            tables.ot_stop = fit_ot_stop(tables, on, stop_shift * _quarter_mask("stop"))
 
     cls_mean = np.zeros((2, N_KEYS))
     for k in range(N_KEYS):
@@ -1209,6 +1241,7 @@ class Tables:
         self.rz_hold = np.zeros(N_RZ)
         self.td_hold = np.zeros(N_SETTLE)
         self.call_p = np.zeros(N_CALL)
+        self.ot_stop = np.zeros(CLOCK_CELLS)
         self.kneel_p = np.zeros(N_KNEEL)
         self.kneel_secs = np.array([PLAY_CLOCK - 3.0])
         self.fg_seconds = None
@@ -1409,7 +1442,7 @@ class Tables:
                       rz_shift=self.rz_shift, rz_hold=self.rz_hold, td_hold=self.td_hold,
                       inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
                       fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]),
-                      call_p=self.call_p,
+                      call_p=self.call_p, ot_stop=self.ot_stop,
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
@@ -1483,6 +1516,8 @@ class Tables:
         t.q4_modes = bool(z["q4_modes"][0]) if "q4_modes" in z else False
         if "call_p" in z and z["call_p"].shape == N_CALL:
             t.call_p = z["call_p"]
+        if "ot_stop" in z:
+            t.ot_stop = z["ot_stop"]
         if "kneel_p" in z:
             t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
         return t
@@ -1945,7 +1980,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         fr = fresh[sx] & tables.n_fresh.any()
         run_logit, ns0, n0 = _running_logit(tables, key)
         p_run = np.where(ns0 <= 0, 0.0, np.where(ns0 >= n0, 1.0,
-                                                 _sigmoid(run_logit + tables.stop_shift[cell])))
+                                                 _sigmoid(run_logit + tables.stop_shift[cell]
+                                                          + np.where(period[sx] >= 5,
+                                                                     tables.ot_stop[_slice_of(clock[sx])], 0.0))))
         p_fresh = (tables.n_fresh_stop[key] + FRESH_PRIOR * FRESH_STOP) / (tables.n_fresh[key] + FRESH_PRIOR)
         p_stop = np.where(ns == 0, 0.0, np.where(ns == n, 1.0, np.where(fr, p_fresh, p_run)))
         stops = rand(sx, 15) < p_stop
