@@ -1073,6 +1073,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         print(f"  4th downs: the league go curve, the part-of-game shifts and {len(tables.player_go):,}"
               f" players' own go shifts fitted together (sd {go_sd:.2f} in log odds); kick rather than"
               f" punt the same way ({len(tables.player_kick):,} players, sd {kick_sd:.2f})")
+    if verbose and sim.TIMEOUTS and tables.timeout_use > 0:
+        left = ", ".join(f"{k} {100 * p:.0f}%" for k, p in enumerate(tables.timeouts_left))
+        print(f"  timeouts, last 2:00 of Q4: the trailing team comes in with {left} and calls one after"
+              f" {100 * tables.timeout_use:.0f}% of the leader's clock-running plays while it has one;"
+              f" the leader stops the clock itself on {100 * tables.timeout_own:.0f}%")
     if verbose and tables.backed is not None:
         print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
               + "; ".join(f"{name.replace('_', ' ')} "
