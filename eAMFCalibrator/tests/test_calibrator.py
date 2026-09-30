@@ -5623,7 +5623,7 @@ class TestSeveralCandidates(unittest.TestCase):
         sides, dropped = self._sides()
         page = html_full.render_sides(sides, dropped)
         self.assertIn("<title>eAMF prod vs v4 &middot; T2</title>", page)
-        for section in ('id="directional"', 'id="cross"',
+        for section in ('id="directional"', 'id="cross"', "<h2>By market</h2>",
                         "<h2>Mirror check</h2>", "<h2>By selection</h2>"):
             block = page[page.index(section):]
             block = block[:block.index("</section>")]
