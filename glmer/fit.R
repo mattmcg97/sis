@@ -25,6 +25,7 @@ DEFAULTS <- list(
   out = "",                 # "" = glmer/out/model
   feature_set = "form",     # best out of sample so far -- see README.md's findings
   weighting = "hl60",
+  scalar = "",              # weight scalar in place of the weighting's own; "" = its own
   mode = "global",          # predict.R's default mode for this model
   form_half_life = "",      # "" = FORM_HALF_LIFE_MATCHES in config.R
   players = "",             # fit per-player models? "" = only when mode isn't global
@@ -65,6 +66,7 @@ if (!args$weighting %in% names(WEIGHTINGS)) stop(sprintf("no weighting '%s' in c
 if (!args$mode %in% PREDICT_MODES) stop(sprintf("mode must be one of %s", paste(PREDICT_MODES, collapse = ", ")))
 fs <- FEATURE_SETS[[args$feature_set]]
 wspec <- WEIGHTINGS[[args$weighting]]
+if (nzchar(args$scalar)) wspec$scalar <- as.numeric(args$scalar)
 if (nzchar(args$form_half_life)) FORM_HALF_LIFE_MATCHES <- as.numeric(args$form_half_life)
 with_players <- if (nzchar(args$players)) as_flag(args$players) else args$mode != "global"
 
@@ -80,8 +82,8 @@ as_of <- if (nzchar(args$before)) {
 long <- to_long(matches)
 train <- long[!is.na(long$Score) & long$Time < as_of, ]
 if (!nrow(train)) stop(sprintf("no settled matches before %s to fit on", format(as_of)))
-log_line("fitting %s / %s (form half-life %g matches) on %d settled matches before %s (%s -> %s)",
-         args$feature_set, args$weighting, FORM_HALF_LIFE_MATCHES, nrow(train) / 2, format(as_of),
+log_line("fitting %s / %s x%g (form half-life %g matches) on %d settled matches before %s (%s -> %s)",
+         args$feature_set, args$weighting, wspec$scalar %||% 1, FORM_HALF_LIFE_MATCHES, nrow(train) / 2, format(as_of),
          format(min(train$Time)), format(max(train$Time)))
 
 cores <- if (nzchar(args$cores)) as.integer(args$cores) else max(1, parallel::detectCores() - 1)
@@ -105,7 +107,8 @@ bundle$history_path <- history_path
 saveRDS(bundle, file.path(out_dir, "model.rds"))
 log_line("saved %s (%.0f MB)", file.path(out_dir, "model.rds"),
          file.size(file.path(out_dir, "model.rds")) / 1e6)
-write_json(list(feature_set = args$feature_set, weighting = args$weighting, mode = args$mode,
+write_json(list(feature_set = args$feature_set, weighting = args$weighting,
+                scalar = wspec$scalar %||% 1, mode = args$mode,
                 form_half_life = FORM_HALF_LIFE_MATCHES, per_player_models = with_players,
                 before = format(as_of, "%Y-%m-%d %H:%M:%S"), fitted_on = nrow(train) / 2,
                 first_match = format(min(train$Time), "%Y-%m-%d %H:%M:%S"),

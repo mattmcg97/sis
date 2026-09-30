@@ -18,6 +18,8 @@
 #   Rscript glmer/backtest.R --test-from=2026-07-01 --refit-days=14
 #   Rscript glmer/backtest.R --feature-sets=form --weightings=hl30,hl60,hl120 \
 #       --form-half-lives=5,10,20 --players=FALSE --refit-days=14   # half-life sweep
+#   Rscript glmer/backtest.R --feature-sets=form --weightings=hl60 --scalars=0.5,1,2 \
+#       --players=FALSE --refit-days=14                               # weight-scalar sweep
 #
 # In RStudio: set the defaults just below and Source the file.
 #
@@ -42,6 +44,9 @@ DEFAULTS <- list(
                             #   "" = FORM_HALF_LIFE_MATCHES. More than one adds "_f<n>" to the
                             #   feature set's name in the outputs.
   players = "TRUE",         # FALSE = global model only (no per-player fits; mode global)
+  scalars = "",             # comma-separated weight scalars, each applied to every weighting
+                            #   (in place of its own); "" = each weighting's own. The outputs
+                            #   call them "<weighting>_x<scalar>".
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
   nagq = "",                # "" = GLMER_NAGQ
   optimizer = "",           # "" = GLMER_OPTIMIZER (nloptwrap or bobyqa)
@@ -77,6 +82,7 @@ if (nzchar(args$optimizer)) GLMER_OPTIMIZER <- args$optimizer
 if (nzchar(args$n_sims)) N_SIMS <- as.integer(args$n_sims)
 fs_names <- if (nzchar(args$feature_sets)) split_list(args$feature_sets) else names(FEATURE_SETS)
 w_names <- if (nzchar(args$weightings)) split_list(args$weightings) else names(WEIGHTINGS)
+scalars <- if (nzchar(args$scalars)) as.numeric(split_list(args$scalars)) else NA_real_
 modes <- if (nzchar(args$modes)) split_list(args$modes) else PREDICT_MODES
 with_players <- as_flag(args$players)
 if (!with_players) modes <- "global"
@@ -117,12 +123,13 @@ log_line("train before %s (%d matches); test %s -> %s (%d matches) in %d fold(s)
          format(test_from), sum(matches$Time < test_from), format(test_from),
          format(test_until), test_n, nrow(folds))
 
-jobs <- expand.grid(fold = folds$fold, form_hl = form_hls, weighting = w_names,
+jobs <- expand.grid(fold = folds$fold, form_hl = form_hls, scalar = scalars, weighting = w_names,
                     feature_set = fs_names, stringsAsFactors = FALSE)
-jobs <- jobs[, c("feature_set", "form_hl", "weighting", "fold")]
+jobs <- jobs[, c("feature_set", "form_hl", "weighting", "scalar", "fold")]
 jobs$label <- if (length(form_hls) > 1) sprintf("%s_f%g", jobs$feature_set, jobs$form_hl) else jobs$feature_set
-log_line("%d feature sets x %d form half-lives x %d weightings x %d folds = %d fits (each: global%s)",
-         length(fs_names), length(form_hls), length(w_names), nrow(folds), nrow(jobs),
+jobs$wlabel <- if (all(is.na(scalars))) jobs$weighting else sprintf("%s_x%g", jobs$weighting, jobs$scalar)
+log_line("%d feature sets x %d form half-lives x %d weightings x %d scalars x %d folds = %d fits (each: global%s)",
+         length(fs_names), length(form_hls), length(w_names), length(scalars), nrow(folds), nrow(jobs),
          if (with_players) " + per-player" else " only")
 
 # ---------------------------------------------------------------------------
@@ -134,6 +141,7 @@ run_job <- function(j) {
   fold <- folds[folds$fold == job$fold, ]
   fs <- FEATURE_SETS[[job$feature_set]]
   wspec <- WEIGHTINGS[[job$weighting]]
+  if (!is.na(job$scalar)) wspec$scalar <- job$scalar
   t0 <- Sys.time()
   long <- longs[[as.character(job$form_hl)]]
   train <- long[!is.na(long$Score) & long$Time < fold$start, ]
@@ -151,11 +159,11 @@ run_job <- function(j) {
     preds <- do.call(rbind, lapply(modes, function(mode) {
       p <- price_matches(b, src, mode)
       p$Seen <- seen[match(p$MATCH_CODE, h$MatchId)]
-      cbind(FeatureSet = job$label, Weighting = job$weighting, Mode = mode,
+      cbind(FeatureSet = job$label, Weighting = job$wlabel, Mode = mode,
             Fold = job$fold, p, stringsAsFactors = FALSE)
     }))
     info <- data.frame(
-      FeatureSet = job$label, Weighting = job$weighting, Fold = job$fold,
+      FeatureSet = job$label, Weighting = job$wlabel, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = b$global$n,
       GlobalFormula = b$global$formula,
       SigmaMatch = b$global$sigma_match, SigmaObs = b$global$sigma_obs,
@@ -173,7 +181,7 @@ run_job <- function(j) {
     list(preds = preds, info = info)
   }, error = function(e) {
     list(preds = NULL, info = data.frame(
-      FeatureSet = job$label, Weighting = job$weighting, Fold = job$fold,
+      FeatureSet = job$label, Weighting = job$wlabel, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = NA, GlobalFormula = NA, SigmaMatch = NA,
       SigmaObs = NA, VarComp = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
       FailedPlayerFits = NA, PlayerFitsWithWarnings = NA, CappedPlayerPreds = NA,
@@ -181,7 +189,7 @@ run_job <- function(j) {
       Error = conditionMessage(e), stringsAsFactors = FALSE))
   })
   cat(sprintf("[%s] done %s / %s / fold %d in %ss%s\n", format(Sys.time(), "%H:%M:%S"),
-              job$label, job$weighting, job$fold, res$info$Seconds,
+              job$label, job$wlabel, job$fold, res$info$Seconds,
               if (nzchar(res$info$Error)) paste(" -- FAILED:", res$info$Error) else ""))
   flush.console()
   res

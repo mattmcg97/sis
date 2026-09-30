@@ -104,8 +104,10 @@ Rscript glmer/backtest.R --feature-sets=form --weightings=hl30,hl60,hl120 --form
 
 `--form-half-lives` adds the form features' own half-life (in matches) to
 the grid; the outputs then call the feature set `form_f5`, `form_f10`, and
-so on. `--players=FALSE` fits the global model only, which scores mode
-`global` and saves the per-player fits' time.
+so on. `--scalars=0.25,0.5` does the same for the weight scalar: each scalar
+is applied to every weighting, named `hl60_x0.25` and so on. `--players=FALSE`
+fits the global model only, which scores mode `global` and saves the
+per-player fits' time.
 
 For each feature set × weighting, the backtest does three things:
 1. fits the global model and every player's models on the matches before
@@ -136,6 +138,7 @@ Rscript glmer/fit.R                                                  # form / hl
 Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924   # fit only on matches before a date
 Rscript glmer/fit.R --form-half-life=20 --weighting=hl30             # other half-lives
+Rscript glmer/fit.R --scalar=0.5                                     # another weight scalar
 ```
 
 Per-player models are fitted only when `--mode` needs them, unless
