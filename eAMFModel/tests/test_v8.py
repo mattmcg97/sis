@@ -576,6 +576,14 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertLess(float(p[sim8.call_index(4, 50.0, 3, sim8.OFFENCE)]), 0.05)
         self.assertEqual(float(sim8.fit_timeout_calls([dict(base, timeouts_left=None, seconds=30.0)]).sum()), 0.0)
 
+    def test_without_timeouts_known_the_build_uses_the_real_rates(self):
+        t = sim8.Tables.build(self.matches, min_records=20)
+        self.assertTrue(np.array_equal(t.call_p, np.array(sim8.DEFAULT_CALL_P)))
+        self.assertFalse(t.call_fitted)
+        d = np.array(sim8.DEFAULT_CALL_P)
+        self.assertGreater(d[0, sim8.OFFENCE, 2, -1], 0.5)      # Q2, last 40 s: the side with the ball
+        self.assertGreater(d[1, sim8.DEFENCE, 1, 3], 0.4)       # Q4, trailing without it, 2:00-1:20
+
     def test_a_play_stopped_by_a_timeout_gets_a_running_play_s_time(self):
         base = dict(key=7, mode=1, down=2)
         snaps = [dict(base, seconds=33.0)] * 10 + [dict(base, seconds=3.0, timeout_role=sim8.OFFENCE)]

@@ -220,7 +220,8 @@ def _fit_stop_censored(tables, on, ends):
 # v8: timeouts, three for each side each half, called as real sides call them. Before a snap,
 # with the clock running after the last play, each side may stop it -- at the rate real sides do
 # in the same quarter, 40-second slice, with or without the ball and at the same score, while it
-# has one left (call_p, fitted on the calibrator's timeouts.csv: v8-build --timeouts). The snap
+# has one left (call_p: fitted on the calibrator's timeouts.csv with v8-build --timeouts, else the
+# real rates in DEFAULT_CALL_P). The snap
 # then takes only its own play's time. Real sides call them in the last four minutes of the
 # second and fourth quarters, and hardly ever otherwise. A real play that followed a timeout is
 # put back in the tables with a clock-running play's time, so the calls are not counted twice.
@@ -232,6 +233,46 @@ TIMEOUT_QUARTERS = (2, 4)
 TIMEOUT_PRIOR = 20.0
 OFFENCE, DEFENCE = 0, 1
 N_CALL = (len(TIMEOUT_QUARTERS), 2, LEAD_CELLS, CLOCK_CELLS)
+
+
+# The share of running clocks each side stopped with a timeout before the snap, while it had one,
+# in 12,000 real calls over 2,300 matches (24 Aug - 22 Sep 2026: SCOUTING_FULL's TIMEOUT_CALLED
+# messages, `python -m eAMFCalibrator timeouts`): what a build uses when it is given no
+# timeouts.csv. [quarter 2, 4][with the ball, without it][the side's own score][slice].
+DEFAULT_CALL_P = [
+    [  # Q2
+        [  # with the ball: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.000, 0.000, 0.006, 0.018, 0.145, 0.788],
+            [0.002, 0.002, 0.000, 0.011, 0.117, 0.711],
+            [0.006, 0.003, 0.000, 0.010, 0.095, 0.706],
+            [0.000, 0.003, 0.000, 0.005, 0.108, 0.735],
+            [0.002, 0.001, 0.000, 0.002, 0.056, 0.717],
+        ],
+        [  # without it: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.001, 0.005, 0.099, 0.168, 0.251, 0.130],
+            [0.003, 0.011, 0.084, 0.157, 0.232, 0.128],
+            [0.003, 0.013, 0.075, 0.136, 0.232, 0.126],
+            [0.001, 0.008, 0.055, 0.100, 0.203, 0.107],
+            [0.000, 0.007, 0.056, 0.095, 0.101, 0.056],
+        ],
+    ],
+    [  # Q4
+        [  # with the ball: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.002, 0.013, 0.052, 0.088, 0.252, 0.677],
+            [0.002, 0.006, 0.007, 0.024, 0.129, 0.649],
+            [0.006, 0.003, 0.001, 0.008, 0.028, 0.288],
+            [0.010, 0.005, 0.007, 0.007, 0.007, 0.055],
+            [0.000, 0.000, 0.005, 0.007, 0.006, 0.089],
+        ],
+        [  # without it: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.050, 0.082, 0.308, 0.511, 0.596, 0.652],
+            [0.008, 0.065, 0.281, 0.495, 0.685, 0.813],
+            [0.012, 0.037, 0.214, 0.381, 0.553, 0.618],
+            [0.008, 0.017, 0.121, 0.178, 0.249, 0.190],
+            [0.009, 0.007, 0.018, 0.017, 0.019, 0.035],
+        ],
+    ],
+]
 
 
 def call_index(period, clock, lead, role):
@@ -1221,7 +1262,9 @@ class Tables:
             early += early_kicks(rows)
         t = cls()
         if TIMEOUTS:
-            t.call_p = fit_timeout_calls(snaps)
+            known = any("timeouts_left" in r for r in snaps)
+            t.call_p = fit_timeout_calls(snaps) if known else np.array(DEFAULT_CALL_P)
+            t.call_fitted = known
             natural_seconds(snaps)
         if KNEELS:
             t.kneel_p, t.kneel_secs = fit_kneels(snaps)

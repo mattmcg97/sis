@@ -1050,6 +1050,9 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             _print_settle(settled, tables)
     if verbose and sim.TIMEOUTS:
         if tables.call_p.any():
+            source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
+                      else "the real rates in sim8.DEFAULT_CALL_P (build with --timeouts to refit)")
+            print(f"  timeouts: {source}")
             p = tables.call_p
             print("  timeouts, share of running clocks a side stops before the snap in each 40-second"
                   " slice (4:00 -> 0:00), level score: Q2 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[0, 0, 2])
@@ -1057,8 +1060,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                   + "; Q4 trailing 1-8 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[1, 0, 1])
                   + " / without " + " ".join(f"{100 * x:.0f}" for x in p[1, 1, 1]) + " %")
         else:
-            print("  timeouts: none known (build with --timeouts, the calibrator's timeouts.csv) --"
-                  " the leader kneels out as v7 did")
+            print("  timeouts: off -- the leader kneels out as v7 did")
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "
