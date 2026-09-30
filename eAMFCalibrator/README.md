@@ -1372,6 +1372,44 @@ a single wrong one. Everything that scores prices skips them.
 
 It is the input to `python -m eAMFModel playover` and `v3-build`.
 
+Each row also carries `timeouts_used_a` / `timeouts_used_b`: how many timeouts
+each side had called in the half at that `PLAY_OVER`, off the feed's
+`TIMEOUT_CALLED_TEAM_A/B` messages. v8 reads them into the game state, so it
+knows each side's timeouts left. Exports made before this have no such columns;
+v8 then assumes three each.
+
+## Every timeout: `timeouts`
+
+```bash
+python -m eAMFCalibrator timeouts --since 2026-08-24
+```
+
+The `PLAY_OVER` export keeps only the messages inside a play, so the timeouts,
+called between plays, never reached it. This reads them straight off
+`SCOUTING_FULL` and writes two files to `--out`:
+
+| file | what it is |
+|---|---|
+| `timeouts.csv` | one row per `TIMEOUT_CALLED`: quarter and clock, the side that called it, whether it had the ball (`role`: the offense of the next snap), its lead, how many it had called before in the half, and the play before it (`incomplete`, `first down`, `in play`, `change of possession`) |
+| `timeouts_summary.txt` | the calls by quarter, clock, role and score, and how many each side had used by 2:00 of Q2 and 3:00, 2:00 and 1:00 of Q4 |
+
+`python -m eAMFModel v8-build ... --timeouts timeouts.csv` fits v8's timeout
+calls on it (see eAMFModel's README).
+
+What 15,612 calls over 2,977 matches (24 Aug – 22 Sep) showed:
+- Almost all come in the last four minutes of Q2 (7,387) and Q4 (7,942).
+  Q1 and Q3 have about 250 between them.
+- Q2: the side without the ball calls most of them from 3:00 to 1:00 (67–79%).
+  In the last 30 seconds the side with the ball calls 69%, at any score.
+- Q4: sides without the ball call them from about 3:00, whether down by one
+  score or more. Level sides and sides a score ahead call them too, to keep
+  time to answer. Trailing sides with the ball call them from about 1:30,
+  most in the last minute.
+- Only about 6% follow an incompletion. The rest follow a play in bounds
+  (about 45%) or a first down (about 30%).
+- A side still has all three at Q2's 2:00 94% of the time, at Q4's 3:00 95%
+  of the time, and at Q4's 2:00 85% of the time.
+
 ## eAMFModel v3 as the candidate: `--candidate v3`
 
 ```bash

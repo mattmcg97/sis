@@ -236,18 +236,19 @@ TIMEOUTS_PER_HALF = 3
 
 
 def timeouts_left(row):
-    """(home, away) timeouts left in the half from the export's timeouts_used_a/b, or (-1, -1)
-    where the export has none (older exports) or in overtime."""
+    """(home, away) timeouts left in the half (or overtime period, two each) from the export's
+    timeouts_used_a/b, or (-1, -1) where the export has none (older exports)."""
     a, b = row.get("timeouts_used_a"), row.get("timeouts_used_b")
     side = row.get("team_a_side")
     try:
         period = int(float(row.get("period") or 0))
     except ValueError:
         return -1, -1
-    if a in ("", None) or b in ("", None) or side not in ("home", "away") or not 1 <= period <= 4:
+    if a in ("", None) or b in ("", None) or side not in ("home", "away") or period < 1:
         return -1, -1
-    left_a = max(0, TIMEOUTS_PER_HALF - int(float(a)))
-    left_b = max(0, TIMEOUTS_PER_HALF - int(float(b)))
+    have = TIMEOUTS_PER_HALF if period <= 4 else sim.OT_TIMEOUTS
+    left_a = max(0, have - int(float(a)))
+    left_b = max(0, have - int(float(b)))
     return (left_a, left_b) if side == "home" else (left_b, left_a)
 
 
@@ -1052,7 +1053,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         if tables.call_p.any():
             source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
                       else "the real rates in sim8.DEFAULT_CALL_P (build with --timeouts to refit)")
-            print(f"  timeouts: {source}")
+            print(f"  timeouts: {source}; overtime, two a side each period, called at"
+                  f" {tables.ot_call_scale:.2f}x the fourth quarter's rates")
             p = tables.call_p
             print("  timeouts, share of running clocks a side stops before the snap in each 40-second"
                   " slice (4:00 -> 0:00), level score: Q2 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[0, 0, 2])

@@ -594,6 +594,33 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertGreater(many_stops[sl], few_stops[sl])
         self.assertEqual(float(sim8.fit_ot_stop(t, [], np.zeros(sim8.N_CELLS)).sum()), 0.0)
 
+    def test_overtime_has_two_timeouts_a_side_called_less_often(self):
+        rec = dict(period=5, offense="TEAM_A")
+        sim8._timeouts_at(rec, {"timeouts_used_a": 1, "timeouts_used_b": 0, "offense": "TEAM_A"})
+        self.assertEqual(rec["timeouts_left"], (1, 2))
+        base = dict(period=5, clock=50.0, margin=0, fresh=False, timeouts_left=(2, 2))
+        p = np.full(sim8.N_CALL, 0.5)
+        none = sim8.fit_ot_call_scale([dict(base, seconds=35.0)] * 200, p)
+        some = sim8.fit_ot_call_scale([dict(base, seconds=35.0)] * 180
+                                      + [dict(base, seconds=4.0, timeout_role=sim8.DEFENCE)] * 20, p)
+        self.assertLess(none, 0.02)
+        self.assertAlmostEqual(some, 20 / 200, delta=0.02)
+        self.assertEqual(sim8.fit_ot_call_scale([], p), sim8.OT_CALL_DEFAULT)
+        t = self.tables
+        saved = t.call_p.copy(), t.ot_call_scale
+        try:
+            t.call_p[:] = 1.0
+            t.ot_call_scale = 1.0
+            st = sim8.Start(1)
+            st.period[:], st.clock[:], st.phase[:] = 5, 200.0, sim8.SCRIM
+            st.team[:], st.y[:], st.down[:], st.home[:], st.away[:] = 0, 30, 1, 17, 17
+            stats = {}
+            sim8.simulate(t, st, 200, np.random.default_rng(1), seed=4, stats=stats)
+            self.assertGreater(stats.get("timeouts", 0), 0)
+            self.assertLessEqual(stats.get("timeouts", 0), 200 * 2 * 2 * sim8.MAX_OT)
+        finally:
+            t.call_p, t.ot_call_scale = saved
+
     def test_a_play_stopped_by_a_timeout_gets_a_running_play_s_time(self):
         base = dict(key=7, mode=1, down=2)
         snaps = [dict(base, seconds=33.0)] * 10 + [dict(base, seconds=3.0, timeout_role=sim8.OFFENCE)]
@@ -677,7 +704,7 @@ class TestClockToTheEnd(unittest.TestCase):
         row = {"timeouts_used_a": "1", "timeouts_used_b": "3", "team_a_side": "away", "period": "4"}
         self.assertEqual(v8.timeouts_left(row), (0, 2))
         self.assertEqual(v8.timeouts_left(dict(row, team_a_side="home")), (2, 0))
-        self.assertEqual(v8.timeouts_left(dict(row, period="5")), (-1, -1))
+        self.assertEqual(v8.timeouts_left(dict(row, period="5")), (0, 1))      # two a side in overtime
         self.assertEqual(v8.timeouts_left({"period": "4", "team_a_side": "home"}), (-1, -1))
         state = v8.FreshState(**{f.name: None for f in v8.fields(v8.GameState)}, timeouts=(2, 0))
         self.assertEqual(state.timeouts, (2, 0))
