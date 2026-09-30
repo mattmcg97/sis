@@ -122,7 +122,9 @@ class Prematch:
     def describe(self):
         """One line on what was fitted, for a build's log."""
         m = self.meta.get("model", {})
-        return (f"glmer {m.get('feature_set', '?')} / {m.get('weighting', '?')} (form half-life "
+        scalar = m.get("scalar", 1)
+        weighting = f"{m.get('weighting', '?')}" + (f" x{scalar:g}" if scalar != 1 else "")
+        return (f"glmer {m.get('feature_set', '?')} / {weighting} (form half-life "
                 f"{m.get('form_half_life', '?')} matches, {m.get('mode', '?')} model) fitted on "
                 f"{self.meta['fitted_on']:,} matches before {self.meta['before'][:10]}; expected "
                 "points not rescaled")
