@@ -241,6 +241,27 @@ matches:
 | glmer `form` / hl60 blend | 0.2373     | 0.6672     | +0.07       | 12.32       | 0.325       |
 | glmer `form` / hl60 pair  | 0.2423     | 0.6790     | −0.16       | 12.46       | 0.297       |
 
+**Half-life sweep** of the global `form` model. Refit every 14 days, all
+5,988 test matches; each cell is log loss / totals RMSE:
+
+| form half-life ↓ · row half-life → | 30 days         | 60 days             | 120 days        |
+|------------------------------------|-----------------|---------------------|-----------------|
+| 5 matches                          | 0.6637 / 12.35  | 0.6633 / 12.34      | 0.6639 / 12.34  |
+| 10 matches                         | 0.6640 / 12.33  | **0.6634 / 12.32**  | 0.6635 / 12.32  |
+| 20 matches                         | 0.6639 / 12.32  | 0.6637 / 12.32      | 0.6642 / 12.33  |
+
+Paired match by match against the defaults (10 matches, 60 days), nothing
+does better:
+- **5 matches / 60 days** is level on log loss: −0.0001, t −0.3, better in
+  2 of 5 fortnights. It is worse on totals (t +3.5).
+- **Every other cell** is worse on log loss, by up to +0.0008 (t +2.0 at 20
+  matches / 120 days).
+
+So the defaults stay. The whole grid spans less than 0.001 in log loss.
+That is about the size of the difference between two machines fitting the
+same model: fits are exact on one machine, but the optimiser stops a hair
+apart on another.
+
 What the numbers say:
 
 - **The form features are the gain.** These are both sides'
