@@ -303,24 +303,36 @@ def _table(sides, lead, rows, measures, table_class="", table_id=""):
 # ---------------------------------------------------------------------------
 
 def _headline(sides):
-    """Brier at prod's line, overall and by market; line error at each side's own line."""
-    rows = [("<th>All markets</th>",
-             [_brier_rec(s["prob_full"]["summary"]["same_line"]["overall"]) for s in sides], "")]
-    for market in MARKET_ORDER:
-        rows.append((f"<th>{MARKET_TITLES[market]}</th>",
-                     [_brier_rec(s["prob_full"]["summary"]["same_line"]["by_market"].get(market))
-                      for s in sides], ""))
-    brier = _table(sides, [("At prod's line", "")], rows, ["brier"])
-    line_rows = [("<th>All lines</th>",
-                  [_line_rec(s["line_full"]["line_error"]["all"].get("all")) for s in sides], "")]
-    for market in LINE_MARKETS:
-        line_rows.append((f"<th>{MARKET_TITLES[market]}</th>",
-                          [_line_rec(s["line_full"]["line_error"]["market"].get(market)) for s in sides],
-                          ""))
-    line = _table(sides, [("At its own line", "")], line_rows, ["line", "same"])
+    """Brier at prod's line and line error at each side's own line, over every market."""
+    brier = _table(sides, [("At prod's line", "")],
+                   [("<th>All markets</th>",
+                     [_brier_rec(s["prob_full"]["summary"]["same_line"]["overall"]) for s in sides],
+                     "")], ["brier"])
+    line = _table(sides, [("At its own line", "")],
+                  [("<th>All lines</th>",
+                    [_line_rec(s["line_full"]["line_error"]["all"].get("all")) for s in sides], "")],
+                  ["line", "same"])
     return f"""
     <section class="panel" id="directional">
       <h2>Directional calibration</h2>
+      {brier}
+      {line}
+    </section>"""
+
+
+def _market_block(sides):
+    """The same two readings by market."""
+    rows = [(f"<th>{MARKET_TITLES[market]}</th>",
+             [_brier_rec(s["prob_full"]["summary"]["same_line"]["by_market"].get(market))
+              for s in sides], "") for market in MARKET_ORDER]
+    brier = _table(sides, [("At prod's line", "")], rows, ["brier"])
+    line_rows = [(f"<th>{MARKET_TITLES[market]}</th>",
+                  [_line_rec(s["line_full"]["line_error"]["market"].get(market)) for s in sides], "")
+                 for market in LINE_MARKETS]
+    line = _table(sides, [("At its own line", "")], line_rows, ["line", "same"])
+    return f"""
+    <section class="panel" id="markets">
+      <h2>By market</h2>
       {brier}
       {line}
     </section>"""
@@ -1198,7 +1210,7 @@ def render_sides(sides, dropped=None, extra=""):
     <h1>{_title(sides)}</h1>
   </header>
 
-  <div id="headline">{_headline(sides)}</div>
+  <div id="headline">{_headline(sides)}{_market_block(sides)}</div>
   {_full_cell(sides)}
   {axis_sections}
   {_prematch_block(sides)}
