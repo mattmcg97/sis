@@ -185,6 +185,22 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_timeouts(args):
+    """Every timeout in SCOUTING_FULL over the window: who called it, when, at what score, and
+    how many each side had left at the end of each half -- what the model's timeout windows are
+    set from."""
+    from . import timeouts
+    out_dir = args.out or DEFAULT_OUT
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            timeouts.run(cur, table, out_dir)
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_drive_audit(args):
     """Every drive the play feed yields in the window, checked, and each
     one's end compared with SCOUTING_FULL where it can be reached."""
@@ -1001,6 +1017,15 @@ def build_parser():
     sc_parser.add_argument("--no-probe", action="store_true")
     sc_parser.add_argument("--no-export", action="store_true")
 
+    to_parser = sub.add_parser(
+        "timeouts", parents=[shared],
+        help="every timeout in SCOUTING_FULL: who called it (with or without the ball), when and "
+             "at what score, and how many each side had left late in each half "
+             "(-> timeouts.csv, timeouts_summary.txt; last 30 days by default)")
+    to_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    to_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE")
+
     dump_parser = sub.add_parser(
         "dump", parents=[shared],
         help="write the drive-detection working out to CSV for inspection")
@@ -1049,7 +1074,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    if args.command == "scouting" and not (args.days or args.since):
+    if args.command in ("scouting", "timeouts") and not (args.days or args.since):
         args.days = 30          # the scouting export defaults to the last month
     apply_overrides(args)
     if args.command == "preflight":
@@ -1064,6 +1089,8 @@ def main(argv=None):
         return cmd_dump(args)
     if args.command == "scouting":
         return cmd_scouting(args)
+    if args.command == "timeouts":
+        return cmd_timeouts(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
