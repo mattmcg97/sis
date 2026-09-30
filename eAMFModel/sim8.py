@@ -1031,6 +1031,11 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
 
 FOURTH_JOINT = True
 OT_RULES = True
+# v8: an overtime period's clock running out ends the game only when a side leads and the side
+# behind has had its possession; otherwise play carries on into the next period with the same
+# ball, down and spot, as between quarters (39% of real overtimes reach a second period; none
+# ended level). Before, a lead ended it at the clock and a level score kicked off again.
+OT_CARRY = True
 OT_KICK_RANGE = 55
 OT_GO_PRIOR = 2.0
 
@@ -1744,6 +1749,32 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         team[h] = np.where(kick2[h] >= 0, kick2[h], pick(h, 18, 2))
         e = ix[p >= 4]
         level = score[e, 0] == score[e, 1]
+        if OT_CARRY:
+            # regulation's end: level goes to overtime off a kick-off, otherwise it is over
+            reg = e[period[e] == 4]
+            lv = score[reg, 0] == score[reg, 1]
+            tally("overtime", lv.sum())
+            phase[reg[~lv]] = DONE
+            go = reg[lv]
+            period[go] = 5
+            clock[go] = QUARTER
+            tos[go] = OT_TIMEOUTS
+            phase[go] = KICK
+            team[go] = pick(go, 1, 2)
+            # an overtime period's end: over only when a side leads and the side behind has had
+            # its possession; otherwise play carries on into the next period, as between quarters
+            ot_e = e[period[e] >= 5]
+            behind = np.where(score[ot_e, 0] < score[ot_e, 1], 0, 1)
+            decided = (score[ot_e, 0] != score[ot_e, 1]) & ot_done[ot_e, behind]
+            stop = decided | (period[ot_e] >= 4 + MAX_OT)
+            phase[ot_e[stop]] = DONE
+            on = ot_e[~stop]
+            period[on] += 1
+            clock[on] = QUARTER
+            tos[on] = OT_TIMEOUTS
+            fresh[on] = True
+            tally("ot_carried", len(on))
+            return
         more = e[level & (period[e] < 4 + MAX_OT)]
         tally("overtime", (level & (period[e] == 4)).sum())
         phase[e[~level | (period[e] >= 4 + MAX_OT)]] = DONE

@@ -435,9 +435,9 @@ class TestLateGame(unittest.TestCase):
 
     def test_with_its_own_switches_off_v8_plays_as_v6(self):
         saved = (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
+                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
         sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
         sim8.PLAY_CALLING_Q4 = set()
         try:
             t7 = sim8.Tables.build(self.matches, min_records=20)
@@ -451,18 +451,18 @@ class TestLateGame(unittest.TestCase):
             b = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
         finally:
             (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS) = saved
+             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_with_both_off_v6_plays_as_v5(self):
         import copy
         saved = (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
                  sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
+                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
         sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4, sim8.RED_ZONE_FIT = \
             None, False, False, set(), False
         sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
         try:
             t6 = sim8.Tables.build(self.matches, min_records=20)
             t6.late_fourth = None
@@ -475,7 +475,7 @@ class TestLateGame(unittest.TestCase):
         finally:
             (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
              sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS) = saved
+             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY) = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_big_leads_have_their_own_situations(self):
@@ -498,8 +498,8 @@ class TestClockToTheEnd(unittest.TestCase):
 
     def test_with_its_own_switches_off_v8_plays_as_v7(self):
         from .. import sim7
-        saved = (sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS)
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = False
+        saved = (sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
+        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
         try:
             t8 = sim8.Tables.build(self.matches, min_records=20)
             t7 = sim7.Tables.build(self.matches, min_records=20)
@@ -510,7 +510,7 @@ class TestClockToTheEnd(unittest.TestCase):
             a = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
             b = sim7.simulate(t7, st, 300, np.random.default_rng(1), seed=9)
         finally:
-            sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS = saved
+            sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def _row(self, message, period, clock, down=1, kind="SCRIMMAGE", offense="TEAM_A"):
@@ -620,6 +620,27 @@ class TestClockToTheEnd(unittest.TestCase):
             self.assertLessEqual(stats.get("timeouts", 0), 200 * 2 * 2 * sim8.MAX_OT)
         finally:
             t.call_p, t.ot_call_scale = saved
+
+    def test_overtime_carries_on_until_both_sides_have_had_the_ball(self):
+        t = self.tables
+        st = sim8.Start(2)
+        # a side leads as the first overtime period runs out, but the side behind has yet to have
+        # the ball / the score is level: play carries on into the next period, same ball and spot
+        st.period[:], st.clock[:], st.phase[:] = 5, 3.0, sim8.SCRIM
+        st.team[:], st.y[:], st.down[:], st.home[:], st.away[:] = [1, 0], 40, 1, [20, 17], [17, 17]
+        stats = {}
+        sim8.simulate(t, st, 200, np.random.default_rng(1), seed=4, stats=stats)
+        self.assertGreater(stats.get("ot_carried", 0), 0)
+        saved = sim8.OT_CARRY
+        try:
+            sim8.OT_CARRY = False
+            stats = {}
+            sim8.simulate(t, st, 200, np.random.default_rng(1), seed=4, stats=stats)
+            self.assertEqual(stats.get("ot_carried", 0), 0)
+        finally:
+            sim8.OT_CARRY = saved
+        h, a = sim8.simulate(t, st, 400, np.random.default_rng(1), seed=4)
+        self.assertLess(float((h == a).mean()), 0.02)            # overtime almost never ends level
 
     def test_a_play_stopped_by_a_timeout_gets_a_running_play_s_time(self):
         base = dict(key=7, mode=1, down=2)
