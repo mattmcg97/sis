@@ -9,6 +9,7 @@
 #   Rscript glmer/fit.R                                     # form / hl60 / global
 #   Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 #   Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924
+#   Rscript glmer/fit.R --form-half-life=20 --weighting=hl30
 #
 # In RStudio: set the defaults just below and Source the file.
 #
@@ -17,6 +18,7 @@
 #   player_ratings.csv   per player: global attack / defence effects, and their own models' summaries
 #   effects.csv          every random effect of the global model (teams, streams, ...)
 #   fit_summary.txt      formulas, variance components, fixed effects, warnings
+#   model_info.json      the configuration and cut-off, for eAMFModel's glmer_prior.py
 
 DEFAULTS <- list(
   history = "",             # "" = first of HISTORY_CANDIDATES in config.R
@@ -24,6 +26,8 @@ DEFAULTS <- list(
   feature_set = "form",     # best out of sample so far -- see README.md's findings
   weighting = "hl60",
   mode = "global",          # predict.R's default mode for this model
+  form_half_life = "",      # "" = FORM_HALF_LIFE_MATCHES in config.R
+  players = "",             # fit per-player models? "" = only when mode isn't global
   before = "",              # "YYYY-MM-DD"; "" = fit on every settled match
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
   nagq = "",                # "" = GLMER_NAGQ
@@ -61,24 +65,28 @@ if (!args$weighting %in% names(WEIGHTINGS)) stop(sprintf("no weighting '%s' in c
 if (!args$mode %in% PREDICT_MODES) stop(sprintf("mode must be one of %s", paste(PREDICT_MODES, collapse = ", ")))
 fs <- FEATURE_SETS[[args$feature_set]]
 wspec <- WEIGHTINGS[[args$weighting]]
+if (nzchar(args$form_half_life)) FORM_HALF_LIFE_MATCHES <- as.numeric(args$form_half_life)
+with_players <- if (nzchar(args$players)) as_flag(args$players) else args$mode != "global"
 
 history_path <- resolve_history(args$history, repo_root)
 log_line("history: %s", history_path)
 matches <- load_matches(history_path)
 settled <- matches[!is.na(matches$P1Score), ]
 as_of <- if (nzchar(args$before)) {
-  as.POSIXct(args$before, tz = "UTC")
+  parse_cutoff(args$before)
 } else {
   max(settled$Time) + 1
 }
 long <- to_long(matches)
 train <- long[!is.na(long$Score) & long$Time < as_of, ]
-log_line("fitting %s / %s on %d settled matches before %s (%s -> %s)", args$feature_set, args$weighting,
-         nrow(train) / 2, format(as_of), format(min(train$Time)), format(max(train$Time)))
+if (!nrow(train)) stop(sprintf("no settled matches before %s to fit on", format(as_of)))
+log_line("fitting %s / %s (form half-life %g matches) on %d settled matches before %s (%s -> %s)",
+         args$feature_set, args$weighting, FORM_HALF_LIFE_MATCHES, nrow(train) / 2, format(as_of),
+         format(min(train$Time)), format(max(train$Time)))
 
 cores <- if (nzchar(args$cores)) as.integer(args$cores) else max(1, parallel::detectCores() - 1)
 cl <- NULL
-if (cores > 1) {
+if (cores > 1 && with_players) {
   cl <- parallel::makeCluster(cores)
   invisible(parallel::clusterCall(cl, function(dir, nagq, optimizer) {
     source(file.path(dir, "config.R"))
@@ -90,13 +98,21 @@ if (cores > 1) {
 }
 bundle <- tryCatch(
   fit_bundle(train, fs, wspec, as_of, cluster = cl, fs_name = args$feature_set,
-             w_name = args$weighting),
+             w_name = args$weighting, with_players = with_players),
   finally = if (!is.null(cl)) parallel::stopCluster(cl))
 bundle$default_mode <- args$mode
 bundle$history_path <- history_path
 saveRDS(bundle, file.path(out_dir, "model.rds"))
 log_line("saved %s (%.0f MB)", file.path(out_dir, "model.rds"),
          file.size(file.path(out_dir, "model.rds")) / 1e6)
+write_json(list(feature_set = args$feature_set, weighting = args$weighting, mode = args$mode,
+                form_half_life = FORM_HALF_LIFE_MATCHES, per_player_models = with_players,
+                before = format(as_of, "%Y-%m-%d %H:%M:%S"), fitted_on = nrow(train) / 2,
+                first_match = format(min(train$Time), "%Y-%m-%d %H:%M:%S"),
+                last_match = format(max(train$Time), "%Y-%m-%d %H:%M:%S"),
+                sigma_match = bundle$global$sigma_match, sigma_obs = bundle$global$sigma_obs,
+                history = history_path),
+           file.path(out_dir, "model_info.json"))
 
 # ---------------------------------------------------------------------------
 # Readable outputs
@@ -155,13 +171,19 @@ print(summary(gfit)$varcor)
 cat("\nFixed effects:\n")
 print(round(summary(gfit)$coefficients, 4))
 if (length(bundle$global$warnings)) cat("\nWarnings:\n", paste(" -", bundle$global$warnings, collapse = "\n"), "\n")
-cat(sprintf("\nPER-PLAYER MODELS (>= %d matches): %d attack, %d defence; %d fits failed\n",
-            bundle$min_matches, sum(!is.na(ratings$AttackModelRows)), sum(!is.na(ratings$DefenceModelRows)),
-            bundle$failed_player_fits))
-ex <- bundle$players[[1]]$attack %||% bundle$players[[1]]$defence
-if (!is.null(ex)) cat("e.g.", names(bundle$players)[1], ":", ex$formula, "\n")
-nw <- sum(unlist(lapply(bundle$players, function(p) vapply(p, function(m) length(m$warnings) > 0, logical(1)))))
-cat(sprintf("%d per-player fits carried warnings (usually singular fits: a variance component at 0)\n", nw))
+if (with_players) {
+  cat(sprintf("\nPER-PLAYER MODELS (>= %d matches): %d attack, %d defence; %d fits failed\n",
+              bundle$min_matches, sum(!is.na(ratings$AttackModelRows)), sum(!is.na(ratings$DefenceModelRows)),
+              bundle$failed_player_fits))
+  if (length(bundle$players)) {
+    ex <- bundle$players[[1]]$attack %||% bundle$players[[1]]$defence
+    if (!is.null(ex)) cat("e.g.", names(bundle$players)[1], ":", ex$formula, "\n")
+  }
+  nw <- sum(unlist(lapply(bundle$players, function(p) vapply(p, function(m) length(m$warnings) > 0, logical(1)))))
+  cat(sprintf("%d per-player fits carried warnings (usually singular fits: a variance component at 0)\n", nw))
+} else {
+  cat("\nPER-PLAYER MODELS: not fitted (global model only)\n")
+}
 sink()
 
 cat("\n")
@@ -172,4 +194,4 @@ show[3:5] <- lapply(show[3:5], round, 3)
 print(head(show, 10), row.names = FALSE)
 cat("...\n")
 print(tail(show, 5), row.names = FALSE)
-cat(sprintf("\nWritten to %s: model.rds, player_ratings.csv, effects.csv, fit_summary.txt\n", out_dir))
+cat(sprintf("\nWritten to %s: model.rds, model_info.json, player_ratings.csv, effects.csv, fit_summary.txt\n", out_dir))

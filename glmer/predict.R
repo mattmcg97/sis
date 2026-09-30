@@ -29,7 +29,7 @@ DEFAULTS <- list(
   history = "",             # "" = the history the model was fitted on
   mode = "",                # "" = the model's default (fit.R --mode)
   out = "",                 # "" = glmer/out/predictions.csv
-  n_sims = ""               # "" = N_SIMS
+  n_sims = ""               # "" = N_SIMS; 0 = expected points only (no moneyline)
 )
 
 .here <- local({
@@ -131,6 +131,7 @@ if (!is.null(out$PLAYER_1_FINAL_SCORE)) {
     p$P2Score <- out$PLAYER_2_FINAL_SCORE[settled]
     cat("\nAgainst the results already in:\n")
     sc <- score_predictions(p)
+    if (N_SIMS <= 0) sc <- sc[setdiff(names(sc), c("Brier", "LogLoss"))]
     print(round(sc, 4), row.names = FALSE)
   }
 }

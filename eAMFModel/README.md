@@ -1152,6 +1152,53 @@ python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshot
 python -m unittest eAMFModel.tests.test_v7
 ```
 
+### Its pre-match prior: NB2 or glmer (`--prior`)
+
+`v7-build --prior glmer` fits the glmer model on `--history` in place of
+NB2. That's the global mixed model in `glmer/`, run in R with lme4.
+`--prior nb2` is the default and is unchanged.
+
+The build saves the model in `v7_model/glmer/` and records the choice in
+`v7prior.json`. From then on, `v7`, `remaining`, the stream and the
+calibrator's `--candidate v7` all price off whichever prior the model was
+built with. A model built before `--prior` existed reads as NB2.
+
+- **The model.** Its terms are:
+  - player attack and defence;
+  - both NFL teams;
+  - the stream;
+  - home/away;
+  - both sides' recent form: points scored and conceded, recency-weighted
+    over their last matches.
+
+  Out of sample on NB2's own split it beat NB2 on the moneyline and on
+  totals (log loss 0.6669 against 0.6782). With a refit every 14 days it
+  also beat the NB2-structured glmer, 0.6638 against 0.6695. See
+  `glmer/README.md`.
+- **Its settings.** The feature set, row weighting and form half-life are
+  `glmer/fit.R`'s defaults (`glmer/config.R`). `glmer_prior.py` only runs
+  `glmer/fit.R` and `glmer/predict.R`.
+- **No level scale.** The expected points aren't rescaled. Out of sample
+  its totals ran 0.2 points under the real ones. NB2's level scale corrects
+  a 1.7-point gap that this model doesn't have.
+- **Form follows results when it has them.**
+  - Priced with `--history` (`v7`, `remaining`), the rows carry finals, so
+    each match's form counts every result that started before it.
+  - The calibrator's `match_info` comes from `EVENT` without finals, so
+    there the form stays as it was at the build, as NB2's ratings do.
+- **It needs R.**
+  - Install R 4.x, then `Rscript glmer/install_packages.R`.
+  - `Rscript` is found on the PATH or through `RSCRIPT`. On Windows it is
+    also found under Program Files.
+  - The fit takes a few minutes on the full history; pricing a batch of
+    matches takes seconds.
+
+```bash
+python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-17 --out v7_glmer --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --prior glmer
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v7 --model v7_glmer --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --since 2026-09-17 --until 2026-09-22
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v7 --v7-model v7_glmer
+```
+
 ## Pricing only what the model is sure of (v4–v7 streams)
 
 A version quotes a prod message only where its state is the game's at that

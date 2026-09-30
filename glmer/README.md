@@ -1,8 +1,24 @@
-# glmer — per-player mixed-effects pre-match model
+# glmer — mixed-effects pre-match model
 
-An alternative to the NB2 pre-match model (`nb2/`) that eAMFModel's v4, v5
-and v6 use for each match's prior. It is written in R with `lme4::glmer`
-and has two parts:
+An alternative to the NB2 pre-match model (`nb2/`) that eAMFModel's
+versions use for each match's prior. It is written in R with `lme4::glmer`.
+v7 can price off it with `v7-build --prior glmer` (see
+[In eAMFModel's v7](#in-eamfmodels-v7)).
+
+**The chosen model is the global one** with the `form` features and a
+60-day row half-life: `fit.R`'s defaults. It is a single Poisson GLMM over
+every side of every match, with:
+- random effects for the gamer's attack, the opponent's defence, both NFL
+  teams and the stream;
+- home/away;
+- both sides' recent form.
+
+Every player's rating is shrunk toward the league by how much data they
+have, so a new player starts as an average one. The per-player models
+below are still here to backtest, but they lost to the global model (see
+[First findings](#first-findings-29-sep-2026-nb2amfelocsv)).
+
+The two parts:
 
 - **A global model.** One Poisson GLMM over every side of every match, with
   random effects for the gamer, the opponent, both NFL teams and the stream.
@@ -82,7 +98,14 @@ Rscript glmer/backtest.R                                              # every fe
 Rscript glmer/backtest.R --feature-sets=home,form --weightings=hl30,hl60 --cores=6
 Rscript glmer/backtest.R --test-from=2026-07-01 --refit-days=14       # walk forward, refit every 14 days
 Rscript glmer/backtest.R --nagq=0                                     # quicker first sweep
+Rscript glmer/backtest.R --feature-sets=form --weightings=hl30,hl60,hl120 --form-half-lives=5,10,20 \
+    --players=FALSE --refit-days=14                                   # the half-life sweep
 ```
+
+`--form-half-lives` adds the form features' own half-life (in matches) to
+the grid; the outputs then call the feature set `form_f5`, `form_f10`, and
+so on. `--players=FALSE` fits the global model only, which scores mode
+`global` and saves the per-player fits' time.
 
 For each feature set × weighting, the backtest does three things:
 1. fits the global model and every player's models on the matches before
@@ -101,7 +124,8 @@ It writes these files to `glmer/out/backtest/`:
 | file              | what                                                                         |
 |-------------------|------------------------------------------------------------------------------|
 | `summary.csv`     | one row per feature set × weighting × mode, for every test match (`all`) and for only matches whose players and teams were all in training (`seen`, NB2's subset) |
-| `predictions.csv` | every test match priced by every configuration                               |
+| `predictions.csv.gz` | every test match priced by every configuration                            |
+| `calibration.csv` | moneyline calibration in probability deciles, per configuration              |
 | `by_player.csv`   | per player, errors on points scored and conceded in each mode, and the change against global (negative means their own model helps) |
 | `fits.csv`        | for each fit: rows, variance components, how many per-player models, warnings, seconds taken |
 
@@ -111,7 +135,12 @@ It writes these files to `glmer/out/backtest/`:
 Rscript glmer/fit.R                                                  # form / hl60 / global: best so far
 Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924   # fit only on matches before a date
+Rscript glmer/fit.R --form-half-life=20 --weighting=hl30             # other half-lives
 ```
+
+Per-player models are fitted only when `--mode` needs them, unless
+`--players=TRUE` or `--players=FALSE` says otherwise. The default
+global mode fits the global model alone.
 
 `fit.R` writes these files to `glmer/out/model/`:
 
@@ -121,12 +150,14 @@ Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924   # fit only 
 | `player_ratings.csv` | each player's global attack and defence effects, plus a summary of their own models |
 | `effects.csv`        | every random effect in the global model (players, teams, streams, …)     |
 | `fit_summary.txt`    | formulas, variance components, fixed effects and warnings                |
+| `model_info.json`    | the configuration and cut-off, read by `eAMFModel/glmer_prior.py`        |
 
 ### 3. Price matches: `predict.R`
 
 ```bash
 Rscript glmer/predict.R --schedule=schedule.csv
 Rscript glmer/predict.R --model=glmer/out/model_0924/model.rds       # no schedule: every history match after the cut-off
+Rscript glmer/predict.R --schedule=schedule.csv --n-sims=0           # expected points only, no moneyline
 ```
 
 The schedule is a CSV shaped like the history; final scores are optional.
@@ -270,11 +301,11 @@ first ~35k rows of `AMFELO.csv`, one core each:
   × 8 weightings = 48 jobs, a few hours on a 4-core laptop. Narrow it with
   `--feature-sets` / `--weightings` first.
 
-## Not wired in yet
+## In eAMFModel's v7
 
-The versions still take their prior from `eAMFModel/nb2_prior.py`. The
-predictions CSV carries the same columns `nb2_prior.predict()` reads from
-NB2's output. Plugging this model in means a prior class that runs
-`fit.R` / `predict.R` in place of `NBRatingTrial.py` /
-`NB2_schedule_predict.py`, plus a flag on the `v4-build`, `v5-build` and
-`v6-build` commands to choose between them.
+`python -m eAMFModel v7-build ... --history <csv> --prior glmer` prices v7's
+pre-match prior off this model in place of NB2. `eAMFModel/glmer_prior.py`
+runs `fit.R` at build time and `predict.R --n-sims=0` whenever the version
+needs expected points. It uses whatever `fit.R`'s defaults and `config.R`
+say, so changing the chosen half-lives here changes v7's prior at its next
+build. See the v7 section of `eAMFModel/README.md`.

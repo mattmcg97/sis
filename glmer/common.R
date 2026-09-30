@@ -94,6 +94,29 @@ parse_time <- function(x) {
   as.POSIXct(x, format = "%Y-%m-%d %H:%M:%S", tz = "UTC")
 }
 
+# A cut-off from the command line: "YYYY-MM-DD", "YYYY-MM-DD HH:MM[:SS]" or
+# the same with a "T", in UTC.
+parse_cutoff <- function(x) {
+  t <- parse_time(x)
+  if (is.na(t)) t <- as.POSIXct(sub("T", " ", x, fixed = TRUE), format = "%Y-%m-%d %H:%M", tz = "UTC")
+  if (is.na(t)) t <- as.POSIXct(x, format = "%Y-%m-%d", tz = "UTC")
+  if (is.na(t)) stop(sprintf("can't read the date '%s' (use YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)", x))
+  t
+}
+
+# A flat named list as a JSON object, for the Python side to read.
+write_json <- function(x, path) {
+  value <- function(v) {
+    if (is.null(v) || (length(v) == 1 && is.na(v))) return("null")
+    if (is.logical(v)) return(tolower(as.character(v)))
+    if (is.numeric(v)) return(format(v, digits = 10))
+    v <- gsub("\\", "/", as.character(v), fixed = TRUE)   # Windows paths
+    sprintf('"%s"', gsub('"', '\\"', v, fixed = TRUE))
+  }
+  body <- paste0('  "', names(x), '": ', vapply(x, value, ""), collapse = ",\n")
+  writeLines(c("{", body, "}"), path)
+}
+
 # A match-history (or schedule) CSV shaped like eAMFCalibrator's
 # match_history.csv / nb2/AMFELO.csv, one row per match, cleaned. Final
 # scores are optional (NA for a match not yet played).
@@ -432,7 +455,8 @@ fit_player <- function(train, player, role, fs, wspec, as_of, min_matches) {
 # `cluster` (optional) spreads the per-player fits over parallel workers
 # that have already sourced this file.
 fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES,
-                       cluster = NULL, verbose = TRUE, fs_name = NA, w_name = NA) {
+                       cluster = NULL, verbose = TRUE, fs_name = NA, w_name = NA,
+                       with_players = TRUE, form_half_life = FORM_HALF_LIFE_MATCHES) {
   t0 <- Sys.time()
   global <- fit_global(train, fs, wspec, as_of)
   if (verbose) {
@@ -443,10 +467,11 @@ fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES
   if (isTRUE(fs$player_offset)) train$GlobalEta <- fit_eta(global$fit, train)
 
   players <- sort(unique(c(train$Player, train$OpponentPlayer)))
+  if (!with_players) players <- character()   # global model only
   jobs <- expand.grid(player = players, role = c("attack", "defence"), stringsAsFactors = FALSE)
   one <- function(j) fit_player(train, jobs$player[j], jobs$role[j], fs, wspec, as_of, min_matches)
   t1 <- Sys.time()
-  fits <- if (is.null(cluster)) {
+  fits <- if (is.null(cluster) || !nrow(jobs)) {
     lapply(seq_len(nrow(jobs)), one)
   } else {
     # The workers get the data once, as globals; the task function itself
@@ -463,7 +488,9 @@ fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES
     per_player[[jobs$player[j]]][[jobs$role[j]]] <- f
   }
   failed <- sum(vapply(fits, function(f) !is.null(f) && is.null(f$fit), logical(1)))
-  if (verbose) {
+  if (verbose && !with_players) {
+    log_line("  per-player: not fitted (global model only)")
+  } else if (verbose) {
     n_att <- sum(vapply(per_player, function(p) !is.null(p$attack), logical(1)))
     n_def <- sum(vapply(per_player, function(p) !is.null(p$defence), logical(1)))
     log_line("  per-player: %d attack + %d defence models of %d players (>= %d matches), %d failed, %.0fs",
@@ -473,7 +500,7 @@ fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES
   list(global = global, players = per_player, feature_set = fs_name, fs = fs,
        weighting = w_name, wspec = wspec, as_of = as_of, min_matches = min_matches,
        n_train_rows = nrow(train), failed_player_fits = failed,
-       features = list(form_half_life = FORM_HALF_LIFE_MATCHES, session_hours = SESSION_HOURS,
+       features = list(form_half_life = form_half_life, session_hours = SESSION_HOURS,
                        rest_cap_hours = REST_CAP_HOURS),
        fitted_at = Sys.time())
 }
@@ -558,13 +585,15 @@ combine_mode <- function(src, mode) {
 
 # Per match: each side's expected points and the home side's moneyline
 # (ties split half/half, as in the NB2 backtests), simulated with one match
-# draw shared by both sides. Chunked so memory stays small.
+# draw shared by both sides. Chunked so memory stays small. n_sims = 0 skips
+# the simulation: expected points only, moneyline NA.
 price_pairs <- function(eta_h, eta_a, s_h, s_a, s_match, n_sims = N_SIMS, seed = SEED, chunk = 100) {
   n <- length(eta_h)
   mu_h <- exp(eta_h + (s_h^2 + s_match^2) / 2)
   mu_a <- exp(eta_a + (s_a^2 + s_match^2) / 2)
   p_home <- numeric(n)
   if (n == 0) return(data.frame(mu_h = mu_h, mu_a = mu_a, p_home = p_home))
+  if (n_sims <= 0) return(data.frame(mu_h = mu_h, mu_a = mu_a, p_home = NA_real_))
   set.seed(seed)
   for (start in seq(1, n, by = chunk)) {
     i <- start:min(n, start + chunk - 1)

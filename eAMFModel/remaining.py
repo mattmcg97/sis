@@ -158,7 +158,7 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
     means = {}
     if pre is not None:
         if history is None:
-            raise SystemExit(f"this {name} model prices pre-match with NB2: pass --history")
+            raise SystemExit(f"this {name} model prices pre-match with its own model: pass --history")
         means = pre.means([r for r in history if r["MATCH_CODE"] in set(codes)])
     items = []
     for c in codes:

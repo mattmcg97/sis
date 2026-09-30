@@ -2,6 +2,7 @@
 play."""
 
 import datetime as dt
+import json
 import math
 import multiprocessing as mp
 from collections import Counter
@@ -9,13 +10,17 @@ from dataclasses import dataclass, fields
 
 import numpy as np
 
-from . import nb2_prior, playover, players, sim7 as sim
+from . import glmer_prior, nb2_prior, playover, players, sim7 as sim
 from .pricer import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
 TOTAL_MAX = 160
 KAPPA = 40.0
+# The pre-match models a build can fit on --history (`prior`), each saved in its own
+# subdirectory of the model; PRIOR_FILE records which one the model prices off.
+PRIORS = {"nb2": nb2_prior.Prematch, "glmer": glmer_prior.Prematch}
+PRIOR_FILE = "v7prior.json"
 
 
 def _distributions(home, away):
@@ -147,7 +152,8 @@ LEAGUE_THETA = (0.0, 0.0)
 
 
 def prior_theta(grid, means):
-    """A match's starting strengths: from NB2's expected points, else league average."""
+    """A match's starting strengths: from the pre-match prior's expected points, else league
+    average."""
     return LEAGUE_THETA if means is None else fit_means(grid, *means)
 
 
@@ -975,10 +981,13 @@ def _print_settle(settled, tables):
 
 
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
-          before=None):
-    """Build the model: tables, fits, prior grid, NB2 and player profiles."""
+          before=None, prior="nb2"):
+    """Build the model: tables, fits, prior grid, the pre-match model (`prior`: "nb2" or
+    "glmer", fitted on `history`) and player profiles."""
     import copy
     import os
+    if prior not in PRIORS:
+        raise ValueError(f"prior must be one of {', '.join(PRIORS)}")
     os.makedirs(out_dir, exist_ok=True)
     pre = priors = None
     if history is not None:
@@ -986,7 +995,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             days = [match_day(rows) for rows in matches.values()]
             last = max(d for d in days if d is not None)
             before = dt.datetime.combine(last + dt.timedelta(days=1), dt.time())
-        pre = nb2_prior.Prematch.build(history, os.path.join(out_dir, "nb2"), before)
+        if verbose and prior == "glmer":
+            print("  pre-match: fitting the glmer model in R (a few minutes on a full history)")
+        pre = PRIORS[prior].build(history, os.path.join(out_dir, prior), before)
+        with open(os.path.join(out_dir, PRIOR_FILE), "w", encoding="utf-8") as fh:
+            json.dump({"prior": prior}, fh)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
     handles = dict(handles or {})
     for code, rows in matches.items():
@@ -1083,7 +1096,9 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
               + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
               + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
     if pre is not None:
-        if verbose:
+        if verbose and prior == "glmer":
+            print(f"  pre-match: {pre.describe()}")
+        elif verbose:
             m = pre.meta
             ratio = f"{m['scale_raw_ratio']:.3f}" if m["scale_raw_ratio"] else "n/a"
             print(f"  pre-match: NB2 fitted on {m['fitted_on']:,} matches before {before:%Y-%m-%d};"
@@ -1109,11 +1124,15 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
 
 
 def prematch_model(model_dir_or_tables):
-    """The model's NB2 pre-match model, or None."""
+    """The model's pre-match model -- NB2 or glmer, whichever it was built with -- or None."""
     import os
     d = model_dir_or_tables if os.path.isdir(model_dir_or_tables) else os.path.dirname(model_dir_or_tables)
-    path = os.path.join(d, "nb2")
-    return nb2_prior.Prematch(path) if nb2_prior.Prematch.exists(path) else None
+    kind = "nb2"                     # a model built before the choice existed
+    if os.path.exists(os.path.join(d, PRIOR_FILE)):
+        with open(os.path.join(d, PRIOR_FILE), encoding="utf-8") as fh:
+            kind = json.load(fh).get("prior", "nb2")
+    path = os.path.join(d, kind)
+    return PRIORS[kind](path) if PRIORS[kind].exists(path) else None
 
 
 def players_book(model_dir_or_tables):
@@ -1133,12 +1152,13 @@ def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, work
     pre = prematch_model(tables_path) if priors is None else None
     if priors is None and history is not None:
         if pre is None:
-            raise SystemExit("this v7 model has no NB2 pre-match model: rebuild it with --history")
+            raise SystemExit("this v7 model has no pre-match model: rebuild it with --history")
         wanted = set(by_match) if matches is None else set(matches)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
     elif priors is None and pre is not None:
-        raise SystemExit("this v7 model prices pre-match with NB2: pass --history (the matches'"
-                         " players, teams and streams, e.g. eAMFCalibrator history's CSV)")
+        raise SystemExit("this v7 model prices pre-match with its own model (NB2 or glmer): pass"
+                         " --history (the matches' players, teams and streams, e.g. eAMFCalibrator"
+                         " history's CSV)")
     codes = sorted(by_match) if matches is None else [c for c in matches if c in by_match]
     items = [(c, by_match[c]) for c in codes]
     chunks = [items[i::workers] for i in range(workers)]

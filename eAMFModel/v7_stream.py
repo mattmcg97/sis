@@ -60,7 +60,8 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
 
 
 def kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof=None, means=None):
-    """v7's pre-match margin and total distributions: the kick-off priced off the NB2 prior."""
+    """v7's pre-match margin and total distributions: the kick-off priced off the pre-match prior
+    (NB2 or glmer)."""
     prof = prof or (players.Profile(), players.Profile())
     return v7.price_kickoff(tables, v7.prior_theta(grid, means), variant, prof, n_paths, rng,
                             seed=v7.match_seed(match_code))
@@ -179,8 +180,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     means = {}
     if pre is not None:
         if match_info is None:
-            raise SystemExit("this v7 model prices off its NB2 pre-match model, which needs each "
-                             "match's players, teams and stream (match_info)")
+            raise SystemExit("this v7 model prices off its own pre-match model (NB2 or glmer), which"
+                             " needs each match's players, teams and stream (match_info)")
         means = pre.means([r for r in match_info if r["MATCH_CODE"] in snapshots_by_match])
     prod_by = {}
     for r in prod_quote_rows:

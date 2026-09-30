@@ -214,8 +214,9 @@ def cmd_v4_build(args):
         v4.sim.RED_ZONE_FIT = False
     elif getattr(args, "red_zone", None):
         v4.sim.RED_ZONE_FIT, v4.sim.RED_ZONE_MODE = True, args.red_zone
+    prior = getattr(args, "prior", None)            # v7: which pre-match model --history fits
     v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
-             history=history, before=before)
+             history=history, before=before, **({"prior": prior} if prior else {}))
     players_file = f"{name}players.json"
     print(f"  wrote {args.out}/{name}tables.npz, {args.out}/{name}grid.npz"
           f"{' and ' + players_file if os.path.exists(os.path.join(args.out, players_file)) else ''}")
@@ -490,6 +491,10 @@ def main(argv=None):
             p.add_argument("--in-play", action="store_true",
                            help="also fit the in-play total shift by segment of the game "
                                 "(see README: off by default, it has not held up out of sample)")
+        if name == "v7":
+            p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
+                           help="the pre-match model --history fits: nb2 (nb2/, the default) or "
+                                "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
         if name in ("v6", "v7"):
             p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
                            help="how drives finish inside the 30 by quarter and lead: hold (the "
