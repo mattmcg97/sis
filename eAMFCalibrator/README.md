@@ -2147,3 +2147,42 @@ On `nb2/AMFELO.csv`, out of sample: knowing the two gamers takes the RMSE of the
 total from 13.06 to 12.61, and their recent form (an EWMA of about the last 20
 matches) takes it to 12.30. The long-run level adds little once form is in.
 Their teams, gamer × team and the gamer pair add nothing.
+
+#### The models at the same checkpoints: `--candidate v8,v9`
+
+```bash
+python -m eAMFCalibrator bets totals-signals --since 2026-09-17 --until 2026-09-30 --candidate v8,v9 --v8-model v8_model --v9-model v9_model
+python -m eAMFCalibrator bets totals-signals ... --candidate v8,v9 ... --react
+```
+
+Each model version in `--candidate` is priced only where it's read:
+- at the kick-off, from its pre-match model;
+- at the latest priceable `PLAY_OVER` before Q2 starts, and before Q3 starts.
+
+Every earlier snap is still read into the game, as the stream reads them.
+That's three simulations a match rather than one for every `PLAY_OVER`. Each
+checkpoint gets the model's own line, its mean total, P(over prod's line),
+final less its line, and its points to come (mean less the board).
+
+The report adds, per checkpoint, on the matches every line priced:
+- **over, MAE and Brier** at prod's line, prod against each model;
+- **points to come, by points on the board** (by form, pre-match): what
+  really came, against prod's line less the board and each model's. A line
+  that anchors on the pre-match total gives a slow start more to come, when it
+  really produces less;
+- over **with and without play detail**: the models read the game from the
+  down and field position, which SCOUTING_FULL has carried empty since 23 Sep;
+- **a regression** of the points the rest of the match made on each line's
+  points to come and how the match was played (points, plays, clock per play,
+  seconds between plays, drives). A line that priced everything takes a
+  coefficient of 1 and leaves the rest at 0.
+
+**`react`.** The streams run v8 and v9 with `react=False`, so each side's
+strength stays at its pre-match value all match. The score, clock and field
+move the price; how well the sides are playing doesn't. `--react` prices each
+model again with its in-game efficiency update on (labelled `v8-react`). That
+update moves strength on first-down success, never on points. It was dropped
+when first-down success predicted later points only weakly (eAMFModel README).
+In the first run here (17–30 Sep), the scoring so far predicted the rest of the
+match beyond prod's line. After a scoreless Q1 the match finished 3.1 points
+under prod's line at Q2. So an update on points and drives is the untried one.

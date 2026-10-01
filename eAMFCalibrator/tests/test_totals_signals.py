@@ -94,5 +94,86 @@ class TestForm(unittest.TestCase):
         self.assertEqual(form["C"][0], -5.0)
 
 
+class FakeModel:
+    """Stands in for eAMFModel.vN: a kick-off total of 30 and, at a snapshot, the board at its
+    message plus 10, recording what it was asked to price."""
+
+    def __init__(self):
+        self.asked = None
+
+    def match_seed(self, code):
+        return 1
+
+    def handles_of(self, snaps):
+        return None
+
+    def prior_theta(self, grid, means):
+        return means
+
+    def price_kickoff(self, *a, **k):
+        return ([1.0], [0.0] * 30 + [1.0])
+
+    def resolve_sides(self, rows):
+        return rows
+
+    def state_for(self, row):
+        return (None, "no state") if row.get("bad") else (int(row["message"]), None)
+
+    def price_states(self, tables, theta0, variant, records, a_home, states, messages, prof, n, rng,
+                     seed=None):
+        self.asked = (records, states, messages)
+        return [([1.0], [0.0] * (m // 10 + 10) + [1.0]) for m in messages]
+
+    def even_line(self, tpmf, offset):
+        return len(tpmf) - 1.5
+
+    def market_prob(self, market, line, mpmf, tpmf):
+        return 0.5
+
+
+class TestModelAt(unittest.TestCase):
+
+    def setUp(self):
+        import types
+        self.m = FakeModel()
+        stream = types.SimpleNamespace(
+            side_known=lambda snaps: bool(snaps), _as_text=lambda r: r,
+            sim=types.SimpleNamespace(snap_records=lambda rows: [r["message"] for r in rows]),
+            np=types.SimpleNamespace(random=types.SimpleNamespace(default_rng=lambda seed: None)))
+        self.at = ts.ModelAt.__new__(ts.ModelAt)
+        self.at.label, self.at.model, self.at.stream = "vx", self.m, stream
+        self.at.tables = self.at.grid = self.at.book = self.at.pre = self.at.variant = None
+        self.at.paths = 10
+
+    def test_each_checkpoint_is_priced_at_the_latest_priceable_play_over_before_it(self):
+        snaps = [{"message": "40", "team_a_side": "home"}, {"message": "90", "team_a_side": "home"},
+                 {"message": "95", "team_a_side": "home", "bad": True},
+                 {"message": "150", "team_a_side": "home"}]
+        books = self.at.price("M1", snaps, {"q1": 100, "h1": 200}, {})
+        records, states, messages = self.m.asked
+        self.assertEqual(messages, [90, 150])               # 95 cannot be priced, so 90
+        self.assertEqual(records, ["40", "90", "95", "150"])  # every snap still read in
+        self.assertEqual(set(books), {"pre", "q1", "h1"})
+
+    def test_the_fields_read_line_mean_and_points_to_come(self):
+        books = self.at.price("M1", [{"message": "90", "team_a_side": "home"}], {"q1": 100, "h1": None}, {})
+        f = self.at.fields(books, {"final_total": 40, "q1_points": 7, "q1_line": 30.5})
+        self.assertEqual(f["pre_vx_line"], 29.5)     # 31 values, line at len - 1.5
+        self.assertEqual(f["q1_vx_mean"], 19.0)              # a point mass at 19 (90 // 10 + 10)
+        self.assertEqual((f["q1_vx_needed"], f["q1_vx_over"]), (12.0, 40 - 18.5))
+        self.assertEqual(f["q1_vx_pover"], 0.5)
+        self.assertEqual(ts.model_names([{"pre_line": 1, **f}]), ["vx"])
+
+
+class TestRegression(unittest.TestCase):
+
+    def test_ols_recovers_a_known_fit(self):
+        X = [[1.0, x, x * x % 7] for x in range(40)]
+        y = [2 + 0.5 * a - 1.5 * b for _, a, b in X]
+        beta, se = ts.ols(X, y)
+        for got, want in zip(beta, (2, 0.5, -1.5)):
+            self.assertAlmostEqual(got, want, places=6)
+
+
 if __name__ == "__main__":
     unittest.main()
