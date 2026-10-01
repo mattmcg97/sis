@@ -2186,3 +2186,43 @@ when first-down success predicted later points only weakly (eAMFModel README).
 In the first run here (17–30 Sep), the scoring so far predicted the rest of the
 match beyond prod's line. After a scoreless Q1 the match finished 3.1 points
 under prod's line at Q2. So an update on points and drives is the untried one.
+
+### The points still to come, calibrated: `totals-calibrate`
+
+```bash
+python -m eAMFCalibrator scouting --since 2026-06-01 --until 2026-09-30     # the export, months of it
+python -m eAMFCalibrator totals-calibrate                                    # out/scouting_playover.csv
+python -m eAMFCalibrator totals-calibrate --history nb2/AMFELO.csv --signals eAMFCalibrator/out/totals_signals.csv
+```
+
+Every line read so far (prod's, v8's, v9's) spreads its points to come wider
+than the rest of the match does. At half time each line's own points to come
+took a coefficient of about 0.35, where a line that needs no correction takes 1.
+It also gives a slow start more to come when it really produces less.
+
+This fits the correction at the end of Q1, half time and the end of Q3:
+
+    rest of the match = a + b × prod's points to come + c × points on the board
+                        + d × prod's closing pre-match line + plays + margin + clock left (+ form)
+
+It reads the `scouting` export only, so it needs no Snowflake. It doesn't
+need the play detail either: only the period, clock, score, scrimmage flag and
+prod's total. The fit is on the earlier two-thirds of the matches; the latest
+third is held out. For each checkpoint it prints:
+- the **simple** fit (points to come alone) and the **full** one, with each
+  coefficient ±2se. A feature that duplicates others is left out;
+- on the held-out matches, prod, simple and full side by side: over (the rest
+  of the match less each line's points to come), MAE, and the Brier of
+  P(over prod's line). The calibrated P(over) reads the fit's own residuals,
+  so a lumpy total keeps its shape;
+- points to come by points on the board, real against each line's.
+
+`--history` adds the gamers' recent form (walk-forward). `--signals` reads a
+`totals_signals.csv` run with `--candidate v8,v9`. At the start of Q2 and Q3 it
+fits, five-fold cross-validated, rest = a + b × the line's points to come + c
+× points on the board for prod and each model, and sets each line as it stands
+against it corrected (MAE, Brier, and the mean b).
+
+It writes `out/totals_calibration.json` (per checkpoint, each fit's
+coefficients and standard errors, and its residual quantiles) and
+`out/totals_calibration.txt`.

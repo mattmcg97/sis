@@ -910,7 +910,7 @@ def apply_overrides(args):
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
 
-    if getattr(args, "command", None) in ("compare", "totals-lines"):
+    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate"):
         return
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
@@ -1101,6 +1101,20 @@ def build_parser():
     tl_parser.add_argument("--all-quotes", action="store_true",
                            help="keep pairs where either quote was not live")
 
+    tc_parser = sub.add_parser(
+        "totals-calibrate",
+        help="the points still to come, calibrated: fit the rest of the match on a line's points to "
+             "come, the board, the plays and the pre-match line at the end of Q1, the half and the end of "
+             "Q3, off the `scouting` export (no Snowflake), and test it on the latest matches; "
+             "--signals reads totals_signals.csv to fit the same on v8/v9's own points to come")
+    tc_parser.add_argument("export", nargs="?", default=os.path.join(DEFAULT_OUT, "scouting_playover.csv"),
+                           help="scouting_playover.csv (default <out>/scouting_playover.csv)")
+    tc_parser.add_argument("--history", metavar="CSV",
+                           help="a match history (nb2/AMFELO.csv, or `history`'s) for the gamers' recent form")
+    tc_parser.add_argument("--signals", metavar="CSV",
+                           help="a totals_signals.csv (run with --candidate v8,v9) to correct the models too")
+    tc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -1141,6 +1155,11 @@ def main(argv=None):
         return cmd_expected_points(args)
     if args.command == "bets":
         return cmd_bets(args)
+    if args.command == "totals-calibrate":
+        from . import totals_calibrate
+        path = totals_calibrate.run(args.export, args.out or DEFAULT_OUT, args.history, args.signals)
+        print(f"\n  -> {path} and totals_calibration.txt")
+        return 0
     if args.command == "totals-lines":
         from . import totals_lines
         totals_lines.run(args.paths, args.out or DEFAULT_OUT, live_only=not args.all_quotes)
