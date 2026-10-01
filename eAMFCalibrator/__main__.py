@@ -304,6 +304,11 @@ def cmd_bets(args):
                 from . import bet_lines
                 path, _ = bet_lines.run(cur, out_dir, n_matches=args.matches, only=args.match)
                 print(f"\n  -> {path}")
+            elif args.action == "totals-moves":
+                from . import bet_totals
+                paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets)
+                if paths:
+                    print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "probe":
                 lines = bets.probe(cur)
                 path = os.path.join(out_dir, "bets_probe.txt")
@@ -969,9 +974,13 @@ def build_parser():
         help="betting simulation: every single bet, pre-match and in play, with prod's and the "
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
-    bets_parser.add_argument("action", nargs="?", choices=["run", "probe", "lines", "check", "moments", "lag"],
+    bets_parser.add_argument("action", nargs="?",
+                             choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves"],
                              default="run",
-                             help="lag: the lag match by match off the lines and the odds, every match of "
+                             help="totals-moves: prod's totals line before and after every totals bet, "
+                                  "restricted accounts against everyone else, and whether each "
+                                  "candidate already leaned their way (out/bets_totals_moves.html); "
+                                  "lag: the lag match by match off the lines and the odds, every match of "
                                   "the window drawn (out/bets_lag.html); moments: where in the game the book loses, bucketed again off a "
                                   "bets_sim.csv already written (no Snowflake); check: the checks alone (when in the match each bet was placed, "
                                   "cash-outs, SCOUTING_FULL against prod), quick, no candidate "

@@ -1987,3 +1987,60 @@ Output:
   `candidate_line_v5`, `candidate_revenue_v5`, `simulated_v5`, ...);
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
+
+### Restricted accounts on totals: `bets totals-moves`
+
+```bash
+python -m eAMFCalibrator bets totals-moves --since 2026-09-17 --until 2026-09-30 --min-bets 30
+python -m eAMFCalibrator bets totals-moves --since 2026-09-17 --until 2026-09-30 --candidate v6,v6@prod --v6-model v6_model --min-bets 30
+```
+
+This reads prod's totals line before and after every totals bet, and compares
+restricted accounts (`CUSTOMER_TEMPERATURE = BET_RESTRICTED_VALUE`) with
+everyone else on the same matches. A pattern only counts if it's different from
+the baseline. The bets, lags, line signs, checks and candidate pricing are the
+`bets` pipeline's, unchanged.
+
+**The sign.** level = side × (prod's line then − prod's line at the bet), with
+side +1 for Over and −1 for Under. + means the market rated the bettor's side
+higher then than at the bet:
+- after the bet, + is a move **their way** (they beat the move);
+- before it, + is a move they **faded**, and − is a move they **followed**.
+
+The bet is read at the price it saw (bet time less the operator's lag). Where
+the line held, the bet selection's probability carries the move, if it changed
+by a point or more. Line and probability are never averaged together.
+
+It prints, and writes to `out/bets_totals_moves.html`:
+- totals bets by temperature: stake, margin, expected margin, over share;
+- the **event study**: mean level at −120, −60, −30, −10s, at bet time (the
+  move inside the operator's lag), +10, +30, +60, +120, +300s, ±2se clustered by
+  match, with the shares each way. Shown for all bets, Over and Under;
+- pre-match bets against prod's closing line (the last before kick-off);
+- **before × after**: followed / faded / still line at −60s against their way
+  / against / held at +60s, with the book's margin in each cell;
+- the restricted bets and the baseline cut by side, in play, quarter, points
+  still needed (line − on board), the feed at bet time, price age, the move
+  before, **whether a score fell between the bet and +60s** (a move with no
+  score is the price drifting; a move across a score is the game), and operator;
+- the restricted customers with the most stake: is it a few accounts or all of them?
+- **each candidate**, at the message the bet saw, only where it carries the same
+  information as prod's:
+  - whether it already leaned the bettor's way (its line, else its probability
+    at the same line);
+  - its line edge over prod's;
+  - whether its line sat nearer where prod went by +120s than prod's own did;
+  - its own move over the next 60s;
+  - the change in margin had it priced the bet.
+
+  It's split by what prod did next. On the bets prod moved their way, a model
+  that leaned their way already had the information. One that didn't has the
+  same leak.
+
+`out/bets_totals_moves.csv` has one row per totals bet: every `bets_sim.csv`
+column, plus `level_*`, `plevel_*`, `way_*` and `scored_*` at each offset
+(`m60` is −60s, `p60` is +60s), `level_bet`, `level_pre_score`,
+`level_kickoff`, and each candidate's `<name>_lean`, `_line_edge`,
+`_prob_edge`, `_nearer_p60`/`_p120`, `_level_p60` and `_change`.
+`--min-bets` (default 100) hides thin buckets. Restricted samples are small, so
+30 is a better starting point.

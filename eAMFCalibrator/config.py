@@ -114,6 +114,8 @@ BET_GROUP_COLUMN = "OPERATOR_NAME"
 BET_IN_PLAY_COLUMN = "BET_IN_PLAY"
 BET_VIP_COLUMN = "CUSTOMER_TEMPERATURE"
 BET_VIP_VALUE = "VIP"
+# `bets totals-moves` reads BET_VIP_COLUMN = BET_RESTRICTED_VALUE as a restricted account.
+BET_RESTRICTED_VALUE = "Restricted"
 # The lags tried, seconds (negative: the operator's clock runs behind
 # GAMEPLAI's), in steps of LAG_STEP_SECONDS.
 LAG_RANGE = (-30, 60)
