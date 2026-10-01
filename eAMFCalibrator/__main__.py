@@ -304,6 +304,10 @@ def cmd_bets(args):
                 from . import bet_lines
                 path, _ = bet_lines.run(cur, out_dir, n_matches=args.matches, only=args.match)
                 print(f"\n  -> {path}")
+            elif args.action == "totals-signals":
+                from . import totals_signals
+                path = totals_signals.run(cur, out_dir)
+                print(f"\n  -> {path} and totals_signals.txt")
             elif args.action == "totals-moves":
                 from . import bet_totals
                 paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets,
@@ -976,9 +980,14 @@ def build_parser():
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
-                             choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves"],
+                             choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves",
+                                      "totals-signals"],
                              default="run",
-                             help="totals-moves: prod's totals line before and after every totals bet, "
+                             help="totals-signals: how every match was played in Q1 and the first "
+                                  "half (pace, time between plays, clock per play, drives) against prod's "
+                                  "total there and where the totals money went next, by temperature "
+                                  "(out/totals_signals.csv); "
+                                  "totals-moves: prod's totals line before and after every totals bet, "
                                   "restricted accounts against everyone else, and whether each "
                                   "candidate already leaned their way (out/bets_totals_moves.html); "
                                   "lag: the lag match by match off the lines and the odds, every match of "
