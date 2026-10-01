@@ -2239,3 +2239,30 @@ v9 build, so `--v10-model v9_model` needs no rebuild. `--learn-weights` prices i
 weight, labelled `v10-w<weight>` (0 plays as v9). The weight to keep is the one whose points
 to come at half time need no correction in `totals-calibrate --signals`: a coefficient nearest
 1, and the best Brier. `--v10-learn-weight` sets the weight for any other command.
+
+### Where the money goes through a session: `bets sessions`
+
+```bash
+python -m eAMFCalibrator bets sessions --since 2026-09-10 --until 2026-09-23
+```
+
+This answers whether the bets and stake are flat across a gamer's session, or
+lumped on particular matches of it. It reads every single the bet source
+gives (moneyline, handicap and total, pre-match and in play) and the match
+history. It needs no prices or play detail. Each bet counts once for each of
+the two gamers in its match, at that gamer's place in his own session. Two
+places are used:
+- his match of the session: 1st, 2nd … 10th, 11+;
+- matches left in it: 6+, 4–5, 3rd last, 2nd last, last.
+
+The denominator is every settled match of the window at that place, bet on or
+not. Per group (All, Restricted, VIP, Standard, none), and per market for All,
+Restricted and VIP, each place gets:
+- gamer-matches and their share;
+- bets and stake, and their shares;
+- stake per gamer-match, and that against the group's average (`vs avg`, 1.00x
+  is flat);
+- the book's margin, and the share on the under for totals.
+
+A place where the stake share runs above its share of gamer-matches is where
+the money is lumped. Writes `out/bets_sessions.txt`.
