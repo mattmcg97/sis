@@ -770,7 +770,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2, v3, v4, v5, v6, v7, v8 -- see eAMFModel) priced "
+                             "or a model version (v1, v2, v3, v4, v5, v6, v7, v8, v9 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
                              "several, comma-separated (v4,v5), set each against prod "
@@ -825,6 +825,14 @@ def common_options():
                              f"(default {config.V8_PATHS})")
     tuning.add_argument("--v8-lines", choices=["own", "prod"],
                         help=f"--candidate v8: its own even lines or prod's (default {config.V8_LINES})")
+    tuning.add_argument("--v9-model", metavar="DIR",
+                        help="eAMFModel v9-build's output, for --candidate v9 "
+                             "(default $EAMF_V9_MODEL, then ./v9_model)")
+    tuning.add_argument("--v9-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v9 "
+                             f"(default {config.V9_PATHS})")
+    tuning.add_argument("--v9-lines", choices=["own", "prod"],
+                        help=f"--candidate v9: its own even lines or prod's (default {config.V9_LINES})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -868,7 +876,10 @@ def apply_overrides(args):
                            ("v7_lines", "V7_LINES"),
                            ("v8_model", "V8_MODEL_DIR"),
                            ("v8_paths", "V8_PATHS"),
-                           ("v8_lines", "V8_LINES")):
+                           ("v8_lines", "V8_LINES"),
+                           ("v9_model", "V9_MODEL_DIR"),
+                           ("v9_paths", "V9_PATHS"),
+                           ("v9_lines", "V9_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
