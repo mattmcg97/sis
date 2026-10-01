@@ -143,7 +143,7 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
     """[(match, message, quarter, state, points on board, points still to come, the version's pmf
     of them)] over the matches in [since, until] whose TEAM_A side is known; with `drive`, the
     points on the rest of the drive under way at each scrimmage PLAY_OVER (v6 to v9)."""
-    if drive and name not in ("v6", "v7", "v8", "v9"):
+    if drive and name not in ("v6", "v7", "v8", "v9", "v10"):
         raise SystemExit("--drive needs v6 to v9 (their simulations can stop at the end of a drive)")
     model = importlib.import_module(f"eAMFModel.{name}")
     stream = importlib.import_module(f"eAMFModel.{name}_stream")
