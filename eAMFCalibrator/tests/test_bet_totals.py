@@ -105,5 +105,28 @@ class TestSummaries(unittest.TestCase):
         self.assertIn("<svg", bet_totals.page(lines, [r for r in rows if bet_totals.in_scope(r)], "w"))
 
 
+class TestBaselineAndGamers(unittest.TestCase):
+
+    def test_the_baseline_is_the_operators_that_send_restricted_accounts(self):
+        bs = [total(60, 1), total(60, 1, "Standard"), total(60, 1, None, operator="HARDROCK")]
+        kept, ops = bet_totals.same_operators(bs)
+        self.assertEqual((len(kept), ops), (2, ["FANDUEL"]))
+
+    def test_with_no_restricted_account_every_operator_stays(self):
+        bs = [total(60, 1, "Standard"), total(60, 1, None, operator="HARDROCK")]
+        self.assertEqual(len(bet_totals.same_operators(bs)[0]), 2)
+
+    def test_each_gamer_gets_every_bet_of_his_matches_and_the_miss_is_line_less_final(self):
+        rows = build([total(60, 1), total(60, 2), total(60, 2, "Standard")], cand=CAND)
+        bet_totals.add_players(rows, {"M1": {"PLAYER_1_HANDLE": "ann", "PLAYER_2_HANDLE": "bob"}})
+        table = {k: v for k, *v in bet_totals.players(rows, ["m"])}
+        self.assertEqual(set(table), {"ann", "bob"})
+        (n, _, _, under), (others, _), miss, ((k, cand_miss, _),) = table["ann"]
+        self.assertEqual((n, under, others), (2, 50.0, 1))
+        self.assertAlmostEqual(miss, 44.5 - 45)          # prod's line at the bet, final 24-21
+        self.assertAlmostEqual(cand_miss, 46.5 - 45)     # the model already at 46.5
+        self.assertEqual(rows[0]["matchup"], "ann v bob")
+
+
 if __name__ == "__main__":
     unittest.main()

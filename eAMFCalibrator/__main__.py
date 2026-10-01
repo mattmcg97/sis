@@ -306,7 +306,8 @@ def cmd_bets(args):
                 print(f"\n  -> {path}")
             elif args.action == "totals-moves":
                 from . import bet_totals
-                paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets)
+                paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets,
+                                       all_operators=args.all_operators)
                 if paths:
                     print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "probe":
@@ -1017,6 +1018,9 @@ def build_parser():
                                   "in play by quarter and clock)")
     bets_parser.add_argument("--min-bets", type=int, default=100, metavar="N",
                              help="moments: hide buckets with fewer bets (default 100)")
+    bets_parser.add_argument("--all-operators", action="store_true",
+                             help="totals-moves: keep every operator in the baseline (default: only the "
+                                  "operators that send restricted accounts)")
     bets_parser.add_argument("--extra-columns", metavar="COLS",
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")
