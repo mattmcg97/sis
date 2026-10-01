@@ -320,10 +320,11 @@ class ModelAt:
     read into the game (as the stream reads them). `react` turns on its in-game efficiency
     update (off as the streams run it)."""
 
-    def __init__(self, name, react=False):
+    def __init__(self, name, react=False, learn_weight=None):
         import importlib
         self.name, self.base = name, snowflake_io.model_base(name)
-        self.label = name + ("-react" if react else "")
+        self.label = name + ("-react" if react else "") + (
+            f"-w{learn_weight:g}" if learn_weight is not None else "")
         self.model = importlib.import_module(f"eAMFModel.{self.base}")
         self.stream = importlib.import_module(f"eAMFModel.{self.base}_stream")
         tables_path, grid_path = self.stream.model_paths(snowflake_io.build_dir(name))
@@ -331,7 +332,8 @@ class ModelAt:
         self.grid = self.model.PriorGrid.load(grid_path)
         self.book = self.model.players_book(tables_path)
         self.pre = self.model.prematch_model(tables_path)
-        self.variant = self.model.Variant(self.base, react=react)
+        self.variant = (self.model.Variant(self.base, react=react, learn_weight=learn_weight)
+                        if learn_weight is not None else self.model.Variant(self.base, react=react))
         self.paths = getattr(config, f"{self.base.upper()}_PATHS")
 
     def means(self, match_info):
@@ -371,9 +373,12 @@ class ModelAt:
                         break
         if states:
             order = sorted(range(len(states)), key=lambda i: messages[i])
+            import inspect
+            more = ({"grid": self.grid} if "grid" in inspect.signature(m.price_states).parameters
+                    else {})                         # v10 learns from the game so far off the grid
             dists = m.price_states(self.tables, theta0, self.variant, st.sim.snap_records(rows),
                                    a_home, [states[i] for i in order], [messages[i] for i in order],
-                                   prof, self.paths, rng, seed=m.match_seed(code))
+                                   prof, self.paths, rng, seed=m.match_seed(code), **more)
             for k, i in enumerate(order):
                 out[segs[i]] = dists[k]
         return out
@@ -655,7 +660,7 @@ def report(rows):
 
 # --- run -------------------------------------------------------------------------------------
 
-def run(cur, out_dir, react=False):
+def run(cur, out_dir, react=False, learn_weights=()):
     """Every settled match of the window: its plays off SCOUTING_FULL, prod's total pre-match, at
     the end of Q1 and at the half, each model version in --candidate priced at the same three
     moments (with `react`, again with its in-game efficiency update on), the final, and the
@@ -663,6 +668,8 @@ def run(cur, out_dir, react=False):
     names = [snowflake_io.model_version(c)[0] for c in config.CANDIDATES if snowflake_io.is_model(c)]
     bets.check_models([c for c in config.CANDIDATES if snowflake_io.is_model(c)])
     models = [ModelAt(n) for n in names] + ([ModelAt(n, react=True) for n in names] if react else [])
+    models += [ModelAt(n, learn_weight=w) for n in names if snowflake_io.model_base(n) == "v10"
+               for w in learn_weights]
     if models:
         print("  models at the checkpoints: " + ", ".join(m.label for m in models), flush=True)
     matches = snowflake_io.match_universe(cur, config.STREAMS["prod"])
