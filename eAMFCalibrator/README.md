@@ -2090,3 +2090,60 @@ column, plus `level_*`, `plevel_*`, `way_*` and `scored_*` at each offset
 `_prob_edge`, `_nearer_p60`/`_p120`, `_level_p60` and `_change`.
 `--min-bets` (default 100) hides thin buckets. Restricted samples are small, so
 30 is a better starting point.
+
+### What separates the totals that go under: `bets totals-signals`
+
+```bash
+python -m eAMFCalibrator bets totals-signals --since 2026-09-17 --until 2026-09-30
+```
+
+This reads every settled match in the window, not only the ones with bets. At
+three checkpoints it sets how the match was shaping up against prod's total
+there, and against where the totals money went next.
+
+| checkpoint | prod's line | features | money |
+|---|---|---|---|
+| pre-match | the closing line (the last before Q1 starts) | match of the session, both gamers on their last, both gamers' recent form and long-run level (walk-forward off `history`: nothing after the match is read) | pre-match bets |
+| end of Q1 | at the message Q2 starts on | how Q1 was played (below) | bets struck in Q2 |
+| half time | at the message Q3 starts on | how the first half was played | bets struck in the second half |
+
+How a segment was played comes off SCOUTING_FULL, play by play:
+- scrimmage plays;
+- **real seconds between plays**: the median from one `PLAY_OVER` to the next
+  snap, which is how long the gamers take;
+- real seconds a play runs;
+- **game-clock seconds per play**: how much of the 240-second quarter each
+  play burns;
+- the real minutes the segment took;
+- yards per play;
+- drives ended (punt, field goal, touchdown, turnover on downs), and punts,
+  touchdowns and field goals on their own;
+- timeouts called;
+- points on the board, and prod's line less them.
+
+The play after a touchdown is its conversion, and the one after a conversion,
+field goal or safety is the kick-off. Neither counts as a scrimmage play.
+
+**over** = final total less prod's line at the checkpoint. A feature prod
+already prices sits flat around 0 whatever its value.
+
+For each checkpoint the report:
+- **ranks the features** by how far over moves from the lowest bin to the
+  highest (prod missing it), with the correlation, and the under share of the
+  next segment's totals stake in those bins (the money reading it);
+- shows **each feature by quintile**: over ±2se, prod's line less the board,
+  stake per match, the under share of the stake for all customers, Restricted,
+  VIP and Standard, and the book's margin on unders. A count with six values or
+  fewer gets one bin per value.
+
+A feature where over moves and the VIP or restricted under share moves with it
+is a signal the money reads and prod doesn't. One where over moves and the
+money doesn't is one nobody is using yet.
+
+Writes `out/totals_signals.csv` (one row per match, every feature, line, over
+and the money by temperature) and `out/totals_signals.txt`.
+
+On `nb2/AMFELO.csv`, out of sample: knowing the two gamers takes the RMSE of the
+total from 13.06 to 12.61, and their recent form (an EWMA of about the last 20
+matches) takes it to 12.30. The long-run level adds little once form is in.
+Their teams, gamer × team and the gamer pair add nothing.
