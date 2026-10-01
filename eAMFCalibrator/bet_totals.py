@@ -363,6 +363,74 @@ def customers(rows, n=15):
     return out
 
 
+def add_players(rows, info):
+    """Add each bet's two gamers (`home_player`, `away_player`) and `matchup` off match -> EVENT
+    row (snowflake_io.fetch_match_info's shape; PLAYER_1 is home)."""
+    for r in rows:
+        i = info.get(r.get("match_code"))
+        if not i:
+            continue
+        home, away = i.get("PLAYER_1_HANDLE") or "?", i.get("PLAYER_2_HANDLE") or "?"
+        r.update(home_player=home, away_player=away, matchup=" v ".join(sorted((home, away))))
+
+
+def _miss(rs, line_key):
+    """Mean of the line less the final total over the rows with both: + is a line set too high."""
+    xs = [r[line_key] - r["final_total"] for r in rs
+          if r.get(line_key) is not None and r.get("final_total") is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+def players(rows, names, key="gamer", n=20):
+    """[(gamer or matchup, restricted (bets, stake, margin %, under %), everyone else (bets,
+    margin %), prod's line less the final on the restricted bets, and per candidate: its line
+    less the final on the restricted bets it carries, and its change in margin on them)] for the
+    n with the most restricted stake. A gamer counts each bet of his matches once (both gamers
+    of a match get it)."""
+    by = defaultdict(lambda: ([], []))
+    for r in rows:
+        if "home_player" not in r:
+            continue
+        keys = (r["home_player"], r["away_player"]) if key == "gamer" else (r[key],)
+        for k in keys:
+            by[k][0 if r["group"] == RESTRICTED else 1].append(r)
+    out = []
+    ranked = sorted(by.items(), key=lambda kv: -sum(r["stake"] for r in kv[1][0]))
+    for k, (rs, others) in ranked[:n]:
+        if not rs:
+            break
+        bets_, stake, m, _ = money(rs)
+        under = 100 * sum(r["side"] == "Under" for r in rs) / bets_
+        o = money(others) if others else (0, 0, None, None)
+        models = []
+        for name in names:
+            ok = [r for r in rs if r.get(f"{name}_ok")]
+            changed = [r for r in ok if r.get(f"{name}_change") is not None]
+            stake_c = sum(r["stake"] for r in changed)
+            models.append((len(ok), _miss(ok, f"{name}_line"),
+                           100 * sum(r[f"{name}_change"] for r in changed) / stake_c if stake_c else None))
+        out.append((k, (bets_, stake, m, under), (o[0], o[2]), _miss(rs, "stream_line"), models))
+    return out
+
+
+def player_lines(rows, names, key, title):
+    """Lines of text: the players table."""
+    table = players(rows, names, key)
+    if not table:
+        return [f"\n  by {title}: no gamers (EVENT gave none for these matches)"]
+    L = [f"\n  by {title}, most restricted stake first (prod miss: prod's line at the bet less the "
+         "final total, + a line too high; each model: its line less the final on the same bets, "
+         "and its change in margin on them)",
+         f"  {title:24s} {'R bets':>6s} {'stake':>9s} {'margin':>8s} {'under':>6s} "
+         f"{'others':>7s} {'margin':>8s} {'prod miss':>9s}"
+         + "".join(f" {n[:8] + ' miss':>14s} {'chg':>7s}" for n in names)]
+    for k, (n, stake, m, under), (on, om), miss, models in table:
+        L.append(f"  {str(k)[:24]:24s} {n:6,d} {stake:9,.0f} {_f(m, '.2f', 7)}% {under:5.1f}% "
+                 f"{on:7,d} {_f(om, '.2f', 7)}% {_f(miss, '+.2f', 9)}"
+                 + "".join(f" {_f(mm, '+.2f', 8)} ({k_:3d}) {_f(c, '+.2f', 7)}" for k_, mm, c in models))
+    return L
+
+
 CUTS = (("side", "side"), ("in play", lambda r: "in play" if r["in_play"] else "pre-match"),
         ("quarter", lambda r: r.get("quarter") or ("pre-match" if not r["in_play"] else "unknown")),
         ("points still needed", "needed_band"), ("feed at bet time", "moment"),
@@ -435,7 +503,10 @@ def report(rows, min_bets=MIN_BETS):
     for c, n, stake, m, over, lv, up in customers(scope):
         L.append(f"  {c:12s} {n:6,d} {stake:10,.0f} {_f(m, '.2f', 7)}% {over:5.1f}% {_f(lv, '+.2f', 6)} "
                  f"{_f(up, '.1f', 5)}%")
-    for name in candidate_names(rows):
+    names = candidate_names(rows)
+    L += player_lines(scope, names, "gamer", "gamer")
+    L += player_lines(scope, names, "matchup", "matchup")
+    for name in names:
         L.append(f"\n  {name} at the message each bet saw, where it carries the same information as "
                  "prod's: does it lean the bettor's way (its line, else its probability at the same "
                  "line), and where prod moved by +120s, was its line nearer where prod went?")
@@ -522,14 +593,30 @@ def page(lines, scope, window):
 
 # --- run -------------------------------------------------------------------------------------
 
-def run(cur, out_dir, min_bets=MIN_BETS):
+def same_operators(totals):
+    """(bets, operators kept): the totals bets of the operators that send restricted accounts, so
+    the baseline is the same book's customers (Hard Rock sends no temperature, so its restricted
+    accounts would sit in the baseline). Every operator where none sends any."""
+    ops = {b.operator for b in totals if group_of(b.extra) == RESTRICTED}
+    if not ops:
+        return totals, sorted({str(b.operator) for b in totals})
+    return [b for b in totals if b.operator in ops], sorted(str(o) for o in ops)
+
+
+def run(cur, out_dir, min_bets=MIN_BETS, all_operators=False):
     """Fetch every totals bet of the window and prod's quotes, read prod's line around each, price
-    the candidates at the message each bet saw, then print, and write the CSV and the page."""
+    the candidates at the message each bet saw, then print, and write the CSV and the page.
+    The baseline is the operators that send restricted accounts, unless all_operators."""
     bets.check_models(bets.candidate_streams())
     sql, params, _ = bets.bets_sql()
     cols, raw = bets.fetch_all(cur, sql, tuple(params))
     every = bets.to_bets(cols, raw)
     totals = [b for b in every if b.feed_market in SIDE]
+    n_all = len(totals)
+    if not all_operators:
+        totals, ops = same_operators(totals)
+        print(f"  operators: {', '.join(ops)} ({n_all - len(totals):,} totals bets of other "
+              "operators left out; --all-operators keeps them)")
     matches = sorted({b.match_code for b in totals})
     restricted = sum(group_of(b.extra) == RESTRICTED for b in totals)
     print(f"  {len(totals):,} totals bets on {len(matches):,} matches, {restricted:,} from "
@@ -556,6 +643,11 @@ def run(cur, out_dir, min_bets=MIN_BETS):
                            finals, checks, same_state=snowflake_io.is_model(stream))
         results.append((bets.label(stream).replace(".", "_"), joined, cand_tl))
     rows = build(totals, results[0][1], results, prod_tl, checks)
+    info = {}
+    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
+        for r in snowflake_io.fetch_match_info(cur, matches[start:start + config.MATCH_CHUNK_SIZE]):
+            info[r["MATCH_CODE"]] = r
+    add_players(rows, info)
     lines = report(rows, min_bets)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)

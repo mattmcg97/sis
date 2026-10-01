@@ -1992,8 +1992,13 @@ Output:
 
 ```bash
 python -m eAMFCalibrator bets totals-moves --since 2026-09-17 --until 2026-09-30 --min-bets 30
-python -m eAMFCalibrator bets totals-moves --since 2026-09-17 --until 2026-09-30 --candidate v6,v6@prod --v6-model v6_model --min-bets 30
+python -m eAMFCalibrator bets totals-moves --since 2026-09-17 --until 2026-09-30 --candidate v8,v9 --v8-model v8_model --v9-model v9_model --min-bets 30
 ```
+
+**Same book only.** The baseline keeps only the operators that send
+restricted accounts (FanDuel: Hard Rock sends no temperature, so its restricted
+accounts would sit in the baseline). It says how many bets of other operators
+it left out. `--all-operators` keeps every operator.
 
 This reads prod's totals line before and after every totals bet, and compares
 restricted accounts (`CUSTOMER_TEMPERATURE = BET_RESTRICTED_VALUE`) with
@@ -2024,6 +2029,18 @@ It prints, and writes to `out/bets_totals_moves.html`:
   before, **whether a score fell between the bet and +60s** (a move with no
   score is the price drifting; a move across a score is the game), and operator;
 - the restricted customers with the most stake: is it a few accounts or all of them?
+- **by gamer and by matchup** (gamers off `EVENT`, PLAYER_1 home), most
+  restricted stake first. Each gamer gets every bet of his matches. Columns:
+  - restricted bets, stake, margin and under share, and the baseline's bets
+    and margin;
+  - **prod miss**: prod's line at the bet less the final total (+ is a line
+    set too high);
+  - for each candidate, its own line less the final on the same bets, and
+    its change in margin on them.
+
+  A gamer whose matches prod sets too high, which restricted accounts bet
+  under, and which a model already sets lower, is information the model
+  carries and prod lacks.
 - **each candidate**, at the message the bet saw, only where it carries the same
   information as prod's:
   - whether it already leaned the bettor's way (its line, else its probability
