@@ -304,6 +304,9 @@ def cmd_bets(args):
                 from . import bet_lines
                 path, _ = bet_lines.run(cur, out_dir, n_matches=args.matches, only=args.match)
                 print(f"\n  -> {path}")
+            elif args.action == "sessions":
+                from . import bet_sessions
+                print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
             elif args.action == "totals-signals":
                 from . import totals_signals
                 weights = [float(w) for w in (args.learn_weights or "").split(",") if w.strip()]
@@ -999,9 +1002,12 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves",
-                                      "totals-signals"],
+                                      "totals-signals", "sessions"],
                              default="run",
-                             help="totals-signals: how every match was played in Q1 and the first "
+                             help="sessions: bets and stake by each gamer's match of the session "
+                                  "(1st .. 10th+) and matches left in it, against how many matches sit "
+                                  "there, by temperature and market (out/bets_sessions.txt); "
+                                  "totals-signals: how every match was played in Q1 and the first "
                                   "half (pace, time between plays, clock per play, drives) against prod's "
                                   "total there and where the totals money went next, by temperature "
                                   "(out/totals_signals.csv); "
