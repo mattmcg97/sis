@@ -2042,6 +2042,34 @@ It prints, and writes to `out/bets_totals_moves.html`:
   A gamer whose matches prod sets too high, which restricted accounts bet
   under, and which a model already sets lower, is information the model
   carries and prod lacks.
+- **through a session.** A gamer's session is a run of matches with no gap
+  over `SESSION_BREAK_MINUTES` (240). The schedule runs a match every 35–110
+  minutes, then breaks for three hours or more, and most sessions are 8–10
+  matches. Each match is labelled by its place: both gamers on their last
+  match, one of them on it, 2nd last, 3rd last, or earlier. Two tables:
+  - **scoring through a session** over every settled match (`history`): each
+    total less its two gamers' own mean totals, ±2se;
+  - **the window's matches and money by place in the session**: how many
+    matches, their share, their totals against the gamers' means, and the
+    totals bets and stake on them (per match, and the share on the under).
+    Then, for all customers, restricted accounts and everyone else: each
+    place's share of matches beside its share of bets and stake (money lumped
+    on a place shows as a stake share above its match share), stake per
+    match, the share on the under by bets and by stake, and the book's margin
+    on unders and overs. Every settled bet the checks keep, priced or not;
+  - **the bets by place in the session**, laid out like the gamer table:
+    restricted and baseline margins, prod's miss, and each model's miss
+    against prod's on the same bets.
+
+  On `nb2/AMFELO.csv` (23,952 matches, Dec 2025 – Sep 2026), a match where
+  both gamers are on their last of the session scores **2.39 ± 0.52 points
+  under** their means, against +0.24 for the rest. It's the last match
+  whatever the session's length (8 to 11), so it's the end of the session,
+  not the match count. With only one gamer on his last, there's no effect.
+
+  `bets_totals_moves.csv` carries each gamer's `*_session_match`,
+  `*_session_left` (1 = last) and `*_session_length`, and the match's
+  `session_end`.
 - **each candidate**, at the message the bet saw, only where it carries the same
   information as prod's:
   - whether it already leaned the bettor's way (its line, else its probability
