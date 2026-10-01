@@ -384,7 +384,8 @@ def _miss(rs, line_key):
 def players(rows, names, key="gamer", n=20):
     """[(gamer or matchup, restricted (bets, stake, margin %, under %), everyone else (bets,
     margin %), prod's line less the final on the restricted bets, and per candidate: its line
-    less the final on the restricted bets it carries, and its change in margin on them)] for the
+    less the final on the restricted bets it carries, prod's on the same bets, and its change
+    in margin on them)] for the
     n with the most restricted stake. A gamer counts each bet of his matches once (both gamers
     of a match get it)."""
     by = defaultdict(lambda: ([], []))
@@ -407,7 +408,7 @@ def players(rows, names, key="gamer", n=20):
             ok = [r for r in rs if r.get(f"{name}_ok")]
             changed = [r for r in ok if r.get(f"{name}_change") is not None]
             stake_c = sum(r["stake"] for r in changed)
-            models.append((len(ok), _miss(ok, f"{name}_line"),
+            models.append((len(ok), _miss(ok, f"{name}_line"), _miss(ok, "stream_line"),
                            100 * sum(r[f"{name}_change"] for r in changed) / stake_c if stake_c else None))
         out.append((k, (bets_, stake, m, under), (o[0], o[2]), _miss(rs, "stream_line"), models))
     return out
@@ -419,15 +420,16 @@ def player_lines(rows, names, key, title):
     if not table:
         return [f"\n  by {title}: no gamers (EVENT gave none for these matches)"]
     L = [f"\n  by {title}, most restricted stake first (prod miss: prod's line at the bet less the "
-         "final total, + a line too high; each model: its line less the final on the same bets, "
-         "and its change in margin on them)",
+         "final total, + a line too high; each model, on the bets it carries (how many): its "
+         "line less the final, prod's on those same bets, and its change in margin on them)",
          f"  {title:24s} {'R bets':>6s} {'stake':>9s} {'margin':>8s} {'under':>6s} "
          f"{'others':>7s} {'margin':>8s} {'prod miss':>9s}"
-         + "".join(f" {n[:8] + ' miss':>14s} {'chg':>7s}" for n in names)]
+         + "".join(f" {n[:8] + ' miss':>14s} {'prod':>6s} {'chg':>7s}" for n in names)]
     for k, (n, stake, m, under), (on, om), miss, models in table:
         L.append(f"  {str(k)[:24]:24s} {n:6,d} {stake:9,.0f} {_f(m, '.2f', 7)}% {under:5.1f}% "
                  f"{on:7,d} {_f(om, '.2f', 7)}% {_f(miss, '+.2f', 9)}"
-                 + "".join(f" {_f(mm, '+.2f', 8)} ({k_:3d}) {_f(c, '+.2f', 7)}" for k_, mm, c in models))
+                 + "".join(f" {_f(mm, '+.2f', 8)} ({k_:3d}) {_f(pm, '+.2f', 6)} {_f(c, '+.2f', 7)}"
+                           for k_, mm, pm, c in models))
     return L
 
 
