@@ -1042,9 +1042,9 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
     handles = {c: h for c, h in handles.items() if h}
+    days = [d for d in (match_day(r) for r in matches.values()) if d is not None]
     as_of = (before.date() if before is not None else
-             max(d for d in (match_day(r) for r in matches.values()) if d is not None)
-             + dt.timedelta(days=1))
+             max(days) + dt.timedelta(days=1) if days else None)
     tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)

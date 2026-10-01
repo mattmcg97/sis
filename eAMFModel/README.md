@@ -1303,7 +1303,66 @@ Per snap (real / v7 / v8, seconds), the last 40 seconds of Q2: 6.5 / 8.4 / 6.8.
   5.0 points; v8 gives 4.6 (v7 4.3).
 - Q3 and Q2 two scores apart still run a point high, as in v7.
 
-## Pricing only what the model is sure of (v4–v8 streams)
+## v9: v8 with recent weeks weighing more, and the late timeout plays' real time
+
+v9 (`sim9.py`, `v9.py`, `v9_stream.py`) is a copy of v8. Its changes are behind `sim9`'s
+`NATURAL_SHIFT`, `TO_PLAY_SECONDS` and `CLOCK_HALF_LIFE`, and `v9`'s `SETTLE_HALF_LIFE`; with
+the first two off and no half-lives it plays as v8 (`test_with_its_own_switches_off_v9_plays_as_v8`).
+Build and report it as v8 (`v9-build ... --timeouts timeouts.csv`, `--candidate v8,v9`).
+
+### What v8 got wrong, and why
+
+v8's totals ran over in Q3, and in Q4 two scores apart. Per snap against real games
+(built before Sep 10, played Sep 10–22):
+
+- **The trailing side two scores down scored too often.** Touchdowns a snap, Q4's last two
+  minutes, behind 9+: 0.141 against 0.112 real. On the build's own weeks v8 matched (0.121
+  against 0.121). Real sides two scores down have scored less week on week (Q4 behind 9+:
+  0.107, 0.104, 0.099, 0.096, 0.097 a snap from the week of 24 Aug); close games held still.
+- **Leaders bled less late than they now do.** A leader's clock-running play in Q4's last two
+  minutes took 31.6–31.9 seconds in v8 against 32.8–34.0 real. That has crept up too: leading
+  by 1–8, 32.0 seconds the week of 24 Aug, 33.2 three weeks on; leading by 9+, 32.2 to 38.1.
+- **Timeout plays took a stopped play's time.** A play the trailing side stopped from defence
+  in Q4 took 10.7 seconds on average; v8 gave it an incompletion's 6.3. Real sides let the clock
+  run on a while before calling.
+- **The clock-running time by state was diluted.** v8 fitted it on every running play,
+  timeout-stopped ones included with a time borrowed from their bin.
+
+The per-snap clock everywhere else in Q3 and Q4 was right to within a second. The late level
+drain-and-kick, which looked heavy snap by snap, makes the right points: from real level
+in-range states in Q4's last two minutes, the offense's 3.97 against 3.90 real (3.90 → 4.75
+without it).
+
+### What v9 changes
+
+- **Recent weeks weigh more** (`SETTLE_HALF_LIFE`, `CLOCK_HALF_LIFE`: 7 days). The touchdown
+  (settle) fit and the clock fits weight each match by its age at the cut-off, halving every
+  week. The clock fits are the clock-stopped share, the play time by state, the kneels and
+  the timeout calls.
+- **The play time by state is fitted on plays nobody stopped** (`NATURAL_SHIFT`).
+- **A play stopped by a timeout takes the time real ones did** (`TO_PLAY_SECONDS`), by quarter,
+  who called it and whether the caller is behind, level or ahead.
+
+### Held out
+
+Points still to come, built before Sep 10, played on Sep 10–22 (56,890 snapshots).
+
+| | v8 mean | v9 mean | v8 rps | v9 rps |
+|---|---|---|---|---|
+| all | +0.14 | +0.14 | 3.841 | 3.837 |
+| Q3 2+ scores, trailer has ball | +0.94 | +0.77 | 4.587 | 4.576 |
+| Q3 2+ scores, leader has ball | +1.20 | +1.14 | 4.115 | 4.114 |
+| Q4 | +0.01 | +0.01 | 2.384 | 2.382 |
+| Q4 2+ scores, leader has ball | +0.55 | +0.46 | 1.656 | 1.647 |
+| Q4 1 score, trailer has ball | −0.46 | −0.39 | 2.877 | 2.874 |
+| Q3 level | +0.49 | +0.66 | 4.401 | 4.412 |
+| Q4 level | +0.14 | +0.23 | 2.080 | 2.085 |
+
+The two-score states come down; level states rise a little. A half-life can only follow a trend
+as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
+seconds a running play) than any week before.
+
+## Pricing only what the model is sure of (v4–v9 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:

@@ -962,7 +962,7 @@ class TestV9(unittest.TestCase):
         for c, *_ in items:
             cells[c] = cells.get(c, 0) + 1
         busy = max((c for c in cells if c % 4 >= 2), key=cells.get)     # inside the 30
-        planted = [(c, f, th, False if c == busy else td) for c, f, th, td in items]
+        planted = [(c, f, th, False if c == busy else td, *rest) for c, f, th, td, *rest in items]
         fitted = v9.fit_settle(t, planted, rounds=3, n_paths=40, prior=0.0)
         n, real, before, after = fitted[busy]
         self.assertEqual(real, 0.0)
