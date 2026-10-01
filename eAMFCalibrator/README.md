@@ -2035,8 +2035,9 @@ It prints, and writes to `out/bets_totals_moves.html`:
     and margin;
   - **prod miss**: prod's line at the bet less the final total (+ is a line
     set too high);
-  - for each candidate, its own line less the final on the same bets, and
-    its change in margin on them.
+  - for each candidate, on the bets it carries (how many): its own line less
+    the final, prod's on those same bets (the like-for-like comparison: the
+    first prod miss is over every restricted bet), and its change in margin.
 
   A gamer whose matches prod sets too high, which restricted accounts bet
   under, and which a model already sets lower, is information the model

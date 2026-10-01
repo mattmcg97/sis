@@ -121,10 +121,11 @@ class TestBaselineAndGamers(unittest.TestCase):
         bet_totals.add_players(rows, {"M1": {"PLAYER_1_HANDLE": "ann", "PLAYER_2_HANDLE": "bob"}})
         table = {k: v for k, *v in bet_totals.players(rows, ["m"])}
         self.assertEqual(set(table), {"ann", "bob"})
-        (n, _, _, under), (others, _), miss, ((k, cand_miss, _),) = table["ann"]
+        (n, _, _, under), (others, _), miss, ((k, cand_miss, prod_same, _),) = table["ann"]
         self.assertEqual((n, under, others), (2, 50.0, 1))
         self.assertAlmostEqual(miss, 44.5 - 45)          # prod's line at the bet, final 24-21
         self.assertAlmostEqual(cand_miss, 46.5 - 45)     # the model already at 46.5
+        self.assertAlmostEqual(prod_same, 44.5 - 45)     # prod on the same bets
         self.assertEqual(rows[0]["matchup"], "ann v bob")
 
 
