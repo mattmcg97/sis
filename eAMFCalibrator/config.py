@@ -116,6 +116,9 @@ BET_VIP_COLUMN = "CUSTOMER_TEMPERATURE"
 BET_VIP_VALUE = "VIP"
 # `bets totals-moves` reads BET_VIP_COLUMN = BET_RESTRICTED_VALUE as a restricted account.
 BET_RESTRICTED_VALUE = "Restricted"
+# A gamer's session: a run of matches with no gap over this many minutes (the schedule
+# runs a match every 35-110 minutes, then breaks for three hours or more).
+SESSION_BREAK_MINUTES = 240
 # The lags tried, seconds (negative: the operator's clock runs behind
 # GAMEPLAI's), in steps of LAG_STEP_SECONDS.
 LAG_RANGE = (-30, 60)

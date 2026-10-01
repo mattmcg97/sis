@@ -381,7 +381,7 @@ def _miss(rs, line_key):
     return sum(xs) / len(xs) if xs else None
 
 
-def players(rows, names, key="gamer", n=20):
+def players(rows, names, key="gamer", n=20, order=None):
     """[(gamer or matchup, restricted (bets, stake, margin %, under %), everyone else (bets,
     margin %), prod's line less the final on the restricted bets, and per candidate: its line
     less the final on the restricted bets it carries, prod's on the same bets, and its change
@@ -396,9 +396,14 @@ def players(rows, names, key="gamer", n=20):
         for k in keys:
             by[k][0 if r["group"] == RESTRICTED else 1].append(r)
     out = []
-    ranked = sorted(by.items(), key=lambda kv: -sum(r["stake"] for r in kv[1][0]))
-    for k, (rs, others) in ranked[:n]:
+    if order:
+        ranked = [(k, by[k]) for k in order if k in by]
+    else:
+        ranked = sorted(by.items(), key=lambda kv: -sum(r["stake"] for r in kv[1][0]))[:n]
+    for k, (rs, others) in ranked:
         if not rs:
+            if order:
+                continue
             break
         bets_, stake, m, _ = money(rs)
         under = 100 * sum(r["side"] == "Under" for r in rs) / bets_
@@ -414,12 +419,12 @@ def players(rows, names, key="gamer", n=20):
     return out
 
 
-def player_lines(rows, names, key, title):
-    """Lines of text: the players table."""
-    table = players(rows, names, key)
+def player_lines(rows, names, key, title, order=None):
+    """Lines of text: the players table (most restricted stake first, or in `order`)."""
+    table = players(rows, names, key, order=order)
     if not table:
         return [f"\n  by {title}: no gamers (EVENT gave none for these matches)"]
-    L = [f"\n  by {title}, most restricted stake first (prod miss: prod's line at the bet less the "
+    L = [f"\n  by {title}{'' if order else ', most restricted stake first'} (prod miss: prod's line at the bet less the "
          "final total, + a line too high; each model, on the bets it carries (how many): its "
          "line less the final, prod's on those same bets, and its change in margin on them)",
          f"  {title:24s} {'R bets':>6s} {'stake':>9s} {'margin':>8s} {'under':>6s} "
@@ -433,6 +438,118 @@ def player_lines(rows, names, key, title):
     return L
 
 
+# --- sessions -------------------------------------------------------------------------------
+
+LAST_BOTH, LAST_ONE, SECOND, THIRD, EARLIER = (
+    "last (both gamers)", "last (one gamer)", "2nd last", "3rd last", "earlier")
+SESSION_ORDER = (LAST_BOTH, LAST_ONE, SECOND, THIRD, EARLIER, "unknown")
+
+
+def _start(v):
+    try:
+        return dt.datetime.fromisoformat(str(v)[:19])
+    except ValueError:
+        return None
+
+
+def sessions(history, gap=None):
+    """(gamer, match) -> (match of the session, matches to its end (1: the last), session length)
+    off match rows with SCHEDULED_START_TIME_UTC and both handles (fetch_history's, AMFELO's). A
+    session is a gamer's run of matches with no gap over `gap` minutes
+    (config.SESSION_BREAK_MINUTES): the schedule runs a match every 35-110 minutes and breaks
+    for three hours or more."""
+    gap = config.SESSION_BREAK_MINUTES if gap is None else gap
+    by = defaultdict(list)
+    for r in history:
+        t = _start(r.get("SCHEDULED_START_TIME_UTC"))
+        if t is None:
+            continue
+        for side in ("PLAYER_1_HANDLE", "PLAYER_2_HANDLE"):
+            if r.get(side):
+                by[r[side]].append((t, r["MATCH_CODE"]))
+    out = {}
+    for g, ms in by.items():
+        ms.sort()
+        runs = [[ms[0]]]
+        for a, b in zip(ms, ms[1:]):
+            if (b[0] - a[0]).total_seconds() > gap * 60:
+                runs.append([b])
+            else:
+                runs[-1].append(b)
+        for run in runs:
+            for i, (_, m) in enumerate(run):
+                out[(g, m)] = (i + 1, len(run) - i, len(run))
+    return out
+
+
+def session_end(p1, p2):
+    """A match's place in its gamers' sessions: both or one on the last, else the nearer end."""
+    left = [p[1] for p in (p1, p2) if p]
+    if not left:
+        return "unknown"
+    last = sum(x == 1 for x in left)
+    if last:
+        return LAST_BOTH if last == 2 else LAST_ONE
+    return {2: SECOND, 3: THIRD}.get(min(left), EARLIER)
+
+
+def add_sessions(rows, pos):
+    """Each bet's gamers' places in their sessions, and the match's `session_end`."""
+    for r in rows:
+        m = r.get("match_code")
+        p1, p2 = pos.get((r.get("home_player"), m)), pos.get((r.get("away_player"), m))
+        for side, p in (("home", p1), ("away", p2)):
+            r[f"{side}_session_match"], r[f"{side}_session_left"], r[f"{side}_session_length"] = \
+                p or (None, None, None)
+        r["session_end"] = session_end(p1, p2)
+
+
+def session_scoring(history, pos, until=None):
+    """{session_end: (matches, mean total less the two gamers' own mean totals, 2se)} over the
+    settled matches of `history` (before `until`): does scoring move through a session?"""
+    games = []
+    for r in history:
+        try:
+            total = int(r["PLAYER_1_FINAL_SCORE"]) + int(r["PLAYER_2_FINAL_SCORE"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        t = _start(r.get("SCHEDULED_START_TIME_UTC"))
+        if t is None or (until and t >= until):
+            continue
+        games.append((r, total))
+    sums = defaultdict(lambda: [0.0, 0])
+    for r, total in games:
+        for side in ("PLAYER_1_HANDLE", "PLAYER_2_HANDLE"):
+            sums[r[side]][0] += total
+            sums[r[side]][1] += 1
+    mean = {g: a / n for g, (a, n) in sums.items()}
+    groups = defaultdict(list)
+    for r, total in games:
+        g1, g2, m = r["PLAYER_1_HANDLE"], r["PLAYER_2_HANDLE"], r["MATCH_CODE"]
+        groups[session_end(pos.get((g1, m)), pos.get((g2, m)))].append(total - (mean[g1] + mean[g2]) / 2)
+    out = {}
+    for k, xs in groups.items():
+        n = len(xs)
+        m = sum(xs) / n
+        sd = math.sqrt(sum((x - m) ** 2 for x in xs) / (n - 1)) if n > 1 else 0.0
+        out[k] = (n, m, 2 * sd / math.sqrt(n) if n else None)
+    return out
+
+
+def session_lines(rows, names, scoring=None, span=""):
+    """Lines of text: scoring through a session over the history, then the bets by session_end."""
+    L = []
+    if scoring:
+        L.append(f"\n  scoring through a session{span}: each match's total less its two gamers' own "
+                 f"mean totals (a session: no gap over {config.SESSION_BREAK_MINUTES} minutes)")
+        L.append(f"  {'':24s} {'matches':>8s} {'total':>7s} {'+-2se':>6s}")
+        for k in SESSION_ORDER:
+            if k in scoring:
+                n, m, se2 = scoring[k]
+                L.append(f"  {k:24s} {n:8,d} {m:+7.2f} {_f(se2, '.2f', 6)}")
+    return L + player_lines(rows, names, "session_end", "place in the session", order=SESSION_ORDER)
+
+
 CUTS = (("side", "side"), ("in play", lambda r: "in play" if r["in_play"] else "pre-match"),
         ("quarter", lambda r: r.get("quarter") or ("pre-match" if not r["in_play"] else "unknown")),
         ("points still needed", "needed_band"), ("feed at bet time", "moment"),
@@ -440,8 +557,9 @@ CUTS = (("side", "side"), ("in play", lambda r: "in play" if r["in_play"] else "
         ("score between bet and +60s", scored_split), ("operator", config.BET_GROUP_COLUMN))
 
 
-def report(rows, min_bets=MIN_BETS):
-    """Lines of text: every table, restricted against everyone else."""
+def report(rows, min_bets=MIN_BETS, scoring=None, span=""):
+    """Lines of text: every table, restricted against everyone else. `scoring` (session_scoring)
+    adds how scoring moves through a session over the history."""
     scope = [r for r in rows if in_scope(r)]
     L = ["\n  totals bets by customer temperature (settled, the checks keeping them)",
          f"  {'':16s} {'bets':>7s} {'custs':>6s} {'stake':>11s} {'margin':>8s} {'expected':>9s} "
@@ -508,6 +626,8 @@ def report(rows, min_bets=MIN_BETS):
     names = candidate_names(rows)
     L += player_lines(scope, names, "gamer", "gamer")
     L += player_lines(scope, names, "matchup", "matchup")
+    if any("session_end" in r for r in scope):
+        L += session_lines(scope, names, scoring, span)
     for name in names:
         L.append(f"\n  {name} at the message each bet saw, where it carries the same information as "
                  "prod's: does it lean the bettor's way (its line, else its probability at the same "
@@ -650,7 +770,14 @@ def run(cur, out_dir, min_bets=MIN_BETS, all_operators=False):
         for r in snowflake_io.fetch_match_info(cur, matches[start:start + config.MATCH_CHUNK_SIZE]):
             info[r["MATCH_CODE"]] = r
     add_players(rows, info)
-    lines = report(rows, min_bets)
+    history = snowflake_io.fetch_history(cur)
+    pos = sessions(history)
+    add_sessions(rows, pos)
+    until = _start(config.CUTOFF_END) if config.CUTOFF_END else None
+    scoring = session_scoring(history, pos, until)
+    first = min((r["SCHEDULED_START_TIME_UTC"] for r in history), default="")
+    span = f", every settled match {str(first)[:10]} to {config.CUTOFF_END or 'now'}"
+    lines = report(rows, min_bets, scoring, span)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
     path_csv = os.path.join(out_dir, "bets_totals_moves.csv")

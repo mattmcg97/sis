@@ -129,5 +129,45 @@ class TestBaselineAndGamers(unittest.TestCase):
         self.assertEqual(rows[0]["matchup"], "ann v bob")
 
 
+
+def game(match, minutes, p1, p2, s1=21, s2=14):
+    return dict(MATCH_CODE=match, SCHEDULED_START_TIME_UTC=f"2026-09-20 {minutes // 60:02d}:{minutes % 60:02d}:00",
+                PLAYER_1_HANDLE=p1, PLAYER_2_HANDLE=p2, PLAYER_1_FINAL_SCORE=str(s1),
+                PLAYER_2_FINAL_SCORE=str(s2))
+
+
+class TestSessions(unittest.TestCase):
+
+    # ann and bob play three matches 40 minutes apart, break five hours, then one more;
+    # cat joins bob's second match only
+    HISTORY = [game("A1", 0, "ann", "bob"), game("A2", 40, "ann", "cat"), game("A3", 80, "ann", "bob"),
+               game("A4", 380, "ann", "bob", 10, 7)]
+
+    def test_a_gap_over_the_break_starts_a_new_session(self):
+        pos = bet_totals.sessions(self.HISTORY, gap=240)
+        self.assertEqual(pos[("ann", "A1")], (1, 3, 3))
+        self.assertEqual(pos[("ann", "A3")], (3, 1, 3))
+        self.assertEqual(pos[("ann", "A4")], (1, 1, 1))
+        self.assertEqual(pos[("bob", "A3")], (2, 1, 2))
+
+    def test_the_match_is_labelled_by_how_many_of_its_gamers_are_on_their_last(self):
+        pos = bet_totals.sessions(self.HISTORY, gap=240)
+        self.assertEqual(bet_totals.session_end(pos[("ann", "A3")], pos[("bob", "A3")]),
+                         bet_totals.LAST_BOTH)
+        self.assertEqual(bet_totals.session_end(pos[("ann", "A2")], pos[("cat", "A2")]),
+                         bet_totals.LAST_ONE)
+        self.assertEqual(bet_totals.session_end(pos[("ann", "A1")], pos[("bob", "A1")]),
+                         bet_totals.SECOND)
+
+    def test_scoring_is_read_against_the_gamers_own_means(self):
+        pos = bet_totals.sessions(self.HISTORY, gap=240)
+        scoring = bet_totals.session_scoring(self.HISTORY, pos)
+        # A4 (17 points) against ann's mean (35 * 3 + 17) / 4 and bob's (35 * 2 + 17) / 3
+        n, m, _ = scoring[bet_totals.LAST_BOTH]
+        ann, bob = (35 * 3 + 17) / 4, (35 * 2 + 17) / 3
+        self.assertEqual(n, 2)                                 # A3 and A4
+        self.assertAlmostEqual(m, ((35 - (ann + bob) / 2) + (17 - (ann + bob) / 2)) / 2)
+
+
 if __name__ == "__main__":
     unittest.main()
