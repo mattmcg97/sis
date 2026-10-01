@@ -482,6 +482,11 @@ def sessions(history, gap=None):
     return out
 
 
+def pos_matches(pos):
+    """The matches sessions() placed."""
+    return {m for _, m in pos}
+
+
 def session_end(p1, p2):
     """A match's place in its gamers' sessions: both or one on the last, else the nearer end."""
     left = [p[1] for p in (p1, p2) if p]
@@ -837,14 +842,25 @@ def run(cur, out_dir, min_bets=MIN_BETS, all_operators=False):
                            finals, checks, same_state=snowflake_io.is_model(stream))
         results.append((bets.label(stream).replace(".", "_"), joined, cand_tl))
     rows = build(totals, results[0][1], results, prod_tl, checks)
-    info = {}
-    for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
-        for r in snowflake_io.fetch_match_info(cur, matches[start:start + config.MATCH_CHUNK_SIZE]):
+    # the gamers come off the same history rows the sessions are built from, so a match's
+    # handles and its place in the session cannot disagree (EVENT can hold more than one row
+    # per match); EVENT fills in any match the history lacks (not settled)
+    history = snowflake_io.fetch_history(cur)
+    info = {r["MATCH_CODE"]: r for r in history}
+    missing = [m for m in matches if m not in info]
+    for start in range(0, len(missing), config.MATCH_CHUNK_SIZE):
+        for r in snowflake_io.fetch_match_info(cur, missing[start:start + config.MATCH_CHUNK_SIZE]):
             info[r["MATCH_CODE"]] = r
     add_players(rows, info)
-    history = snowflake_io.fetch_history(cur)
     pos = sessions(history)
     add_sessions(rows, pos)
+    placed = pos_matches(pos)
+    unknown = Counter("no gamers" if "home_player" not in r else
+                      "match not in the history (not settled)" if r["match_code"] not in placed
+                      else "gamer not placed" for r in rows if r.get("session_end") == "unknown")
+    print(f"  sessions: {len(missing):,} of {len(matches):,} bet matches not in the settled history"
+          + (f"; bets with no place in the session: "
+             + ", ".join(f"{k} {v:,}" for k, v in unknown.most_common()) if unknown else ""))
     until = _start(config.CUTOFF_END) if config.CUTOFF_END else None
     scoring = session_scoring(history, pos, until)
     window = session_scoring(history, pos, until, since=_start(config.CUTOFF_START))
