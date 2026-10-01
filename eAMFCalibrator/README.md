@@ -2049,6 +2049,14 @@ It prints, and writes to `out/bets_totals_moves.html`:
   match, one of them on it, 2nd last, 3rd last, or earlier. Two tables:
   - **scoring through a session** over every settled match (`history`): each
     total less its two gamers' own mean totals, ±2se;
+  - **the window's matches and money by place in the session**: how many
+    matches, their share, their totals against the gamers' means, and the
+    totals bets and stake on them (per match, and the share on the under).
+    Then, for all customers, restricted accounts and everyone else: each
+    place's share of matches beside its share of bets and stake (money lumped
+    on a place shows as a stake share above its match share), stake per
+    match, the share on the under by bets and by stake, and the book's margin
+    on unders and overs. Every settled bet the checks keep, priced or not;
   - **the bets by place in the session**, laid out like the gamer table:
     restricted and baseline margins, prod's miss, and each model's miss
     against prod's on the same bets.

@@ -169,5 +169,19 @@ class TestSessions(unittest.TestCase):
         self.assertAlmostEqual(m, ((35 - (ann + bob) / 2) + (17 - (ann + bob) / 2)) / 2)
 
 
+    def test_the_money_is_split_by_place_side_and_group(self):
+        rows = build([total(60, 2, stake=30.0, revenue=30.0), total(60, 1, stake=10.0, revenue=10.0),
+                      total(60, 2, "Standard", stake=20.0, revenue=-18.0)])
+        for r in rows:
+            r["session_end"] = bet_totals.LAST_BOTH
+        money = bet_totals.session_money(rows)
+        nb, st, ub, us, ur, orev = money[("All", bet_totals.LAST_BOTH)]
+        self.assertEqual((nb, st, ub, us), (3, 60.0, 2, 50.0))
+        self.assertEqual((ur, orev), (12.0, 10.0))
+        self.assertEqual(money[(bet_totals.RESTRICTED, bet_totals.LAST_BOTH)][:4], (2, 40.0, 1, 30.0))
+        lines = bet_totals.volume_lines(rows, {bet_totals.LAST_BOTH: (4, -2.0, 0.5)})
+        self.assertTrue(any("stake/match" in x for x in lines))
+
+
 if __name__ == "__main__":
     unittest.main()
