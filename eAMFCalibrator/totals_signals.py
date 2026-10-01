@@ -174,6 +174,7 @@ def segment_features(ps, periods, called=None):
                timeouts=sum((called or {}).get(q, 0) for q in periods))
     out["drives"] = out["punts"] + out["tds"] + count("FIELD_GOAL_GOOD", "FIELD_GOAL_MISSED") \
         + count("TURNOVER_ON_DOWNS")
+    out["detail"] = sum(p.yard is not None for p in scrim) / len(scrim) if scrim else None
     return out
 
 
@@ -275,6 +276,7 @@ def match_row(match, rows, tl, prod_tl, scores, final, match_bets, pre_bets=(), 
     q = bets.price_at_time(prod_tl, match, 54, start - dt.timedelta(milliseconds=1)) if start else None
     f = dict(pre or {})
     f["line"] = q[2] if q else None
+    f["prob"] = q[1] if q else None
     f["over"] = (None if f["line"] is None or out["final_total"] is None
                  else out["final_total"] - f["line"])
     m = money(pre_bets, dt.datetime.min, None)
@@ -291,6 +293,7 @@ def match_row(match, rows, tl, prod_tl, scores, final, match_bets, pre_bets=(), 
         board = sum(scores.score_at(match, msg)) if msg is not None else None
         f["points"] = board
         f["line"] = line
+        f["prob"] = q[1] if q else None
         f["needed"] = None if line is None or board is None else line - board
         f["over"] = (None if line is None or out["final_total"] is None
                      else out["final_total"] - line)
@@ -301,6 +304,107 @@ def match_row(match, rows, tl, prod_tl, scores, final, match_bets, pre_bets=(), 
             f[f"{g}_under_rev"], f[f"{g}_over_rev"] = ur, orv
         out.update({f"{name}_{k}": v for k, v in f.items()})
     return out
+
+
+# --- the models at the checkpoints ------------------------------------------------------------
+
+def targets(rows):
+    """{segment: the message its checkpoint is at} for one match (the quarter starts)."""
+    cps = checkpoints(rows)
+    return {name: cps.get(status) for name, _, status in SEGMENTS}
+
+
+class ModelAt:
+    """One model version (v8, v9, a named build), priced only where it is read: the kick-off, and
+    the latest priceable PLAY_OVER at or before each checkpoint, with every earlier snap still
+    read into the game (as the stream reads them). `react` turns on its in-game efficiency
+    update (off as the streams run it)."""
+
+    def __init__(self, name, react=False):
+        import importlib
+        self.name, self.base = name, snowflake_io.model_base(name)
+        self.label = name + ("-react" if react else "")
+        self.model = importlib.import_module(f"eAMFModel.{self.base}")
+        self.stream = importlib.import_module(f"eAMFModel.{self.base}_stream")
+        tables_path, grid_path = self.stream.model_paths(snowflake_io.build_dir(name))
+        self.tables = self.stream.sim.Tables.load(tables_path)
+        self.grid = self.model.PriorGrid.load(grid_path)
+        self.book = self.model.players_book(tables_path)
+        self.pre = self.model.prematch_model(tables_path)
+        self.variant = self.model.Variant(self.base, react=react)
+        self.paths = getattr(config, f"{self.base.upper()}_PATHS")
+
+    def means(self, match_info):
+        if self.pre is None:
+            return {}
+        return self.pre.means(match_info)
+
+    def price(self, code, snaps, at, means):
+        """{"pre": (margin pmf, total pmf), segment: (...)} for one match; a segment is missing
+        where no priceable PLAY_OVER comes before its checkpoint, or TEAM_A's side is unknown."""
+        m, st = self.model, self.stream
+        rng = st.np.random.default_rng(m.match_seed(code))
+        snaps = sorted(snaps, key=lambda r: int(r["message"]))
+        pair = m.handles_of(snaps) if self.book else None
+        prof = (self.book.profile(pair[0]), self.book.profile(pair[1])) if pair else None
+        if prof is None:
+            from eAMFModel import players
+            prof = (players.Profile(), players.Profile())
+        theta0 = m.prior_theta(self.grid, means.get(code, self.pre.league) if self.pre else None)
+        out = {"pre": m.price_kickoff(self.tables, theta0, self.variant, prof, self.paths, rng,
+                                      seed=m.match_seed(code))}
+        if not st.side_known(snaps):
+            return out
+        rows = m.resolve_sides([st._as_text(r) for r in snaps])
+        a_home = rows[0]["team_a_side"] == "home"
+        states, messages, segs = [], [], []
+        for seg, msg in at.items():
+            if msg is None:
+                continue
+            for r in reversed(rows):
+                if int(r["message"]) <= msg:
+                    state, _ = m.state_for(r)
+                    if state is not None:
+                        states.append(state)
+                        messages.append(int(r["message"]))
+                        segs.append(seg)
+                        break
+        if states:
+            order = sorted(range(len(states)), key=lambda i: messages[i])
+            dists = m.price_states(self.tables, theta0, self.variant, st.sim.snap_records(rows),
+                                   a_home, [states[i] for i in order], [messages[i] for i in order],
+                                   prof, self.paths, rng, seed=m.match_seed(code))
+            for k, i in enumerate(order):
+                out[segs[i]] = dists[k]
+        return out
+
+    def fields(self, books, row):
+        """The model's line, mean total and P(over prod's line) at each checkpoint, its over
+        (final less its line) and its points still to come (its mean less the board)."""
+        out = {}
+        for seg in ("pre",) + tuple(s[0] for s in SEGMENTS):
+            b = books.get(seg)
+            if b is None:
+                continue
+            mpmf, tpmf = b
+            line = float(self.model.even_line(tpmf, 0))
+            mean = float(sum(i * float(p) for i, p in enumerate(tpmf)))
+            prod_line = row.get(f"{seg}_line")
+            pover = (float(self.model.market_prob(54, prod_line, mpmf, tpmf))
+                     if prod_line is not None else None)
+            final, board = row.get("final_total"), row.get(f"{seg}_points") or 0
+            out.update({f"{seg}_{self.label}_line": line, f"{seg}_{self.label}_mean": mean,
+                        f"{seg}_{self.label}_pover": pover,
+                        f"{seg}_{self.label}_over": None if final is None else final - line,
+                        f"{seg}_{self.label}_needed": mean - board})
+        return out
+
+
+def model_names(rows):
+    """The model labels a set of rows carries (`h1_v8_line` -> v8)."""
+    keys = list(dict.fromkeys(k for r in rows[:50] for k in r))
+    return [k[len("pre_"):-len("_line")] for k in keys
+            if k.startswith("pre_") and k.endswith("_line") and k != "pre_line"]
 
 
 # --- the report ------------------------------------------------------------------------------
@@ -381,6 +485,127 @@ def ranking(rows, seg):
     return sorted(out, key=lambda x: -abs((x[5] or 0) - (x[4] or 0)))
 
 
+def ols(X, y):
+    """(coefficients, standard errors) of y on the columns of X (with its constant), by the
+    normal equations; None where X'X is singular."""
+    k, n = len(X[0]), len(X)
+    A = [[sum(x[i] * x[j] for x in X) for j in range(k)] + [float(i == j) for j in range(k)]
+         for i in range(k)]
+    for c in range(k):
+        piv = max(range(c, k), key=lambda r_: abs(A[r_][c]))
+        if abs(A[piv][c]) < 1e-12:
+            return None
+        A[c], A[piv] = A[piv], A[c]
+        d = A[c][c]
+        A[c] = [v / d for v in A[c]]
+        for r_ in range(k):
+            if r_ != c and A[r_][c]:
+                f = A[r_][c]
+                A[r_] = [a - f * b for a, b in zip(A[r_], A[c])]
+    inv = [row[k:] for row in A]
+    xty = [sum(x[i] * yy for x, yy in zip(X, y)) for i in range(k)]
+    beta = [sum(inv[i][j] * xty[j] for j in range(k)) for i in range(k)]
+    resid = [yy - sum(b * xi for b, xi in zip(beta, x)) for x, yy in zip(X, y)]
+    s2 = sum(e * e for e in resid) / max(1, n - k)
+    return beta, [math.sqrt(max(0.0, s2 * inv[i][i])) for i in range(k)]
+
+
+REGRESSORS = (("needed", "points to come, by the line"), ("points", "points on the board"),
+              ("plays", "scrimmage plays"), ("clock_per_play", "game clock per play"),
+              ("presnap_s", "real seconds between plays"), ("drives", "drives ended"))
+
+
+def regression_lines(rows, seg, names):
+    """Lines of text: the points the rest of the match made, regressed on prod's points to come
+    and how the match was played; then with each model's points to come in prod's place. A
+    line that already priced everything would take a coefficient of 1 and leave the rest at 0."""
+    L = []
+    for who in ["prod"] + names:
+        need = f"{seg}_needed" if who == "prod" else f"{seg}_{who}_needed"
+        cols = [need] + [f"{seg}_{k}" for k, _ in REGRESSORS[1:]]
+        use = [r for r in rows if r.get("final_total") is not None and r.get(f"{seg}_points") is not None
+               and all(r.get(c) is not None for c in cols)]
+        if len(use) < 30:
+            continue
+        X = [[1.0] + [float(r[c]) for c in cols] for r in use]
+        y = [r["final_total"] - r[f"{seg}_points"] for r in use]
+        fit = ols(X, y)
+        if fit is None:
+            continue
+        beta, se = fit
+        L.append(f"  {who:12s} {len(use):6,d}  const {beta[0]:+6.2f}  "
+                 + "  ".join(f"{(who if k == 'needed' else k)[:12]} {b:+.2f}+-{2 * e:.2f}"
+                             for (k, _), b, e in zip(REGRESSORS, beta[1:], se[1:])))
+    if L:
+        L.insert(0, f"\n  points the rest of the match made, regressed on each line's points to come "
+                    "and how the match was played (coefficient +-2se; a line that priced everything "
+                    "takes 1, the rest 0)")
+    return L
+
+
+def _brier(rs, pkey, line_key):
+    xs = [(r[pkey] - (1.0 if r["final_total"] > r[line_key] else 0.0)) ** 2 for r in rs
+          if r.get(pkey) is not None and r["final_total"] != r[line_key]]
+    return sum(xs) / len(xs) if xs else None
+
+
+def model_lines(rows, names):
+    """Lines of text: prod and each model at each checkpoint on the same matches, how they anchor,
+    and the regression."""
+    if not names:
+        return []
+    L = ["\n  ==== prod and the models at each checkpoint, on the matches all of them priced ===="]
+    for seg in ("pre",) + tuple(x[0] for x in SEGMENTS):
+        rs = [r for r in rows if r.get("final_total") is not None and r.get(f"{seg}_line") is not None
+              and r.get(f"{seg}_prob") is not None
+              and all(r.get(f"{seg}_{n}_line") is not None for n in names)]
+        if not rs:
+            continue
+        title = {"pre": "pre-match (closing line; the models' kick-off)", "q1": "start of Q2",
+                 "h1": "start of Q3"}[seg]
+        L.append(f"\n  {title}: {len(rs):,} matches (over: final less the line; MAE: its mean "
+                 "absolute size; Brier: P(over prod's line) against the result)")
+        L.append(f"  {'':14s} {'over':>7s} {'+-2se':>6s} {'MAE':>6s} {'Brier':>7s}")
+        for who, line, prob in [("prod", f"{seg}_line", f"{seg}_prob")] + \
+                [(n, f"{seg}_{n}_line", f"{seg}_{n}_pover") for n in names]:
+            ov = [r["final_total"] - r[line] for r in rs]
+            m, se = _mean_se(ov)
+            L.append(f"  {who:14s} {m:+7.2f} {_f(se, '.2f', 6)} {sum(map(abs, ov)) / len(ov):6.2f} "
+                     f"{_f(_brier(rs, prob, f'{seg}_line'), '.4f', 7)}")
+        if seg == "pre":
+            key, label = "pre_form", "both gamers' recent form"
+        else:
+            key, label = f"{seg}_points", "points on the board"
+        have = [r for r in rs if r.get(key) is not None]
+        if len(have) >= 25:
+            edges = edges_for([r[key] for r in have])
+            board = (lambda r: 0) if seg == "pre" else (lambda r: r[f"{seg}_points"])
+            L.append(f"  by {label}: points to come, real against each line's (line less the board) "
+                     "-- a line that anchors on the pre-match total gives a slow start more to come")
+            L.append(f"  {'range':>15s} {'matches':>7s} {'real':>6s} {'prod':>6s} "
+                     + " ".join(f"{n[:8]:>8s}" for n in names))
+            for q in sorted({bin_of(r[key], edges) for r in have}):
+                b = [r for r in have if bin_of(r[key], edges) == q]
+                vals = [r[key] for r in b]
+                real = sum(r["final_total"] - board(r) for r in b) / len(b)
+                prod = sum(r[f"{seg}_line"] - board(r) for r in b) / len(b)
+                ms = [sum(r[f"{seg}_{n}_line"] - board(r) for r in b) / len(b) for n in names]
+                L.append(f"  {min(vals):7.1f}-{max(vals):<7.1f} {len(b):7,d} {real:6.1f} {prod:6.1f} "
+                         + " ".join(f"{x:8.1f}" for x in ms))
+        if seg != "pre":
+            for flag, keep in (("with play detail", lambda r: (r.get(f"{seg}_detail") or 0) >= 0.5),
+                               ("without play detail", lambda r: (r.get(f"{seg}_detail") or 0) < 0.5)):
+                d = [r for r in rs if keep(r)]
+                if d:
+                    L.append(f"  {flag} (down and field position, which the models read the game "
+                             f"from): {len(d):,} matches, over "
+                             + ", ".join(f"{who} {_mean_se([r['final_total'] - r[c] for r in d])[0]:+.2f}"
+                                         for who, c in [("prod", f"{seg}_line")]
+                                         + [(n, f"{seg}_{n}_line") for n in names]))
+            L += regression_lines(rs, seg, names)
+    return L
+
+
 def report(rows):
     """Lines of text: per checkpoint, the features ranked, then each one by quintile."""
     L = []
@@ -425,14 +650,21 @@ def report(rows):
                          f"{_f(ose, '.2f', 6)} {_f(nd, '.1f', 7)} {stake:8,.0f} "
                          + " ".join(f"{_f(_share(b, seg, g), '.1f', 11)}%" for g in GROUPS[:4])
                          + f" {_f(_under_margin(b, seg), '+.1f', 8)}%")
-    return L
+    return L + model_lines(rows, model_names(rows))
 
 
 # --- run -------------------------------------------------------------------------------------
 
-def run(cur, out_dir):
-    """Every settled match of the window: its plays off SCOUTING_FULL, prod's total at the end of
-    Q1 and at the half, the final, and the totals bets; print the report, write the CSV."""
+def run(cur, out_dir, react=False):
+    """Every settled match of the window: its plays off SCOUTING_FULL, prod's total pre-match, at
+    the end of Q1 and at the half, each model version in --candidate priced at the same three
+    moments (with `react`, again with its in-game efficiency update on), the final, and the
+    totals bets; print the report, write the CSV."""
+    names = [snowflake_io.model_version(c)[0] for c in config.CANDIDATES if snowflake_io.is_model(c)]
+    bets.check_models([c for c in config.CANDIDATES if snowflake_io.is_model(c)])
+    models = [ModelAt(n) for n in names] + ([ModelAt(n, react=True) for n in names] if react else [])
+    if models:
+        print("  models at the checkpoints: " + ", ".join(m.label for m in models), flush=True)
     matches = snowflake_io.match_universe(cur, config.STREAMS["prod"])
     print(f"  {len(matches):,} settled matches in the window", flush=True)
     sql, params, _ = bets.bets_sql()
@@ -455,17 +687,30 @@ def run(cur, out_dir):
         prod_rows = snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         finals = snowflake_io.fetch_final_scores(cur, batch)
         scores = bet_checks.Checks({}, {}, bet_checks.score_index(snowflake_io.fetch_scores(cur, batch)))
-        srows = scouting.fetch_scouting(cur, table, batch, windowed=False)
+        if models:
+            prod_by, keep = defaultdict(list), {}
+            for q in prod_rows:
+                prod_by[q[0]].append(q)
+            snapshots, _ = snowflake_io._play_over_snapshots(cur, batch, with_handles=True,
+                                                             prod_by_match=prod_by, keep=keep)
+            srows = keep.get("scouting", [])
+            match_info = snowflake_io.fetch_match_info(cur, list(snapshots))
+        else:
+            srows = scouting.fetch_scouting(cur, table, batch, windowed=False)
         tls = bet_moments.build(srows, bet_checks.message_times(prod_rows))
         prod_tl = bets.timeline(prod_rows)
         by = defaultdict(list)
         for r in srows:
             by[r[0]].append(r)
+        means = {mdl.label: mdl.means(match_info) for mdl in models}
         for m in batch:
             if by.get(m):
-                out.append(match_row(m, by[m], tls.get(m), prod_tl, scores, finals.get(m),
-                                     by_match.get(m, []), pre_by.get(m, []),
-                                     pre_features(m, info, pos, form)))
+                row = match_row(m, by[m], tls.get(m), prod_tl, scores, finals.get(m),
+                                by_match.get(m, []), pre_by.get(m, []), pre_features(m, info, pos, form))
+                for mdl in models:
+                    row.update(mdl.fields(mdl.price(m, snapshots.get(m, []), targets(by[m]),
+                                                    means[mdl.label]), row))
+                out.append(row)
         print(f"  {min(start + chunk, len(matches)):,} of {len(matches):,} matches read", flush=True)
     lines = report(out)
     print("\n".join(lines))

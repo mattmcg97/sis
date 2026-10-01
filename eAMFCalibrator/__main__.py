@@ -306,7 +306,7 @@ def cmd_bets(args):
                 print(f"\n  -> {path}")
             elif args.action == "totals-signals":
                 from . import totals_signals
-                path = totals_signals.run(cur, out_dir)
+                path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
             elif args.action == "totals-moves":
                 from . import bet_totals
@@ -1027,6 +1027,9 @@ def build_parser():
                                   "in play by quarter and clock)")
     bets_parser.add_argument("--min-bets", type=int, default=100, metavar="N",
                              help="moments: hide buckets with fewer bets (default 100)")
+    bets_parser.add_argument("--react", action="store_true",
+                             help="totals-signals: also price each model with its in-game efficiency "
+                                  "update on (the streams run it off), labelled <model>-react")
     bets_parser.add_argument("--all-operators", action="store_true",
                              help="totals-moves: keep every operator in the baseline (default: only the "
                                   "operators that send restricted accounts)")
