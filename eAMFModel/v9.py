@@ -600,15 +600,26 @@ SETTLE_ROUNDS = 3
 SETTLE_OUTER = 2
 SETTLE_PATHS = 40
 SETTLE_PRIOR = 150.0
+# v9: the settle fit weights each match by its age at the build's cut-off, halving every
+# SETTLE_HALF_LIFE days (None: every match alike). Sides two scores down score less week on week
+# (touchdowns a snap behind 9+ in Q4: 0.107 the week of 24 Aug, 0.096 three weeks on; level,
+# flat), so an even weighting keeps them scoring as they did weeks ago.
+SETTLE_HALF_LIFE = 7.0
 
 
-def settle_states(matches, grid, priors=None):
+def settle_states(matches, grid, priors=None, as_of=None, half_life=None):
     """Every real snapshot with a snap to come as a simulation start: its settle cell, its start
-    fields, the match's prior strengths and whether the next play was the offense's touchdown."""
+    fields, the match's prior strengths, whether the next play was the offense's touchdown and its
+    weight (v9: halving every `half_life` days of the match's age at `as_of`; 1 without)."""
     out = []
     for code, rows in matches.items():
         if priors is not None and code not in priors:
             continue
+        w = 1.0
+        if half_life and as_of is not None:
+            day = match_day(rows)
+            if day is not None:
+                w = 0.5 ** (max(0, (as_of - day).days) / half_life)
         rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
         theta0 = prior_theta(grid, None if priors is None else priors[code])
         for r, nxt in zip(rows, rows[1:]):
@@ -624,7 +635,7 @@ def settle_states(matches, grid, priors=None):
             td = nxt["play_kind"] == "TOUCHDOWN" and \
                 playover.side_of(scorer, r.get("team_a_side")) == state.offense
             cell = int(sim.settle_index(state.period, state.clock_seconds, lead, fields["y"]))
-            out.append((cell, fields, theta0, bool(td)))
+            out.append((cell, fields, theta0, bool(td), w))
     return out
 
 
@@ -640,24 +651,28 @@ def fit_settle(tables, items, rounds=SETTLE_ROUNDS, n_paths=SETTLE_PATHS, prior=
     prepared = {}
     for cell, its in by.items():
         start = sim.Start(len(its))
-        for i, (_, fields, theta0, _) in enumerate(its):
-            _fill(start, i, fields)
-            start.theta[i] = theta0
+        for i, it in enumerate(its):
+            _fill(start, i, it[1])
+            start.theta[i] = it[2]
         team = start.team.astype(int)
         base = np.where(team == 0, start.home, start.away)
-        prepared[cell] = (start, team, base, float(sum(it[3] for it in its)), len(its))
+        w = np.array([it[4] if len(it) > 4 else 1.0 for it in its])
+        # the weighted touchdowns and the weighted count, so the target's shrinkage reads the
+        # cell's effective size
+        prepared[cell] = (start, team, base, float(sum(it[3] * wi for it, wi in zip(its, w))),
+                          float(w.sum()), w)
 
     def scored(cell):
-        """The simulation's touchdown rate on one snap from the cell's states."""
-        start, team, base, _, _ = prepared[cell]
+        """The simulation's touchdown rate on one snap from the cell's states, weighted alike."""
+        start, team, base, _, _, w = prepared[cell]
         home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed + cell),
                                   max_steps=1, common=False)
         own = np.where(team[:, None] == 0, home, away)
-        return float(((own - base[:, None]) == 6).mean())
+        return float((((own - base[:, None]) == 6).mean(1) * w).sum() / max(1e-12, w.sum()))
 
     out = {}
     for rnd in range(rounds):
-        for cell, (_, _, _, real, n) in sorted(prepared.items()):
+        for cell, (_, _, _, real, n, _) in sorted(prepared.items()):
             got = scored(cell)
             if rnd == 0:
                 out[cell] = [n, real / n, got, got]
@@ -1027,7 +1042,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
     handles = {c: h for c, h in handles.items() if h}
-    tables = sim.Tables.build(matches, handles=handles)
+    as_of = (before.date() if before is not None else
+             max(d for d in (match_day(r) for r in matches.values()) if d is not None)
+             + dt.timedelta(days=1))
+    tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
@@ -1043,7 +1061,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
                   + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
     if sim.SETTLE_FIT:
-        states = settle_states(matches, quick, priors)
+        states = settle_states(matches, quick, priors, as_of=as_of, half_life=SETTLE_HALF_LIFE)
         for _ in range(SETTLE_OUTER):
             settled = fit_settle(tables, states)
             offsets, got = sim.fit_period_theta(tables, real)

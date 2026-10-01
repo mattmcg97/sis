@@ -754,6 +754,88 @@ class TestClockToTheEnd(unittest.TestCase):
         self.assertTrue(np.allclose(u.call_p, t.call_p))
 
 
+class TestV9Changes(unittest.TestCase):
+    """v9: recent weeks weigh more in the touchdown and clock fits; timeout plays take their real
+    time; the clock's state shifts are fitted on plays nobody stopped."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.matches = _matches()
+
+    def test_with_its_own_switches_off_v9_plays_as_v8(self):
+        from .. import sim8
+        saved = (sim9.NATURAL_SHIFT, sim9.TO_PLAY_SECONDS)
+        sim9.NATURAL_SHIFT = sim9.TO_PLAY_SECONDS = False
+        try:
+            t9 = sim9.Tables.build(self.matches, min_records=20)
+            t8 = sim8.Tables.build(self.matches, min_records=20)
+            st = sim9.Start(4)
+            st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 150.0, 50.0, 25.0], sim9.SCRIM
+            st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
+            st.down[:] = [1, 2, 1, 4]
+            a = sim9.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
+            b = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
+        finally:
+            sim9.NATURAL_SHIFT, sim9.TO_PLAY_SECONDS = saved
+        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
+
+    def test_matches_weigh_less_with_age(self):
+        recs = [dict(match="AF001100926"), dict(match="AF001030926"), dict(match="X")]
+        sim9.age_weights(recs, dt.date(2026, 9, 10), 7.0)
+        self.assertEqual([round(r["w"], 3) for r in recs], [1.0, 0.5, 1.0])
+        sim9.age_weights(recs, None, 7.0)
+        self.assertEqual([r["w"] for r in recs], [1.0, 1.0, 1.0])
+        self.assertEqual(sim9.match_date("AF001010926"), dt.date(2026, 9, 1))
+
+    def test_recent_weeks_pull_the_clock_fit(self):
+        t = sim9.Tables.build(self.matches, min_records=20)
+        key = int(np.argmax(np.minimum(t.n_stop, t.count - t.n_stop)))
+        base = dict(period=4, clock=150.0, margin=3, key=key, fresh=False)
+        old = [dict(base, seconds=5.0, w=0.1)] * 50
+        new = [dict(base, seconds=35.0, w=1.0)] * 50
+        cell = sim9.cell_index(4, 150.0, 3)
+        shift = sim9._fit_stop_censored(t, old + new, [])[cell]
+        even = sim9._fit_stop_censored(t, [dict(r, w=1.0) for r in old + new], [])[cell]
+        self.assertLess(shift, even)                       # the recent running plays count for more
+
+    def test_the_touchdown_fit_weighs_recent_matches_more(self):
+        from .. import v9 as v9mod
+        quick = v9mod.PriorGrid.build(sim9.Tables.build(self.matches, min_records=20), n_paths=200)
+        some = {code: [dict(r, file_time="2026-09-01 10:00:00") for r in rows]
+                for code, rows in list(self.matches.items())[:3]}
+        states = v9mod.settle_states(some, quick, as_of=dt.date(2026, 9, 15), half_life=7.0)
+        self.assertTrue(states and all(len(s) == 5 for s in states))
+        self.assertTrue(all(abs(s[4] - 0.25) < 1e-9 for s in states))     # two half-lives old
+        flat = v9mod.settle_states(some, quick)
+        self.assertTrue(all(s[4] == 1.0 for s in flat))
+
+    def test_timeout_plays_take_their_real_time_by_caller(self):
+        snaps = ([dict(period=4, margin=7, timeout_role=sim9.DEFENCE, seconds=12.0)] * 40
+                 + [dict(period=4, margin=-7, timeout_role=sim9.OFFENCE, seconds=5.0)] * 40
+                 + [dict(period=4, margin=0, seconds=30.0)] * 40)
+        q = sim9.fit_timeout_seconds(snaps)
+        self.assertEqual(q[1, sim9.DEFENCE, 0, 10], 12.0)          # the side behind, on defence
+        self.assertEqual(q[1, sim9.OFFENCE, 0, 10], 5.0)
+        self.assertTrue(np.isnan(q[0]).all())
+        self.assertEqual(list(sim9.caller_side([-3, 0, 4])), [0, 1, 2])
+
+    def test_a_called_timeout_takes_the_fitted_time(self):
+        t = sim9.Tables.build(self.matches, min_records=20)
+        t.call_p[:] = 0.0
+        t.call_p[1, sim9.DEFENCE] = 1.0
+        st = sim9.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 4, 100.0, sim9.SCRIM
+        st.team[:], st.y[:], st.down[:], st.home[:], st.away[:] = 0, 40, 1, 21, 17
+        st.timeouts[:, 1] = 3
+        used = {}
+        for secs in (3.0, 20.0):
+            t.to_secs[:] = secs
+            stats = {}
+            sim9.simulate(t, st, 300, np.random.default_rng(1), seed=4, stats=stats, max_steps=1)
+            used[secs] = stats.get("clock_used", 0) / max(1, stats.get("snaps", 1))
+        self.assertGreater(used[20.0], used[3.0])
+
+
 class TestV9(unittest.TestCase):
     """v9: a fresh possession's first snap is played with the clock stopped, the fourth quarter
     has situations of its own, a side a touchdown behind late goes for it, and would-be
