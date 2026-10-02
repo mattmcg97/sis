@@ -50,6 +50,42 @@ def even_line(pmf, offset):
     return float(k - offset) + 0.5
 
 
+# Line rules other than the even line (the stream's "anchored" and "hyst" modes). Anchored: start
+# at prod's line and step a point at a time toward even until P(over) is inside 50% +- ANCHOR_BAND.
+# Hysteresis: keep the line the market last had until the even line is HOLD_MOVE points away or
+# P(over) at the kept line leaves 50% +- HOLD_BAND. Lines are on prob_above's scale: a total, or
+# the margin home must beat.
+ANCHOR_BAND = 0.10
+HOLD_MOVE = 2.0
+HOLD_BAND = 0.15
+
+
+def anchored_line(pmf, offset, start, band=ANCHOR_BAND):
+    """`start` (prod's line), stepped a point at a time toward even until P(above) is inside
+    50% +- band, never past the distribution's ends."""
+    lo, hi = -offset, pmf.shape[-1] - 1 - offset
+    x = float(start)
+    for _ in range(pmf.shape[-1]):
+        q = float(prob_above(pmf, offset, x))
+        if q > 0.5 + band and x + 1 < hi:
+            x += 1
+        elif q < 0.5 - band and x - 1 > lo:
+            x -= 1
+        else:
+            break
+    return x
+
+
+def held_line(pmf, offset, kept, move=HOLD_MOVE, band=HOLD_BAND):
+    """The kept line while the even line is under `move` points from it and P(above) at it is
+    inside 50% +- band; the even line otherwise (and with nothing kept)."""
+    even = even_line(pmf, offset)
+    if kept is None:
+        return even
+    q = float(prob_above(pmf, offset, kept))
+    return kept if abs(even - kept) < move and abs(q - 0.5) <= band else even
+
+
 def prob_above(pmf, offset, line):
     """P(X > line), pushes taken out."""
     x = np.arange(pmf.shape[-1]) - offset

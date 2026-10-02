@@ -1292,6 +1292,33 @@ each point of v10's (v9 0.74).
 Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leader on the ball,
 +0.52 with the trailer) and late level ones. Those are game-state effects, not the prior.
 
+### Line rules (`v10@anchored`, `v10@hyst`)
+
+v10 can set its handicap and total lines four ways, all off one simulation:
+
+| stream | line |
+|---|---|
+| `v10` | its own even line: the half-point line nearest 50%, at every snapshot |
+| `v10@prod` | prod's line |
+| `v10@anchored` | prod's line, moved a point at a time toward even only until P(over), or P(home covers), is inside 40–60% (`ANCHOR_BAND`) |
+| `v10@hyst` | its own even line, kept until the even line is 2 points away (`HOLD_MOVE`) or P(over) at the kept line leaves 35–65% (`HOLD_BAND`) |
+
+Offline, on the held-out build's remaining totals (Sep 10–22, 52k snapshots, 905 matches, 5%
+margin), a bettor who learns where each rule misprices on half the matches and bets those spots on
+the other half:
+
+| rule | book per 100 of their bets | line moves a match | from prod's line |
+|---|---|---|---|
+| prod | −6.7 | 29.4 | 0 |
+| v10 at prod's line | +0.4 | 27.8 | 0 |
+| v10 even line | −0.1 | 30.5 | 1.7 |
+| anchored 40–60% | +2.2 | 27.4 | 0.6 |
+| even line + hysteresis | +1.5 | 16.4 | 1.7 |
+
+The even line is the best calibrated, but it moves most and crosses key numbers as the
+distribution shifts. Those moves are what the bettor picks off. The rules are within a couple of
+points of each other here, so the book comparison against real bets decides.
+
 ## Pricing only what the model is sure of (v8–v10 streams)
 
 A version quotes a prod message only where its state is the game's at that

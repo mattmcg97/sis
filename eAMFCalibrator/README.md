@@ -1838,7 +1838,10 @@ somewhere v6 needs fixing too. The per-candidate columns are `simulated_v6`
 and `candidate_revenue_v6`. `line_gap_v6` buckets the bets by v6's line
 less the bet's (whole points, capped at ±3), to separate what moving the
 line did from what the probability did. Running `--candidate v6,v6@prod`
-prices both from one simulation.
+prices both from one simulation. v10 has two more line rules, `v10@anchored`
+(prod's line, moved only as far as it must) and `v10@hyst` (its own even line,
+held until far off). See eAMFModel's README. `--candidate
+v10,v10@prod,v10@anchored,v10@hyst` prices all four from one simulation.
 
 **Prod's pre-match by gamer (Aug 25–Sep 10, 1,424 matches).** Prod's
 pre-match misses by gamer are larger than chance. The mean z² runs

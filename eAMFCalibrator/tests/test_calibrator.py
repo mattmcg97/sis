@@ -5476,6 +5476,12 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertTrue(sio.has_own_lines("MODEL:v9"))
         self.assertFalse(sio.has_own_lines("MODEL:v3"))
         self.assertFalse(sio.has_own_lines("GAMEPLAI_STREAM_CANDIDATE"))
+        self.assertEqual(sio.stream_name("v10@anchored"), "MODEL:v10@anchored")
+        self.assertEqual(sio.stream_name("v10-glmer@hyst"), "MODEL:v10-glmer@hyst")
+        self.assertEqual(sio.model_version("MODEL:v10@hyst"), ("v10", "hyst"))
+        for bad in ("v9@anchored", "v10@nearest"):
+            with self.assertRaises(ValueError):
+                sio.stream_name(bad)
 
     def test_a_second_build_of_a_version_is_named_with_its_directory(self):
         from ..__main__ import build_parser, apply_overrides

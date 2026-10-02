@@ -635,12 +635,19 @@ def run(cur, out_dir, only_checks=False, summary=None):
         print("\n".join(bet_moments.report([("prod", rows)])))
         return rows
     results = []
-    for stream in candidate_streams():
-        print(f"\n  pricing the bets with {label(stream)}", flush=True)
-        cand_rows = candidate_quotes(cur, stream, matches)
-        results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
-                                             timeline(cand_rows), finals, checks,
-                                             same_state=snowflake_io.is_model(stream))))
+    cached = config.FETCH_CACHE
+    config.FETCH_CACHE = True             # one simulation per model, whatever lines each reads
+    try:
+        for stream in candidate_streams():
+            print(f"\n  pricing the bets with {label(stream)}", flush=True)
+            cand_rows = candidate_quotes(cur, stream, matches)
+            results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
+                                                 timeline(cand_rows), finals, checks,
+                                                 same_state=snowflake_io.is_model(stream))))
+            del cand_rows
+    finally:
+        config.FETCH_CACHE = cached
+        snowflake_io.clear_fetch_cache()
     bet_moments.annotate(results, bets, checks, checks.timelines)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})

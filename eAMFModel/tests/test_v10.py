@@ -1386,6 +1386,54 @@ class TestBuild(unittest.TestCase):
         line = v10.even_line(margin, v10.MARGIN_MAX)
         self.assertLessEqual(abs(v10.market_prob(52, line, margin, pmf) - 0.5), 0.2 + 1e-9)
 
+    def test_the_anchored_line_moves_prods_only_as_far_as_the_band(self):
+        pmf = np.zeros(80)
+        pmf[30:60] = 1 / 30                      # flat on 30..59: P(> x.5) = (59 - x) / 30
+        anchored = lambda start, pmf=pmf, offset=0: v10.anchored_line(pmf, offset, start, band=0.11)
+        self.assertEqual(anchored(44.5), 44.5)                           # 0.5: kept
+        self.assertEqual(anchored(46.5), 46.5)                           # 0.43: inside 39-61%
+        self.assertEqual(anchored(49.5), 47.5)                           # 0.33: down to 0.4
+        self.assertEqual(anchored(36.5), 41.5)                           # 0.77: up to 0.6
+        self.assertEqual(anchored(45.0), 45.0)                           # a whole line stays whole
+        self.assertEqual(v10.anchored_line(pmf, 0, 36.5, band=0.02), 44.5)
+        margin = np.zeros(2 * v10.MARGIN_MAX + 1)
+        margin[v10.MARGIN_MAX - 10:v10.MARGIN_MAX + 10] = 1 / 20         # -10..9
+        self.assertEqual(anchored(6.5, margin, v10.MARGIN_MAX), 1.5)
+        self.assertEqual(anchored(-8.5, margin, v10.MARGIN_MAX), -2.5)
+
+    def test_the_held_line_stays_until_the_even_line_is_far_or_the_price_is(self):
+        pmf = np.zeros(80)
+        pmf[30:60] = 1 / 30                      # even 44.5
+        self.assertEqual(v10.held_line(pmf, 0, None), 44.5)
+        self.assertEqual(v10.held_line(pmf, 0, 43.5), 43.5)              # 1 point, 0.53
+        self.assertEqual(v10.held_line(pmf, 0, 42.5), 44.5)              # 2 points away
+        self.assertEqual(v10.held_line(pmf, 0, 42.5, move=3.0), 42.5)    # 0.57, inside 35-65%
+        self.assertEqual(v10.held_line(pmf, 0, 39.5, move=9.0), 44.5)    # 0.67, outside
+
+    def test_the_stream_quotes_every_line_rule_off_one_book(self):
+        margin = np.zeros(2 * v10.MARGIN_MAX + 1)
+        margin[v10.MARGIN_MAX - 10:v10.MARGIN_MAX + 8] = 1 / 18          # -10..7: even -1.5
+        total = np.zeros(v10.TOTAL_MAX + 1)
+        total[30:58] = 1 / 28                                            # 30..57: even 43.5
+        row = lambda m, line, msg: ("M", m, None, 50.0, 2.0, v10_stream.description(m, line), msg,
+                                    "OPEN", "true")
+        prod = [row(52, 6.5, 1), row(53, -6.5, 1), row(54, 49.5, 1), row(55, 49.5, 1)]
+        lines = lambda mode, books=((1, margin, total),), rows=prod: {
+            (q[6], q[1]): v10_stream._parse_line(q[5])
+            for q in v10_stream.quote_rows("M", list(books), rows, lines=mode)}
+        self.assertEqual(lines("prod"), {(1, 52): 6.5, (1, 53): -6.5, (1, 54): 49.5, (1, 55): 49.5})
+        # prod's lines stepped toward even until P(over) and P(home covers) reach 40%
+        self.assertEqual(lines("anchored"), {(1, 52): -0.5, (1, 53): 0.5, (1, 54): 45.5, (1, 55): 45.5})
+        self.assertEqual(lines("own"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
+        # hyst keeps 43.5 while the book drifts a point, and moves once it is two away
+        later, far = np.roll(total, 1), np.roll(total, 2)
+        books = ((1, margin, total), (2, margin, later), (3, margin, far))
+        rows = [row(54, 49.5, m) for m in (1, 2, 3)]
+        self.assertEqual(lines("hyst", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 45.5})
+        self.assertEqual(lines("own", books, rows), {(1, 54): 43.5, (2, 54): 44.5, (3, 54): 45.5})
+        with self.assertRaises(ValueError):
+            lines("nearest")
+
     def test_the_stream_moves_its_own_line_with_the_game(self):
         rows = next(iter(self.matches.values()))
         code = rows[0]["match_code"]
