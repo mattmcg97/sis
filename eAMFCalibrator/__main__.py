@@ -307,6 +307,11 @@ def cmd_bets(args):
             elif args.action == "sessions":
                 from . import bet_sessions
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
+            elif args.action == "favourite":
+                from . import bet_favourite
+                path = bet_favourite.run(cur, out_dir, min_bets=args.min_bets)
+                if path:
+                    print(f"\n  -> {path} and bets_favourite.txt")
             elif args.action == "totals-signals":
                 from . import totals_signals
                 path = totals_signals.run(cur, out_dir, react=args.react)
@@ -940,9 +945,13 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves",
-                                      "totals-signals", "sessions"],
+                                      "totals-signals", "sessions", "favourite"],
                              default="run",
-                             help="sessions: bets and stake by each gamer's match of the session "
+                             help="favourite: every bet split by the pre-match favourite, the score "
+                                  "when it was struck and the side it backs, by temperature: where "
+                                  "the stake goes and the book's margin against what prod's price "
+                                  "leaves it (out/bets_favourite.txt); "
+                                  "sessions: bets and stake by each gamer's match of the session "
                                   "(1st .. 10th+) and matches left in it, against how many matches sit "
                                   "there, by temperature and market (out/bets_sessions.txt); "
                                   "totals-signals: how every match was played in Q1 and the first "
