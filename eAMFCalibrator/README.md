@@ -2208,6 +2208,39 @@ It writes `out/totals_calibration.json` (per checkpoint, each fit's
 coefficients and standard errors, and its residual quantiles) and
 `out/totals_calibration.txt`.
 
+### The pre-match favourite: `bets favourite`
+
+```bash
+python -m eAMFCalibrator bets favourite --since 2026-09-10 --until 2026-09-23 --min-bets 50
+```
+
+Every single (moneyline, handicap and total, pre-match and in play) on a match with a pre-match
+favourite, split by:
+- **the favourite:** the side prod's last pre-match moneyline rated above 50%. A match within 2%
+  of evens has none and is left out;
+- **phase:** pre-match, or the quarter the bet was placed in (the operator's period);
+- **state:** the favourite's lead at the prod message the bet was priced at (down 9+, down 1–8,
+  level, up 1–8, up 9+);
+- **side:** favourite or underdog on the moneyline and handicap, over or under on totals;
+- **customer temperature:** Restricted, VIP, Standard, none.
+
+Each cell gives:
+- bets and stake, and the share of the state's (or phase's) stake;
+- the book's margin, and the margin prod's price leaves it (1 − odds × prod's probability of the
+  selection, on bets struck at prod's line);
+- the gap between them. Positive means bettors took more than the price allowed there;
+- prod's probability against how often the selection won (stake-weighted).
+
+The tables are, in order:
+1. every bet by phase and the favourite's lead;
+2. Q1 and Q2 by lead and side, for each market;
+3. the same for each temperature;
+4. every temperature by phase and side;
+5. the favourite ahead in Q1 and Q2, by temperature, market and side.
+
+Writes `out/bets_favourite.csv` (one row per bet, with its prod price, favourite, state and side)
+and `out/bets_favourite.txt`.
+
 ### Where the money goes through a session: `bets sessions`
 
 ```bash
