@@ -1,9 +1,9 @@
-"""The realistic betting simulation: acceptance by segment, the two-book test and the intervals."""
+"""The book comparison: acceptance by segment, the two-book test and the intervals."""
 
 import unittest
 from unittest import mock
 
-from .. import bet_realistic as br, bets, config, markets
+from .. import book_comparison as br, bets, config, markets
 
 
 def row(temp="Standard", odds=2.0, cand_odds=2.0, stake=10.0, result=bets.LOST, match="M1",
@@ -80,6 +80,12 @@ class TestIntervals(unittest.TestCase):
         self.assertIn("== v10 ==", text)
         self.assertIn("two books", text)
         self.assertIn("sharp", text)
+        with mock.patch.object(config, "SIM_BOOT", 50):
+            page = br.html(br.compute([("v10", rows)]), lambda x: str(x))
+        self.assertIn("<h3>Book comparison</h3>", page)
+        self.assertEqual(page.count("<table"), 2)
+        self.assertIn("<th>Candidate takes</th>", page)
+        self.assertEqual(br.html([], str), "")
 
 
 if __name__ == "__main__":

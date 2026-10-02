@@ -97,7 +97,7 @@ BET_VIP_COLUMN = "CUSTOMER_TEMPERATURE"
 BET_VIP_VALUE = "VIP"
 # `bets totals-moves` reads BET_VIP_COLUMN = BET_RESTRICTED_VALUE as a restricted account.
 BET_RESTRICTED_VALUE = "Restricted"
-# The realistic betting simulation (bet_realistic.py, part of every `bets` run): the customer
+# The book comparison (book_comparison.py, part of every `bets` run): the customer
 # temperatures that bet for an edge and shop on price (everyone else bets as placed, the stake
 # x (candidate odds / odds) ^ SIM_ELASTICITY), the most a sharp stake may grow, the bets a
 # market's measured edge is shrunk toward its segment's by, and the bootstrap resamples.
