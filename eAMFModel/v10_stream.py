@@ -7,7 +7,7 @@ from bisect import bisect_right
 import numpy as np
 
 from . import playover, players, sim10 as sim, v10
-from .pricer import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
+from .state import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
 from .stream import OPEN, _parse_line, confident_windows, description, side_known
 
 DEFAULT_MODEL_DIR = "v10_model"
@@ -21,12 +21,11 @@ def model_paths(model_dir=None):
         os.environ.get("EAMF_V10_MODEL"), DEFAULT_MODEL_DIR,
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", DEFAULT_MODEL_DIR)]
     for d in candidates:
-        for tag in ("v10", "v9"):          # v10 prices off a v9 build as well as its own
-            if d and os.path.exists(os.path.join(d, f"{tag}tables.npz")) \
-                    and os.path.exists(os.path.join(d, f"{tag}grid.npz")):
-                return os.path.join(d, f"{tag}tables.npz"), os.path.join(d, f"{tag}grid.npz")
+        if d and os.path.exists(os.path.join(d, "v10tables.npz")) \
+                and os.path.exists(os.path.join(d, "v10grid.npz")):
+            return os.path.join(d, "v10tables.npz"), os.path.join(d, "v10grid.npz")
     raise SystemExit(
-        "v10 needs its model (play tables and pre-match grid, its own or a v9 build's), and none was found"
+        "v10 needs its model (play tables and pre-match grid), and none was found"
         f" in {model_dir or DEFAULT_MODEL_DIR}. Build it once from a PLAY_OVER export:\n"
         "  python -m eAMFCalibrator scouting            # writes out/scouting_playover.csv\n"
         "  python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv"
@@ -43,7 +42,8 @@ def _as_text(row):
 def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, means=None):
     """v10's margin and total distributions at every priceable snapshot of one match."""
     rows = v10.resolve_sides([_as_text(r) for r in match_rows])
-    theta0 = v10.prior_theta(grid, means)
+    prof = prof or (players.Profile(), players.Profile())
+    theta0 = v10.prior_theta(grid, means, prof if variant.pace else None)
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
@@ -53,10 +53,9 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
             messages.append(int(r["message"]))
     if not states:
         return []
-    prof = prof or (players.Profile(), players.Profile())
     dists = v10.price_states(tables, theta0, variant, sim.snap_records(rows), a_home, states,
                             messages, prof, n_paths, rng,
-                            seed=v10.match_seed(rows[0].get("match_code", "")), grid=grid)
+                            seed=v10.match_seed(rows[0].get("match_code", "")))
     return [(m, mp_, tp) for m, (mp_, tp) in zip(messages, dists)]
 
 
@@ -64,8 +63,8 @@ def kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof=None, mea
     """v10's pre-match margin and total distributions: the kick-off priced off the pre-match prior
     (NB2 or glmer)."""
     prof = prof or (players.Profile(), players.Profile())
-    return v10.price_kickoff(tables, v10.prior_theta(grid, means), variant, prof, n_paths, rng,
-                            seed=v10.match_seed(match_code))
+    return v10.price_kickoff(tables, v10.prior_theta(grid, means, prof if variant.pace else None),
+                             variant, prof, n_paths, rng, seed=v10.match_seed(match_code))
 
 
 def _before_play(message, first_play_message):

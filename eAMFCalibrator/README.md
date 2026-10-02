@@ -74,15 +74,13 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v1`, `v2`, `v3`) |
-| `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v3`) |
-| `--v3-model DIR` | `eAMFModel v3-build` output for `--candidate v3` (default `$EAMF_V3_MODEL`, then `./v3_model`) |
-| `--v4-model DIR` | `eAMFModel v4-build` output for `--candidate v4` (default `$EAMF_V4_MODEL`, then `./v4_model`) |
-| `--v4-paths N` | games simulated per snapshot for `--candidate v4` (default 2000) |
-| `--v4-lines own\|prod` | `--candidate v4`: quote v4's own even line, moved as the game moves (`own`, the default), or read v4's price at prod's line (`prod`) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8`, `v9`, `v10`) |
+| `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
+| `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
+| `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
+| `--v9-lines own\|prod` | `--candidate v9`: quote v9's own even line, moved as the game moves (`own`, the default), or read v9's price at prod's line (`prod`) |
+| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines` | the same for `--candidate v8` and `--candidate v10` |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
-| `--v5-model DIR`, `--v5-paths N`, `--v5-lines own\|prod` | the same for `--candidate v5` (`eAMFModel v5-build`; default `$EAMF_V5_MODEL`, then `./v5_model`) |
-| `--v3-paths N` | games simulated per snapshot for `--candidate v3` (default 2000) |
 
 Every run prints the window it actually used.
 
@@ -1366,11 +1364,11 @@ Each `scouting_playover.csv` row carries:
 - on each market, prod's line, probability, liveness and outcome.
 
 `PLAY_OVER`s that GAMEPLAI never quoted (about 1.7%) are kept with
-`quoted = 0` and no market columns. The play-by-play model (v3) reads each
+`quoted = 0` and no market columns. The play-by-play models read each
 play against the one before it, so dropping one would join two plays into
 a single wrong one. Everything that scores prices skips them.
 
-It is the input to `python -m eAMFModel playover` and `v3-build`.
+It is the input to `python -m eAMFModel v8-build` to `v10-build`, `remaining` and `profiles`.
 
 Each row also carries `timeouts_used_a` / `timeouts_used_b`: how many timeouts
 each side had called in the half at that `PLAY_OVER`, off the feed's
@@ -1410,107 +1408,90 @@ What 15,612 calls over 2,977 matches (24 Aug – 22 Sep) showed:
 - A side still has all three at Q2's 2:00 94% of the time, at Q4's 3:00 95%
   of the time, and at Q4's 2:00 85% of the time.
 
-## eAMFModel v3 as the candidate: `--candidate v3`
+## eAMFModel as the candidate: `--candidate v9`
+
+The simulation versions v8, v9 and v10 stand in for the candidate. (v3–v7 have been removed;
+use v8–v10 in their place in the commands that follow.)
 
 ```bash
-# once: export PLAY_OVER snapshots and build v3's model from them
-python -m eAMFCalibrator scouting --until 2026-09-17
-python -m eAMFModel v3-build eAMFCalibrator/out/scouting_playover.csv --half all --out v3_model
+# once: export PLAY_OVER snapshots, the match history and every timeout, and build the model
+python -m eAMFCalibrator scouting --since 2026-08-24 --until 2026-09-23
+python -m eAMFCalibrator history --until 2026-09-23
+python -m eAMFCalibrator timeouts --since 2026-08-24 --until 2026-09-23
+python -m eAMFModel v9-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
+    --out v9_model --history eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
 
-# then any report, with v3 in the candidate's place
-python -m eAMFCalibrator report --candidate v3 --v3-model v3_model
+# then any report, with v9 in the candidate's place
+python -m eAMFCalibrator report --candidate v9 --v9-model v9_model
 ```
 
-v3 prices on the game clock, which only `SCOUTING_FULL` has. So for each
+A version prices on the game clock, which only `SCOUTING_FULL` has. So for each
 match in the window, the calibrator builds the same `PLAY_OVER` snapshots
-the `scouting` export writes (`snowflake_io._v3_quotes`), and the model
-prices each one by simulation (`eAMFModel.v3_stream`).
-- **Prices between snapshots:** like any stream, v3's quote stands until
+the `scouting` export writes (`snowflake_io._sim_quotes`), with each match's
+player handles for the profiles, and the model prices each one by simulation
+(`eAMFModel.v9_stream`).
+- **Prices between snapshots:** like any stream, the model's quote stands until
   its next one. At every message and market prod quoted after a
-  `PLAY_OVER`, v3 quotes that snapshot's book. Messages before the first
-  `PLAY_OVER` get no v3 quote.
-- **Lines:** v3 prices at the line of the exact prod row the pairing uses
-  there: the first live row on the message, otherwise the first row (the
-  rule in `directional.index_by_message`). So every pair is on the same
-  line, including on messages where prod moved its line and carries both
-  the old and the new one.
-- **Whole matches:** v3 reads every `SCOUTING_FULL` row of each match,
+  `PLAY_OVER`, it quotes that snapshot's book.
+- **Lines:** it quotes its own even line on the spread and the total, so pairs
+  split between the same line (compared on probability) and a different line
+  (compared on whose line landed nearer the result). `--v9-lines prod` reads its
+  price at the line of the exact prod row the pairing uses there: the first live
+  row on the message, otherwise the first row (the rule in
+  `directional.index_by_message`). Then every pair is on the same line, including
+  on messages where prod moved its line and carries both the old and the new one.
+- **Whole matches:** it reads every `SCOUTING_FULL` row of each match,
   including rows before the window opened, so a match already under way
   at the window start still knows who received the opening kickoff.
-- **Liveness:** v3's quotes are always live. The pairing's own liveness
+- **Liveness:** its quotes are always live. The pairing's own liveness
   rule decides what counts, and prod's suspensions still apply to prod's
   side.
 
-**The reports say "v3".** With a model standing in, every "candidate" a
+`history` writes `out/match_history.csv`, shaped like `nb2/AMFELO.csv`: every
+settled match of the sport before `--until`, with players, teams, stream
+and finals, off `EVENT` and `SCORE_ENDGAME`. The model's own pre-match
+model (NB2, or glmer with `--prior glmer`) is fitted on it. The model prices
+pre-match from that, never from GAMEPLAI, so the report also fetches each priced
+match's players, teams and stream from `EVENT`. That needs pandas and scipy
+as well as numpy.
+
+**The reports say "v9".** With a model standing in, every "candidate" a
 reader sees in the HTML reports (headers, tooltips, verdicts, the title)
-becomes its name, and the report is written as `eamf_report_v3.html`, so
+becomes its name, and the report is written as `eamf_report_v9.html`, so
 it never overwrites a prod-vs-candidate report. `--candidate-label NAME`
 picks another name; `--html PATH` another file. The CSVs keep their
-column names and file names, so give a v3 run its own folder with
-`--out` if you want to keep both sets:
-
-```bash
-python -m eAMFCalibrator report --candidate v3 --v3-model v3_model --out out_v3
-```
+column names and file names, so give a model run its own folder with
+`--out` if you want to keep both sets.
 
 **The model must be built from matches before the window.** It is fitted
 to play-by-play outcomes and final scores, so building it on the matches
-being scored makes the comparison in-sample. Build it on an export that
-ends where the window starts (`scouting --until`). When the model
-directory is missing, the run stops and prints the build commands.
+being scored makes the comparison in-sample. Build it with `--until` where
+the window starts. When the model directory is missing, the run stops and
+prints the build commands.
 
 Cost: about a second of simulation per match on each core at 2,000 paths
-(`--v3-paths`). The work is spread over all cores but one
-(`config.V3_WORKERS`).
+(`--v9-paths`). The work is spread over all cores but one
+(`config.MODEL_WORKERS`).
 
-## eAMFModel v4 as the candidate: `--candidate v4`
+`--candidate v8` and `--candidate v10` work the same way off their own builds
+(`--v8-model`, `--v10-model`). What each version changes is in the eAMFModel README.
 
-It works exactly as v3 does: the same `PLAY_OVER` snapshots, the same line
-pairing, and the same "v4" naming in the reports (`eamf_report_v4.html`).
-It also fetches each match's player handles, for v4's player profiles.
-
-```bash
-python -m eAMFCalibrator scouting --until 2026-09-24
-python -m eAMFCalibrator history --until 2026-09-24
-python -m eAMFModel v4-build eAMFCalibrator/out/scouting_playover.csv --half all --out v4_model --history eAMFCalibrator/out/match_history.csv
-python -m eAMFCalibrator report --candidate v4 --v4-model v4_model --since 2026-09-24 --out eAMFCalibrator/out_v4
-```
-
-`history` writes `out/match_history.csv`, shaped like `nb2/AMFELO.csv`: every
-settled match of the sport before `--until`, with players, teams, stream
-and finals, off `EVENT` and `SCORE_ENDGAME`. It's what v4's own pre-match
-model (NB2) is fitted on. A model built with `--history` prices pre-match
-from NB2, never from GAMEPLAI, so the report also fetches each priced
-match's players, teams and stream from `EVENT`. That needs pandas and scipy
-as well as numpy. A model built without `--history` falls back to prod's
-pre-match quotes and says so.
-
-v4 quotes its own even line on the spread and the total, so pairs split
-between the same line (compared on probability) and a different line
-(compared on whose line landed nearer the result). `--v4-lines prod`
-reads v4's price at prod's line instead, so every pair is on the same line.
-
-What v4 changes is in the eAMFModel README.
-
-`--candidate v5` works the same way off `eAMFModel v5-build`'s model
-(`--v5-model`), and the reports call it v5 (`eamf_report_v5.html`).
-
-## Several candidates in one report: `--candidate v4,v5`
+## Several candidates in one report: `--candidate v8,v9`
 
 ```bash
-python -m eAMFCalibrator report --candidate v4,v5 --v4-model v4_model --v5-model v5_model --since 2026-09-17 --until 2026-09-24 --out eAMFCalibrator/out_v4_v5
+python -m eAMFCalibrator report --candidate v8,v9 --v8-model v8_model --v9-model v9_model --since 2026-09-17 --until 2026-09-23 --out eAMFCalibrator/out_v8_v9
 ```
 
 Name any number of candidates, comma-separated, and the report sets each one
 beside prod: every table reads real, prod, then a group of columns per
-candidate. The file is `eamf_report_v4_v5.html`. To move on to a new
+candidate. The file is `eamf_report_v8_v9.html`. To move on to a new
 version, change the names on the command line.
 
 - **One population.** Every candidate is paired with prod in its own pass,
   then all of them are cut to the snapshots every candidate paired. So
   prod's figures and the real outcomes are the same beside every
   candidate. The Run table counts what was dropped for want of one.
-- **Two readings of a model.** A model that quotes its own lines (v4, v5)
+- **Two readings of a model.** A model that quotes its own lines (v8 to v10)
   is read at prod's line for the calibration tables, where its probability
   answers prod's question. It's read at its own line for the line tables,
   where the question is whose line landed nearer the result. One simulation
@@ -1537,17 +1518,17 @@ version, change the names on the command line.
 
 With one candidate the page is the same with one group of columns.
 
-### Two builds of the same version: `v7,v7-glmer=DIR`
+### Two builds of the same version: `v9,v9-glmer=DIR`
 
 ```bash
-python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate v7,v7-glmer=v7_glmer_917 --v7-model v7_model_917 --bets
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate v9,v9-glmer=v9_glmer_917 --v9-model v9_model_917 --bets
 ```
 
-- `v7` is priced off `--v7-model` as usual.
-- `v7-glmer=v7_glmer_917` is a second candidate. It runs v7's code off the
-  build in `v7_glmer_917`, and its columns are headed `v7-glmer`.
-- The name is the version, a dash, then any tag (`v7-glmer`, `v6-old`).
-  Paths and lines follow the version (`--v7-paths`, `--v7-lines`).
+- `v9` is priced off `--v9-model` as usual.
+- `v9-glmer=v9_glmer_917` is a second candidate. It runs v9's code off the
+  build in `v9_glmer_917`, and its columns are headed `v9-glmer`.
+- The name is the version, a dash, then any tag (`v9-glmer`, `v9-old`).
+  Paths and lines follow the version (`--v9-paths`, `--v9-lines`).
 - Use this to compare two builds that differ only in what they were built
   with, e.g. `--prior nb2` against `--prior glmer`.
 
@@ -1584,9 +1565,9 @@ share a line.
 ## The totals lines, value by value: `totals-lines`
 
 ```bash
-python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v5,v6 --v5-model v5_model --v6-model v6_model
+python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v8,v9 --v8-model v8_model --v9-model v9_model
 python -m eAMFCalibrator totals-lines                      # every out/directional_pairs*.csv
-python -m eAMFCalibrator totals-lines out/directional_pairs_v6.csv
+python -m eAMFCalibrator totals-lines out/directional_pairs_v9.csv
 ```
 
 This reads the report's `directional_pairs*.csv` (no Snowflake, seconds to
@@ -1621,7 +1602,7 @@ join, then the analysis.
 ```bash
 python -m eAMFCalibrator bets probe --since 2026-09-18 --until 2026-09-25
 python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25
-python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate v6 --v6-model v6_model
+python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9 --v9-model v9_model
 ```
 
 - **Bets.** Every single bet on an AF moneyline, handicap or total in the
@@ -1705,7 +1686,7 @@ beside the real rate it was taken from.
 ### In the calibration report: `report --bets`
 
 ```bash
-python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v6 --v6-model v6_model --bets
+python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshots play_over --candidate GAMEPLAI_STREAM_CANDIDATE,v9 --v9-model v9_model --bets
 ```
 
 `--bets` runs the betting simulation for the same window and candidates, and
@@ -1854,8 +1835,8 @@ wins 51.1% of 24k matches, +0.3 points, and prod prices that right.
 ### Several candidates: the model versions
 
 ```bash
-python -m eAMFCalibrator bets --since 2026-09-18 --until 2026-09-25 --candidate v4,v5,v6 \
-    --v4-model v4_model --v5-model v5_model --v6-model v6_model
+python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v8,v9,v10 \
+    --v8-model v8_model --v9-model v9_model --v10-model v10_model
 ```
 
 Every candidate shares the bets, the lags, the line signs and prod's quotes.
@@ -2226,19 +2207,6 @@ against it corrected (MAE, Brier, and the mean b).
 It writes `out/totals_calibration.json` (per checkpoint, each fit's
 coefficients and standard errors, and its residual quantiles) and
 `out/totals_calibration.txt`.
-
-#### v10 at the checkpoints, and tuning it: `--learn-weights`
-
-```bash
-python -m eAMFCalibrator bets totals-signals --since 2026-09-10 --until 2026-09-22 --candidate v9,v10 --v9-model v9_model --v10-model v9_model --learn-weights 0.5,2,4
-python -m eAMFCalibrator totals-calibrate --signals eAMFCalibrator/out/totals_signals.csv
-```
-
-v10 is v9 learning the day's scoring from the game so far (eAMFModel README). It prices off a
-v9 build, so `--v10-model v9_model` needs no rebuild. `--learn-weights` prices it again at each
-weight, labelled `v10-w<weight>` (0 plays as v9). The weight to keep is the one whose points
-to come at half time need no correction in `totals-calibrate --signals`: a coefficient nearest
-1, and the best Brier. `--v10-learn-weight` sets the weight for any other command.
 
 ### Where the money goes through a session: `bets sessions`
 

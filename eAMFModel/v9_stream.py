@@ -7,7 +7,7 @@ from bisect import bisect_right
 import numpy as np
 
 from . import playover, players, sim9 as sim, v9
-from .pricer import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
+from .state import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
 from .stream import OPEN, _parse_line, confident_windows, description, side_known
 
 DEFAULT_MODEL_DIR = "v9_model"

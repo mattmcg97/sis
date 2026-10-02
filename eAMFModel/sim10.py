@@ -1,4 +1,4 @@
-"""v10's simulation (v9's, copied as it was, plus path_draws): plays the rest of a game snap by snap from real plays in the same situation."""
+"""v10's simulation: plays the rest of a game snap by snap from real plays in the same situation."""
 
 import datetime as dt
 import math
@@ -1713,24 +1713,6 @@ def strength_draw(tables, theta, form):
     return theta - slope * (own * own + game * game) / 2.0, own, game
 
 
-def path_draws(seed, n_paths):
-    """(own, game): the form draws simulate() gives paths 0..n_paths-1 under `seed` -- each side's
-    own (n_paths x 2) and the game's shared one (n_paths), standard normal -- the same at every
-    snapshot of a match (common random numbers, step 0, slots 20-23). simulate() draws them here,
-    so v10's learn_weights reads the very draws each path played."""
-    return _draws(int(seed) % (2 ** 62), np.arange(n_paths, dtype=np.int64))
-
-
-def _draws(seed, path_no):
-    """The form draws of these paths at step 0 (see path_draws)."""
-    step = np.zeros(len(path_no), dtype=np.int64)
-    u = [_uniform(seed, path_no, step, slot) for slot in (20, 21, 22, 23)]
-    r1 = np.sqrt(-2.0 * np.log(np.maximum(u[0], 1e-12)))
-    r2 = np.sqrt(-2.0 * np.log(np.maximum(u[2], 1e-12)))
-    own = np.stack([r1 * np.cos(2 * np.pi * u[1]), r1 * np.sin(2 * np.pi * u[1])], axis=1)
-    return own, r2 * np.cos(2 * np.pi * u[3])
-
-
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
              in_play=False, distinct=False, one_drive=False):
@@ -1777,15 +1759,12 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     own_sd = getattr(start, "strength", np.zeros((S, 2)))
     game_sd = getattr(start, "strength_game", np.zeros((S, 2)))
     if np.any(own_sd) or np.any(game_sd):
-        if common:                                 # v10: the draws learn_weights reads
-            own, game = _draws(seed, path_no)
-            game = game[:, None]
-        else:
-            u = [rng.random(P) for _ in (20, 21, 22, 23)]
-            r1 = np.sqrt(-2.0 * np.log(np.maximum(u[0], 1e-12)))
-            r2 = np.sqrt(-2.0 * np.log(np.maximum(u[2], 1e-12)))
-            own = np.stack([r1 * np.cos(2 * np.pi * u[1]), r1 * np.sin(2 * np.pi * u[1])], axis=1)
-            game = (r2 * np.cos(2 * np.pi * u[3]))[:, None]
+        u = [_uniform(seed, path_no, step, slot) if common else rng.random(P)
+             for slot in (20, 21, 22, 23)]
+        r1 = np.sqrt(-2.0 * np.log(np.maximum(u[0], 1e-12)))
+        r2 = np.sqrt(-2.0 * np.log(np.maximum(u[2], 1e-12)))
+        own = np.stack([r1 * np.cos(2 * np.pi * u[1]), r1 * np.sin(2 * np.pi * u[1])], axis=1)
+        game = (r2 * np.cos(2 * np.pi * u[3]))[:, None]
         theta = theta + rep(own_sd) * own + rep(game_sd) * game
         exp_theta = np.exp(theta)
 

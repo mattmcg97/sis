@@ -1,11 +1,11 @@
-"""v4-v6 price only where they are sure of the state: the latest PLAY_OVER, read, until the next
+"""v8-v10 price only where they are sure of the state: the latest PLAY_OVER, read, until the next
 play starts, and TEAM_A's side known."""
 
 import unittest
 
 import numpy as np
 
-from .. import stream, v4_stream, v5_stream, v6_stream
+from .. import stream, v8_stream, v9_stream, v10_stream
 
 
 def snap(message, next_start, side="home"):
@@ -32,7 +32,7 @@ class TestConfident(unittest.TestCase):
         books = [(5, margin, total), (11, margin, total)]
         prod = [("M1", 50, None, 50.0, 2.0, None, m, "open", "true") for m in range(4, 21)]
         windows = stream.confident_windows(SNAPS, [5, 11])
-        for module in (v4_stream, v5_stream, v6_stream):
+        for module in (v8_stream, v9_stream, v10_stream):
             rows = module.quote_rows("M1", books, prod, windows=windows)
             self.assertEqual([r[6] for r in rows], [5, 6, 7, 8, 11, 12, 13, 14], module.__name__)
             every = module.quote_rows("M1", books, prod)

@@ -48,11 +48,11 @@ connected. `.env` is gitignored so credentials never get committed.
   possession cells. Re-runnable: each run writes CSVs that `compare` diffs,
   so prod vs candidate (or the same stream week on week) is one command.
   See `eAMFCalibrator/README.md`.
-- `eAMFModel/` — A rival in-play pricer for moneyline, spread and total. It
-  is top-down with no machine learning: a pre-match anchor, a scoreboard
-  update, and exact Markov chains over possessions and over the current
-  drive. It suspends around feed garbage. The calibrator runs it in the
-  candidate's place with `--candidate v1`. See `eAMFModel/README.md`.
+- `eAMFModel/` — A rival in-play pricer for moneyline, spread and total. From
+  each `PLAY_OVER` snapshot it simulates the rest of the game play by play on
+  the real clock, starting from our own pre-match model (NB2 or glmer). The
+  versions are v8, v9 and v10. The calibrator runs one in the candidate's
+  place with `--candidate v9`. See `eAMFModel/README.md`.
 - `nb2/` — Pre-match NB2 rating model (Adrian's): fitting (`NBRatingTrial.py`),
   schedule pricing (`NB2_schedule_predict.py`), and out-of-sample calibration
   backtests in both Python and R (`backtest_nb2_calibration.py`,
@@ -66,7 +66,7 @@ connected. `.env` is gitignored so credentials never get committed.
   - **The scripts.** `backtest.R` grids feature sets × row weightings out of
     sample, `fit.R` fits the chosen one, and `predict.R` prices a schedule
     into the same expected-points columns NB2 gives the eAMFModel versions.
-  - **In v7.** `python -m eAMFModel v7-build ... --prior glmer` prices v7's
-    pre-match prior off it in place of NB2.
+  - **In v8–v10.** `python -m eAMFModel v9-build ... --prior glmer` prices the
+    version's pre-match prior off it in place of NB2.
 
   See `glmer/README.md`.

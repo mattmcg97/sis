@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from .. import remaining
-from ..pricer import AWAY, HOME, GameState
+from ..state import AWAY, HOME, GameState
 
 
 def pmf(**mass):
@@ -19,7 +19,7 @@ class TestRemaining(unittest.TestCase):
 
     def test_the_game_state_is_read_off_the_margin_and_the_ball(self):
         s = lambda h, a, off: GameState(offense=off, down=1, distance=10, field_position=25,
-                                        home_score=h, away_score=a, period=4, elapsed_in_period=0.0,
+                                        home_score=h, away_score=a, period=4,
                                         clock_seconds=60)
         self.assertEqual(remaining.game_state(s(7, 7, HOME)), "level")
         self.assertEqual(remaining.game_state(s(14, 7, HOME)), "1 score, leader has ball")
@@ -62,10 +62,10 @@ class TestBuildUntil(unittest.TestCase):
         def fake_build(matches, out, **kw):
             seen["codes"], seen["before"] = sorted(matches), kw.get("before")
         with mock.patch.object(playover, "load", return_value=rows), \
-                mock.patch("eAMFModel.v6.build", side_effect=fake_build), \
+                mock.patch("eAMFModel.v9.build", side_effect=fake_build), \
                 mock.patch("eAMFModel.nb2_prior.load_history", return_value=[]), \
                 mock.patch("builtins.print"):
-            cli.main(["v6-build", "x.csv", "--half", "all", "--out", tempfile.mkdtemp(),
+            cli.main(["v9-build", "x.csv", "--half", "all", "--out", tempfile.mkdtemp(),
                       "--history", "h.csv", "--until", "2026-09-10"])
         self.assertEqual(seen["codes"], ["AF001090926"])
         self.assertEqual(str(seen["before"])[:10], "2026-09-10")

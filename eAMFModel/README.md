@@ -6,182 +6,49 @@ and candidate.
 
 ## How it works
 
-It works top-down: the whole game first, then drives inside it.
+From a `PLAY_OVER` snapshot's state -- score, quarter and clock, who has the ball, down,
+distance and field position, timeouts left -- a version plays the rest of the game snap by snap
+on the real game clock, 2,000 times, and prices moneyline, spread and total off the final scores.
+Every snap is drawn from real snaps in the same situation; the clock, 4th downs, kneels,
+timeouts and overtime follow what real players do (each version's section says how).
 
-1. **Pre-match anchor** (`strength.py`, `pricer.Model.fit_prior`). The
-   pre-match spread and total give each side its expected points. When the
-   pre-match probabilities are available, the anchor is fitted to them too,
-   so at kickoff the model quotes the pre-match moneyline and total
-   probability back exactly.
-2. **Moving off the anchor as the game goes** (`strength.py`). Each side's
-   scoring rate has a Gamma prior with mean 1 and shape k. The scoreboard
-   updates it: points scored against points expected by now, counted in
-   scores of about 6.2 points. k is the setting that separates the
-   versions: a large k trusts the pre-match number, a small k trusts the
-   game. Only the scoreboard feeds it, never drive counts, so a drive the
-   feed mis-splits can't move a strength.
-3. **The rest of the game as an exact possession Markov chain**
-   (`pricer.py`). The remaining drives alternate: the current drive, then
-   the defense, then the offense, and so on. Possession resets at halftime
-   to whoever didn't receive the opening kickoff. The number of drives
-   still to start follows a discretised normal whose variance combines
-   the game's own spread (`count_dispersion`) and the uncertainty from
-   having no clock. Everything is combined by convolution into the full
-   final-score distribution, and all six markets are read off that. There
-   is no simulation, so the same state always gets the same price, and a
-   price moves only when the state does.
-4. **The current drive as a play-by-play Markov chain** (`drive.py`). The
-   state is down, distance and field position, and each snap is a
-   turnover, a loss, no gain, a gain or a big play. On 4th down the chain
-   kicks a field goal in range, goes for it on 4th and short, and punts
-   otherwise. It is solved backwards, exactly, into P(TD) and P(FG) from
-   every state, on a grid of offensive quality. Quality is set so a fresh
-   drive is worth the side's expected points per drive. The chain supplies
-   the shape of in-drive moves; the game level sets the height. A first
-   down, a big gain or a short 4th down lifts the offense's price. A sack,
-   a stall or a long 3rd down drops it. The total moves with the drive.
-5. **The clock, by halves** (`clock.py`). The feed has no game clock, only
-   period and message count. Q2 continues Q1 and Q4 continues Q3, so time
-   is counted through each half. Scoring falls smoothly across a half
-   instead of stepping down at the quarter break: the share of a half's
-   scoring still to come at game-time fraction u is (1 − u)^(1 + a). The
-   first half is near flat; the second falls (a = 0.5). The quarter break
-   anchors game time at u = 0.5, because it's a real game-time point even
-   though Q2 and Q4 run far more messages. Within a quarter, u moves with
-   messages over the quarter's uncertain length. The drive in progress
-   follows the second half's falling rate too, not just the count of
-   drives left.
-6. **The end of each half** (`pricer.py`). The current drive can be cut
-   off by the clock. The clock left is measured in messages (time, not
-   scoring share), and the time a drive needs scales with the field it
-   still has to cover. A drive on the 1 needs a snap or two; one from its
-   own 20 needs a full drive's worth.
-7. **End of the game** (`pricer.Model._endgame`). With under 3 drives of
-   clock left in the second half:
-   - behind by 1–3 or by 9+, the trailing side never punts (it still
-     kicks when a field goal helps);
-   - behind by 4–8, it never punts and never kicks, because three points
-     don't catch up;
-   - ahead by 9+ with the ball, the leader kneels, scoring 80% less.
+Each match starts from its pre-match prior: the expected points of our own pre-match model (NB2,
+`nb2/`, or glmer with `--prior glmer`, fitted on the match history), turned into the two sides'
+starting strengths. Player profiles (pace, 4th-down aggression, form on the day) come from the
+same export.
 
-   The drive chain is solved for each 4th-down policy.
-8. **Suspension** (`feed.py`). A causal tracker suspends:
-   - from the opening kick to the first snap
-   - from any score to the next drive's first snap (the extra point, the
-     kickoff and the return; an onside recovery is picked up)
-   - from each new half to its first snap
-   - kick-spot rows
-   - stale label flips (the possession changed but the spot wasn't re-read)
-   - impossible down jumps
+The code that runs:
 
-   Everything else is priced live. The calibrator's own cleaning looks
-   one row ahead, so it can't be used for a live price.
-
-Monte Carlo would add noise that moves prices without the game moving, so
-the model uses exact chains instead of simulation.
-
-## Where the numbers come from
-
-| constant | value | source |
-|---|---|---|
-| drives per team | 4.80, count sd 2.14 | max likelihood on 23,952 AF finals (`nb2/AMFELO.csv`), `fit.py` |
-| TD / FG per drive | 45.1% / 10.3% | same fit; directional_pairs drives read 46% / 11% directly |
-| conversions | 6 only 5.1%, 8 4.3% | same fit |
-| overtime | won by a field goal | same fit (ot_fg at its bound) |
-| messages per quarter | 71, 122, 81, 120 | quarter boundaries in 262 matches of directional_pairs |
-| half shares, slopes | 57% / 43%; a = −0.2, 0.5 | fitted on half the matches, checked on the other |
-| play kernel | mean gain 10, 18% big plays | calibrated so a fresh drive from the 25 scores ~46% TD / 11% FG |
-| drive cut-off | needs 1.2 drives of clock, spread 0.8 | fitted on half the matches, checked on the other |
-| end game | 3 drives of clock left; kneel 80% less | same |
-
-The normal drive count replaced a negative binomial, which can't go below
-Poisson dispersion. That overstated the total's spread (sd 14.8 against
-12.9 in the data) and cost 563 log-likelihood points.
+| file | what it is |
+|---|---|
+| `sim8.py`, `sim9.py`, `sim10.py` | each version's simulation: play tables and the snap-by-snap game |
+| `v8.py`, `v9.py`, `v10.py` | each version's build (fits, pre-match grid, profiles) and pricing |
+| `v8_stream.py` … `v10_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
+| `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
+| `stream.py`, `grading.py` | what every stream shares; Brier against prod |
+| `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
+| `nb2_prior.py`, `glmer_prior.py` | the pre-match models |
+| `remaining.py` | points still to come against reality |
 
 ## Versions
 
-| | prior strength k | reading |
-|---|---|---|
-| v1 | 16 | anchored: four TDs above expectation move a side about 25% |
-| v2 | 4 | reactive: the game takes over about four times as fast |
+| | what it adds |
+|---|---|
+| v8 | the clock to the last second, timeouts, kneels and overtime as played |
+| v9 | v8 with recent weeks weighing more, and the late timeout plays' real time |
+| v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
 
-Add a version by naming what differs in `params.VERSIONS`. v3 is a separate model (below).
-
-## Backtest (262 matches, directional_pairs, 17–20 Sep)
-
-Brier score, lower is better. d is prod's Brier minus the version's, so
-positive means the version beat prod. The 95% interval is a match-level
-bootstrap. The model prices at prod's line, from the same state.
-
-| market | prod | candidate | v1 | v2 | d v1 [95% CI] | d v2 [95% CI] |
-|---|---|---|---|---|---|---|
-| moneyline | 0.1595 | 0.1629 | 0.1602 | 0.1639 | −0.0007 [−0.0034, +0.0020] | −0.0044 [−0.0083, −0.0001] |
-| spread | 0.2484 | 0.2476 | 0.2322 | 0.2400 | +0.0162 [+0.0099, +0.0235] | +0.0084 [−0.0024, +0.0189] |
-| total | 0.2473 | 0.2479 | 0.2371 | 0.2387 | +0.0103 [+0.0032, +0.0174] | +0.0086 [−0.0005, +0.0155] |
-| all | 0.2184 | 0.2195 | 0.2098 | 0.2142 | +0.0086 [+0.0037, +0.0121] | +0.0042 [−0.0014, +0.0097] |
-
-Read it with care:
-
-- **Moneyline is the clean comparison.** It is live throughout. v1 is
-  level with prod (the interval straddles zero) and ahead of the
-  candidate. Q1 is slightly behind (−0.0045); Q4 and overtime are ahead.
-- **The spread and total wins are overstated.** This file predates the
-  liveness columns, and late prod spread and total quotes are mostly
-  suspended rows near 50% whatever the line. Nearly all of the gain is
-  in Q4. Q1–Q3 are level with prod within noise.
-- **Most of this file's snapshots sit on garbage rows.** 1,378 of 2,615
-  are a 1st & 10 on the 35: the opening kick, or the receiving side's
-  label flipped onto the kick spot straight after a score. In the full
-  play-by-play the real drive start follows on the 20–30. The current
-  calibrator drops those rows, and now also refuses any quote sitting on
-  a conversion, kick or score message. A fresh export will be a cleaner
-  test.
-- **Halves and end-game rules versus the earlier quarter clock.** On
-  held-out matches it's a tie (Brier 0.2123 vs 0.2120):
-  better Q4 totals (0.197 vs 0.206), slightly worse Q4 moneyline. A
-  clock counting only messages since the half began lost to both
-  (0.2140). The quarter break carries real game-time information.
-- **Trusting the scoreboard more cost Brier.** On the moneyline: k = ∞
-  0.1593, k = 16 0.1601, k = 4 0.1638. The score itself already moves
-  every price. Re-rating each side's scoring rate off its points on top
-  of that didn't help. That is why v1 is the anchored one.
-
-## PLAY_OVER snapshots and the real game clock
-
-`SCOUTING_FULL` has the game clock (`IN_PLAY_CLOCK_SECONDS`, 240 a
-quarter), and `PLAY_OVER` is the message snapshots are keyed on. With the
-clock known (`GameState.clock_seconds`):
-- The drives left are a matter of time: this half's seconds in drives'
-  worth, plus a whole half more in the first half.
-- The second half's lower scoring comes off what each drive is worth. Its
-  drives score at `half_shares[1] / half_shares[0]` of the first half's,
-  and fall through the half at w(u).
-- The spread of the drive count carries the current drive's own length:
-  a quick turnover hands the ball back with time on the clock.
-- The prior is fitted on this path (`fit_prior(on_clock=True)`).
-
-A touchdown's `PLAY_OVER` is priced with the conversion still to come
-(`pending_conversion`) and a fresh drive for the other side. Its points
-(or a good field goal's) are added if the scoreboard hasn't caught up with
-them yet.
-
-```bash
-python -m eAMFCalibrator scouting                            # writes scouting_playover.csv
-python -m eAMFModel playover eAMFCalibrator/out/scouting_playover.csv --versions v1,v2
-python -m eAMFModel playover ... --scrimmage-only            # leave out kicks, conversions, scores
-python -m eAMFModel playover ... --state over                # the PLAY_OVER row's own state
-```
-
-Only prod quotes that were live are compared. The kind of play a snapshot
-closed is its own breakdown (`--by kind`).
-
-The clock-path settings (half shares and slopes, drive cut-off, end-game)
-are carried over from the message-clock fit. They should be refitted on
-play-over data once there is an export to fit them on.
+The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
+removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
+onward still carries everything they introduced. Their own commands no longer run, so use v8–v10
+in their place.
 
 ## v3: a play-by-play simulation
 
-v3 is its own model (`sim.py`, `v3.py`), not a setting of v1/v2. From the
+> v3's code has been removed (as have v4–v7's). This section and the next four describe what
+> they introduced, which v8–v10 still run.
+
+v3 was the first simulation (`sim.py`, `v3.py`). From the
 snapshot's state it plays the rest of the game snap by snap on the real
 clock, 2,000 times, and prices the markets off the final scores.
 
@@ -1362,69 +1229,70 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
-## v10: v9 learning the day's scoring from the game so far
+## v10: v9 with the prior's pace counted once, and its totals' spread fitted out of sample
 
-v10 (`sim10.py`, `v10.py`, `v10_stream.py`) is a copy of v9. Its one change is behind `v10`'s
-`LEARN`; off, v10 prices as v9 (`test_with_learning_off_v10_prices_as_v9`). It prices off its own
-build (`v10-build`, which builds as v9) or a v9 build as it stands: the tables, grid, profiles
-and prior are the same, so `--v10-model v9_model` works with no rebuild.
+v10 (`sim10.py`, `v10.py`, `v10_stream.py`) started as v9 copied exactly. Its simulation is still
+v9's (`test_v10_plays_as_v9`). What changes is how each match's pre-match prior becomes its
+starting strengths. An earlier v10, which learned the day's scoring from the game so far, showed
+no gain held out and was replaced.
 
-### What v9 got wrong
+### What v9 got wrong, and why
 
-Since v5 every simulated game draws the day's form: a swing both sides share and each side's
-own (see Form on the day). The draws are the same at every snapshot of a match. They are
-never looked at again, so at half time v9 still averages over swings the first half has
-already ruled out. In the calibrator (`bets totals-signals`, Sep 17–30):
-- a first half of 0–10 points was given about 1.2 points too many still to come, one of 24+
-  about 0.2 too few (prod the same, worse at 24+);
-- the points to come at half time were spread too wide. Regressed on what the rest of the
-  match made, v8/v9's own points to come took a coefficient of 0.40 (`totals-calibrate
-  --signals`), where a line that needs no correction takes 1.
+v9's totals ran over in Q3: points still to come +0.34 too high there, against +0.01 to +0.05
+in the other quarters. By the pre-match total, held out (Sep 10–22), the games NB2 expected to be
+high-scoring (around 42) came in 1.6–1.9 points under v9 in each of Q1–Q3. At half time, real
+points to come moved only 0.74 for each point of v9's.
 
-The `react` update did not help (as before): it moves strength on first-down success, and
-first-down success does not predict later points. Points do.
+- **Pace counted twice.** From kickoff, v9's total moved 1.15 points for each point of NB2's
+  total. Real games moved 0.89. The pre-match grid maps the prior one to one (slope 1.00). The
+  extra 0.15 is the players' pace: fast players score more, so NB2's expected points already
+  carry their pace, and the sim's clock then sped those players up again. Pace runs −0.54 with the
+  prior total, and each 0.1 of the two paces moves the sim 1.7 points.
+- **NB2's totals spread a little wider than real ones.** Out of sample, real totals move 0.89–0.92
+  points for each point of NB2's.
+
+How far the game so far runs above or below its pre-match pace carries little extra: 0.07 points
+of the rest of the game for each point of surprise. That is why learning from it didn't help.
 
 ### What v10 changes
 
-At each snapshot every path counts by how likely its draws make the points each side has
-scored so far (`learn_weights`):
-- a path's draws put side s's scoring at exp(sqrt(form_s) × own_s + sqrt(game) × shared),
-  less half their variance so the prior's expected points stand (as `strength_draw` does);
-- so far it expects the prior's points from kick-off (off the pre-match grid,
-  `expected_points`), times the share of a match the league has scored by this point
-  (`elapsed_share`, off the simulation's own points by quarter), times that;
-- the weight is the Poisson likelihood of each side's real points at that mean, divided by
-  `LEARN_DISPERSION` (6: points come in 3s and 7s, so a side's points vary about six times
-  their mean), raised to `LEARN_WEIGHT`;
-- where fewer than `LEARN_MIN_ESS` (a quarter) of the paths would carry the price, the
-  evidence is softened until they do.
+- **The prior's pace is counted once** (`PACE_NEUTRAL`). At build, each side's points from
+  kickoff are simulated over a grid of the two players' paces (0.85–1.15, `fit_pace_response`,
+  kept in the grid file). A match's expected points are divided by its pace response before its
+  starting strengths are fitted. With both paces applied, the sim then averages the prior's
+  points.
+- **The prior's totals are pulled in by their out-of-sample slope** (`PRIOR_SHRINK`). At build,
+  the pre-match model (NB2 or glmer) is refitted 14 days before the cut-off. It predicts those
+  days' matches, and the real totals are regressed on its predictions. Every match's expected
+  total is then pulled toward the build's average by that slope (`v10shrink.json`; 0.924 on the
+  build before Sep 10). The margin's slope is read but not applied (`MARGIN_SHRINK`). NB2's
+  margins spread only about ±1.75 points, so two weeks measure their slope only to about ±0.15.
 
-The margin and total distributions are then the weighted paths'. Nothing is simulated twice:
-the paths are v9's, path for path (`sim10.simulate` draws the form through `path_draws`, the
-function `learn_weights` reads). A slow first half pulls the swing down and with it the points
-still to come; a fast one pushes them up. Before the first snap, and pre-match, nothing is
-learnt.
+The build refits the pre-match model once more for this, so it takes a few minutes longer.
 
-On the test tables (a shared swing of sd 0.15, the build's own size), at half time, against v9:
-0–0 −0.53 points to come, 3–3 −0.32, as expected +0.01, half as many again +0.26, twice
-as many +0.56. The paths carrying the price stay at 89% or more.
+### Held out
 
-### Tuning the weight
+Built before Sep 10 with the same export, history, handles and timeouts as v9, played on Sep
+10–22 (56,890 snapshots). "Pace" is v10 with only the pace change.
 
-`LEARN_WEIGHT` (1: the likelihood as it stands; 0: v9) is the one setting. It should leave the
-points to come at half time needing no correction: run v10 at a few weights through the
-calibrator and take the one whose coefficient in `totals-calibrate --signals` is nearest 1 with
-the best held-out Brier:
+| | v9 mean | pace mean | v10 mean | v9 rps | pace rps | v10 rps |
+|---|---|---|---|---|---|---|
+| all | +0.09 | +0.04 | +0.03 | 3.837 | 3.828 | 3.825 |
+| Q1 | +0.01 | −0.09 | −0.09 | 3.795 | 3.789 | 3.785 |
+| Q2 | +0.05 | −0.02 | −0.04 | 4.753 | 4.742 | 4.738 |
+| Q3 | +0.34 | +0.28 | +0.27 | 4.408 | 4.398 | 4.397 |
+| Q4 | +0.00 | −0.01 | −0.01 | 2.382 | 2.375 | 2.374 |
 
-```bash
-python -m eAMFCalibrator bets totals-signals --since 2026-09-10 --until 2026-09-22 --candidate v9,v10 --v9-model v9_model --v10-model v9_model --learn-weights 0.5,2,4
-python -m eAMFCalibrator totals-calibrate --signals eAMFCalibrator/out/totals_signals.csv
-```
+By the pre-match total, the highest fifth (around 42) goes from +1.85 to +0.56 in Q1, from +1.62
+to +0.61 in Q2, and from +1.85 to +1.23 in Q3. At half time, real points to come move 0.88 for
+each point of v10's (v9 0.74).
 
-`$EAMF_V10_LEARN_WEIGHT` (the calibrator's `--v10-learn-weight`) sets it for any run. It rides
-on the `Variant`, so worker processes price with the same weight on Windows too.
+### Still open
 
-## Pricing only what the model is sure of (v4–v9 streams)
+Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leader on the ball,
++0.52 with the trailer) and late level ones. Those are game-state effects, not the prior.
+
+## Pricing only what the model is sure of (v8–v10 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
@@ -1467,7 +1335,7 @@ total, less the points on the board, is its distribution of the points
 still to come. The export's final gives what really came.
 
 ```bash
-python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v6 --model v6_model \
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v9 --model v9_model \
     --history eAMFCalibrator/out/match_history.csv --since 2026-09-10 --until 2026-09-22
 ```
 
@@ -1476,8 +1344,8 @@ Build the model on matches before `--since`, or the comparison is in-sample:
 the matches before DATE:
 
 ```bash
-python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-10 \
-    --out v6_model_pre10 --history eAMFCalibrator/out/match_history.csv
+python -m eAMFModel v9-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-10 \
+    --out v9_model_pre10 --history eAMFCalibrator/out/match_history.csv
 ```
 
 Snapshots in one match share one final, so a cell's real sample is its
@@ -1495,7 +1363,7 @@ leader or the trailer has the ball), it prints:
   against reality, by quarter, over every snapshot. Positive means the over
   is priced too high there.
 
-**By drive: `--drive` (v6).** The rest-of-game view mixes up who scores and
+**By drive: `--drive`.** The rest-of-game view mixes up who scores and
 when. `--drive` narrows it to the drive under way. At each scrimmage
 `PLAY_OVER`, it compares the points scored on the rest of that drive (0, a
 safety, 3, 6, 7, 8) with what the version simulates to the end of the same
@@ -1512,38 +1380,16 @@ streams leave them.
 ## Run it
 
 ```bash
-# score versions against prod and candidate on a calibrator pairs file
-python -m eAMFModel backtest eAMFCalibrator/out/directional_pairs.csv --versions v1,v2
+# once: the snapshots, the match history and every timeout (eAMFCalibrator), then a build
+python -m eAMFCalibrator scouting --since 2026-08-24 --until 2026-09-23
+python -m eAMFCalibrator history --until 2026-09-23
+python -m eAMFCalibrator timeouts --since 2026-08-24 --until 2026-09-23
+python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
+    --out v10_model --history eAMFCalibrator/out/match_history.csv \
+    --handles eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
 
-# walk one match message by message: the tracker's verdict, the model's prices, prod's
-python -m eAMFModel trace eAMFCalibrator/out/dump_play_by_play.csv
+# the calibration report with versions standing in for the candidate
+python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
 
-# one state by hand
-python -m eAMFModel price --spread -2.5 --total 38.5 --period 2 --elapsed 30 \
-    --score 7-7 --offense home --down 1 --distance 10 --field 60 --opening home
-
-# the whole calibration report with a version standing in for the candidate
-python -m eAMFCalibrator report --candidate v1
-
-python -m unittest eAMFModel.tests.test_model
+python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v10
 ```
-
-`--candidate v1` makes the calibrator price every match with the model, off
-prod's pre-match quotes, the play feed and the scores. It prices at prod's
-lines, so every section compares like with like. Pure Python, no new
-dependencies.
-
-## Known gaps
-
-- **No game clock.** The late 4th quarter is where prod clearly knows how
-  long is left and the model doesn't. Messages per period vary a lot
-  between matches, and nothing in the feed says why.
-- **The play kernel is calibrated, not estimated.** It is tuned to drive
-  outcomes because the local data has one snapshot per drive. The full
-  play feed in Snowflake would let the gain distribution be read off the
-  snaps directly.
-- **End-game behaviour is rule-based.** Policies switch on a threshold of
-  clock left, and the kneel is a flat reduction. There is no hurry-up
-  clock management, no timeouts and no going for two when chasing. The
-  local data (about 2.5 Q4 snapshots per match) can't separate finer
-  rules; the full play feed could.

@@ -3,7 +3,6 @@ kneel-down that counts them (sim8.py, v8.py, v8_stream.py)."""
 
 import csv
 import datetime as dt
-import inspect
 import json
 import os
 import random
@@ -15,18 +14,8 @@ from unittest import mock
 
 import numpy as np
 
-from .. import glmer_prior, nb2_prior, players, pricer, sim, sim4, sim5, sim6, sim8, v8, v8_stream
-from .test_v3 import _matches
-
-
-def _with_handles(matches):
-    rng = random.Random(7)
-    names = ["ALPHA", "BRAVO", "CHARLIE", "DELTA"]
-    for rows in matches.values():
-        home, away = rng.sample(names, 2)
-        for r in rows:
-            r["home_handle"], r["away_handle"] = home, away
-    return matches
+from .. import glmer_prior, nb2_prior, players, sim8, v8, v8_stream
+from .fakes import _matches, _with_handles
 
 
 class TestCommonRandomNumbers(unittest.TestCase):
@@ -53,9 +42,6 @@ class TestCommonRandomNumbers(unittest.TestCase):
         self.assertAlmostEqual(float(u.mean()), 0.5, delta=0.01)
         self.assertTrue((u == sim8._uniform(12345, path, step, 7)).all())
         self.assertFalse((u == sim8._uniform(12345, path, step, 8)).all())
-
-    def test_v3_is_left_as_it_was(self):
-        self.assertNotIn("common", inspect.signature(sim.simulate).parameters)
 
 
 class TestPlayCalling(unittest.TestCase):
@@ -222,20 +208,6 @@ class TestPlayCalling(unittest.TestCase):
         self.assertLess(banded, plain - 0.3)
         _, eased = self._q3_leader_with_ball(eff_shift=(lead, -0.4))
         self.assertLess(eased, plain - 0.3)
-
-    def test_v4s_tables_play_as_v4(self):
-        t4 = sim4.Tables.build(self.matches, min_records=20)
-        with tempfile.TemporaryDirectory() as d:
-            path = os.path.join(d, "t.npz")
-            t4.save(path)
-            t5 = sim8.Tables.load(path)
-        # a game that cannot reach overtime, which v8 plays by the real rules
-        st = sim4.Start(2)
-        st.period[:], st.clock[:], st.phase[:] = 3, 150.0, sim4.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, 40, 38, 0
-        a = sim4.simulate(t4, st, 400, np.random.default_rng(1), seed=9)
-        b = sim8.simulate(t5, st, 400, np.random.default_rng(1), seed=9)
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
 
 class TestBackedUp(unittest.TestCase):
@@ -433,51 +405,6 @@ class TestLateGame(unittest.TestCase):
         self.assertEqual(lf.shape, (2, len(sim8.LATE_DEFICITS) + 1, len(sim8.KICK_RANGES) + 1, 3))
         self.assertTrue(np.allclose(lf.sum(3), 1.0))
 
-    def test_with_its_own_switches_off_v8_plays_as_v6(self):
-        saved = (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
-        sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
-        sim8.PLAY_CALLING_Q4 = set()
-        try:
-            t7 = sim8.Tables.build(self.matches, min_records=20)
-            t6 = sim6.Tables.build(self.matches, min_records=20)
-            st = sim8.Start(4)
-            st.period[:], st.clock[:], st.phase[:] = [3, 4, 4, 4], [150.0, 150.0, 50.0, 25.0], sim8.SCRIM
-            st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
-            st.down[:] = [1, 2, 4, 4]
-            st.fresh[:] = [True, False, True, False]
-            a = sim8.simulate(t7, st, 300, np.random.default_rng(1), seed=9)
-            b = sim6.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
-        finally:
-            (sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD, sim8.PLAY_CALLING_Q4,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY) = saved
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
-
-    def test_with_both_off_v6_plays_as_v5(self):
-        import copy
-        saved = (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
-                 sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-                 sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
-        sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4, sim8.RED_ZONE_FIT = \
-            None, False, False, set(), False
-        sim8.FRESH_CLOCK = sim8.Q4_MODES = sim8.SETTLE_FIT = sim8.GO_AHEAD = False
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
-        try:
-            t6 = sim8.Tables.build(self.matches, min_records=20)
-            t6.late_fourth = None
-            t5 = sim5.Tables.build(self.matches, min_records=20)
-            st = sim8.Start(3)
-            st.period[:], st.clock[:], st.phase[:] = 4, 150.0, sim8.SCRIM
-            st.team[:], st.y[:], st.home[:], st.away[:] = 0, 50, [3, 17, 10], [10, 10, 30]
-            a = sim8.simulate(t6, st, 300, np.random.default_rng(1), seed=9)
-            b = sim5.simulate(t5, st, 300, np.random.default_rng(1), seed=9)
-        finally:
-            (sim8.BIG_LEAD, sim8.FOURTH_JOINT, sim8.OT_RULES, sim8.PLAY_CALLING_Q4,
-             sim8.RED_ZONE_FIT, sim8.FRESH_CLOCK, sim8.Q4_MODES, sim8.SETTLE_FIT, sim8.GO_AHEAD,
-             sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY) = saved
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
-
     def test_big_leads_have_their_own_situations(self):
         self.assertEqual(sim8.mode_of(3, 100.0, 5), 3)
         self.assertEqual(sim8.mode_of(3, 100.0, 12), 8)
@@ -495,23 +422,6 @@ class TestClockToTheEnd(unittest.TestCase):
     def setUpClass(cls):
         cls.matches = _matches()
         cls.tables = sim8.Tables.build(cls.matches, min_records=20)
-
-    def test_with_its_own_switches_off_v8_plays_as_v7(self):
-        from .. import sim7
-        saved = (sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY)
-        sim8.LATE_CLOCK = sim8.TIMEOUTS = sim8.KNEELS = sim8.OT_CARRY = False
-        try:
-            t8 = sim8.Tables.build(self.matches, min_records=20)
-            t7 = sim7.Tables.build(self.matches, min_records=20)
-            st = sim8.Start(4)
-            st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 150.0, 50.0, 25.0], sim8.SCRIM
-            st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
-            st.down[:] = [1, 2, 1, 4]
-            a = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
-            b = sim7.simulate(t7, st, 300, np.random.default_rng(1), seed=9)
-        finally:
-            sim8.LATE_CLOCK, sim8.TIMEOUTS, sim8.KNEELS, sim8.OT_CARRY = saved
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def _row(self, message, period, clock, down=1, kind="SCRIMMAGE", offense="TEAM_A"):
         return {"message": str(message), "period": str(period), "clock_seconds": str(clock),
@@ -1538,7 +1448,7 @@ class TestNB2Prior(unittest.TestCase):
         self.assertFalse(nb2_prior.Prematch.exists(self.tmp.name))
 
     def test_v8_build_with_history_writes_the_prematch_model(self):
-        from .test_v3 import _matches
+        from .fakes import _matches
         matches = _matches(12)
         out = os.path.join(self.tmp.name, "v8")
         v8.build(matches, out, grid_paths=40, verbose=False, history=self.history(),

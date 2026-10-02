@@ -1,13 +1,13 @@
 """A version's points still to come against what the rest of each game really made.
 
-At every PLAY_OVER snapshot a version (v4 to v9) simulates the rest of the game. Its distribution
+At every PLAY_OVER snapshot a version (v8 to v10) simulates the rest of the game. Its distribution
 of the final total, less the points on the board, is its distribution of the points still to come.
 The export's final score gives what really came. Set side by side, value by value (0, 3, 6, 7, 8,
 10, 14 ...) and by quarter and game state, this is the comparison against reality -- not against
 prod -- that says where the simulation puts too much or too little: a lone field goal late, a
 touchdown without its kick, a second score.
 
-  python -m eAMFModel remaining SNAPS.csv --version v6 --model v6_model --history AMFELO.csv \\
+  python -m eAMFModel remaining SNAPS.csv --version v9 --model v9_model --history AMFELO.csv \\
       --since 2026-09-10 --until 2026-09-22
 """
 
@@ -21,7 +21,7 @@ from collections import defaultdict
 import numpy as np
 
 from . import playover
-from .pricer import HOME
+from .state import HOME
 
 VALUES = (0, 3, 6, 7, 8, 10, 13, 14, 17, 21)
 MAX_REMAINING = 60
@@ -142,9 +142,7 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
           history=None, handles=None, limit=None, drive=False, timeouts=None):
     """[(match, message, quarter, state, points on board, points still to come, the version's pmf
     of them)] over the matches in [since, until] whose TEAM_A side is known; with `drive`, the
-    points on the rest of the drive under way at each scrimmage PLAY_OVER (v6 to v9)."""
-    if drive and name not in ("v6", "v7", "v8", "v9", "v10"):
-        raise SystemExit("--drive needs v6 to v9 (their simulations can stop at the end of a drive)")
+    points on the rest of the drive under way at each scrimmage PLAY_OVER."""
     model = importlib.import_module(f"eAMFModel.{name}")
     stream = importlib.import_module(f"eAMFModel.{name}_stream")
     tables_path, _ = stream.model_paths(model_dir)

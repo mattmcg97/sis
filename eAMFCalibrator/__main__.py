@@ -309,8 +309,7 @@ def cmd_bets(args):
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
             elif args.action == "totals-signals":
                 from . import totals_signals
-                weights = [float(w) for w in (args.learn_weights or "").split(",") if w.strip()]
-                path = totals_signals.run(cur, out_dir, react=args.react, learn_weights=weights)
+                path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
             elif args.action == "totals-moves":
                 from . import bet_totals
@@ -784,53 +783,15 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1 to v10 -- see eAMFModel) priced "
-                             "live off prod's lines (v1/v2 off the play feed, v3 off "
-                             "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
-                             "several, comma-separated (v4,v5), set each against prod "
+                             "or a model version (v8, v9, v10 -- see eAMFModel) priced "
+                             "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
+                             "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
-                             "NAME=DIR, e.g. v7,v7-glmer=v7_glmer_917 "
+                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917 "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
-                             "model version when one stands in, e.g. v3; else 'candidate')")
-    tuning.add_argument("--v3-model", metavar="DIR",
-                        help="eAMFModel v3-build's output, for --candidate v3 "
-                             "(default $EAMF_V3_MODEL, then ./v3_model)")
-    tuning.add_argument("--v4-model", metavar="DIR",
-                        help="eAMFModel v4-build's output, for --candidate v4 "
-                             "(default $EAMF_V4_MODEL, then ./v4_model)")
-    tuning.add_argument("--v4-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v4 "
-                             f"(default {config.V4_PATHS})")
-    tuning.add_argument("--v4-lines", choices=["own", "prod"],
-                        help="--candidate v4: quote v4's own even line, moved as the game "
-                             "moves (own), or read v4's price at prod's line (prod) "
-                             f"(default {config.V4_LINES})")
-    tuning.add_argument("--v5-model", metavar="DIR",
-                        help="eAMFModel v5-build's output, for --candidate v5 "
-                             "(default $EAMF_V5_MODEL, then ./v5_model)")
-    tuning.add_argument("--v5-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v5 "
-                             f"(default {config.V5_PATHS})")
-    tuning.add_argument("--v5-lines", choices=["own", "prod"],
-                        help=f"--candidate v5: its own even lines or prod's (default {config.V5_LINES})")
-    tuning.add_argument("--v6-model", metavar="DIR",
-                        help="eAMFModel v6-build's output, for --candidate v6 "
-                             "(default $EAMF_V6_MODEL, then ./v6_model)")
-    tuning.add_argument("--v6-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v6 "
-                             f"(default {config.V6_PATHS})")
-    tuning.add_argument("--v6-lines", choices=["own", "prod"],
-                        help=f"--candidate v6: its own even lines or prod's (default {config.V6_LINES})")
-    tuning.add_argument("--v7-model", metavar="DIR",
-                        help="eAMFModel v7-build's output, for --candidate v7 "
-                             "(default $EAMF_V7_MODEL, then ./v7_model)")
-    tuning.add_argument("--v7-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v7 "
-                             f"(default {config.V7_PATHS})")
-    tuning.add_argument("--v7-lines", choices=["own", "prod"],
-                        help=f"--candidate v7: its own even lines or prod's (default {config.V7_LINES})")
+                             "model version when one stands in, e.g. v9; else 'candidate')")
     tuning.add_argument("--v8-model", metavar="DIR",
                         help="eAMFModel v8-build's output, for --candidate v8 "
                              "(default $EAMF_V8_MODEL, then ./v8_model)")
@@ -848,19 +809,13 @@ def common_options():
     tuning.add_argument("--v9-lines", choices=["own", "prod"],
                         help=f"--candidate v9: its own even lines or prod's (default {config.V9_LINES})")
     tuning.add_argument("--v10-model", metavar="DIR",
-                        help="eAMFModel v10-build's output, or a v9 build (v10 changes only the "
-                             "pricing), for --candidate v10 (default $EAMF_V10_MODEL, then ./v10_model)")
-    tuning.add_argument("--v10-learn-weight", type=float, metavar="W",
-                        help="--candidate v10: how much the game so far counts in its learning (0 "
-                             "plays as v9; default 1)")
+                        help="eAMFModel v10-build's output, for --candidate v10 "
+                             "(default $EAMF_V10_MODEL, then ./v10_model)")
     tuning.add_argument("--v10-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v10 "
                              f"(default {config.V10_PATHS})")
     tuning.add_argument("--v10-lines", choices=["own", "prod"],
                         help=f"--candidate v10: its own even lines or prod's (default {config.V10_LINES})")
-    tuning.add_argument("--v3-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v3 "
-                             f"(default {config.V3_PATHS})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -884,21 +839,7 @@ def apply_overrides(args):
                            ("time_axis", "TIME_AXIS"),
                            ("snapshots", "SNAPSHOTS"),
                            ("chunk", "MATCH_CHUNK_SIZE"),
-                           ("v3_model", "V3_MODEL_DIR"),
                            ("candidate_label", "CANDIDATE_LABEL"),
-                           ("v3_paths", "V3_PATHS"),
-                           ("v4_model", "V4_MODEL_DIR"),
-                           ("v4_paths", "V4_PATHS"),
-                           ("v4_lines", "V4_LINES"),
-                           ("v5_model", "V5_MODEL_DIR"),
-                           ("v5_paths", "V5_PATHS"),
-                           ("v5_lines", "V5_LINES"),
-                           ("v6_model", "V6_MODEL_DIR"),
-                           ("v6_paths", "V6_PATHS"),
-                           ("v6_lines", "V6_LINES"),
-                           ("v7_model", "V7_MODEL_DIR"),
-                           ("v7_paths", "V7_PATHS"),
-                           ("v7_lines", "V7_LINES"),
                            ("v8_model", "V8_MODEL_DIR"),
                            ("v8_paths", "V8_PATHS"),
                            ("v8_lines", "V8_LINES"),
@@ -911,9 +852,6 @@ def apply_overrides(args):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
-
-    if getattr(args, "v10_learn_weight", None) is not None:
-        os.environ["EAMF_V10_LEARN_WEIGHT"] = str(args.v10_learn_weight)   # reaches worker processes
 
     if getattr(args, "drop_flipped", False):
         config.EXCLUDE_FLIPPED_MATCHES = True
@@ -992,7 +930,7 @@ def build_parser():
 
     hi_parser = sub.add_parser(
         "history", parents=[shared],
-        help="every settled match before --until, shaped like nb2/AMFELO.csv (for v4-build --history)")
+        help="every settled match before --until, shaped like nb2/AMFELO.csv (for v9-build --history)")
     hi_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     bets_parser = sub.add_parser(
@@ -1054,10 +992,6 @@ def build_parser():
     bets_parser.add_argument("--react", action="store_true",
                              help="totals-signals: also price each model with its in-game efficiency "
                                   "update on (the streams run it off), labelled <model>-react")
-    bets_parser.add_argument("--learn-weights", metavar="W,W",
-                             help="totals-signals: also price each v10 in --candidate at these learning "
-                                  "weights (0 plays as v9, 1 the likelihood as it stands), labelled "
-                                  "v10-w<weight>, to tune how much the game so far counts")
     bets_parser.add_argument("--all-operators", action="store_true",
                              help="totals-moves: keep every operator in the baseline (default: only the "
                                   "operators that send restricted accounts)")
