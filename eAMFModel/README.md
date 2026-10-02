@@ -1385,7 +1385,8 @@ python -m eAMFCalibrator scouting --since 2026-08-24 --until 2026-09-23
 python -m eAMFCalibrator history --until 2026-09-23
 python -m eAMFCalibrator timeouts --since 2026-08-24 --until 2026-09-23
 python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
-    --out v10_model --history eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
+    --out v10_model --history eAMFCalibrator/out/match_history.csv \
+    --handles eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
 
 # the calibration report with versions standing in for the candidate
 python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
