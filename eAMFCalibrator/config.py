@@ -82,11 +82,6 @@ V8_LINES = "own"
 V9_MODEL_DIR = None
 V9_PATHS = 2000
 V9_LINES = "own"
-# The same for --candidate v10 (v9 learning the day's scoring from the game so far; prices off
-# a v9 build as well as its own; None: $EAMF_V10_MODEL, then ./v10_model).
-V10_MODEL_DIR = None
-V10_PATHS = 2000
-V10_LINES = "own"
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

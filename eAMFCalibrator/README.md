@@ -2227,19 +2227,6 @@ It writes `out/totals_calibration.json` (per checkpoint, each fit's
 coefficients and standard errors, and its residual quantiles) and
 `out/totals_calibration.txt`.
 
-#### v10 at the checkpoints, and tuning it: `--learn-weights`
-
-```bash
-python -m eAMFCalibrator bets totals-signals --since 2026-09-10 --until 2026-09-22 --candidate v9,v10 --v9-model v9_model --v10-model v9_model --learn-weights 0.5,2,4
-python -m eAMFCalibrator totals-calibrate --signals eAMFCalibrator/out/totals_signals.csv
-```
-
-v10 is v9 learning the day's scoring from the game so far (eAMFModel README). It prices off a
-v9 build, so `--v10-model v9_model` needs no rebuild. `--learn-weights` prices it again at each
-weight, labelled `v10-w<weight>` (0 plays as v9). The weight to keep is the one whose points
-to come at half time need no correction in `totals-calibrate --signals`: a coefficient nearest
-1, and the best Brier. `--v10-learn-weight` sets the weight for any other command.
-
 ### Where the money goes through a session: `bets sessions`
 
 ```bash

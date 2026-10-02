@@ -1362,68 +1362,6 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
-## v10: v9 learning the day's scoring from the game so far
-
-v10 (`sim10.py`, `v10.py`, `v10_stream.py`) is a copy of v9. Its one change is behind `v10`'s
-`LEARN`; off, v10 prices as v9 (`test_with_learning_off_v10_prices_as_v9`). It prices off its own
-build (`v10-build`, which builds as v9) or a v9 build as it stands: the tables, grid, profiles
-and prior are the same, so `--v10-model v9_model` works with no rebuild.
-
-### What v9 got wrong
-
-Since v5 every simulated game draws the day's form: a swing both sides share and each side's
-own (see Form on the day). The draws are the same at every snapshot of a match. They are
-never looked at again, so at half time v9 still averages over swings the first half has
-already ruled out. In the calibrator (`bets totals-signals`, Sep 17–30):
-- a first half of 0–10 points was given about 1.2 points too many still to come, one of 24+
-  about 0.2 too few (prod the same, worse at 24+);
-- the points to come at half time were spread too wide. Regressed on what the rest of the
-  match made, v8/v9's own points to come took a coefficient of 0.40 (`totals-calibrate
-  --signals`), where a line that needs no correction takes 1.
-
-The `react` update did not help (as before): it moves strength on first-down success, and
-first-down success does not predict later points. Points do.
-
-### What v10 changes
-
-At each snapshot every path counts by how likely its draws make the points each side has
-scored so far (`learn_weights`):
-- a path's draws put side s's scoring at exp(sqrt(form_s) × own_s + sqrt(game) × shared),
-  less half their variance so the prior's expected points stand (as `strength_draw` does);
-- so far it expects the prior's points from kick-off (off the pre-match grid,
-  `expected_points`), times the share of a match the league has scored by this point
-  (`elapsed_share`, off the simulation's own points by quarter), times that;
-- the weight is the Poisson likelihood of each side's real points at that mean, divided by
-  `LEARN_DISPERSION` (6: points come in 3s and 7s, so a side's points vary about six times
-  their mean), raised to `LEARN_WEIGHT`;
-- where fewer than `LEARN_MIN_ESS` (a quarter) of the paths would carry the price, the
-  evidence is softened until they do.
-
-The margin and total distributions are then the weighted paths'. Nothing is simulated twice:
-the paths are v9's, path for path (`sim10.simulate` draws the form through `path_draws`, the
-function `learn_weights` reads). A slow first half pulls the swing down and with it the points
-still to come; a fast one pushes them up. Before the first snap, and pre-match, nothing is
-learnt.
-
-On the test tables (a shared swing of sd 0.15, the build's own size), at half time, against v9:
-0–0 −0.53 points to come, 3–3 −0.32, as expected +0.01, half as many again +0.26, twice
-as many +0.56. The paths carrying the price stay at 89% or more.
-
-### Tuning the weight
-
-`LEARN_WEIGHT` (1: the likelihood as it stands; 0: v9) is the one setting. It should leave the
-points to come at half time needing no correction: run v10 at a few weights through the
-calibrator and take the one whose coefficient in `totals-calibrate --signals` is nearest 1 with
-the best held-out Brier:
-
-```bash
-python -m eAMFCalibrator bets totals-signals --since 2026-09-10 --until 2026-09-22 --candidate v9,v10 --v9-model v9_model --v10-model v9_model --learn-weights 0.5,2,4
-python -m eAMFCalibrator totals-calibrate --signals eAMFCalibrator/out/totals_signals.csv
-```
-
-`$EAMF_V10_LEARN_WEIGHT` (the calibrator's `--v10-learn-weight`) sets it for any run. It rides
-on the `Variant`, so worker processes price with the same weight on Windows too.
-
 ## Pricing only what the model is sure of (v4–v9 streams)
 
 A version quotes a prod message only where its state is the game's at that

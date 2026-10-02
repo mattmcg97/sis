@@ -309,8 +309,7 @@ def cmd_bets(args):
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
             elif args.action == "totals-signals":
                 from . import totals_signals
-                weights = [float(w) for w in (args.learn_weights or "").split(",") if w.strip()]
-                path = totals_signals.run(cur, out_dir, react=args.react, learn_weights=weights)
+                path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
             elif args.action == "totals-moves":
                 from . import bet_totals
@@ -784,7 +783,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1 to v10 -- see eAMFModel) priced "
+                             "or a model version (v1, v2, v3, v4, v5, v6, v7, v8, v9 -- see eAMFModel) priced "
                              "live off prod's lines (v1/v2 off the play feed, v3 off "
                              "SCOUTING_FULL's PLAY_OVER snapshots and a v3-build model); "
                              "several, comma-separated (v4,v5), set each against prod "
@@ -847,17 +846,6 @@ def common_options():
                              f"(default {config.V9_PATHS})")
     tuning.add_argument("--v9-lines", choices=["own", "prod"],
                         help=f"--candidate v9: its own even lines or prod's (default {config.V9_LINES})")
-    tuning.add_argument("--v10-model", metavar="DIR",
-                        help="eAMFModel v10-build's output, or a v9 build (v10 changes only the "
-                             "pricing), for --candidate v10 (default $EAMF_V10_MODEL, then ./v10_model)")
-    tuning.add_argument("--v10-learn-weight", type=float, metavar="W",
-                        help="--candidate v10: how much the game so far counts in its learning (0 "
-                             "plays as v9; default 1)")
-    tuning.add_argument("--v10-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v10 "
-                             f"(default {config.V10_PATHS})")
-    tuning.add_argument("--v10-lines", choices=["own", "prod"],
-                        help=f"--candidate v10: its own even lines or prod's (default {config.V10_LINES})")
     tuning.add_argument("--v3-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v3 "
                              f"(default {config.V3_PATHS})")
@@ -904,16 +892,10 @@ def apply_overrides(args):
                            ("v8_lines", "V8_LINES"),
                            ("v9_model", "V9_MODEL_DIR"),
                            ("v9_paths", "V9_PATHS"),
-                           ("v9_lines", "V9_LINES"),
-                           ("v10_model", "V10_MODEL_DIR"),
-                           ("v10_paths", "V10_PATHS"),
-                           ("v10_lines", "V10_LINES")):
+                           ("v9_lines", "V9_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
-
-    if getattr(args, "v10_learn_weight", None) is not None:
-        os.environ["EAMF_V10_LEARN_WEIGHT"] = str(args.v10_learn_weight)   # reaches worker processes
 
     if getattr(args, "drop_flipped", False):
         config.EXCLUDE_FLIPPED_MATCHES = True
@@ -1054,10 +1036,6 @@ def build_parser():
     bets_parser.add_argument("--react", action="store_true",
                              help="totals-signals: also price each model with its in-game efficiency "
                                   "update on (the streams run it off), labelled <model>-react")
-    bets_parser.add_argument("--learn-weights", metavar="W,W",
-                             help="totals-signals: also price each v10 in --candidate at these learning "
-                                  "weights (0 plays as v9, 1 the likelihood as it stands), labelled "
-                                  "v10-w<weight>, to tune how much the game so far counts")
     bets_parser.add_argument("--all-operators", action="store_true",
                              help="totals-moves: keep every operator in the baseline (default: only the "
                                   "operators that send restricted accounts)")
