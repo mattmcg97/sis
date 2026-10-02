@@ -36,7 +36,7 @@ The code that runs:
 |---|---|
 | v8 | the clock to the last second, timeouts, kneels and overtime as played |
 | v9 | v8 with recent weeks weighing more, and the late timeout plays' real time |
-| v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample |
+| v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
@@ -1229,18 +1229,68 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
-## v10: a fresh copy of v9
+## v10: v9 with the prior's pace counted once, and its totals' spread fitted out of sample
 
-v10 (`sim10.py`, `v10.py`, `v10_stream.py`) is v9 copied as it was, the base for the next
-changes. It plays exactly as v9 for now (`test_v10_plays_as_v9`). An earlier v10, which learned
-the day's scoring from the game so far, showed no gain held out and was replaced by this copy.
-Build and report it as v9:
+v10 (`sim10.py`, `v10.py`, `v10_stream.py`) started as v9 copied exactly. Its simulation is still
+v9's (`test_v10_plays_as_v9`). What changes is how each match's pre-match prior becomes its
+starting strengths. An earlier v10, which learned the day's scoring from the game so far, showed
+no gain held out and was replaced.
 
-```bash
-python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
-    --out v10_model --history eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
-python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
-```
+### What v9 got wrong, and why
+
+v9's totals ran over in Q3: points still to come +0.34 too high there, against +0.01 to +0.05
+in the other quarters. By the pre-match total, held out (Sep 10–22), the games NB2 expected to be
+high-scoring (around 42) came in 1.6–1.9 points under v9 in each of Q1–Q3. At half time, real
+points to come moved only 0.74 for each point of v9's.
+
+- **Pace counted twice.** From kickoff, v9's total moved 1.15 points for each point of NB2's
+  total. Real games moved 0.89. The pre-match grid maps the prior one to one (slope 1.00). The
+  extra 0.15 is the players' pace: fast players score more, so NB2's expected points already
+  carry their pace, and the sim's clock then sped those players up again. Pace runs −0.54 with the
+  prior total, and each 0.1 of the two paces moves the sim 1.7 points.
+- **NB2's totals spread a little wider than real ones.** Out of sample, real totals move 0.89–0.92
+  points for each point of NB2's.
+
+How far the game so far runs above or below its pre-match pace carries little extra: 0.07 points
+of the rest of the game for each point of surprise. That is why learning from it didn't help.
+
+### What v10 changes
+
+- **The prior's pace is counted once** (`PACE_NEUTRAL`). At build, each side's points from
+  kickoff are simulated over a grid of the two players' paces (0.85–1.15, `fit_pace_response`,
+  kept in the grid file). A match's expected points are divided by its pace response before its
+  starting strengths are fitted. With both paces applied, the sim then averages the prior's
+  points.
+- **The prior's totals are pulled in by their out-of-sample slope** (`PRIOR_SHRINK`). At build,
+  the pre-match model (NB2 or glmer) is refitted 14 days before the cut-off. It predicts those
+  days' matches, and the real totals are regressed on its predictions. Every match's expected
+  total is then pulled toward the build's average by that slope (`v10shrink.json`; 0.924 on the
+  build before Sep 10). The margin's slope is read but not applied (`MARGIN_SHRINK`). NB2's
+  margins spread only about ±1.75 points, so two weeks measure their slope only to about ±0.15.
+
+The build refits the pre-match model once more for this, so it takes a few minutes longer.
+
+### Held out
+
+Built before Sep 10 with the same export, history, handles and timeouts as v9, played on Sep
+10–22 (56,890 snapshots). "Pace" is v10 with only the pace change.
+
+| | v9 mean | pace mean | v10 mean | v9 rps | pace rps | v10 rps |
+|---|---|---|---|---|---|---|
+| all | +0.09 | +0.04 | +0.03 | 3.837 | 3.828 | 3.825 |
+| Q1 | +0.01 | −0.09 | −0.09 | 3.795 | 3.789 | 3.785 |
+| Q2 | +0.05 | −0.02 | −0.04 | 4.753 | 4.742 | 4.738 |
+| Q3 | +0.34 | +0.28 | +0.27 | 4.408 | 4.398 | 4.397 |
+| Q4 | +0.00 | −0.01 | −0.01 | 2.382 | 2.375 | 2.374 |
+
+By the pre-match total, the highest fifth (around 42) goes from +1.85 to +0.56 in Q1, from +1.62
+to +0.61 in Q2, and from +1.85 to +1.23 in Q3. At half time, real points to come move 0.88 for
+each point of v10's (v9 0.74).
+
+### Still open
+
+Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leader on the ball,
++0.52 with the trailer) and late level ones. Those are game-state effects, not the prior.
 
 ## Pricing only what the model is sure of (v8–v10 streams)
 
