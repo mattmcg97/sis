@@ -975,15 +975,15 @@ def build_parser():
                                   "prod's spread and total lines through each match against the "
                                   "lines bet (out/bets_lines.html)")
     bets_parser.add_argument("--sharp", metavar="GROUPS",
-                             help="realistic sim: the customer temperatures that bet for an edge and "
+                             help="book comparison: the customer temperatures that bet for an edge and "
                                   f"shop on price, comma-separated (default {','.join(config.SIM_SHARP_GROUPS)})")
     bets_parser.add_argument("--elasticity", type=float, metavar="E",
-                             help="realistic sim: everyone else's stake x (candidate odds / odds) ^ E "
+                             help="book comparison: everyone else's stake x (candidate odds / odds) ^ E "
                                   f"(default {config.SIM_ELASTICITY:g}: bets as placed)")
     bets_parser.add_argument("--max-scale", type=float, metavar="X",
-                             help=f"realistic sim: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
+                             help=f"book comparison: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
     bets_parser.add_argument("--boot", type=int, metavar="N",
-                             help=f"realistic sim: bootstrap resamples over matches (default {config.SIM_BOOT})")
+                             help=f"book comparison: bootstrap resamples over matches (default {config.SIM_BOOT})")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",

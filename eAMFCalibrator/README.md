@@ -1703,16 +1703,16 @@ The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
 `--out` folder. Models are priced again for the bets' matches, so the run
 takes longer.
 
-### A more realistic simulation: who would still bet, and which book they would take
+### Book comparison: who would still bet, and which book they would take
 
 Re-pricing the same bets assumes every bet would still be placed, at the same stake, whatever the
 candidate quoted. But bettors chose those bets against prod's price. So every `bets` run, and
-`report --bets`, also prints three more readings, on the bets each candidate re-priced (written
-to `out/bets_realistic.txt` and shown at the bottom of the page). Each candidate keeps the
-operator's margin over its own price, bet by bet, as the same-bets re-sim does. So every reading
-is a like-for-like comparison with prod.
+`report --bets`, also sets each candidate against prod as a book. The tables are written to
+`out/bets_book_comparison.txt` and shown on the report page under **Book comparison**. Each
+candidate keeps the operator's margin over its own price, bet by bet, as the same-bets re-sim
+does, so every reading is a like-for-like comparison with prod.
 
-- **Acceptance.**
+- **Would they still bet?**
   - Sharp accounts (`--sharp`, Restricted by default) bet for an edge. Each is given its
     segment's measured edge over prod's price, by market: the bettors' return on those bets,
     shrunk toward the segment's own over 200 bets.
@@ -1721,15 +1721,18 @@ is a like-for-like comparison with prod.
     capped at 3× (`--max-scale`).
   - Everyone else (VIP, Standard, untagged) has little edge and doesn't shop on price, so the bet
     stands at stake × (candidate odds / odds) ^ `--elasticity` (default 0: as placed).
-  - `kept` is the stake the candidate would have taken against the real stake.
-- **Two books.** Prod and the candidate both quote. A bettor takes whichever pays more on the
-  bet's selection, where both quote the same line: the moneyline always, a line market only where
-  the candidate's line is the bet's (run a candidate `@prod` to compare every line market). Each
-  book is scored on what it is left with; "both books" is their margin together against prod
-  taking every bet alone. A model generous in the wrong places gets picked off here even when its
-  average price is fine.
+  - Kept is the stake the candidate would have taken against the real stake.
+- **Two books.**
+  - Prod and the candidate both quote. A bettor takes whichever pays more on the bet's
+    selection, where both quote the same line: the moneyline always, and a line market only where
+    the candidate's line is the bet's (run a candidate `@prod` to compare every line market).
+  - Each book is scored on what it is left with. Candidate − prod is the head-to-head: positive
+    where the candidate's prices hold up better where the two differ.
+  - Both − alone is the two books together against prod taking every bet alone. Any second book
+    lowers it, as the bettor always gets the better price.
 - **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
-  (`--boot` resamples, 1000 by default). A change whose interval spans zero is not a difference.
+  (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
+  side of zero.
 
 ```bash
 python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
