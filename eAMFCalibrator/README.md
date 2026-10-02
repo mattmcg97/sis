@@ -2222,7 +2222,11 @@ favourite, split by:
 - **state:** the favourite's lead at the prod message the bet was priced at (down 9+, down 1–8,
   level, up 1–8, up 9+);
 - **side:** favourite or underdog on the moneyline and handicap, over or under on totals;
-- **customer temperature:** Restricted, VIP, Standard, none.
+- **customer temperature:** Restricted, VIP, Standard, none;
+- **price** (in play): "current" where nothing that moves a price happened between the price's
+  message and the bet (or only a play started or ended), "score since" where the board moved in
+  between, so the bet took a price the game had already overtaken. This separates a mispriced
+  state from a slow price.
 
 Each cell gives:
 - bets and stake, and the share of the state's (or phase's) stake;
@@ -2236,7 +2240,9 @@ The tables are, in order:
 2. Q1 and Q2 by lead and side, for each market;
 3. the same for each temperature;
 4. every temperature by phase and side;
-5. the favourite ahead in Q1 and Q2, by temperature, market and side.
+5. Q1 and Q2 by lead and side again, on current prices and on prices a score had overtaken;
+6. in play by phase and price;
+7. the favourite ahead in Q1 and Q2, by temperature, market and side.
 
 Writes `out/bets_favourite.csv` (one row per bet, with its prod price, favourite, state and side)
 and `out/bets_favourite.txt`.

@@ -8,6 +8,11 @@ what score, and does the book keep the margin prod's price says it should there?
               1-8, level, up 1-8, up 9+ (0-0 pre-match)
   side        moneyline and handicap: favourite or underdog; total: over or under
 
+  price       for in-play bets, whether the price was current: "current" where the feed did
+              nothing that moves a price between the price's message and bet time (or only a
+              play started or a play over), "score since" where the board moved in between
+              (a price the game had overtaken), "other" for a kick-off, timeout or possession
+
 Per cell: bets, stake, the share of the phase's stake, the book's margin (revenue over settled
 stake) and the margin prod's price says it keeps (1 - odds x prod's probability of the selection,
 on bets struck at prod's line), and their gap: positive where bettors took more than the price
@@ -21,7 +26,7 @@ import os
 from bisect import bisect_right
 from collections import defaultdict
 
-from . import bet_checks, bets, config, markets, snowflake_io
+from . import bet_moments, bets, config, markets, snowflake_io
 from .bet_sessions import GROUPS, group_of
 
 FAV_MIN = 0.02
@@ -31,6 +36,16 @@ FAV, DOG, OVER, UNDER = "favourite", "underdog", "over", "under"
 SIDES = {markets.MONEYLINE: (FAV, DOG), markets.SPREAD: (FAV, DOG), markets.TOTAL: (OVER, UNDER)}
 PLAYER_1 = {50: True, 51: False, 52: True, 53: False}
 MIN_BETS = 30
+CURRENT, SCORED, OTHER_MOVE = "current", "score since", "other"
+
+
+def price_state(moved):
+    """current / score since / other off bet_moments' `moved` (None pre-match or unknown)."""
+    if moved in ("nothing", "play started", "play over", "price after the bet"):
+        return CURRENT
+    if moved == "score":
+        return SCORED
+    return None if moved is None else OTHER_MOVE
 
 
 def prematch_favourite(tl, match):
@@ -99,6 +114,7 @@ def tag(rows, prod_tl, scores):
         won = {bets.WON: 1.0, bets.LOST: 0.0}.get(r["result"])
         priced = r["stream_prob"] is not None and r["on_prod_line"] and r["odds"]
         out.append(dict(r, fav_p=fav_p, phase=phase, fav_lead=lead, state=state_of(lead),
+                        price=price_state(r.get("moved")) if b.in_play else "pre-match",
                         side=side_of(r["feed_market"], p1_fav), group=group_of(b),
                         won=won, priced=bool(priced),
                         expected_revenue=(r["stake"] * (1 - r["odds"] * r["stream_prob"])
@@ -194,6 +210,16 @@ def report(rows, min_bets=MIN_BETS):
                 L += table(g, ["state", "side"], f"{grp}: Q1 and Q2, {mk}", min_bets)
     L += table(rows, ["group", "phase", "side"], "Every group by phase and side, all states "
                "(share: of the group's phase)", min_bets)
+    for name, keep in ((CURRENT, lambda r: r["price"] == CURRENT),
+                       (SCORED, lambda r: r["price"] == SCORED)):
+        sub = [r for r in early if keep(r)]
+        for mk in (markets.MONEYLINE, markets.SPREAD, markets.TOTAL):
+            g = [r for r in sub if r["market"] == mk]
+            L += table(g, ["state", "side"], f"Q1 and Q2, {mk}, price {name} (share: of the state's "
+                       "stake at that price)", min_bets)
+    L += table([r for r in rows if r["phase"] != "pre-match"], ["phase", "price"],
+               "In play by phase and whether the price was current (share: of the phase's stake)",
+               min_bets)
     fav_up = [r for r in early if r["state"] in ("fav up 1-8", "fav up 9+")]
     L += table(fav_up, ["group", "market", "side"], "The favourite ahead in Q1 and Q2, by group, "
                "market and side (share: of the group's market)", max(10, min_bets // 3))
@@ -211,20 +237,21 @@ def run(cur, out_dir, min_bets=MIN_BETS):
     print(f"  {len(every):,} bets on {len(matches):,} matches")
     if not every:
         return None
-    prod_rows, finals, score_rows = [], {}, []
+    prod_rows, finals = [], {}
     for start in range(0, len(matches), config.MATCH_CHUNK_SIZE):
         batch = matches[start:start + config.MATCH_CHUNK_SIZE]
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
-        score_rows += snowflake_io.fetch_scores(cur, batch)
+    checks = bets.fetch_checks(cur, matches, prod_rows)
     prod_tl = bets.timeline(prod_rows)
     del prod_rows
     lags = bets.fit_lags(every, prod_tl)
     signs = bets.fit_line_signs(every, prod_tl, lags)
-    joined = bets.join(every, lags, signs, prod_tl, {}, None, finals)
+    joined = bets.join(every, lags, signs, prod_tl, {}, None, finals, checks)
+    bet_moments.annotate([("prod", joined)], every, checks, checks.timelines)
     for r, b in zip(joined, every):
         r["_bet"] = b
-    rows = tag(joined, prod_tl, bet_checks.score_index(score_rows))
+    rows = tag(joined, prod_tl, checks.scores)
     lines = report(rows, min_bets)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)

@@ -36,6 +36,16 @@ class TestFavourite(unittest.TestCase):
         tl = {("M4", 50): ([T0], [(5, 0.30, None, True)])}            # never quoted pre-match
         self.assertEqual(bf.prematch_favourite(tl, "M4"), (False, 0.70))
 
+    def test_a_price_is_current_unless_the_board_moved_since(self):
+        self.assertEqual(bf.price_state("nothing"), bf.CURRENT)
+        self.assertEqual(bf.price_state("play over"), bf.CURRENT)
+        self.assertEqual(bf.price_state("score"), bf.SCORED)
+        self.assertEqual(bf.price_state("kick-off"), bf.OTHER_MOVE)
+        self.assertIsNone(bf.price_state(None))
+        rows = bf.tag([dict(row(bet(), message=16), moved="score"), dict(row(bet(in_play="No")), moved=None)],
+                      TL, SCORES)
+        self.assertEqual([r["price"] for r in rows], [bf.SCORED, "pre-match"])
+
     def test_phase_state_and_side(self):
         self.assertEqual(bf.phase_of(bet(in_play="No")), "pre-match")
         self.assertEqual(bf.phase_of(bet(period=2)), "Q2")
@@ -96,12 +106,20 @@ class TestRun(unittest.TestCase):
         quotes = [("M1", 50, T0 - dt.timedelta(minutes=30), 62.0, 1.6, "PLAYER 1 to win", None, "OPEN", "true"),
                   ("M1", 50, T0 + dt.timedelta(minutes=4), 75.0, 1.3, "PLAYER 1 to win", 20, "OPEN", "true"),
                   ("M1", 51, T0 + dt.timedelta(minutes=4), 25.0, 4.0, "PLAYER 2 to win", 20, "OPEN", "true")]
-        scores = [("M1", 15, 1, None, 7, 7, 0)]
+        class Checks:
+            scores = {"M1": ([15], [(7, 0)])}
+            timelines = {}
+
+            def for_bet(self, b, message):
+                return {}
+
+            def candidate(self, match, cand_message, message):
+                return {}
         with tempfile.TemporaryDirectory() as out, \
                 mock.patch.object(bets, "fetch_all", return_value=(cols, raw)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=quotes), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 10)}), \
-                mock.patch.object(snowflake_io, "fetch_scores", return_value=scores), \
+                mock.patch.object(bets, "fetch_checks", return_value=Checks()), \
                 contextlib.redirect_stdout(io.StringIO()) as printed:
             path = bf.run(None, out, min_bets=1)
             self.assertTrue(os.path.exists(path))
