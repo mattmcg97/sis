@@ -285,6 +285,12 @@ def cmd_bets(args):
         else:
             print("\n".join(bet_moments.report([("prod", rows)], args.min_bets, candidates=False)))
         return 0
+    if getattr(args, "sharp", None):
+        config.SIM_SHARP_GROUPS = tuple(g.strip() for g in args.sharp.split(",") if g.strip())
+    for attribute, key in (("elasticity", "SIM_ELASTICITY"), ("max_scale", "SIM_MAX_SCALE"),
+                           ("boot", "SIM_BOOT")):
+        if getattr(args, attribute, None) is not None:
+            setattr(config, key, getattr(args, attribute))
     if args.bet_table:
         config.BET_TABLE = args.bet_table
     if args.gap is not None:
@@ -968,6 +974,16 @@ def build_parser():
                                   "priced; probe: print the columns it reads, to check the names; lines: "
                                   "prod's spread and total lines through each match against the "
                                   "lines bet (out/bets_lines.html)")
+    bets_parser.add_argument("--sharp", metavar="GROUPS",
+                             help="realistic sim: the customer temperatures that bet for an edge and "
+                                  f"shop on price, comma-separated (default {','.join(config.SIM_SHARP_GROUPS)})")
+    bets_parser.add_argument("--elasticity", type=float, metavar="E",
+                             help="realistic sim: everyone else's stake x (candidate odds / odds) ^ E "
+                                  f"(default {config.SIM_ELASTICITY:g}: bets as placed)")
+    bets_parser.add_argument("--max-scale", type=float, metavar="X",
+                             help=f"realistic sim: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
+    bets_parser.add_argument("--boot", type=int, metavar="N",
+                             help=f"realistic sim: bootstrap resamples over matches (default {config.SIM_BOOT})")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",

@@ -97,6 +97,15 @@ BET_VIP_COLUMN = "CUSTOMER_TEMPERATURE"
 BET_VIP_VALUE = "VIP"
 # `bets totals-moves` reads BET_VIP_COLUMN = BET_RESTRICTED_VALUE as a restricted account.
 BET_RESTRICTED_VALUE = "Restricted"
+# The realistic betting simulation (bet_realistic.py, part of every `bets` run): the customer
+# temperatures that bet for an edge and shop on price (everyone else bets as placed, the stake
+# x (candidate odds / odds) ^ SIM_ELASTICITY), the most a sharp stake may grow, the bets a
+# market's measured edge is shrunk toward its segment's by, and the bootstrap resamples.
+SIM_SHARP_GROUPS = ("Restricted",)
+SIM_ELASTICITY = 0.0
+SIM_MAX_SCALE = 3.0
+SIM_EDGE_PRIOR = 200
+SIM_BOOT = 1000
 # A gamer's session: a run of matches with no gap over this many minutes (the schedule
 # runs a match every 35-110 minutes, then breaks for three hours or more).
 SESSION_BREAK_MINUTES = 240

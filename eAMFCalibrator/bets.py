@@ -504,6 +504,12 @@ def line_report(rows):
     return out
 
 
+def write_text(path, lines):
+    """Write lines of text to a file."""
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write("\n".join(lines) + "\n")
+
+
 def write_csv(path, rows, fields=None):
     """Write rows (dicts) to a CSV."""
     fields = fields or (list(rows[0]) if rows else [])
@@ -653,8 +659,13 @@ def run(cur, out_dir, only_checks=False, summary=None):
     if len(results) > 1:
         print("\n".join(compare_report(results)))
     print("\n".join(bet_moments.report(results)))
+    from . import bet_realistic
+    realistic = bet_realistic.report(results)
+    print("\n".join(realistic))
+    write_text(os.path.join(out_dir, "bets_realistic.txt"), realistic)
     if summary is not None:
-        summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches))
+        summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
+                       realistic=realistic)
     return results[0][1] if len(results) == 1 else results
 
 
@@ -931,6 +942,9 @@ def html_section(summary):
     common_n = split[0] if split else 0
     from . import bet_moments
     moments = bet_moments.html_tables(results, _esc, _change_cell)
+    realistic = summary.get("realistic")
+    realistic = (f"<h3>Realistic simulation: who would still bet, and which book they would take</h3>"
+                 f"<pre class=\"dim\">{_esc(chr(10).join(realistic))}</pre>") if realistic else ""
     return f"""
   <section class="panel" id="bets">
     <h2>Betting simulation</h2>
@@ -956,6 +970,7 @@ def html_section(summary):
       <tbody>{''.join(effect_rows)}</tbody>
     </table>
     {moments}
+    {realistic}
     <h3>Why bets were not re-priced</h3>
     <table class="reach"><tbody>{''.join(why)}</tbody></table>
     <p class="dim">Lag by operator: {lag_line or 'none fitted'}</p>

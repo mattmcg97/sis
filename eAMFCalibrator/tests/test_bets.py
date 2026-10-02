@@ -230,7 +230,8 @@ class TestCommand(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
-                mock.patch.object(bets, "write_csv"), mock.patch("builtins.print"), \
+                mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text"), \
+                mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
                 mock.patch.object(config, "LAG_RANGE", (-20, 30)):
             out = bets.run(None, "out")
@@ -240,7 +241,8 @@ class TestCommand(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE) as fq, \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
-                mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
+                mock.patch.object(bets, "write_csv") as written, mock.patch.object(bets, "write_text"), \
+                mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
                 mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
                 mock.patch.object(config, "CANDIDATES", ["MODEL:v8", "MODEL:v9", "MODEL:v10"]), \
