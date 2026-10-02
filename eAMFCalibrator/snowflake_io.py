@@ -42,12 +42,12 @@ def is_model(stream_table):
 
 def stream_name(value):
     """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table.
-    A model with its own lines (v4, v5) read at prod's line instead is
-    'v4@prod'.
+    A model with its own lines (v8, v9) read at prod's line instead is
+    'v9@prod'.
 
     A second build of a version is named '<version>-<tag>=<model dir>', e.g.
-    'v7-glmer=v7_glmer_917': it prices with v7's code off that build, under
-    the name 'v7-glmer'. Its directory is kept in config.MODEL_DIRS."""
+    'v9-glmer=v9_glmer_917': it prices with v9's code off that build, under
+    the name 'v9-glmer'. Its directory is kept in config.MODEL_DIRS."""
     name, eq, directory = value.partition("=")
     if eq:
         stream = stream_name(name.strip())
@@ -67,23 +67,23 @@ def stream_name(value):
     return value
 
 
-LINE_MODELS = ("v4", "v5", "v6", "v7", "v8", "v9")     # versions that quote their own lines
+LINE_MODELS = ("v8", "v9", "v10")     # versions that quote their own lines
 
 
 def model_version(stream_table):
-    """'MODEL:v4@prod' -> ('v4', 'prod'); ('v4', None) without a suffix."""
+    """'MODEL:v9@prod' -> ('v9', 'prod'); ('v9', None) without a suffix."""
     version = stream_table.split(":", 1)[1] or "v1"
     name, _, lines = version.lower().partition("@")
     return name, (lines or None)
 
 
 def model_base(name):
-    """'v7-glmer' -> 'v7': the version whose code a named build prices with."""
+    """'v9-glmer' -> 'v9': the version whose code a named build prices with."""
     return name.split("-", 1)[0]
 
 
 def build_dir(name):
-    """The build a model version prices off: its own (--candidate v7-glmer=<dir>), else the
+    """The build a model version prices off: its own (--candidate v9-glmer=<dir>), else the
     version's --vN-model."""
     return (getattr(config, "MODEL_DIRS", {}).get(name)
             or getattr(config, f"{model_base(name).upper()}_MODEL_DIR"))
@@ -376,10 +376,8 @@ def _model_quotes(cur, stream_table, match_codes):
     """
     from eAMFModel import stream as model_stream
     version, lines = model_version(stream_table)
-    if version == "v3":
-        return _v3_quotes(cur, match_codes)
     if model_base(version) in LINE_MODELS:
-        return _v4_quotes(cur, match_codes, version, lines)
+        return _sim_quotes(cur, match_codes, version, lines)
     prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
     plays = fetch_plays(cur, match_codes, None)
     scores = fetch_scores(cur, match_codes)
@@ -390,7 +388,7 @@ def _model_quotes(cur, stream_table, match_codes):
 _SCOUTING_TABLE = {}                      # located once per run
 
 
-# The columns v4's own pre-match model (nb2/, the NB2 player + team model)
+# The columns the models' own pre-match model (nb2/, the NB2 player + team model)
 # reads for each match, as nb2/AMFELO.csv carries them. EVENT has them all.
 MATCH_INFO_COLUMNS = ["MATCH_CODE", "SPORT_CODE", "STREAM_NUMBER", "SCHEDULED_START_TIME_UTC",
                       "PLAYER_1_HANDLE", "PLAYER_1_TEAM", "PLAYER_2_HANDLE", "PLAYER_2_TEAM"]
@@ -540,27 +538,13 @@ def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=Non
     return snapshots, prod_all
 
 
-def _v3_quotes(cur, match_codes):
-    """eAMFModel v3, GAMEPLAI-shaped: PLAY_OVER snapshots off SCOUTING_FULL
-    (built exactly as `scouting` exports them), priced by simulation and
-    held at prod's lines until the next PLAY_OVER."""
-    _need_numpy("v3")
-    from eAMFModel import v3_stream
-    v3_stream.model_paths(config.V3_MODEL_DIR)          # fail early, with instructions
-    snapshots, prod_all = _play_over_snapshots(cur, match_codes)
-    print(f"  v3: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
-          f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{config.V3_PATHS:,} games each", flush=True)
-    return v3_stream.quotes_for_matches(snapshots, prod_all, config.V3_MODEL_DIR,
-                                        n_paths=config.V3_PATHS, workers=config.V3_WORKERS)
-
-
 _MODEL_QUOTES = {}
 
 
-def _v4_quotes(cur, match_codes, name="v4", lines=None):
-    """eAMFModel v4 (or v5, its successor), as v3 (same snapshots), with the
-    players' handles attached for the player profiles.
+def _sim_quotes(cur, match_codes, name, lines=None):
+    """An eAMFModel simulation version (v8 to v10), GAMEPLAI-shaped: PLAY_OVER
+    snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
+    with the players' handles attached for the player profiles.
 
     Each match is simulated once for both of its line modes -- its own even
     lines and prod's -- and the other is kept, so a report that reads the
@@ -590,7 +574,7 @@ def _v4_quotes(cur, match_codes, name="v4", lines=None):
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
           f"{paths:,} games each", flush=True)
     both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
-                                     workers=config.V3_WORKERS, match_info=match_info,
+                                     workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=(stream.OWN, stream.PROD_LINES))
     if caching:
         _MODEL_QUOTES[cache_key] = both

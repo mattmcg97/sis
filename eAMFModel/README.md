@@ -105,7 +105,13 @@ Poisson dispersion. That overstated the total's spread (sd 14.8 against
 | v1 | 16 | anchored: four TDs above expectation move a side about 25% |
 | v2 | 4 | reactive: the game takes over about four times as fast |
 
-Add a version by naming what differs in `params.VERSIONS`. v3 is a separate model (below).
+Add a version by naming what differs in `params.VERSIONS`.
+
+The play-by-play simulation versions in the code are **v8, v9 and v10**. The code of v3 to v7
+(`sim.py`, `sim4.py`–`sim7.py`, `v3.py`–`v7.py` and their streams) has been removed. Their
+sections below are kept as the record of how the simulation was built: v8 onward still
+carries everything they introduced. Their own commands (`v3-build` … `v7`) no longer run, so
+use v8–v10 in their place.
 
 ## Backtest (262 matches, directional_pairs, 17–20 Sep)
 
@@ -180,6 +186,9 @@ are carried over from the message-clock fit. They should be refitted on
 play-over data once there is an export to fit them on.
 
 ## v3: a play-by-play simulation
+
+> v3's code has been removed (as have v4–v7's). This section and the next four describe what
+> they introduced, which v8–v10 still run.
 
 v3 is its own model (`sim.py`, `v3.py`), not a setting of v1/v2. From the
 snapshot's state it plays the rest of the game snap by snap on the real
@@ -1362,7 +1371,20 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
-## Pricing only what the model is sure of (v4–v9 streams)
+## v10: a fresh copy of v9
+
+v10 (`sim10.py`, `v10.py`, `v10_stream.py`) is v9 copied as it was, the base for the next
+changes. It plays exactly as v9 for now (`test_v10_plays_as_v9`). An earlier v10, which learned
+the day's scoring from the game so far, showed no gain held out and was replaced by this copy.
+Build and report it as v9:
+
+```bash
+python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
+    --out v10_model --history eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
+python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
+```
+
+## Pricing only what the model is sure of (v8–v10 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
@@ -1405,7 +1427,7 @@ total, less the points on the board, is its distribution of the points
 still to come. The export's final gives what really came.
 
 ```bash
-python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v6 --model v6_model \
+python -m eAMFModel remaining eAMFCalibrator/out/scouting_playover.csv --version v9 --model v9_model \
     --history eAMFCalibrator/out/match_history.csv --since 2026-09-10 --until 2026-09-22
 ```
 
@@ -1414,8 +1436,8 @@ Build the model on matches before `--since`, or the comparison is in-sample:
 the matches before DATE:
 
 ```bash
-python -m eAMFModel v6-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-10 \
-    --out v6_model_pre10 --history eAMFCalibrator/out/match_history.csv
+python -m eAMFModel v9-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-10 \
+    --out v9_model_pre10 --history eAMFCalibrator/out/match_history.csv
 ```
 
 Snapshots in one match share one final, so a cell's real sample is its
@@ -1433,7 +1455,7 @@ leader or the trailer has the ball), it prints:
   against reality, by quarter, over every snapshot. Positive means the over
   is priced too high there.
 
-**By drive: `--drive` (v6).** The rest-of-game view mixes up who scores and
+**By drive: `--drive`.** The rest-of-game view mixes up who scores and
 when. `--drive` narrows it to the drive under way. At each scrimmage
 `PLAY_OVER`, it compares the points scored on the rest of that drive (0, a
 safety, 3, 6, 7, 8) with what the version simulates to the end of the same

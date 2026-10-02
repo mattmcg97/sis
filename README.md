@@ -66,7 +66,7 @@ connected. `.env` is gitignored so credentials never get committed.
   - **The scripts.** `backtest.R` grids feature sets × row weightings out of
     sample, `fit.R` fits the chosen one, and `predict.R` prices a schedule
     into the same expected-points columns NB2 gives the eAMFModel versions.
-  - **In v7.** `python -m eAMFModel v7-build ... --prior glmer` prices v7's
-    pre-match prior off it in place of NB2.
+  - **In v8–v10.** `python -m eAMFModel v9-build ... --prior glmer` prices the
+    version's pre-match prior off it in place of NB2.
 
   See `glmer/README.md`.

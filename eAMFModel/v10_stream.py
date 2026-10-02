@@ -1,4 +1,4 @@
-"""v7 as a price stream: v7's quotes at every snapshot, shaped like prod's."""
+"""v10 as a price stream: v10's quotes at every snapshot, shaped like prod's."""
 
 import math
 import os
@@ -6,11 +6,11 @@ from bisect import bisect_right
 
 import numpy as np
 
-from . import playover, players, sim7 as sim, v7
+from . import playover, players, sim10 as sim, v10
 from .pricer import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
 from .stream import OPEN, _parse_line, confident_windows, description, side_known
 
-DEFAULT_MODEL_DIR = "v7_model"
+DEFAULT_MODEL_DIR = "v10_model"
 DEFAULT_PATHS = 2000
 PREMATCH = True
 
@@ -18,19 +18,19 @@ PREMATCH = True
 def model_paths(model_dir=None):
     """The model's tables and grid paths, or an error saying how to build them."""
     candidates = [model_dir] if model_dir else [
-        os.environ.get("EAMF_V7_MODEL"), DEFAULT_MODEL_DIR,
+        os.environ.get("EAMF_V10_MODEL"), DEFAULT_MODEL_DIR,
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", DEFAULT_MODEL_DIR)]
     for d in candidates:
-        if d and os.path.exists(os.path.join(d, "v7tables.npz")) \
-                and os.path.exists(os.path.join(d, "v7grid.npz")):
-            return os.path.join(d, "v7tables.npz"), os.path.join(d, "v7grid.npz")
+        if d and os.path.exists(os.path.join(d, "v10tables.npz")) \
+                and os.path.exists(os.path.join(d, "v10grid.npz")):
+            return os.path.join(d, "v10tables.npz"), os.path.join(d, "v10grid.npz")
     raise SystemExit(
-        "v7 needs its model (play tables and pre-match grid), and none was found"
+        "v10 needs its model (play tables and pre-match grid), and none was found"
         f" in {model_dir or DEFAULT_MODEL_DIR}. Build it once from a PLAY_OVER export:\n"
         "  python -m eAMFCalibrator scouting            # writes out/scouting_playover.csv\n"
-        "  python -m eAMFModel v7-build eAMFCalibrator/out/scouting_playover.csv"
-        " --half all --out v7_model\n"
-        "then point --v7-model (or EAMF_V7_MODEL) at it. Build it on matches before the"
+        "  python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv"
+        " --half all --out v10_model\n"
+        "then point --v10-model (or EAMF_V10_MODEL) at it. Build it on matches before the"
         " window you calibrate, or the comparison is in-sample.")
 
 
@@ -40,31 +40,31 @@ def _as_text(row):
 
 
 def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, means=None):
-    """v7's margin and total distributions at every priceable snapshot of one match."""
-    rows = v7.resolve_sides([_as_text(r) for r in match_rows])
-    theta0 = v7.prior_theta(grid, means)
+    """v10's margin and total distributions at every priceable snapshot of one match."""
+    rows = v10.resolve_sides([_as_text(r) for r in match_rows])
+    theta0 = v10.prior_theta(grid, means)
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
-        state, _ = v7.state_for(r)
+        state, _ = v10.state_for(r)
         if state is not None:
             states.append(state)
             messages.append(int(r["message"]))
     if not states:
         return []
     prof = prof or (players.Profile(), players.Profile())
-    dists = v7.price_states(tables, theta0, variant, sim.snap_records(rows), a_home, states,
+    dists = v10.price_states(tables, theta0, variant, sim.snap_records(rows), a_home, states,
                             messages, prof, n_paths, rng,
-                            seed=v7.match_seed(rows[0].get("match_code", "")))
+                            seed=v10.match_seed(rows[0].get("match_code", "")))
     return [(m, mp_, tp) for m, (mp_, tp) in zip(messages, dists)]
 
 
 def kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof=None, means=None):
-    """v7's pre-match margin and total distributions: the kick-off priced off the pre-match prior
+    """v10's pre-match margin and total distributions: the kick-off priced off the pre-match prior
     (NB2 or glmer)."""
     prof = prof or (players.Profile(), players.Profile())
-    return v7.price_kickoff(tables, v7.prior_theta(grid, means), variant, prof, n_paths, rng,
-                            seed=v7.match_seed(match_code))
+    return v10.price_kickoff(tables, v10.prior_theta(grid, means), variant, prof, n_paths, rng,
+                            seed=v10.match_seed(match_code))
 
 
 def _before_play(message, first_play_message):
@@ -90,21 +90,21 @@ OWN, PROD_LINES = "own", "prod"
 
 
 def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message):
-    """One prod-shaped quote row off a margin and total distribution, at v7's own line or prod's;
+    """One prod-shaped quote row off a margin and total distribution, at v10's own line or prod's;
     None where it cannot be priced."""
     if market_id in (ML_HOME, ML_AWAY):
         line = None
     elif lines == OWN:
         if market_id in (SPREAD_HOME, SPREAD_AWAY):
-            home = v7.even_line(mpmf, v7.MARGIN_MAX)
+            home = v10.even_line(mpmf, v10.MARGIN_MAX)
             line = home if market_id == SPREAD_HOME else -home
         else:
-            line = v7.even_line(tpmf, 0)
+            line = v10.even_line(tpmf, 0)
     else:
         line = _parse_line(prod_row[5])
         if line is None:
             return None
-    p = float(v7.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
+    p = float(v10.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
     if not math.isfinite(p):
         return None
     p = min(0.9999, max(0.0001, p))
@@ -114,9 +114,9 @@ def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message):
 
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
                kickoff=None):
-    """Prod-shaped quote rows from v7's distributions. With `kickoff` (the pre-match margin and
+    """Prod-shaped quote rows from v10's distributions. With `kickoff` (the pre-match margin and
     total distributions), every prod row published before the first play started -- no message,
-    or one below first_play_message -- gets v7's pre-match price, on its own message (none for
+    or one below first_play_message -- gets v10's pre-match price, on its own message (none for
     none) and publish time."""
     keys = [b[0] for b in books]
     out = []
@@ -150,7 +150,7 @@ def _worker(job):
     """Worker: price a list of matches."""
     items, tables_path, grid_path, variant, n_paths, seed, lines = job
     tables = sim.Tables.load(tables_path)
-    grid = v7.PriorGrid.load(grid_path)
+    grid = v10.PriorGrid.load(grid_path)
     rng = np.random.default_rng(seed)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
@@ -173,14 +173,14 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
                        match_info=None, lines=OWN):
     """Quote rows for many matches."""
     tables_path, grid_path = model_paths(model_dir)
-    variant = variant or v7.Variant("v7")
+    variant = variant or v10.Variant("v10")
     if book is None:
-        book = v7.players_book(tables_path)
-    pre = v7.prematch_model(tables_path)
+        book = v10.players_book(tables_path)
+    pre = v10.prematch_model(tables_path)
     means = {}
     if pre is not None:
         if match_info is None:
-            raise SystemExit("this v7 model prices off its own pre-match model (NB2 or glmer), which"
+            raise SystemExit("this v10 model prices off its own pre-match model (NB2 or glmer), which"
                              " needs each match's players, teams and stream (match_info)")
         means = pre.means([r for r in match_info if r["MATCH_CODE"] in snapshots_by_match])
     prod_by = {}
@@ -193,7 +193,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         snaps = sorted(snaps, key=lambda r: int(r["message"]))
         first_play = snaps[0].get("first_play_message")
         first_play = int(first_play) if first_play not in ("", None) else None
-        pair = ((handles or {}).get(code) or v7.handles_of(snaps)) if book else None
+        pair = ((handles or {}).get(code) or v10.handles_of(snaps)) if book else None
         prof = (book.profile(pair[0]), book.profile(pair[1])) if pair else None
         items.append((code, snaps, prod_by[code], first_play, prof,
                       means.get(code, pre.league) if pre is not None else None))
@@ -206,7 +206,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     if workers == 1:
         results = [_worker(j) for j in jobs]
     else:
-        with v7.pool_context().Pool(workers) as pool:
+        with v10.pool_context().Pool(workers) as pool:
             results = pool.map(_worker, jobs)
     out = {mode: [row for part in results for row in part[mode]] for mode in modes}
     return out[lines] if isinstance(lines, str) else out

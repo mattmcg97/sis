@@ -1,4 +1,4 @@
-"""v7: prices moneyline, spread and total from inside a game by simulating the rest of it play by
+"""v10: prices moneyline, spread and total from inside a game by simulating the rest of it play by
 play."""
 
 import datetime as dt
@@ -10,7 +10,7 @@ from dataclasses import dataclass, fields
 
 import numpy as np
 
-from . import glmer_prior, nb2_prior, playover, players, sim7 as sim
+from . import glmer_prior, nb2_prior, playover, players, sim10 as sim
 from .pricer import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
@@ -20,7 +20,7 @@ KAPPA = 40.0
 # The pre-match models a build can fit on --history (`prior`), each saved in its own
 # subdirectory of the model; PRIOR_FILE records which one the model prices off.
 PRIORS = {"nb2": nb2_prior.Prematch, "glmer": glmer_prior.Prematch}
-PRIOR_FILE = "v7prior.json"
+PRIOR_FILE = "v10prior.json"
 
 
 def _distributions(home, away):
@@ -227,8 +227,29 @@ def fit_kappa(tables, grid, matches, kappas=(5, 10, 20, 40, 80, 160, 320, 1e9)):
 @dataclass(frozen=True)
 class FreshState(GameState):
     """A game state that also says whether its next snap starts a possession with the clock
-    stopped (sim.is_fresh)."""
+    stopped (sim.is_fresh), and each side's timeouts left in the half (-1: not known)."""
     fresh: bool = False
+    timeouts: tuple = (-1, -1)
+
+
+TIMEOUTS_PER_HALF = 3
+
+
+def timeouts_left(row):
+    """(home, away) timeouts left in the half (or overtime period, two each) from the export's
+    timeouts_used_a/b, or (-1, -1) where the export has none (older exports)."""
+    a, b = row.get("timeouts_used_a"), row.get("timeouts_used_b")
+    side = row.get("team_a_side")
+    try:
+        period = int(float(row.get("period") or 0))
+    except ValueError:
+        return -1, -1
+    if a in ("", None) or b in ("", None) or side not in ("home", "away") or period < 1:
+        return -1, -1
+    have = TIMEOUTS_PER_HALF if period <= 4 else sim.OT_TIMEOUTS
+    left_a = max(0, have - int(float(a)))
+    left_b = max(0, have - int(float(b)))
+    return (left_a, left_b) if side == "home" else (left_b, left_a)
 
 
 def state_for(row):
@@ -237,7 +258,7 @@ def state_for(row):
     if state is None:
         return state, why
     return FreshState(**{f.name: getattr(state, f.name) for f in fields(GameState)},
-                      fresh=sim.is_fresh(row)), why
+                      fresh=sim.is_fresh(row), timeouts=timeouts_left(row)), why
 
 
 def start_from(state):
@@ -255,7 +276,8 @@ def start_from(state):
     return dict(period=state.period, clock=state.clock_seconds, phase=phase, team=team, down=down,
                 dist=dist, y=min(99, max(1, y)), home=state.home_score, away=state.away_score,
                 kicks_second_half=side(state.opening_receiver) if state.opening_receiver else -1,
-                fresh=phase == sim.SCRIM and bool(getattr(state, "fresh", False)))
+                fresh=phase == sim.SCRIM and bool(getattr(state, "fresh", False)),
+                timeouts=getattr(state, "timeouts", (-1, -1)))
 
 
 def _fill(start, i, fields):
@@ -265,7 +287,7 @@ def _fill(start, i, fields):
 
 
 class Variant:
-    """One way of running v7 (what it reacts to in the game)."""
+    """One way of running v10 (what it reacts to in the game)."""
 
     def __init__(self, name, kappa=KAPPA, react=False, theta_sd=False, profiles=True,
                  pace=True, sim_kw=None, grid=None):
@@ -316,7 +338,7 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
 
 def price_kickoff(tables, theta0, variant, prof, n_paths, rng, seed=None):
     """Margin and total distributions from the kick-off, before anything is known of the game:
-    v7's pre-match price. Each side receives the opening kick in half the paths."""
+    v10's pre-match price. Each side receives the opening kick in half the paths."""
     v = variant
     start = sim.Start(2)
     start.team[:] = (0, 1)
@@ -578,15 +600,26 @@ SETTLE_ROUNDS = 3
 SETTLE_OUTER = 2
 SETTLE_PATHS = 40
 SETTLE_PRIOR = 150.0
+# v9: the settle fit weights each match by its age at the build's cut-off, halving every
+# SETTLE_HALF_LIFE days (None: every match alike). Sides two scores down score less week on week
+# (touchdowns a snap behind 9+ in Q4: 0.107 the week of 24 Aug, 0.096 three weeks on; level,
+# flat), so an even weighting keeps them scoring as they did weeks ago.
+SETTLE_HALF_LIFE = 7.0
 
 
-def settle_states(matches, grid, priors=None):
+def settle_states(matches, grid, priors=None, as_of=None, half_life=None):
     """Every real snapshot with a snap to come as a simulation start: its settle cell, its start
-    fields, the match's prior strengths and whether the next play was the offense's touchdown."""
+    fields, the match's prior strengths, whether the next play was the offense's touchdown and its
+    weight (v9: halving every `half_life` days of the match's age at `as_of`; 1 without)."""
     out = []
     for code, rows in matches.items():
         if priors is not None and code not in priors:
             continue
+        w = 1.0
+        if half_life and as_of is not None:
+            day = match_day(rows)
+            if day is not None:
+                w = 0.5 ** (max(0, (as_of - day).days) / half_life)
         rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
         theta0 = prior_theta(grid, None if priors is None else priors[code])
         for r, nxt in zip(rows, rows[1:]):
@@ -602,7 +635,7 @@ def settle_states(matches, grid, priors=None):
             td = nxt["play_kind"] == "TOUCHDOWN" and \
                 playover.side_of(scorer, r.get("team_a_side")) == state.offense
             cell = int(sim.settle_index(state.period, state.clock_seconds, lead, fields["y"]))
-            out.append((cell, fields, theta0, bool(td)))
+            out.append((cell, fields, theta0, bool(td), w))
     return out
 
 
@@ -618,24 +651,28 @@ def fit_settle(tables, items, rounds=SETTLE_ROUNDS, n_paths=SETTLE_PATHS, prior=
     prepared = {}
     for cell, its in by.items():
         start = sim.Start(len(its))
-        for i, (_, fields, theta0, _) in enumerate(its):
-            _fill(start, i, fields)
-            start.theta[i] = theta0
+        for i, it in enumerate(its):
+            _fill(start, i, it[1])
+            start.theta[i] = it[2]
         team = start.team.astype(int)
         base = np.where(team == 0, start.home, start.away)
-        prepared[cell] = (start, team, base, float(sum(it[3] for it in its)), len(its))
+        w = np.array([it[4] if len(it) > 4 else 1.0 for it in its])
+        # the weighted touchdowns and the weighted count, so the target's shrinkage reads the
+        # cell's effective size
+        prepared[cell] = (start, team, base, float(sum(it[3] * wi for it, wi in zip(its, w))),
+                          float(w.sum()), w)
 
     def scored(cell):
-        """The simulation's touchdown rate on one snap from the cell's states."""
-        start, team, base, _, _ = prepared[cell]
+        """The simulation's touchdown rate on one snap from the cell's states, weighted alike."""
+        start, team, base, _, _, w = prepared[cell]
         home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed + cell),
                                   max_steps=1, common=False)
         own = np.where(team[:, None] == 0, home, away)
-        return float(((own - base[:, None]) == 6).mean())
+        return float((((own - base[:, None]) == 6).mean(1) * w).sum() / max(1e-12, w.sum()))
 
     out = {}
     for rnd in range(rounds):
-        for cell, (_, _, _, real, n) in sorted(prepared.items()):
+        for cell, (_, _, _, real, n, _) in sorted(prepared.items()):
             got = scored(cell)
             if rnd == 0:
                 out[cell] = [n, real / n, got, got]
@@ -1005,7 +1042,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
     handles = {c: h for c, h in handles.items() if h}
-    tables = sim.Tables.build(matches, handles=handles)
+    days = [d for d in (match_day(r) for r in matches.values()) if d is not None]
+    as_of = (before.date() if before is not None else
+             max(days) + dt.timedelta(days=1) if days else None)
+    tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
@@ -1021,12 +1061,26 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
                   + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
     if sim.SETTLE_FIT:
-        states = settle_states(matches, quick, priors)
+        states = settle_states(matches, quick, priors, as_of=as_of, half_life=SETTLE_HALF_LIFE)
         for _ in range(SETTLE_OUTER):
             settled = fit_settle(tables, states)
             offsets, got = sim.fit_period_theta(tables, real)
         if verbose:
             _print_settle(settled, tables)
+    if verbose and sim.TIMEOUTS:
+        if tables.call_p.any():
+            source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
+                      else "the real rates in sim10.DEFAULT_CALL_P (build with --timeouts to refit)")
+            print(f"  timeouts: {source}; overtime, two a side each period, called at"
+                  f" {tables.ot_call_scale:.2f}x the fourth quarter's rates")
+            p = tables.call_p
+            print("  timeouts, share of running clocks a side stops before the snap in each 40-second"
+                  " slice (4:00 -> 0:00), level score: Q2 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[0, 0, 2])
+                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[0, 1, 2])
+                  + "; Q4 trailing 1-8 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[1, 0, 1])
+                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[1, 1, 1]) + " %")
+        else:
+            print("  timeouts: off -- the leader kneels out as v7 did")
     if verbose:
         print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
               + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "
@@ -1052,6 +1106,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         print(f"  4th downs: the league go curve, the part-of-game shifts and {len(tables.player_go):,}"
               f" players' own go shifts fitted together (sd {go_sd:.2f} in log odds); kick rather than"
               f" punt the same way ({len(tables.player_kick):,} players, sd {kick_sd:.2f})")
+    if verbose and sim.KNEELS and tables.kneel_p.any():
+        print("  kneels, leader on 1st down by 40-second slice of Q4 (one score / more): "
+              + " ".join(f"{100 * a:.0f}/{100 * b:.0f}" for a, b in zip(tables.kneel_p[0, 0], tables.kneel_p[1, 0]))
+              + f"%; a kneel takes {np.median(tables.kneel_secs):.0f}s when nothing stops the clock")
     if verbose and tables.backed is not None:
         print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
               + "; ".join(f"{name.replace('_', ' ')} "
@@ -1074,8 +1132,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f" (both sides together), each player's own {sds[0]:.3f} to {sds[-1]:.3f}"
                       f" ({len(form)} players; {np.sqrt(tables.strength_league):.3f} for one"
                       f" with no history)")
-    tables_path = os.path.join(out_dir, "v7tables.npz")
-    grid_path = os.path.join(out_dir, "v7grid.npz")
+    tables_path = os.path.join(out_dir, "v10tables.npz")
+    grid_path = os.path.join(out_dir, "v10grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)
     grid.save(grid_path)
     if IN_PLAY_FIT:
@@ -1115,7 +1173,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                                                   kick=tables.player_kick.get(h, 0.0))
         for h, f in form.items():
             book.players.setdefault(h, players.Profile()).form = f
-        book.save(os.path.join(out_dir, "v7players.json"))
+        book.save(os.path.join(out_dir, "v10players.json"))
         if verbose:
             print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
     elif verbose:
@@ -1139,24 +1197,24 @@ def players_book(model_dir_or_tables):
     """The model's player profiles, or None."""
     import os
     d = model_dir_or_tables if os.path.isdir(model_dir_or_tables) else os.path.dirname(model_dir_or_tables)
-    path = os.path.join(d, "v7players.json")
+    path = os.path.join(d, "v10players.json")
     return players.Book.load(path) if os.path.exists(path) else None
 
 
 def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, workers=4,
         seed=0, book=None, handles=None, require_live=True, priors=None, history=None):
-    """Price an export with v7 and grade it against the results."""
+    """Price an export with v10 and grade it against the results."""
     if book is None:
         book = players_book(tables_path)
     by_match = playover.load(path)
     pre = prematch_model(tables_path) if priors is None else None
     if priors is None and history is not None:
         if pre is None:
-            raise SystemExit("this v7 model has no pre-match model: rebuild it with --history")
+            raise SystemExit("this v10 model has no pre-match model: rebuild it with --history")
         wanted = set(by_match) if matches is None else set(matches)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
     elif priors is None and pre is not None:
-        raise SystemExit("this v7 model prices pre-match with its own model (NB2 or glmer): pass"
+        raise SystemExit("this v10 model prices pre-match with its own model (NB2 or glmer): pass"
                          " --history (the matches' players, teams and streams, e.g. eAMFCalibrator"
                          " history's CSV)")
     codes = sorted(by_match) if matches is None else [c for c in matches if c in by_match]

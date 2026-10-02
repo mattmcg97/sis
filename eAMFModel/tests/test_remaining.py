@@ -62,10 +62,10 @@ class TestBuildUntil(unittest.TestCase):
         def fake_build(matches, out, **kw):
             seen["codes"], seen["before"] = sorted(matches), kw.get("before")
         with mock.patch.object(playover, "load", return_value=rows), \
-                mock.patch("eAMFModel.v6.build", side_effect=fake_build), \
+                mock.patch("eAMFModel.v9.build", side_effect=fake_build), \
                 mock.patch("eAMFModel.nb2_prior.load_history", return_value=[]), \
                 mock.patch("builtins.print"):
-            cli.main(["v6-build", "x.csv", "--half", "all", "--out", tempfile.mkdtemp(),
+            cli.main(["v9-build", "x.csv", "--half", "all", "--out", tempfile.mkdtemp(),
                       "--history", "h.csv", "--until", "2026-09-10"])
         self.assertEqual(seen["codes"], ["AF001090926"])
         self.assertEqual(str(seen["before"])[:10], "2026-09-10")

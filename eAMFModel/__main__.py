@@ -11,20 +11,14 @@
   profiles SNAPS.csv     player profiles off the same snapshots: pace, 4th-down
                          aggression, clock milking
   fit-finals             refit the possession structure to nb2/AMFELO.csv
-  v3-build SNAPS.csv     v3's play tables and pre-match grid off PLAY_OVER snapshots
-  v3 SNAPS.csv           score v3 -- the play-by-play simulation -- against prod
-  v4-build / v4          the same for v4 (v3 plus common random numbers, player
-                         profiles and, with --history, our own NB2 pre-match)
-  v6-build / v6          the same for v6 (v5 plus late 4th downs and kneels
-                         fitted to real play)
-  v7-build / v7          the same for v7 (v6 plus leaders settling, clock bleed
-                         by lead and a go-ahead check)
-  v8-build / v8          the same for v8 (v7 plus the end-of-half clock, timeouts
-                         and kneels)
-  v9-build / v9          the same for v9 (v8 plus giving up two scores down, the
-                         leader's late clock and the late level drive)
-  v5-build / v5          the same for v5 (v4 plus run/pass play calling and the
-                         rubber band)
+  v8-build / v8          v8's play tables, pre-match grid (NB2 or glmer, --history) and
+                         player profiles off PLAY_OVER snapshots, and v8 scored against
+                         prod: the play-by-play simulation with the end-of-half clock,
+                         timeouts and kneels
+  v9-build / v9          the same for v9 (v8 plus recent weeks weighing more and the
+                         late timeout plays' real time)
+  v10-build / v10        the same for v10 (a fresh copy of v9, for the next changes)
+  remaining SNAPS.csv    a version's points still to come against what really came
 
 The calibrator runs a version as a stream in its own right:
   python -m eAMFCalibrator report --candidate v1
@@ -134,55 +128,7 @@ def _half(path, half):
     return codes[0::2] if half == "train" else codes[1::2] if half == "test" else codes
 
 
-def _v3_module():
-    """v3 needs numpy; nothing else in the package does, so it loads here."""
-    try:
-        import numpy  # noqa: F401
-    except ImportError:
-        raise SystemExit("v3 needs numpy:  py -m pip install numpy   (or python -m pip ...)")
-    from . import v3
-    return v3
-
-
-def cmd_v3_build(args):
-    v3 = _v3_module()
-    data = playover.load(args.snapshots)
-    keep = set(_half(args.snapshots, args.half))
-    v3.build({c: rows for c, rows in data.items() if c in keep}, args.out)
-    print(f"  wrote {args.out}/v3tables.npz and {args.out}/v3grid.npz")
-
-
-def cmd_v3(args):
-    v3 = _v3_module()
-    variants = [v3.Variant("v3", react=False)]
-    if args.react:
-        variants.append(v3.Variant("v3_react", kappa=args.kappa))
-    book = players.Book.load(args.profiles) if args.profiles else None
-    handles = players.load_handles(args.handles or args.snapshots) if book else None
-    if book:
-        variants.append(v3.Variant("v3_profiles", react=False, profiles=True, pace=True))
-    matches = _half(args.snapshots, args.half)
-    if args.limit:
-        matches = matches[:args.limit]
-    graded, skipped = v3.run(args.snapshots, os.path.join(args.model, "v3tables.npz"),
-                             os.path.join(args.model, "v3grid.npz"), variants, matches=matches,
-                             n_paths=args.paths, workers=args.workers, book=book, handles=handles)
-    names = [v.name for v in variants]
-    print(f"\n  {len(graded):,} graded PLAY_OVER quotes across {len({g[0] for g in graded}):,} matches")
-    for reason, n in skipped.most_common():
-        print(f"  skipped, {reason.replace('_', ' ')}: {n:,}")
-    keys = {
-        "market": lambda r: backtest.GROUPS[r.market_id],
-        "period-market": lambda r: (r.period if r.period and r.period <= 4 else "OT",
-                                    backtest.GROUPS[r.market_id]),
-        "kind": lambda r: r.kind,
-    }
-    for by in args.by.split(","):
-        summary = backtest.summarise(graded, names, key=keys[by], n_boot=args.boot)
-        backtest.print_summary(summary, names, f"Brier by {by} (v3, PLAY_OVER snapshots)")
-
-
-def _v4_module(name="v4"):
+def _sim_module(name):
     try:
         import numpy  # noqa: F401
     except ImportError:
@@ -191,9 +137,9 @@ def _v4_module(name="v4"):
     return importlib.import_module(f".{name}", __package__)
 
 
-def cmd_v4_build(args):
-    name = getattr(args, "version", "v4")
-    v4 = _v4_module(name)
+def cmd_sim_build(args):
+    name = args.version
+    model = _sim_module(name)
     import datetime as dt
     data = playover.load(args.snapshots)
     if getattr(args, "timeouts", None):
@@ -212,29 +158,29 @@ def cmd_v4_build(args):
         history = nb2_prior.load_history(args.history)
         if args.before or args.until:
             before = dt.datetime.fromisoformat(args.before or args.until)
-    if name in ("v5", "v6", "v7", "v8", "v9") and history is None:
+    if history is None:
         raise SystemExit(f"{name}-build needs --history: {name} takes every match's prior from its own "
                          "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
-        v4.IN_PLAY_FIT = True
+        model.IN_PLAY_FIT = True
     if getattr(args, "red_zone", None) == "off":
-        v4.sim.RED_ZONE_FIT = False
+        model.sim.RED_ZONE_FIT = False
     elif getattr(args, "red_zone", None):
-        v4.sim.RED_ZONE_FIT, v4.sim.RED_ZONE_MODE = True, args.red_zone
-    prior = getattr(args, "prior", None)            # v7: which pre-match model --history fits
-    v4.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
-             history=history, before=before, **({"prior": prior} if prior else {}))
+        model.sim.RED_ZONE_FIT, model.sim.RED_ZONE_MODE = True, args.red_zone
+    prior = getattr(args, "prior", None)            # which pre-match model --history fits
+    model.build({c: rows for c, rows in data.items() if c in keep}, args.out, handles=handles,
+                history=history, before=before, **({"prior": prior} if prior else {}))
     players_file = f"{name}players.json"
     print(f"  wrote {args.out}/{name}tables.npz, {args.out}/{name}grid.npz"
           f"{' and ' + players_file if os.path.exists(os.path.join(args.out, players_file)) else ''}")
 
 
-def cmd_v4(args):
-    name = getattr(args, "version", "v4")
-    v4 = _v4_module(name)
-    variants = [v4.Variant(name)]
+def cmd_sim(args):
+    name = args.version
+    model = _sim_module(name)
+    variants = [model.Variant(name)]
     if args.without_profiles:
-        variants.append(v4.Variant(f"{name}_no_profiles", profiles=False, pace=False))
+        variants.append(model.Variant(f"{name}_no_profiles", profiles=False, pace=False))
     handles = players.load_handles(args.handles) if args.handles else None
     matches = _half(args.snapshots, args.half)
     if args.limit:
@@ -243,10 +189,10 @@ def cmd_v4(args):
     if args.history:
         from . import nb2_prior
         history = nb2_prior.load_history(args.history)
-    graded, skipped = v4.run(args.snapshots, os.path.join(args.model, f"{name}tables.npz"),
-                             os.path.join(args.model, f"{name}grid.npz"), variants, matches=matches,
-                             n_paths=args.paths, workers=args.workers, handles=handles,
-                             history=history)
+    graded, skipped = model.run(args.snapshots, os.path.join(args.model, f"{name}tables.npz"),
+                                os.path.join(args.model, f"{name}grid.npz"), variants, matches=matches,
+                                n_paths=args.paths, workers=args.workers, handles=handles,
+                                history=history)
     names = [v.name for v in variants]
     print(f"\n  {len(graded):,} graded PLAY_OVER quotes across {len({g[0] for g in graded}):,} matches")
     for reason, n in skipped.most_common():
@@ -449,41 +395,11 @@ def main(argv=None):
     p.add_argument("--iterations", type=int, default=400)
     p.set_defaults(func=cmd_fit_finals)
 
-    p = sub.add_parser("v3-build", help="v3: play tables and pre-match grid off PLAY_OVER "
-                                        "snapshots")
-    p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--half", choices=["train", "test", "all"], default="train")
-    p.add_argument("--out", default="v3_model")
-    p.set_defaults(func=cmd_v3_build)
-
-    p = sub.add_parser("v3", help="score v3, the play-by-play simulation, against prod on "
-                                  "PLAY_OVER snapshots")
-    p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--model", default="v3_model", help="v3-build's output directory")
-    p.add_argument("--half", choices=["train", "test", "all"], default="test")
-    p.add_argument("--paths", type=int, default=2000, help="simulated games per snapshot")
-    p.add_argument("--react", action="store_true",
-                   help="also a variant whose efficiencies move with first-down success")
-    p.add_argument("--kappa", type=float, default=200.0, help="shrinkage for --react")
-    p.add_argument("--profiles", help="player profiles (eAMFModel profiles): adds a variant "
-                                      "with each player's 4th-down aggression and pace")
-    p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
-    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
-    p.add_argument("--limit", type=int, help="first N matches only")
-    p.add_argument("--boot", type=int, default=300)
-    p.add_argument("--by", default="market,period-market,kind")
-    p.set_defaults(func=cmd_v3)
-
-    for name, what in (("v4", "v4: play tables, pre-match grid (NB2 with --history) and player "
-                               "profiles off PLAY_OVER snapshots"),
-                       ("v5", "v5: v4 plus run/pass play calling and the rubber band (see README)"),
-                       ("v6", "v6: v5 plus late 4th downs and kneels as real players play them "
-                              "(see README)"),
-                       ("v7", "v7: v6 plus leaders settling, clock bleed by lead and a go-ahead "
-                              "check (see README)"),
-                       ("v8", "v8: v7 plus the end-of-half clock, timeouts and kneels (see README)"),
-                       ("v9", "v9: v8 plus giving up two scores down, the leader's late clock and the "
-                              "late level drive (see README)")):
+    for name, what in (("v8", "v8: the play-by-play simulation with the end-of-half clock, timeouts "
+                               "and kneels (see README)"),
+                       ("v9", "v9: v8 plus recent weeks weighing more and the late timeout plays' "
+                              "real time (see README)"),
+                       ("v10", "v10: a fresh copy of v9, for the next changes (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -498,22 +414,18 @@ def main(argv=None):
         p.add_argument("--until", help="build everything -- play tables, profiles and NB2 -- on the "
                                        "matches before this date (YYYY-MM-DD), so a test after it is "
                                        "out of sample")
-        if name in ("v5", "v6", "v7", "v8", "v9"):
-            p.add_argument("--in-play", action="store_true",
-                           help="also fit the in-play total shift by segment of the game "
-                                "(see README: off by default, it has not held up out of sample)")
-        if name in ("v8", "v9"):
-            p.add_argument("--timeouts", help="the calibrator's timeouts.csv (`python -m eAMFCalibrator "
-                                              "timeouts`): every real timeout, to fit when sides call them")
-        if name in ("v7", "v8", "v9"):
-            p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
-                           help="the pre-match model --history fits: nb2 (nb2/, the default) or "
-                                "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
-        if name in ("v6", "v7", "v8", "v9"):
-            p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
-                           help="how drives finish inside the 30 by quarter and lead: hold (the "
-                                "default), tilt, or off (see README)")
-        p.set_defaults(func=cmd_v4_build, version=name)
+        p.add_argument("--in-play", action="store_true",
+                       help="also fit the in-play total shift by segment of the game "
+                            "(see README: off by default, it has not held up out of sample)")
+        p.add_argument("--timeouts", help="the calibrator's timeouts.csv (`python -m eAMFCalibrator "
+                                          "timeouts`): every real timeout, to fit when sides call them")
+        p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
+                       help="the pre-match model --history fits: nb2 (nb2/, the default) or "
+                            "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
+        p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
+                       help="how drives finish inside the 30 by quarter and lead: hold (the "
+                            "default), tilt, or off (see README)")
+        p.set_defaults(func=cmd_sim_build, version=name)
 
         p = sub.add_parser(name, help=f"score {name} against prod on PLAY_OVER snapshots")
         p.add_argument("snapshots", help="scouting_playover.csv")
@@ -529,13 +441,13 @@ def main(argv=None):
         p.add_argument("--limit", type=int, help="first N matches only")
         p.add_argument("--boot", type=int, default=300)
         p.add_argument("--by", default="market,period-market,kind")
-        p.set_defaults(func=cmd_v4, version=name)
+        p.set_defaults(func=cmd_sim, version=name)
 
     p = sub.add_parser("remaining", help="a version's points still to come against what the rest "
                                          "of each game really made, value by value, by quarter and "
                                          "game state (see remaining.py)")
     p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--version", choices=["v4", "v5", "v6", "v7", "v8", "v9"], default="v6")
+    p.add_argument("--version", choices=["v8", "v9", "v10"], default="v9")
     p.add_argument("--model", help="the version's build directory (default <version>_model)")
     p.add_argument("--since", help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD")
@@ -546,10 +458,10 @@ def main(argv=None):
     p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE")
     p.add_argument("--limit", type=int, help="first N matches only")
     p.add_argument("--out", help="per-snapshot CSV (default remaining_<version>.csv)")
-    p.add_argument("--timeouts", help="v8, v9: the calibrator's timeouts.csv, so each state knows the "
+    p.add_argument("--timeouts", help="the calibrator's timeouts.csv, so each state knows the "
                                       "timeouts each side has left")
     p.add_argument("--drive", action="store_true",
-                   help="v6 to v9: the points on the rest of the drive under way at each scrimmage PLAY_OVER "
+                   help="the points on the rest of the drive under way at each scrimmage PLAY_OVER "
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
 

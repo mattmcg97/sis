@@ -2,8 +2,8 @@
 
 An alternative to the NB2 pre-match model (`nb2/`) that eAMFModel's
 versions use for each match's prior. It is written in R with `lme4::glmer`.
-v7 can price off it with `v7-build --prior glmer` (see
-[In eAMFModel's v7](#in-eamfmodels-v7)).
+v8 to v10 can price off it with `v9-build --prior glmer` (see
+[In eAMFModel's versions](#in-eamfmodels-versions)).
 
 **The chosen model is the global one** with the `form` features and a
 60-day row half-life: `fit.R`'s defaults. It is a single Poisson GLMM over
@@ -322,9 +322,9 @@ first ~35k rows of `AMFELO.csv`, one core each:
   × 8 weightings = 48 jobs, a few hours on a 4-core laptop. Narrow it with
   `--feature-sets` / `--weightings` first.
 
-## In eAMFModel's v7
+## In eAMFModel's versions
 
-`python -m eAMFModel v7-build ... --history <csv> --prior glmer` prices v7's
+`python -m eAMFModel v9-build ... --history <csv> --prior glmer` (or v8, v10) prices the version's
 pre-match prior off this model in place of NB2. `eAMFModel/glmer_prior.py`
 runs `fit.R` at build time and `predict.R --n-sims=0` whenever the version
 needs expected points. It uses whatever `fit.R`'s defaults and `config.R`

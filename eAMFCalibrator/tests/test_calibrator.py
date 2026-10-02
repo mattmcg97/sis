@@ -879,22 +879,11 @@ class TestModelStream(unittest.TestCase):
             config.STREAMS.update(saved)
 
 
-class TestV3Candidate(unittest.TestCase):
-    """--candidate v3: eAMFModel v3 priced off SCOUTING_FULL PLAY_OVERs."""
+class TestPlayOverCandidate(unittest.TestCase):
+    """What every simulation version (--candidate v8 to v10) prices off: SCOUTING_FULL PLAY_OVERs,
+    paired with prod's lines."""
 
     MC = "AF1"
-
-    @classmethod
-    def setUpClass(cls):
-        import tempfile
-        from eAMFModel import v3
-        from eAMFModel.tests.test_v3 import _matches
-        cls.tmp = tempfile.TemporaryDirectory()
-        v3.build(_matches(40), cls.tmp.name, grid_paths=60, verbose=False)
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
 
     def scouting_rows(self):
         return TestScoutingPlayOver.rows(self)
@@ -911,54 +900,11 @@ class TestV3Candidate(unittest.TestCase):
                       m, "OPEN", "true") for mid in texts]
         return rows
 
-    def quotes(self, model_dir):
-        from .. import snowflake_io as sio
-        prod_table = config.STREAMS["prod"]
-        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
-
-        def fetch_all(cur, sql, params=None):
-            if prod_table in sql:
-                return None, self.prod_rows()
-            raise AssertionError("unexpected query")
-
-        saved = (config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS)
-        config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS = model_dir, 50, 1
-        try:
-            with mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
-                    mock.patch.object(sio, "fetch_scores", return_value=scores), \
-                    mock.patch.object(sio, "fetch_final_scores", return_value={self.MC: (14, 21)}), \
-                    mock.patch.object(scouting, "locate", return_value=None), \
-                    mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
-                    contextlib.redirect_stdout(io.StringIO()):
-                return sio.fetch_quotes(RecordingCursor(), "MODEL:v3", [self.MC])
-        finally:
-            config.V3_MODEL_DIR, config.V3_PATHS, config.V3_WORKERS = saved
-
-    def test_quotes_every_prod_message_from_the_first_play_over(self):
-        rows = self.quotes(self.tmp.name)
-        self.assertTrue(rows)
-        self.assertTrue(all(len(r) == 9 for r in rows))
-        self.assertEqual(sorted({r[6] for r in rows}), [5, 6, 7, 8, 10, 13])
-        # spreads and totals only where prod had a line, at prod's line
-        self.assertEqual({r[1] for r in rows}, {50, 51, 52, 54})
-        spread = next(r for r in rows if r[1] == 52)
-        self.assertEqual(markets.parse_line(spread[5]), -2.5)
-        for m in {r[6] for r in rows}:
-            ml = {r[1]: r[3] for r in rows if r[6] == m and r[1] in (50, 51)}
-            self.assertAlmostEqual(ml[50] + ml[51], 100.0, delta=0.05)
-        index = directional.index_by_message(rows)
-        self.assertIn((self.MC, 54), index)
-
-    def test_a_held_book_is_the_last_play_overs(self):
-        rows = self.quotes(self.tmp.name)
-        at = {(r[1], r[6]): r[3] for r in rows}
-        self.assertEqual(at[(50, 6)], at[(50, 5)])      # 6 is mid-play: 5's book stands
-
-    def test_every_v3_quote_is_on_the_line_it_is_paired_against(self):
+    def test_every_quote_is_on_the_line_it_is_paired_against(self):
         # prod moves its line on a message: the dead old line and the live
         # new one arrive together, and on another message two live rows
         import numpy as np
-        from eAMFModel import v3_stream
+        from eAMFModel import v9_stream
         base = self.prod_rows()
         t = dt.datetime(2026, 9, 20, 10, 30)
         spread = "PLAYER 1 to score over {} points more than PLAYER 2"
@@ -969,13 +915,13 @@ class TestV3Candidate(unittest.TestCase):
         prod = sorted([r for r in base if not (r[1] == 52 and r[6] in (7, 8))] + extra,
                       key=lambda r: (r[1], r[2]))
         paired = directional.index_by_message(prod)
-        chosen = v3_stream.paired_prod_rows(prod)
+        chosen = v9_stream.paired_prod_rows(prod)
         for (market, message), row in chosen.items():
             self.assertEqual(row[5], paired[(self.MC, market)][message].description)
         self.assertEqual(markets.parse_line(chosen[(52, 7)][5]), -1.5)
         self.assertEqual(markets.parse_line(chosen[(52, 8)][5]), -0.5)
         book = (0, np.full(2 * 100 + 1, 1 / 201), np.full(161, 1 / 161))
-        rows = v3_stream.quote_rows(self.MC, [book], prod)
+        rows = v9_stream.quote_rows(self.MC, [book], prod, lines=v9_stream.PROD_LINES)
         for r in rows:
             if r[1] in (52, 53, 54, 55):
                 self.assertEqual(markets.parse_line(r[5]),
@@ -994,24 +940,13 @@ class TestV3Candidate(unittest.TestCase):
         sql_w, params_w = scouting.scouting_rows_sql(table, ["MATCH_CODE"])
         self.assertIn(config.CUTOFF_START, params_w)
 
-    def test_no_model_says_how_to_build_one(self):
-        import tempfile
-        with tempfile.TemporaryDirectory() as empty:
-            with self.assertRaises(SystemExit) as caught:
-                self.quotes(empty)
-        self.assertIn("v3-build", str(caught.exception))
 
-    def test_the_cli_takes_v3(self):
-        from .. import snowflake_io as sio
-        self.assertEqual(sio.stream_name("v3"), "MODEL:v3")
-
-
-class TestV4Candidate(unittest.TestCase):
-    """--candidate v4: the same snapshots and line pairing as v3, with the
-    players' handles attached for v4's profiles."""
+class TestV8Candidate(unittest.TestCase):
+    """--candidate v8: PLAY_OVER snapshots priced by simulation, with the players' handles
+    attached for its profiles."""
 
     MC = "AF1"
-    NAME = "v4"
+    NAME = "v8"
 
     @classmethod
     def model(cls):
@@ -1021,8 +956,7 @@ class TestV4Candidate(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         import tempfile
-        from eAMFModel.tests.test_v4 import _with_handles
-        from eAMFModel.tests.test_v3 import _matches
+        from eAMFModel.tests.fakes import _matches, _with_handles
         cls.tmp = tempfile.TemporaryDirectory()
         cls.model().build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
 
@@ -1030,8 +964,8 @@ class TestV4Candidate(unittest.TestCase):
     def tearDownClass(cls):
         cls.tmp.cleanup()
 
-    scouting_rows = TestV3Candidate.scouting_rows
-    prod_rows = TestV3Candidate.prod_rows
+    scouting_rows = TestPlayOverCandidate.scouting_rows
+    prod_rows = TestPlayOverCandidate.prod_rows
 
     def quotes(self, model_dir, handles, lines="prod", suffix=""):
         from .. import snowflake_io as sio
@@ -1044,7 +978,7 @@ class TestV4Candidate(unittest.TestCase):
             raise AssertionError("unexpected query")
 
         key = self.NAME.upper()
-        names = (f"{key}_MODEL_DIR", f"{key}_PATHS", "V3_WORKERS", f"{key}_LINES")
+        names = (f"{key}_MODEL_DIR", f"{key}_PATHS", "MODEL_WORKERS", f"{key}_LINES")
         saved = [getattr(config, n) for n in names]
         for n, v in zip(names, (model_dir, 50, 1, lines)):
             setattr(config, n, v)
@@ -1070,7 +1004,7 @@ class TestV4Candidate(unittest.TestCase):
         self.assertEqual({r[1] for r in rows}, {50, 51, 52, 54})
         paired = directional.index_by_message(self.prod_rows())
         for r in rows:
-            if r[1] in (52, 54):
+            if r[1] in (52, 54) and r[6] is not None:        # pre-match rows: the kick-off price
                 self.assertEqual(markets.parse_line(r[5]),
                                  markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
 
@@ -1087,13 +1021,13 @@ class TestV4Candidate(unittest.TestCase):
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own",
                            suffix="@prod")
         paired = directional.index_by_message(self.prod_rows())
-        lined = [r for r in rows if r[1] in (52, 54)]
+        lined = [r for r in rows if r[1] in (52, 54) and r[6] is not None]
         self.assertTrue(lined)
         for r in lined:
             self.assertEqual(markets.parse_line(r[5]),
                              markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
 
-    def test_by_default_v4_quotes_its_own_even_lines(self):
+    def test_by_default_it_quotes_its_own_even_lines(self):
         self.assertEqual(getattr(config, f"{self.NAME.upper()}_LINES"), "own")
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own")
         by = collections.defaultdict(dict)
@@ -1135,7 +1069,7 @@ class TestV4Candidate(unittest.TestCase):
             self.assertTrue(self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}))
         fetch.assert_not_called()
 
-    def test_the_reports_call_it_v4(self):
+    def test_the_reports_call_it_by_its_version(self):
         from .. import labels, snowflake_io as sio
         saved = dict(config.STREAMS)
         try:
@@ -1148,10 +1082,16 @@ class TestV4Candidate(unittest.TestCase):
             config.STREAMS.update(saved)
 
 
-class TestV5Candidate(TestV4Candidate):
-    """--candidate v5: wired as v4 is, off its own model (v5-build)."""
+class TestV9Candidate(TestV8Candidate):
+    """--candidate v9: wired as v8 is, off its own model (v9-build)."""
 
-    NAME = "v5"
+    NAME = "v9"
+
+
+class TestV10Candidate(TestV8Candidate):
+    """--candidate v10: wired as v8 is, off its own model (v10-build)."""
+
+    NAME = "v10"
 
 
 class TestMatchHistory(unittest.TestCase):
@@ -5546,9 +5486,9 @@ class TestSeveralCandidates(unittest.TestCase):
         saved = (list(config.CANDIDATES), dict(config.STREAMS))
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                apply_overrides(build_parser().parse_args(["report", "--candidate", "v4,v5"]))
-            self.assertEqual(config.CANDIDATES, ["MODEL:v4", "MODEL:v5"])
-            self.assertEqual(config.STREAMS["candidate"], "MODEL:v4")
+                apply_overrides(build_parser().parse_args(["report", "--candidate", "v8,v9"]))
+            self.assertEqual(config.CANDIDATES, ["MODEL:v8", "MODEL:v9"])
+            self.assertEqual(config.STREAMS["candidate"], "MODEL:v8")
         finally:
             config.CANDIDATES = saved[0]
             config.STREAMS.clear()
@@ -5556,10 +5496,10 @@ class TestSeveralCandidates(unittest.TestCase):
 
     def test_stream_names_carry_the_line_reading(self):
         from .. import snowflake_io as sio
-        self.assertEqual(sio.stream_name("v4@prod"), "MODEL:v4@prod")
-        self.assertEqual(sio.model_version("MODEL:v4@prod"), ("v4", "prod"))
-        self.assertEqual(sio.model_version("MODEL:v5"), ("v5", None))
-        self.assertTrue(sio.has_own_lines("MODEL:v5"))
+        self.assertEqual(sio.stream_name("v8@prod"), "MODEL:v8@prod")
+        self.assertEqual(sio.model_version("MODEL:v8@prod"), ("v8", "prod"))
+        self.assertEqual(sio.model_version("MODEL:v9"), ("v9", None))
+        self.assertTrue(sio.has_own_lines("MODEL:v9"))
         self.assertFalse(sio.has_own_lines("MODEL:v3"))
         self.assertFalse(sio.has_own_lines("GAMEPLAI_STREAM_CANDIDATE"))
 
@@ -5567,20 +5507,20 @@ class TestSeveralCandidates(unittest.TestCase):
         from ..__main__ import build_parser, apply_overrides
         from .. import snowflake_io as sio, multi, bets
         saved = (list(config.CANDIDATES), dict(config.STREAMS), dict(config.MODEL_DIRS),
-                 config.V7_MODEL_DIR)
+                 config.V9_MODEL_DIR)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 apply_overrides(build_parser().parse_args(
-                    ["report", "--candidate", "v7,v7-glmer=Out/V7_Glmer", "--v7-model", "v7_nb2"]))
-            self.assertEqual(config.CANDIDATES, ["MODEL:v7", "MODEL:v7-glmer"])
-            self.assertEqual(config.MODEL_DIRS, {"v7-glmer": "Out/V7_Glmer"})
-            self.assertEqual(sio.build_dir("v7"), "v7_nb2")
-            self.assertEqual(sio.build_dir("v7-glmer"), "Out/V7_Glmer")
-            self.assertEqual(sio.model_version("MODEL:v7-glmer@prod"), ("v7-glmer", "prod"))
-            self.assertTrue(sio.has_own_lines("MODEL:v7-glmer"))
-            self.assertEqual(multi.display_name("MODEL:v7-glmer"), "v7-glmer")
-            self.assertEqual(bets.label("MODEL:v7-glmer"), "v7-glmer")
-            for bad in ("v7=Out/x", "GAMEPLAI_STREAM_CANDIDATE=Out/x"):
+                    ["report", "--candidate", "v9,v9-glmer=Out/V9_Glmer", "--v9-model", "v9_nb2"]))
+            self.assertEqual(config.CANDIDATES, ["MODEL:v9", "MODEL:v9-glmer"])
+            self.assertEqual(config.MODEL_DIRS, {"v9-glmer": "Out/V9_Glmer"})
+            self.assertEqual(sio.build_dir("v9"), "v9_nb2")
+            self.assertEqual(sio.build_dir("v9-glmer"), "Out/V9_Glmer")
+            self.assertEqual(sio.model_version("MODEL:v9-glmer@prod"), ("v9-glmer", "prod"))
+            self.assertTrue(sio.has_own_lines("MODEL:v9-glmer"))
+            self.assertEqual(multi.display_name("MODEL:v9-glmer"), "v9-glmer")
+            self.assertEqual(bets.label("MODEL:v9-glmer"), "v9-glmer")
+            for bad in ("v9=Out/x", "GAMEPLAI_STREAM_CANDIDATE=Out/x"):
                 with self.assertRaises(SystemExit):
                     apply_overrides(build_parser().parse_args(["report", "--candidate", bad]))
         finally:
@@ -5589,27 +5529,27 @@ class TestSeveralCandidates(unittest.TestCase):
             config.STREAMS.update(saved[1])
             config.MODEL_DIRS.clear()
             config.MODEL_DIRS.update(saved[2])
-            config.V7_MODEL_DIR = saved[3]
+            config.V9_MODEL_DIR = saved[3]
 
     def test_a_named_build_prices_with_its_versions_code_off_its_own_directory(self):
         from .. import snowflake_io as sio, bets
         import importlib
-        stream = importlib.import_module("eAMFModel.v7_stream")
+        stream = importlib.import_module("eAMFModel.v9_stream")
         seen = []
 
         def fake_paths(model_dir):
             seen.append(model_dir)
             raise RuntimeError("stop")
-        with mock.patch.dict(config.MODEL_DIRS, {"v7-glmer": "v7_glmer"}), \
-                mock.patch.object(config, "V7_MODEL_DIR", "v7_nb2"), \
+        with mock.patch.dict(config.MODEL_DIRS, {"v9-glmer": "v9_glmer"}), \
+                mock.patch.object(config, "V9_MODEL_DIR", "v9_nb2"), \
                 mock.patch.object(sio, "_need_numpy"), \
                 mock.patch.object(stream, "model_paths", side_effect=fake_paths):
-            for name in ("v7-glmer", "v7"):
+            for name in ("v9-glmer", "v9"):
                 with self.assertRaises(RuntimeError):
                     sio._model_quotes(None, "MODEL:" + name, ["M1"])
             with self.assertRaises(RuntimeError):
-                bets.check_models(["MODEL:v7-glmer"])
-        self.assertEqual(seen, ["v7_glmer", "v7_nb2", "v7_glmer"])
+                bets.check_models(["MODEL:v9-glmer"])
+        self.assertEqual(seen, ["v9_glmer", "v9_nb2", "v9_glmer"])
 
     def test_repeated_queries_are_answered_once_while_the_cache_is_on(self):
         from .. import snowflake_io as sio
@@ -5632,7 +5572,7 @@ class TestSeveralCandidates(unittest.TestCase):
         import tempfile
         from .. import __main__ as cli, multi
         sides, _ = self._sides()
-        passes = {"MODEL:v4": sides[0]["line"], "MODEL:v4@prod": sides[0]["prob"],
+        passes = {"MODEL:v8": sides[0]["line"], "MODEL:v8@prod": sides[0]["prob"],
                   "T2": sides[1]["line"]}
         seen = []
 
@@ -5646,16 +5586,16 @@ class TestSeveralCandidates(unittest.TestCase):
                 with mock.patch.object(multi, "_pass", side_effect=fake_pass), \
                         mock.patch.object(multi.snowflake_io, "clear_fetch_cache"), \
                         contextlib.redirect_stdout(io.StringIO()):
-                    code = cli.main(["report", "--candidate", "v4,T2", "--out", out])
+                    code = cli.main(["report", "--candidate", "v8,T2", "--out", out])
             finally:
                 config.CANDIDATES = saved[0]
                 config.STREAMS.clear()
                 config.STREAMS.update(saved[1])
             self.assertEqual(code, 0)
-            self.assertEqual(seen, ["MODEL:v4", "MODEL:v4@prod", "T2"])
+            self.assertEqual(seen, ["MODEL:v8", "MODEL:v8@prod", "T2"])
             names = sorted(os.listdir(out))
-            self.assertIn("eamf_report_v4_T2.html", names)
-            self.assertIn("directional_pairs_v4.csv", names)
+            self.assertIn("eamf_report_v8_T2.html", names)
+            self.assertIn("directional_pairs_v8.csv", names)
             self.assertIn("directional_pairs_T2.csv", names)
 
 

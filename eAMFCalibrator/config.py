@@ -15,10 +15,10 @@ STREAMS = {
 }
 
 # The report can set several candidates against prod at once
-# (`--candidate v4,v5`): each is paired with prod in turn and every table
+# (`--candidate v8,v9`): each is paired with prod in turn and every table
 # shows them side by side. Empty: just STREAMS["candidate"].
 CANDIDATES = []
-# A second build of a model version, by name: --candidate v7-glmer=<dir> -> {"v7-glmer": "<dir>"}
+# A second build of a model version, by name: --candidate v9-glmer=<dir> -> {"v9-glmer": "<dir>"}
 MODEL_DIRS = {}
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
@@ -38,42 +38,18 @@ CUTOFF_END = None  # None = up to the latest data available
 
 SPORT_CODE = "AF"
 
-# eAMFModel v3 standing in for the candidate (--candidate v3). It prices
-# PLAY_OVER snapshots off SCOUTING_FULL (the game clock lives only there),
-# with the model `python -m eAMFModel v3-build` wrote to V3_MODEL_DIR (None:
-# $EAMF_V3_MODEL, then ./v3_model). V3_PATHS games are simulated per
-# snapshot; V3_WORKERS processes (None: all cores but one).
+# An eAMFModel version standing in for the candidate (--candidate v9) prices
+# PLAY_OVER snapshots off SCOUTING_FULL (the game clock lives only there) in
+# MODEL_WORKERS processes (None: all cores but one).
 SCOUTING_TABLE = "SCOUTING_FULL"
 # What the HTML reports call the candidate (None: the model version when one
-# stands in, e.g. "v3"; otherwise "candidate"). --candidate-label sets it.
+# stands in, e.g. "v9"; otherwise "candidate"). --candidate-label sets it.
 CANDIDATE_LABEL = None
-V3_MODEL_DIR = None
-V3_PATHS = 2000
-V3_WORKERS = None
-# The same for --candidate v4 (its model: `python -m eAMFModel v4-build`;
-# None: $EAMF_V4_MODEL, then ./v4_model). Workers are V3_WORKERS.
-V4_MODEL_DIR = None
-V4_PATHS = 2000
-# "own": v4 quotes its own even line, moved as the game moves; "prod": v4's
-# book read at the line prod quoted, so every pair answers one question
-V4_LINES = "own"
-# The same for --candidate v5 (`python -m eAMFModel v5-build`; None:
-# $EAMF_V5_MODEL, then ./v5_model).
-V5_MODEL_DIR = None
-V5_PATHS = 2000
-V5_LINES = "own"
-# The same for --candidate v6 (`python -m eAMFModel v6-build`; None:
-# $EAMF_V6_MODEL, then ./v6_model).
-V6_MODEL_DIR = None
-V6_PATHS = 2000
-V6_LINES = "own"
-# The same for --candidate v7 (`python -m eAMFModel v7-build`; None:
-# $EAMF_V7_MODEL, then ./v7_model).
-V7_MODEL_DIR = None
-V7_PATHS = 2000
-V7_LINES = "own"
-# The same for --candidate v8 (`python -m eAMFModel v8-build`; None:
-# $EAMF_V8_MODEL, then ./v8_model).
+MODEL_WORKERS = None
+# --candidate v8 (its model: `python -m eAMFModel v8-build`; None:
+# $EAMF_V8_MODEL, then ./v8_model). "own" lines: v8 quotes its own even line,
+# moved as the game moves; "prod": its book read at the line prod quoted, so
+# every pair answers one question.
 V8_MODEL_DIR = None
 V8_PATHS = 2000
 V8_LINES = "own"
@@ -82,6 +58,11 @@ V8_LINES = "own"
 V9_MODEL_DIR = None
 V9_PATHS = 2000
 V9_LINES = "own"
+# The same for --candidate v10 (`python -m eAMFModel v10-build`; None:
+# $EAMF_V10_MODEL, then ./v10_model).
+V10_MODEL_DIR = None
+V10_PATHS = 2000
+V10_LINES = "own"
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

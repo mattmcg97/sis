@@ -1,5 +1,6 @@
-"""v7's simulation: plays the rest of a game snap by snap from real plays in the same situation."""
+"""v10's simulation: plays the rest of a game snap by snap from real plays in the same situation."""
 
+import datetime as dt
 import math
 from collections import Counter, defaultdict
 from dataclasses import replace
@@ -180,10 +181,358 @@ def _running_logit(tables, key):
     return np.log(np.maximum(ns, 0.5) / np.maximum(n - ns, 0.5)), ns, n
 
 
-def fit_play_calling(tables, snaps):
+# v8: the clock is fitted right to the end of each quarter. A snap that ran the quarter out used at
+# least the time that was left: it is kept as a censored observation, where before every snap with
+# under a minute left was dropped and the last 40 seconds of each quarter were never fitted.
+LATE_CLOCK = True
+STOP_GRID = np.linspace(-4.0, 4.0, 401)
+
+
+def _fit_stop_censored(tables, on, ends):
+    """The clock-stopped share's shift by cell, by maximum likelihood on every snap that follows a
+    scrimmage play: a stopped play, a running play, or -- for a snap that ran the quarter out with c
+    seconds left -- either one that would have taken c or more."""
+    base = _running_logit(tables, np.array([r["key"] for r in on] + [r["key"] for r in ends],
+                                           dtype=np.int64))[0]
+    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in on + ends], dtype=np.int64)
+    kind = np.array([0 if r["seconds"] <= STOP_SECONDS else 1 for r in on] + [2] * len(ends))
+    wt = np.array([r.get("w", 1.0) for r in on] + [r.get("w", 1.0) for r in ends])
+    e_stop, e_run = np.zeros(len(kind)), np.zeros(len(kind))
+    for i, r in enumerate(ends, start=len(on)):
+        a, m, c = tables.start[r["key"]], tables.n_stop[r["key"]], tables.count[r["key"]]
+        seg = tables.seconds[a:a + c]
+        e_stop[i] = float((seg[:m] >= r["clock"]).mean()) if m else 0.0
+        e_run[i] = float((seg[m:] >= r["clock"]).mean()) if c > m else 0.0
+    shift = np.zeros(N_CELLS)
+    pen = 0.5 * STOP_PRIOR * 0.25 * STOP_GRID ** 2
+    order = np.argsort(cell, kind="stable")
+    bounds = np.searchsorted(cell[order], np.arange(N_CELLS + 1))
+    for c_ in range(N_CELLS):
+        ix = order[bounds[c_]:bounds[c_ + 1]]
+        if not len(ix):
+            continue
+        p = np.clip(_sigmoid(base[ix, None] + STOP_GRID[None, :]), 1e-9, 1 - 1e-9)
+        k = kind[ix, None]
+        lik = np.where(k == 0, p, np.where(k == 1, 1 - p,
+                                           p * e_stop[ix, None] + (1 - p) * e_run[ix, None]))
+        shift[c_] = STOP_GRID[np.argmax((np.log(np.maximum(lik, 1e-12)) * wt[ix, None]).sum(0) - pen)]
+    return shift
+
+
+# v8: timeouts, three for each side each half, called as real sides call them. Before a snap,
+# with the clock running after the last play, each side may stop it -- at the rate real sides do
+# in the same quarter, 40-second slice, with or without the ball and at the same score, while it
+# has one left (call_p: fitted on the calibrator's timeouts.csv with v8-build --timeouts, else the
+# real rates in DEFAULT_CALL_P). The snap
+# then takes only its own play's time. Real sides call them in the last four minutes of the
+# second and fourth quarters, and hardly ever otherwise. A real play that followed a timeout is
+# put back in the tables with a clock-running play's time, so the calls are not counted twice.
+# A leader kneels the game out only when its downs left, less the trailing side's timeouts, each
+# worth a play clock, outlast the clock.
+TIMEOUTS = True
+PLAY_CLOCK = 40.0
+TIMEOUT_QUARTERS = (2, 4)
+TIMEOUT_PRIOR = 20.0
+OT_TIMEOUTS = 2            # each side's timeouts in each overtime period
+OFFENCE, DEFENCE = 0, 1
+N_CALL = (len(TIMEOUT_QUARTERS), 2, LEAD_CELLS, CLOCK_CELLS)
+
+
+# The share of running clocks each side stopped with a timeout before the snap, while it had one,
+# in 12,000 real calls over 2,300 matches (24 Aug - 22 Sep 2026: SCOUTING_FULL's TIMEOUT_CALLED
+# messages, `python -m eAMFCalibrator timeouts`): what a build uses when it is given no
+# timeouts.csv. [quarter 2, 4][with the ball, without it][the side's own score][slice].
+DEFAULT_CALL_P = [
+    [  # Q2
+        [  # with the ball: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.000, 0.000, 0.006, 0.018, 0.145, 0.788],
+            [0.002, 0.002, 0.000, 0.011, 0.117, 0.711],
+            [0.006, 0.003, 0.000, 0.010, 0.095, 0.706],
+            [0.000, 0.003, 0.000, 0.005, 0.108, 0.735],
+            [0.002, 0.001, 0.000, 0.002, 0.056, 0.717],
+        ],
+        [  # without it: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.001, 0.005, 0.099, 0.168, 0.251, 0.130],
+            [0.003, 0.011, 0.084, 0.157, 0.232, 0.128],
+            [0.003, 0.013, 0.075, 0.136, 0.232, 0.126],
+            [0.001, 0.008, 0.055, 0.100, 0.203, 0.107],
+            [0.000, 0.007, 0.056, 0.095, 0.101, 0.056],
+        ],
+    ],
+    [  # Q4
+        [  # with the ball: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.002, 0.013, 0.052, 0.088, 0.252, 0.677],
+            [0.002, 0.006, 0.007, 0.024, 0.129, 0.649],
+            [0.006, 0.003, 0.001, 0.008, 0.028, 0.288],
+            [0.010, 0.005, 0.007, 0.007, 0.007, 0.055],
+            [0.000, 0.000, 0.005, 0.007, 0.006, 0.089],
+        ],
+        [  # without it: down 9+, down 1-8, level, up 1-8, up 9+; 40-second slices 4:00 -> 0:00
+            [0.050, 0.082, 0.308, 0.511, 0.596, 0.652],
+            [0.008, 0.065, 0.281, 0.495, 0.685, 0.813],
+            [0.012, 0.037, 0.214, 0.381, 0.553, 0.618],
+            [0.008, 0.017, 0.121, 0.178, 0.249, 0.190],
+            [0.009, 0.007, 0.018, 0.017, 0.019, 0.035],
+        ],
+    ],
+]
+
+
+def call_index(period, clock, lead, role):
+    """The timeout-call cell for a side: quarter (2 or 4), role, its own lead, 40-second slice."""
+    period = np.asarray(period)
+    qi = np.where(period >= 4, 1, 0)             # overtime reads the fourth quarter's
+    lead = np.asarray(lead)
+    lc = np.where(lead <= -9, 0, np.where(lead < 0, 1, np.where(lead == 0, 2, np.where(lead <= 8, 3, 4))))
+    cb = np.clip(((QUARTER - np.asarray(clock, dtype=float)) // (QUARTER / CLOCK_CELLS)).astype(np.int64),
+                 0, CLOCK_CELLS - 1)
+    return qi, np.asarray(role), lc, cb
+
+
+def fit_timeout_calls(snaps):
+    """How often each side stops a running clock with a timeout, by cell, among the snaps whose
+    clock was running (or was stopped by a timeout) while it had one left; shrunk toward the
+    quarter, role and slice over all scores. Zero where nothing is known."""
+    n, k = np.zeros(N_CALL), np.zeros(N_CALL)
+    for r in snaps:
+        left = r.get("timeouts_left")
+        if left is None or r["period"] not in TIMEOUT_QUARTERS or r.get("fresh"):
+            continue
+        by = r.get("timeout_role")
+        if by is None and r["seconds"] <= STOP_SECONDS:
+            continue                          # the clock had stopped by itself
+        for role in (OFFENCE, DEFENCE):
+            if left[role] <= 0:
+                continue
+            lead = r["margin"] if role == OFFENCE else -r["margin"]
+            i = call_index(r["period"], r["clock"], lead, role)
+            w = r.get("w", 1.0)
+            n[i] += w
+            k[i] += w * (by == role)
+    base = (k.sum(2, keepdims=True) + 0.1) / (n.sum(2, keepdims=True) + 1.0)
+    return np.where(n.sum(2, keepdims=True) > 0, (k + TIMEOUT_PRIOR * base) / (n + TIMEOUT_PRIOR), 0.0)
+
+
+OT_CALL_PRIOR = 0.2        # shrink toward a scale of 0.2 until overtime shows otherwise
+OT_CALL_DEFAULT = 0.23     # all 35 real overtime calls, 24 Aug - 22 Sep
+
+
+def fit_ot_call_scale(snaps, call_p):
+    """Overtime's timeouts are called like the fourth quarter's but far less often (35 calls in
+    75 overtime periods): the fourth quarter's rates scaled by one factor -- the real calls over
+    the calls the fourth quarter's rates would make on overtime's running clocks."""
+    expected = called = 0.0
+    for r in snaps:
+        left = r.get("timeouts_left")
+        if left is None or r["period"] < 5 or r.get("fresh"):
+            continue
+        by = r.get("timeout_role")
+        if by is None and r["seconds"] <= STOP_SECONDS:
+            continue
+        for role in (OFFENCE, DEFENCE):
+            if left[role] > 0:
+                lead = r["margin"] if role == OFFENCE else -r["margin"]
+                expected += float(call_p[call_index(r["period"], r["clock"], lead, role)])
+                called += by == role
+    return (called + 1.0) / (expected + 1.0 / OT_CALL_PRIOR) if expected > 0 else OT_CALL_DEFAULT
+
+
+# v9: the clock fits -- the clock-stopped share, each state's play time, the kneels and the
+# timeout calls -- weight each match by its age at the build's cut-off, halving every
+# CLOCK_HALF_LIFE days (None: every match alike). Late in the fourth quarter leaders have bled the
+# clock more week on week (a running play leading by 1-8 in the last two minutes: 32.0 seconds the
+# week of 24 Aug, 33.2 three weeks on); elsewhere the clock has held still.
+CLOCK_HALF_LIFE = 7.0
+
+
+def match_date(code):
+    """A match's date off its code (...DDMMYY), or None."""
+    try:
+        return dt.date(2000 + int(code[-2:]), int(code[-4:-2]), int(code[-6:-4]))
+    except (ValueError, TypeError, IndexError):
+        return None
+
+
+def age_weights(records, as_of, half_life):
+    """Set r["w"] on each record: 1, or halving every `half_life` days of its match's age."""
+    for r in records:
+        w = 1.0
+        if as_of is not None and half_life:
+            day = match_date(r.get("match"))
+            if day is not None:
+                w = 0.5 ** (max(0, (as_of - day).days) / half_life)
+        r["w"] = w
+
+
+# v9: the clock-running play's time by state is fitted on the plays nobody stopped. v8 fitted it
+# on every running play, the ones a timeout stopped among them with a time borrowed from the bin
+# (natural_seconds): where timeouts come thick -- the leader with the ball late in the fourth
+# quarter -- that pulled the state's time toward the bin's (31.6-31.9 seconds against a real
+# 32.8-34.0). And a play a timeout stops takes the time real ones did: it ran in bounds, and the
+# clock ran on a moment before the call (the leader's, stopped by the trailing side: 8 seconds
+# against 6.3 for a stopped play), by quarter, who called it and whether the caller is behind,
+# level or ahead (to_secs): the fourth quarter's trailing side, calling from defence, lets the
+# clock run on a while first (10.7 seconds on average, against 6-7 elsewhere).
+NATURAL_SHIFT = True
+TO_PLAY_SECONDS = True
+TO_QUANTILES = np.linspace(0.0, 1.0, 21)
+
+
+def caller_side(lead):
+    """0 behind, 1 level, 2 ahead: the calling side's own score."""
+    lead = np.asarray(lead)
+    return np.where(lead < 0, 0, np.where(lead == 0, 1, 2))
+
+
+def fit_timeout_seconds(snaps):
+    """The time a play stopped by a timeout took, as quantiles, by quarter (2; 4 and overtime),
+    who called it and the caller's score: [quarter][OFFENCE, DEFENCE][behind, level, ahead] ->
+    21 quantiles; NaN where too few."""
+    out = np.full((2, 2, 3, len(TO_QUANTILES)), np.nan)
+    pools = defaultdict(list)
+    for r in snaps:
+        by = r.get("timeout_role")
+        secs = r.get("seconds_real", r["seconds"])
+        if by is None or r["period"] < 2 or r["period"] == 3:
+            continue
+        lead = r["margin"] if by == OFFENCE else -r["margin"]
+        pools[(1 if r["period"] >= 4 else 0, by, int(caller_side(lead)))].append(secs)
+    for (qi, role, side), xs in pools.items():
+        if len(xs) >= 30:
+            out[qi, role, side] = np.quantile(xs, TO_QUANTILES)
+    return out
+
+
+def natural_seconds(snaps):
+    """A real play that followed a timeout used next to nothing of the clock: give it the time of
+    a clock-running play in the same bin (else situation and down), so the tables' clock is the
+    one without timeouts and the simulation's own calls take it off."""
+    pools = defaultdict(list)
+    for r in snaps:
+        if r.get("timeout_role") is None and r["seconds"] > STOP_SECONDS:
+            pools[("k", r["key"])].append(r["seconds"])
+            pools[("m", r["mode"], r["down"])].append(r["seconds"])
+            pools[("all",)].append(r["seconds"])
+    rng = np.random.default_rng(0)
+    for r in snaps:
+        if r.get("timeout_role") is None:
+            continue
+        pool = next((pools[g] for g in (("k", r["key"]), ("m", r["mode"], r["down"]), ("all",))
+                     if len(pools[g]) >= 5), None)
+        if pool:
+            r["seconds_real"] = r["seconds"]
+            r["seconds"] = float(pool[rng.integers(len(pool))])
+
+
+# v8: the leader's kneel-downs in the fourth quarter are plays of their own, called as often as
+# real leaders call them by down, 40-second slice of the clock and one score or more (kneel_p):
+# the play tables pool a leader's plays over the whole of the quarter's end, so the kneels in them
+# came as often at 1:50 as at 0:50. A kneel loses a yard or two and takes a play clock -- or next
+# to nothing when the trailing team calls a timeout. Real kneels (a leader's loss of 1 to 4 yards
+# on downs 1-3) leave the tables.
+KNEELS = True
+KNEEL_PRIOR = 10.0
+KNEEL_LOSS = (-4, -1)
+N_KNEEL = (2, 3, CLOCK_CELLS)
+
+
+def is_kneel(rec):
+    """Whether a snap was a leader's kneel-down in the fourth quarter: a loss of 1 to 4 yards on
+    downs 1-3 that kept the ball."""
+    return (rec["period"] == 4 and rec["margin"] > 0 and rec["down"] <= 3 and rec["kind"] == GAIN
+            and KNEEL_LOSS[0] <= rec["gain"] <= KNEEL_LOSS[1])
+
+
+def kneel_index(margin, down, clock):
+    """The kneel cell: one score or more, down, 40-second slice."""
+    big = np.asarray(margin) >= BIG_LEAD
+    cb = np.clip(((QUARTER - np.asarray(clock, dtype=float)) // (QUARTER / CLOCK_CELLS)).astype(np.int64),
+                 0, CLOCK_CELLS - 1)
+    return big.astype(np.int64), np.clip(np.asarray(down), 1, 3) - 1, cb
+
+
+def fit_kneels(snaps):
+    """How often the fourth-quarter leader kneels, by cell, shrunk toward its lead and down; and
+    the clock a kneel takes when nothing stops it."""
+    n, k = np.zeros(N_KNEEL), np.zeros(N_KNEEL)
+    secs = []
+    for r in snaps:
+        if r["period"] != 4 or r["margin"] <= 0 or r["down"] > 3:
+            continue
+        i = kneel_index(r["margin"], r["down"], r["clock"])
+        w = r.get("w", 1.0)
+        n[i] += w
+        if r.get("kneel"):
+            k[i] += w
+            if r["seconds"] > STOP_SECONDS and r["clock"] >= UNCUT_SECONDS:
+                secs.append(r["seconds"])
+    base = (k.sum(2, keepdims=True) + 1) / (n.sum(2, keepdims=True) + 2)
+    p = (k + KNEEL_PRIOR * base) / (n + KNEEL_PRIOR)
+    return p, (np.array(secs) if len(secs) >= 20 else np.array([PLAY_CLOCK - 3.0]))
+
+
+def _slice_of(clock):
+    """The 40-second slice of a quarter, 0 (4:00) to 5 (the last 40 seconds)."""
+    return np.clip(((QUARTER - np.asarray(clock, dtype=float)) // (QUARTER / CLOCK_CELLS)).astype(np.int64),
+                   0, CLOCK_CELLS - 1)
+
+
+def fit_ot_stop(tables, on, stop_shift):
+    """v8: overtime's own shift to the clock-stopped share, by 40-second slice. Overtime reads the
+    fourth quarter's cells, whose shares no longer hold the timeouts' stops (the calls add them
+    back in the fourth quarter); real sides hardly call timeouts in overtime, so its clock stops
+    on its own more than the fourth quarter's natural share."""
+    ot = [r for r in on if r["period"] >= 5]
+    shift = np.zeros(CLOCK_CELLS)
+    if not ot:
+        return shift
+    base = (_running_logit(tables, np.array([r["key"] for r in ot], dtype=np.int64))[0]
+            + stop_shift[np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in ot])])
+    sl = _slice_of([r["clock"] for r in ot])
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in ot])
+    pen = 0.5 * STOP_PRIOR * 0.25 * STOP_GRID ** 2
+    for c_ in range(CLOCK_CELLS):
+        ix = np.flatnonzero(sl == c_)
+        if not len(ix):
+            continue
+        p = np.clip(_sigmoid(base[ix, None] + STOP_GRID[None, :]), 1e-9, 1 - 1e-9)
+        ll = np.where(stop[ix, None], np.log(p), np.log(1 - p)).sum(0)
+        shift[c_] = STOP_GRID[np.argmax(ll - pen)]
+    return shift
+
+
+def clock_end_records(rows):
+    """v8: every scrimmage snap on downs 1-3 that ran its quarter out -- the next PLAY_OVER is in a
+    later quarter, or it was the game's last -- with its state and the seconds it had left."""
+    out = []
+    for i, a in enumerate(rows):
+        if a["play_kind"] not in SNAP_KINDS or not a["down"] or not a["field_position"] \
+                or not a["distance"] or not a["period"] or not a["clock_seconds"]:
+            continue
+        p, c = _i(a["period"]), _f(a["clock_seconds"])
+        b = rows[i + 1] if i + 1 < len(rows) else None
+        if p is None or p > 4 or c is None or c <= 0:
+            continue
+        if b is None:
+            if p != 4:
+                continue
+        elif not b["period"] or _i(b["period"]) == p:
+            continue
+        down, t, y = _i(a["down"]), max(1, _i(a["distance"])), _i(a["field_position"])
+        m = _margin(a, a["offense"])
+        if down is None or down >= 4 or y is None or m is None:
+            continue
+        mode = mode_of(p, c, m, BIG_LEAD, Q4_MODES)
+        out.append(dict(period=p, clock=c, margin=m, down=down, distance=t, field=y, seconds=c,
+                        key=key_index(mode, down, t, y), fresh=FRESH_CLOCK and is_fresh(a)))
+    return out
+
+
+def fit_play_calling(tables, snaps, ends=(), kneels=()):
     """By game state: how often clock-stopping plays are called, how long plays take, and the
     rubber band. The clock is fitted on snaps that follow a scrimmage play: a fresh possession's
-    first snap is played with the clock stopped whatever the state."""
+    first snap is played with the clock stopped whatever the state. With LATE_CLOCK (v8) the
+    snaps that ran a quarter out are kept as censored, and the clock is fitted to the last second."""
     n = len(snaps)
     on = [r for r in snaps if not r.get("fresh")]
     key = np.array([r["key"] for r in on])
@@ -198,6 +547,12 @@ def fit_play_calling(tables, snaps):
         g = np.bincount(cell, (stop - p) * uncut, N_CELLS) - STOP_PRIOR * 0.25 * stop_shift
         h = np.bincount(cell, p * (1 - p) * uncut, N_CELLS) + STOP_PRIOR * 0.25
         stop_shift += g / h
+    if LATE_CLOCK:
+        ends_on = [r for r in ends if not r.get("fresh")]
+        stop_shift = _fit_stop_censored(tables, on, ends_on)
+        if TIMEOUTS:
+            tables.ot_stop = fit_ot_stop(tables, on, stop_shift * _quarter_mask("stop"))
+
     cls_mean = np.zeros((2, N_KEYS))
     for k in range(N_KEYS):
         a, m, c = tables.start[k], tables.n_stop[k], tables.count[k]
@@ -208,10 +563,20 @@ def fit_play_calling(tables, snaps):
     resid = secs - cls_mean[kind, key]
     sec_shift = np.zeros((2, N_CELLS))
     for c_ in (STOP, RUNNING):
-        sel = (kind == c_) & uncut
-        tot = np.bincount(cell[sel], resid[sel], N_CELLS)
-        num = np.bincount(cell[sel], minlength=N_CELLS)
+        # a stopped play (12 seconds or less) is never cut short with more than 12 left
+        sel = (kind == c_) & (uncut if c_ == RUNNING or not LATE_CLOCK
+                              else np.array([r["clock"] > STOP_SECONDS for r in on]))
+        if NATURAL_SHIFT:
+            sel &= np.array([r.get("timeout_role") is None for r in on])
+        wt = np.array([r.get("w", 1.0) for r in on])
+        tot = np.bincount(cell[sel], resid[sel] * wt[sel], N_CELLS)
+        num = np.bincount(cell[sel], wt[sel], N_CELLS)
         sec_shift[c_] = tot / (num + SECONDS_PRIOR)
+    if LATE_CLOCK:
+        # a running play in the last 40 seconds is nearly always cut short: it takes the slice
+        # before's shift
+        by = sec_shift[RUNNING].reshape(4, CLOCK_CELLS, LEAD_CELLS)
+        by[:, CLOCK_CELLS - 1] = by[:, CLOCK_CELLS - 2]
     key = np.array([r["key"] for r in snaps])
     cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in snaps])
     stop = np.array([r["seconds"] <= STOP_SECONDS for r in snaps])
@@ -414,8 +779,24 @@ def snap_records(rows):
         rec["success"] = rec["kind"] == GAIN and (rec["gain"] >= t or rec["gain"] >= 100 - y)
         rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD, Q4_MODES)
         rec["key"] = key_index(rec["mode"], down, t, y)
+        _timeouts_at(rec, a)
         out.append(rec)
     return out
+
+
+def _timeouts_at(rec, row):
+    """v8: each side's timeouts left at the snap's PLAY_OVER (offense's, defense's) and who, if
+    anyone, stopped the running clock before it (timeout_role), where the row carries them
+    (playover.annotate_timeouts, or the scouting export's columns)."""
+    a, b = _i(row.get("timeouts_used_a")), _i(row.get("timeouts_used_b"))
+    if a is None or b is None or row.get("offense") not in ("TEAM_A", "TEAM_B"):
+        return
+    mine = (a, b) if row["offense"] == "TEAM_A" else (b, a)
+    have = 3 if rec["period"] <= 4 else OT_TIMEOUTS
+    rec["timeouts_left"] = (max(0, have - mine[0]), max(0, have - mine[1]))
+    caller = row.get("timeout_after")
+    if caller in ("TEAM_A", "TEAM_B") and row.get("timeout_prev") != "incomplete":
+        rec["timeout_role"] = OFFENCE if caller == row["offense"] else DEFENCE
 
 
 def kick_records(rows):
@@ -723,6 +1104,11 @@ def fit_decision_shifts(decisions, dp, prior=DECISION_PRIOR, iterations=8):
 
 FOURTH_JOINT = True
 OT_RULES = True
+# v8: an overtime period's clock running out ends the game only when a side leads and the side
+# behind has had its possession; otherwise play carries on into the next period with the same
+# ball, down and spot, as between quarters (39% of real overtimes reach a second period; none
+# ended level). Before, a lead ended it at the clock and a level score kicked off again.
+OT_CARRY = True
 OT_KICK_RANGE = 55
 OT_GO_PRIOR = 2.0
 
@@ -958,6 +1344,12 @@ class Tables:
         self.rz_shift = np.zeros(N_RZ)
         self.rz_hold = np.zeros(N_RZ)
         self.td_hold = np.zeros(N_SETTLE)
+        self.call_p = np.zeros(N_CALL)
+        self.ot_stop = np.zeros(CLOCK_CELLS)
+        self.ot_call_scale = OT_CALL_DEFAULT
+        self.to_secs = np.full((2, 2, 3, len(TO_QUANTILES)), np.nan)
+        self.kneel_p = np.zeros(N_KNEEL)
+        self.kneel_secs = np.array([PLAY_CLOCK - 3.0])
         self.fg_seconds = None
         self.fg_after = None
         self.go_for_two = None
@@ -982,17 +1374,26 @@ class Tables:
         self.ot_go = 0.5
 
     @classmethod
-    def build(cls, matches, min_records=MIN_RECORDS, seed=0, handles=None):
+    def build(cls, matches, min_records=MIN_RECORDS, seed=0, handles=None, as_of=None,
+              half_life=None):
         """Build every table from the export's matches; `handles` (match -> (home, away)) gives the
-        4th-down fit each player's own go and kick shifts."""
+        4th-down fit each player's own go and kick shifts. v9: with `as_of` and `half_life` the
+        clock fits weight each match by its age (age_weights)."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
-        backed, late4, fourth_recs, ot_first = [], [], [], []
+        backed, late4, fourth_recs, ot_first, ends = [], [], [], [], []
         for code, rows in matches.items():
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             snaps_before = len(snaps)
             ot_first += ot_first_fourths(rows)
             late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
+            for rec in snaps[snaps_before:]:
+                rec["match"] = code
+                rec["kneel"] = KNEELS and is_kneel(rec)
+            new_ends = clock_end_records(rows) if LATE_CLOCK else []
+            for rec in new_ends:
+                rec["match"] = code
+            ends += new_ends
             if not FRESH_CLOCK:
                 for rec in snaps[snaps_before:]:
                     rec["fresh"] = False
@@ -1003,7 +1404,22 @@ class Tables:
             conv += conversions(rows)
             fourths += fourth_down_choices(rows)
             early += early_kicks(rows)
+        age_weights(snaps + ends, as_of, half_life)
         t = cls()
+        if TIMEOUTS:
+            known = any("timeouts_left" in r for r in snaps)
+            t.call_p = fit_timeout_calls(snaps) if known else np.array(DEFAULT_CALL_P)
+            t.call_fitted = known
+            t.ot_call_scale = fit_ot_call_scale(snaps, t.call_p) if known else OT_CALL_DEFAULT
+            if TO_PLAY_SECONDS and known:
+                t.to_secs = fit_timeout_seconds(snaps)
+            natural_seconds(snaps)
+        if KNEELS:
+            t.kneel_p, t.kneel_secs = fit_kneels(snaps)
+            kneels = [r for r in snaps if r["kneel"]]
+            snaps = [r for r in snaps if not r["kneel"]]
+        else:
+            kneels = []
         levels = ["k", "zc", "mdb", "m2", "m2zc", "any", "anyzc", "d", "dd"]
         groups = {lv: defaultdict(list) for lv in levels}
         for rec in snaps:
@@ -1112,7 +1528,7 @@ class Tables:
         if backed:
             t.backed, returns = fit_backed_up(backed)
             t.backed_return = returns if len(returns) >= BACKED_RETURNS_MIN else None
-        fit_play_calling(t, snaps)
+        fit_play_calling(t, snaps, ends, kneels)
         if SETTLE_FIT:
             t.rz_shift, t.rz_hold = np.zeros(N_RZ), np.zeros(N_RZ)
         else:
@@ -1140,7 +1556,10 @@ class Tables:
                       stop_shift=self.stop_shift, sec_shift=self.sec_shift, eff_shift=self.eff_shift,
                       rz_shift=self.rz_shift, rz_hold=self.rz_hold, td_hold=self.td_hold,
                       inplay_theta=self.inplay_theta, go_coef=np.array(self.drive.go_coef),
-                      fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]))
+                      fg_kick_coef=np.array(self.drive.fg_kick_coef), ot_go=np.array([self.ot_go]),
+                      call_p=self.call_p, ot_stop=self.ot_stop,
+                      ot_call_scale=np.array([self.ot_call_scale]), to_secs=self.to_secs,
+                      kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
         if self.backed is not None:
@@ -1211,6 +1630,16 @@ class Tables:
         else:
             t.n_fresh, t.n_fresh_stop = np.zeros_like(t.count), np.zeros_like(t.count)
         t.q4_modes = bool(z["q4_modes"][0]) if "q4_modes" in z else False
+        if "call_p" in z and z["call_p"].shape == N_CALL:
+            t.call_p = z["call_p"]
+        if "ot_stop" in z:
+            t.ot_stop = z["ot_stop"]
+        if "ot_call_scale" in z:
+            t.ot_call_scale = float(z["ot_call_scale"][0])
+        if "to_secs" in z and z["to_secs"].ndim == 4:
+            t.to_secs = z["to_secs"]
+        if "kneel_p" in z:
+            t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
         return t
 
 
@@ -1246,6 +1675,7 @@ class Start:
         self.strength = np.zeros((n, 2))
         self.strength_game = np.zeros((n, 2))
         self.fresh = np.zeros(n, dtype=bool)
+        self.timeouts = np.full((n, 2), -1, dtype=np.int8)     # -1: not known, drawn when needed
 
 
 def _sigmoid(z):
@@ -1309,6 +1739,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     kick_pl = rep(getattr(start, "kick", np.zeros((S, 2))))
     pace = rep(start.pace)
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
+    tos = rep(getattr(start, "timeouts", np.full((S, 2), -1))).astype(np.int8)
+    to_on = TIMEOUTS and tables.call_p.any()
     dp = tables.drive
     gc = dp.go_coef
     ka, kb = dp.fg_kick_coef
@@ -1346,6 +1778,30 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         """A random index below n for these paths."""
         return np.minimum(n - 1, (rand(ix, slot) * n).astype(np.int64))
 
+    def timeouts_of(ix, side):
+        """The timeouts `side` has left in the half (or overtime period) on these paths; all of
+        them where not known (real sides still have all three at the two-minute mark nine times
+        in ten)."""
+        unknown = tos[ix, side] < 0
+        tos[ix[unknown], side[unknown]] = np.where(period[ix[unknown]] >= 5, OT_TIMEOUTS, 3)
+        return tos[ix, side]
+
+    def calls(ix, lead):
+        """Which of these paths' sides stop the clock with a timeout before the snap, off the
+        running clock: (called, side). lead: the offense's."""
+        ok = np.isin(period[ix], TIMEOUT_QUARTERS) | (period[ix] >= 5)
+        scale = np.where(period[ix] >= 5, tables.ot_call_scale, 1.0)
+        off, dfn = team[ix].astype(np.int64), (1 - team[ix]).astype(np.int64)
+        p_off = np.where(ok & (timeouts_of(ix, off) > 0),
+                         scale * tables.call_p[call_index(period[ix], clock[ix], lead, OFFENCE)], 0.0)
+        p_def = np.where(ok & (timeouts_of(ix, dfn) > 0),
+                         scale * tables.call_p[call_index(period[ix], clock[ix], -lead, DEFENCE)], 0.0)
+        u = rand(ix, 41)
+        by_def = u < p_def
+        by_off = ~by_def & (u < p_def + p_off)
+        called = by_def | by_off
+        return called, np.where(by_def, dfn, off)
+
     def fg_make(yy):
         """The chance a field goal from here is good."""
         d = (100 - yy + 17) / 100.0
@@ -1371,16 +1827,44 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         fresh[c] = True
         h = ix[p == 2]
         period[h] = 3
+        tos[h] = -1
         clock[h] = QUARTER
         phase[h] = KICK
         team[h] = np.where(kick2[h] >= 0, kick2[h], pick(h, 18, 2))
         e = ix[p >= 4]
         level = score[e, 0] == score[e, 1]
+        if OT_CARRY:
+            # regulation's end: level goes to overtime off a kick-off, otherwise it is over
+            reg = e[period[e] == 4]
+            lv = score[reg, 0] == score[reg, 1]
+            tally("overtime", lv.sum())
+            phase[reg[~lv]] = DONE
+            go = reg[lv]
+            period[go] = 5
+            clock[go] = QUARTER
+            tos[go] = OT_TIMEOUTS
+            phase[go] = KICK
+            team[go] = pick(go, 1, 2)
+            # an overtime period's end: over only when a side leads and the side behind has had
+            # its possession; otherwise play carries on into the next period, as between quarters
+            ot_e = e[period[e] >= 5]
+            behind = np.where(score[ot_e, 0] < score[ot_e, 1], 0, 1)
+            decided = (score[ot_e, 0] != score[ot_e, 1]) & ot_done[ot_e, behind]
+            stop = decided | (period[ot_e] >= 4 + MAX_OT)
+            phase[ot_e[stop]] = DONE
+            on = ot_e[~stop]
+            period[on] += 1
+            clock[on] = QUARTER
+            tos[on] = OT_TIMEOUTS
+            fresh[on] = True
+            tally("ot_carried", len(on))
+            return
         more = e[level & (period[e] < 4 + MAX_OT)]
         tally("overtime", (level & (period[e] == 4)).sum())
         phase[e[~level | (period[e] >= 4 + MAX_OT)]] = DONE
         period[more] += 1
         clock[more] = QUARTER
+        tos[more] = OT_TIMEOUTS
         phase[more] = KICK
         team[more] = pick(more, 1, 2)
 
@@ -1503,7 +1987,17 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         dn = down[ix]
         tt = dist[ix]
 
-        kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
+        if to_on:
+            # the fourth quarter: the leader kneels it out when its downs left, less the trailing
+            # team's timeouts, each worth a play clock, outlast the clock (overtime as before)
+            kneel = (p >= 5) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
+            cand = (p == 4) & (margin > 0) & (yy > 5 - dn) & (c <= PLAY_CLOCK * (5 - dn))
+            if cand.any():
+                ci = np.flatnonzero(cand)
+                left = timeouts_of(ix[ci], 1 - o[ci]).astype(np.int64)
+                kneel[ci[c[ci] <= PLAY_CLOCK * np.maximum(0, 5 - dn[ci] - left)]] = True
+        else:
+            kneel = (p >= 4) & (margin > 0) & (c <= kneel_seconds * (5 - dn)) & (yy > 5 - dn)
         tally("kneel", kneel.sum())
         if kneel.any():
             kx = ix[kneel]
@@ -1605,6 +2099,29 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         sx = ix[play]
         if not len(sx):
             continue
+        if KNEELS and tables.kneel_p.any():
+            ld = score[sx, team[sx]] - score[sx, 1 - team[sx]]
+            cand = np.flatnonzero((period[sx] == 4) & (ld > 0) & (down[sx] < 4) & (y[sx] > 5))
+            if len(cand):
+                kp = tables.kneel_p[kneel_index(ld[cand], down[sx[cand]], clock[sx[cand]])]
+                kn = cand[rand(sx[cand], 43) < kp]
+                if len(kn):
+                    kx = sx[kn]
+                    used = tables.kneel_secs[pick(kx, 44, len(tables.kneel_secs))]
+                    if to_on:
+                        call, side = calls(kx, ld[kn])
+                        used = np.where(call, 3.0, used)
+                        tos[kx[call], side[call]] -= 1
+                        tally("timeouts", call.sum())
+                    clock[kx] -= used
+                    y[kx] = np.maximum(1, y[kx] - 1)
+                    down[kx] += 1
+                    dist[kx] += 1
+                    fresh[kx] = False
+                    tally("kneel_plays", len(kx))
+                    sx = np.delete(sx, kn)
+            if not len(sx):
+                continue
         so = team[sx]
         lead = score[sx, so] - score[sx, 1 - so]
         mode = _modes_np(period[sx], clock[sx], lead, tables.big_lead, tables.q4_modes)
@@ -1615,7 +2132,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         fr = fresh[sx] & tables.n_fresh.any()
         run_logit, ns0, n0 = _running_logit(tables, key)
         p_run = np.where(ns0 <= 0, 0.0, np.where(ns0 >= n0, 1.0,
-                                                 _sigmoid(run_logit + tables.stop_shift[cell])))
+                                                 _sigmoid(run_logit + tables.stop_shift[cell]
+                                                          + np.where(period[sx] >= 5,
+                                                                     tables.ot_stop[_slice_of(clock[sx])], 0.0))))
         p_fresh = (tables.n_fresh_stop[key] + FRESH_PRIOR * FRESH_STOP) / (tables.n_fresh[key] + FRESH_PRIOR)
         p_stop = np.where(ns == 0, 0.0, np.where(ns == n, 1.0, np.where(fr, p_fresh, p_run)))
         stops = rand(sx, 15) < p_stop
@@ -1650,6 +2169,32 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 held_td &= scores(j)
         shift = np.where(fr, 0.0, tables.sec_shift[np.where(stops, STOP, RUNNING), cell])
         used = np.maximum(1.0, tables.seconds[j] + shift) * pace[sx, so]
+        if to_on:
+            # the clock is running before this snap: a side may stop it with a timeout, as often
+            # as real sides do there; the snap then takes only its own play's time
+            win = ~stops & ~fr
+            if win.any():
+                wi = np.flatnonzero(win)
+                call, side = calls(sx[wi], lead[wi])
+                if call.any():
+                    ci, dc = wi[call], side[call]
+                    ns_ = tables.n_stop[key[ci]]
+                    js = tables.start[key[ci]] + np.minimum(
+                        np.maximum(ns_, 1) - 1, (rand(sx[ci], 42) * np.maximum(ns_, 1)).astype(np.int64))
+                    # the clock stops when the play ends: it takes a stopped play's time
+                    used[ci] = np.where(ns_ > 0, np.maximum(1.0, tables.seconds[js]) * pace[sx[ci], so[ci]],
+                                        np.minimum(used[ci], 6.0))
+                    if TO_PLAY_SECONDS and np.isfinite(tables.to_secs).any():
+                        # v9: the time real plays stopped by a timeout took, by who called it
+                        role = np.where(dc == so[ci], OFFENCE, DEFENCE)
+                        qi = np.where(period[sx[ci]] >= 4, 1, 0)
+                        caller_lead = np.where(role == OFFENCE, lead[ci], -lead[ci])
+                        q = tables.to_secs[qi, role, caller_side(caller_lead)]
+                        u = rand(sx[ci], 46)
+                        got = np.array([np.interp(ui, TO_QUANTILES, qq) for ui, qq in zip(u, q)])
+                        used[ci] = np.where(np.isfinite(got), np.maximum(1.0, got), used[ci])
+                    tos[sx[ci], dc] -= 1
+                    tally("timeouts", call.sum())
         clock[sx] -= used
         fresh[sx] = False
         tally("clock_used", used.sum())
