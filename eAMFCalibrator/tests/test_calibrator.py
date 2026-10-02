@@ -809,15 +809,15 @@ class TestGeneratedQueries(unittest.TestCase):
 
 
 class TestModelStream(unittest.TestCase):
-    """A MODEL:<version> stream is the eAMFModel pricer, not a table."""
+    """A MODEL:<version> stream is an eAMFModel version, not a table."""
 
     def test_names(self):
         from .. import snowflake_io as io
-        self.assertEqual(io.stream_name("v1"), "MODEL:v1")
-        self.assertEqual(io.stream_name("MODEL:V2"), "MODEL:v2")
+        self.assertEqual(io.stream_name("v9"), "MODEL:v9")
+        self.assertEqual(io.stream_name("MODEL:V10"), "MODEL:v10")
         self.assertEqual(io.stream_name("GAMEPLAI_STREAM_CANDIDATE"),
                          "GAMEPLAI_STREAM_CANDIDATE")
-        self.assertTrue(io.is_model("MODEL:v1"))
+        self.assertTrue(io.is_model("MODEL:v9"))
         self.assertFalse(io.is_model(config.STREAMS["prod"]))
 
     def test_which_and_when_read_prods_table(self):
@@ -825,55 +825,29 @@ class TestModelStream(unittest.TestCase):
         for call in (io.match_universe, io.stream_window_summary, io.status_profile):
             cursor = RecordingCursor()
             try:
-                call(cursor, "MODEL:v1")
+                call(cursor, "MODEL:v9")
             except (IndexError, TypeError, ValueError):
                 pass
             sql = cursor.calls[0][0]
             self.assertIn(config.STREAMS["prod"], sql)
             self.assertNotIn("MODEL:", sql)
 
-    def test_quotes_are_priced_off_prods_quotes_and_the_feed(self):
+    def test_only_the_simulation_versions_are_models(self):
         from .. import snowflake_io as io
-        prod_table = config.STREAMS["prod"]
-        plays = [("AF1", 6, 1, "Home Team", 1, 10, 35, None),
-                 ("AF1", 10, 1, "Home Team", 1, 10, 26, None),
-                 ("AF1", 16, 1, "Home Team", 2, 11, 26, None)]
-        texts = {50: "PLAYER 1 to win", 51: "PLAYER 2 to win",
-                 52: "PLAYER 1 to score over -2.5 points more than PLAYER 2",
-                 53: "PLAYER 2 to score over 2.5 points more than PLAYER 1",
-                 54: "Total points over 38.5", 55: "Total points under 38.5"}
-        probs = {50: 42.0, 51: 58.0, 52: 46.0, 53: 54.0, 54: 47.0, 55: 53.0}
-        quotes = [("AF1", mid, m, probs[mid], 2.0, texts[mid], m if m else None, "OPEN", "true")
-                  for m in (0, 10, 16) for mid in texts]
-
-        def fetch_all(cur, sql, params=None):
-            if io.PLAY_TABLE in sql:
-                return None, plays
-            if io.SCORE_TABLE in sql:
-                return None, []
-            if prod_table in sql:
-                return None, quotes
-            raise AssertionError("unexpected query")
-
-        with mock.patch.object(io, "fetch_all", side_effect=fetch_all):
-            rows = io.fetch_quotes(RecordingCursor(), "MODEL:v1", ["AF1"])
-        self.assertTrue(rows)
-        self.assertTrue(all(len(r) == 9 for r in rows))
-        live = [r for r in rows if r[8] == "true"]
-        self.assertEqual({r[1] for r in live}, set(texts))
-        spread = next(r for r in live if r[1] == 52)
-        self.assertEqual(markets.parse_line(spread[5]), -2.5)
-        index = directional.index_by_message(rows)
-        self.assertIn(("AF1", 50), index)
+        for gone in ("v1", "v2", "v7", "MODEL:v3", "v2@prod"):
+            with self.assertRaises(ValueError):
+                io.stream_name(gone)
+        with self.assertRaises(SystemExit):
+            io._model_quotes(RecordingCursor(), "MODEL:v2", ["AF1"])
 
     def test_the_cli_swaps_the_candidate(self):
         from .. import __main__ as cli
         saved = dict(config.STREAMS)
         try:
-            args = cli.build_parser().parse_args(["report", "--candidate", "v2"])
+            args = cli.build_parser().parse_args(["report", "--candidate", "v9"])
             with contextlib.redirect_stdout(io.StringIO()):
                 cli.apply_overrides(args)
-            self.assertEqual(config.STREAMS["candidate"], "MODEL:v2")
+            self.assertEqual(config.STREAMS["candidate"], "MODEL:v9")
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
@@ -5623,14 +5597,14 @@ class TestCandidateLabel(unittest.TestCase):
     def test_the_model_name_replaces_candidate_everywhere_a_reader_looks(self):
         import re
         from .. import labels
-        config.STREAMS["candidate"] = "MODEL:v3"
+        config.STREAMS["candidate"] = "MODEL:v9"
         config.CANDIDATE_LABEL = None
         raw = self._render()
         page = labels.relabel(raw)
         seen = self._visible(page)
         self.assertIsNone(re.search(r"(?i)\bcand(idate)?\b", seen), re.search(r"(?i).{40}\bcand(idate)?\b.{40}", seen))
-        self.assertIn("v3", seen)
-        self.assertIn("<title>eAMF prod vs v3</title>", page)
+        self.assertIn("v9", seen)
+        self.assertIn("<title>eAMF prod vs v9</title>", page)
         # what the page runs on is untouched
         pick = lambda p, rx: re.findall(rx, p, re.S | re.I)
         self.assertEqual(pick(raw, r"<script\b.*?</script>"), pick(page, r"<script\b.*?</script>"))
@@ -5639,10 +5613,10 @@ class TestCandidateLabel(unittest.TestCase):
 
     def test_a_label_can_be_given(self):
         from .. import labels
-        config.STREAMS["candidate"] = "MODEL:v3"
-        config.CANDIDATE_LABEL = "v3 sim"
-        self.assertIn(">v3 sim</th>", self._render())
-        self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v3_sim.html")
+        config.STREAMS["candidate"] = "MODEL:v9"
+        config.CANDIDATE_LABEL = "v9 sim"
+        self.assertIn(">v9 sim</th>", self._render())
+        self.assertEqual(labels.default_report_name("eamf_report.html"), "eamf_report_v9_sim.html")
 
     def test_a_real_candidate_stream_keeps_its_name(self):
         from .. import labels

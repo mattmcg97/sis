@@ -783,9 +783,8 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v1, v2, v8, v9, v10 -- see eAMFModel) priced "
-                             "live (v1/v2 off the play feed, v8 to v10 off SCOUTING_FULL's "
-                             "PLAY_OVER snapshots and their build); "
+                             "or a model version (v8, v9, v10 -- see eAMFModel) priced "
+                             "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
                              "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917 "

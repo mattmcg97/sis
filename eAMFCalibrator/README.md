@@ -74,7 +74,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v1`, `v2`, `v8`, `v9`, `v10`) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8`, `v9`, `v10`) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
@@ -1368,7 +1368,7 @@ Each `scouting_playover.csv` row carries:
 play against the one before it, so dropping one would join two plays into
 a single wrong one. Everything that scores prices skips them.
 
-It is the input to `python -m eAMFModel playover` and `v8-build` to `v10-build`.
+It is the input to `python -m eAMFModel v8-build` to `v10-build`, `remaining` and `profiles`.
 
 Each row also carries `timeouts_used_a` / `timeouts_used_b`: how many timeouts
 each side had called in the half at that `PLAY_OVER`, off the feed's

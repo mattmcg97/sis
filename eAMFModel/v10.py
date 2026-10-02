@@ -11,7 +11,7 @@ from dataclasses import dataclass, fields
 import numpy as np
 
 from . import glmer_prior, nb2_prior, playover, players, sim10 as sim
-from .pricer import HOME, GameState
+from .state import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
@@ -86,9 +86,27 @@ def market_prob(market, line, margin_pmf, total_pmf):
 class PriorGrid:
     """Simulated games from kickoff on a grid of the two offenses' strengths."""
 
-    def __init__(self, margin, total, grid=GRID):
-        """Hold the margin and total distributions for each grid point."""
+    def __init__(self, margin, total, grid=GRID, pace_home=None, pace_away=None):
+        """Hold the margin and total distributions for each grid point, and the pace response
+        (each side's points at each pair of paces, against both at 1)."""
         self.margin, self.total, self.grid = margin, total, grid
+        self.pace_home, self.pace_away = pace_home, pace_away
+
+    def pace_response(self, home_pace, away_pace):
+        """How far the two players' pace moves each side's points from kickoff: (home, away)
+        multipliers, 1 when the grid has no pace response."""
+        if self.pace_home is None:
+            return 1.0, 1.0
+        gi = np.interp([home_pace, away_pace], PACE_POINTS, np.arange(len(PACE_POINTS)))
+        lo = np.minimum(len(PACE_POINTS) - 2, gi.astype(int))
+        w = gi - lo
+        out = []
+        for table in (self.pace_home, self.pace_away):
+            a, b = lo
+            wa, wb = w
+            out.append(float(table[a, b] * (1 - wa) * (1 - wb) + table[a + 1, b] * wa * (1 - wb)
+                             + table[a, b + 1] * (1 - wa) * wb + table[a + 1, b + 1] * wa * wb))
+        return tuple(out)
 
     @classmethod
     def build(cls, tables, n_paths=6000, seed=0, grid=GRID, theta_sd=0.0, **sim_kw):
@@ -111,13 +129,43 @@ class PriorGrid:
 
     def save(self, path):
         """Write the grid to a file."""
-        np.savez_compressed(path, margin=self.margin, total=self.total, grid=self.grid)
+        extra = ({} if self.pace_home is None else
+                 dict(pace_home=self.pace_home, pace_away=self.pace_away))
+        np.savez_compressed(path, margin=self.margin, total=self.total, grid=self.grid, **extra)
 
     @classmethod
     def load(cls, path):
         """Read a grid from a file."""
         z = np.load(path)
-        return cls(z["margin"], z["total"], z["grid"])
+        pace = (z["pace_home"], z["pace_away"]) if "pace_home" in z else (None, None)
+        return cls(z["margin"], z["total"], z["grid"], *pace)
+
+
+# v10: the pre-match model's expected points already carry each player's pace -- a fast player
+# scores more, and NB2 learned that from his scores -- so the sim's clock must not add it a second
+# time. Each side's points at kickoff are simulated at pairs of paces (PACE_POINTS, league
+# strengths) and a match's expected points are divided by its pace response before the starting
+# strengths are fitted: the sim, with both paces applied, then averages the prior's points.
+PACE_NEUTRAL = True
+PACE_POINTS = np.array([0.85, 0.925, 1.0, 1.075, 1.15])
+PACE_PATHS = 4000
+
+
+def fit_pace_response(tables, n_paths=PACE_PATHS, seed=0):
+    """Each side's mean points from kickoff at every pair of paces (home x away), over both at
+    1: (home, away) tables shaped (len(PACE_POINTS), len(PACE_POINTS))."""
+    n = len(PACE_POINTS)
+    start = sim.Start(2 * n * n)
+    rows = [(i, j, t) for i in range(n) for j in range(n) for t in (0, 1)]
+    for k, (i, j, t) in enumerate(rows):
+        start.pace[k] = (PACE_POINTS[i], PACE_POINTS[j])
+        start.team[k] = t
+        start.kicks_second_half[k] = 1 - t
+    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed)
+    h = home.mean(axis=1).reshape(n, n, 2).mean(-1)
+    a = away.mean(axis=1).reshape(n, n, 2).mean(-1)
+    mid = n // 2
+    return h / h[mid, mid], a / a[mid, mid]
 
 
 def _surface_fn(grid, step):
@@ -151,10 +199,94 @@ def fit_means(grid, home_points, away_points, step=0.01):
 LEAGUE_THETA = (0.0, 0.0)
 
 
-def prior_theta(grid, means):
+def prior_theta(grid, means, prof=None):
     """A match's starting strengths: from the pre-match prior's expected points, else league
+    average. With the players' profiles (`prof`, home and away) and PACE_NEUTRAL, the points are
+    first divided by the pace response, so the sim's clock does not count pace twice."""
+    if means is None:
+        return LEAGUE_THETA
+    if PACE_NEUTRAL and prof is not None:
+        rh, ra = grid.pace_response(prof[0].pace, prof[1].pace)
+        means = (means[0] / rh, means[1] / ra)
+    return fit_means(grid, *means)
+
+
+# v10: the pre-match model's expected points spread wider than real games do. Refitted
+# SHRINK_DAYS before the build's cut-off and read on those days, real totals and margins move
+# total_slope and margin_slope points for each point of its predictions (out of sample). Every
+# match's expected total and margin are pulled toward the build's average by those slopes.
+# The margin's slope is read but not applied (MARGIN_SHRINK): NB2's margins spread only about
+# +-1.75 points, so two weeks of matches measure their slope to about +-0.15.
+PRIOR_SHRINK = True
+MARGIN_SHRINK = False
+SHRINK_DAYS = 14
+SHRINK_MIN_MATCHES = 200
+SHRINK_RANGE = (0.5, 1.2)
+SHRINK_FILE = "v10shrink.json"
+
+
+def shrink_means(means, shrink):
+    """(home, away) expected points with the total and margin pulled toward the build's
     average."""
-    return LEAGUE_THETA if means is None else fit_means(grid, *means)
+    h, a = means
+    t = shrink["total_centre"] + shrink["total_slope"] * (h + a - shrink["total_centre"])
+    m = shrink["margin_centre"] + shrink["margin_slope"] * (h - a - shrink["margin_centre"])
+    return (t + m) / 2, (t - m) / 2
+
+
+def _slope(x, y):
+    """Least-squares slope of y on x."""
+    x, y = np.asarray(x, float), np.asarray(y, float)
+    v = np.var(x)
+    return float(np.cov(x, y, bias=True)[0, 1] / v) if v > 0 else 1.0
+
+
+def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_DAYS):
+    """Refit the pre-match model `days` before the cut-off, predict those days' matches and
+    regress the real total and margin on the predicted ones: the slopes (within SHRINK_RANGE,
+    corrected by the live model's level `scale`), the build's average (`centre`: total, margin)
+    and the matches read. None when fewer than SHRINK_MIN_MATCHES finished in the window."""
+    import os
+    start = before - dt.timedelta(days=days)
+    held = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
+            and nb2_prior._start(r) is not None and start <= nb2_prior._start(r) < before]
+    if len(held) < SHRINK_MIN_MATCHES:
+        return None
+    module = nb2_prior if prior == "nb2" else glmer_prior
+    d = os.path.join(work_dir, "shrink")
+    module.fit(history, d, before=start)
+    pred = module.predict(d, held)
+    rows = [(pred[r["MATCH_CODE"]], float(r["PLAYER_1_FINAL_SCORE"]), float(r["PLAYER_2_FINAL_SCORE"]))
+            for r in held if r["MATCH_CODE"] in pred]
+    if len(rows) < SHRINK_MIN_MATCHES:
+        return None
+    pt = [p[0] + p[1] for p, _, _ in rows]
+    pm = [p[0] - p[1] for p, _, _ in rows]
+    rt = [h + a for _, h, a in rows]
+    rm = [h - a for _, h, a in rows]
+    raw_t, raw_m = _slope(pt, rt) / scale, _slope(pm, rm) / scale
+    lo, hi = SHRINK_RANGE
+    margin = float(np.clip(raw_m, lo, hi)) if MARGIN_SHRINK else 1.0
+    return {"total_slope": float(np.clip(raw_t, lo, hi)), "margin_slope": margin,
+            "total_raw": raw_t, "margin_raw": raw_m, "total_centre": float(centre[0]),
+            "margin_centre": float(centre[1]), "matches": len(rows), "days": days,
+            "from": start.isoformat(), "before": before.isoformat()}
+
+
+class ShrunkPrematch:
+    """A pre-match model whose expected points are pulled toward the build's average
+    (shrink_means); everything else is the model's own."""
+
+    def __init__(self, pre, shrink):
+        """Wrap a fitted pre-match model and the build's shrink."""
+        self.pre, self.shrink = pre, shrink
+
+    def __getattr__(self, name):
+        return getattr(self.pre, name)
+
+    def means(self, schedule, **kw):
+        """The model's expected points for each match, shrunk."""
+        return {c: shrink_means(m, self.shrink) for c, m in self.pre.means(schedule, **kw).items()}
 
 
 def resolve_sides(match_rows):
@@ -386,14 +518,16 @@ def _grade_matches(job):
             if means is None:
                 skipped["no_prematch_prediction"] += 1
                 continue
-            theta0s = {g: fit_means(grid, *means) for g, grid in grids.items()}
-        else:
-            theta0s = {g: LEAGUE_THETA for g in grids}
-        a_home = match_rows[0]["team_a_side"] == "home"
-        snaps = sim.snap_records(match_rows)
         pair = (handles.get(code) if handles else None) or handles_of(match_rows)
         prof = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
                 else (players.Profile(), players.Profile()))
+        if priors is not None:
+            theta0s = {(v.grid, v.pace): prior_theta(grids[v.grid], means, prof if v.pace else None)
+                       for v in variants}
+        else:
+            theta0s = {(v.grid, v.pace): LEAGUE_THETA for v in variants}
+        a_home = match_rows[0]["team_a_side"] == "home"
+        snaps = sim.snap_records(match_rows)
         todo = []
         for row in playover.rows_for_match(match_rows):
             if row.prod_outcome is None:
@@ -414,7 +548,7 @@ def _grade_matches(job):
         states = {}
         for row, state in todo:
             states[row.message] = state
-        dists = {v.name: price_states(tables, theta0s[v.grid], v, snaps, a_home,
+        dists = {v.name: price_states(tables, theta0s[(v.grid, v.pace)], v, snaps, a_home,
                                       [states[m] for m in messages], messages, prof, n_paths, rng,
                                       seed=match_seed(code))
                  for v in variants}
@@ -1038,6 +1172,29 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         with open(os.path.join(out_dir, PRIOR_FILE), "w", encoding="utf-8") as fh:
             json.dump({"prior": prior}, fh)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
+        shrink_path = os.path.join(out_dir, SHRINK_FILE)
+        if os.path.exists(shrink_path):
+            os.remove(shrink_path)
+        if PRIOR_SHRINK and priors:
+            centre = (float(np.mean([h + a for h, a in priors.values()])),
+                      float(np.mean([h - a for h, a in priors.values()])))
+            if verbose:
+                print(f"  prior shrink: refitting the pre-match model {SHRINK_DAYS} days before the cut-off")
+            shrink = fit_shrink(history, prior, before, centre, out_dir, scale=pre.scale)
+            if shrink is not None:
+                with open(shrink_path, "w", encoding="utf-8") as fh:
+                    json.dump(shrink, fh, indent=1)
+                pre = ShrunkPrematch(pre, shrink)
+                priors = {c: shrink_means(m, shrink) for c, m in priors.items()}
+                if verbose:
+                    print(f"  prior shrink: on {shrink['matches']:,} matches out of sample, real totals move"
+                          f" {shrink['total_raw']:.3f} and margins {shrink['margin_raw']:.3f} a point of"
+                          f" the prediction -> totals pulled {shrink['total_slope']:.3f}, margins"
+                          f" {shrink['margin_slope']:.3f} toward {shrink['total_centre']:.2f} /"
+                          f" {shrink['margin_centre']:+.2f}")
+            elif verbose:
+                print(f"  prior shrink: fewer than {SHRINK_MIN_MATCHES} finished matches in the"
+                      f" {SHRINK_DAYS} days before the cut-off, none applied")
     handles = dict(handles or {})
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
@@ -1135,6 +1292,14 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     tables_path = os.path.join(out_dir, "v10tables.npz")
     grid_path = os.path.join(out_dir, "v10grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)
+    if PACE_NEUTRAL:
+        grid.pace_home, grid.pace_away = fit_pace_response(tables, n_paths=max(500, grid_paths * 2 // 3))
+        if verbose:
+            n = len(PACE_POINTS)
+            print("  pace response, home points at kickoff against both at 1 (home pace "
+                  + " / ".join(f"{p:.3f}" for p in PACE_POINTS) + ", away at 1): "
+                  + " / ".join(f"{grid.pace_home[i, n // 2]:.3f}" for i in range(n))
+                  + "; at the away pace: " + " / ".join(f"{grid.pace_home[n // 2, j]:.3f}" for j in range(n)))
     grid.save(grid_path)
     if IN_PLAY_FIT:
         rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors))
@@ -1190,7 +1355,14 @@ def prematch_model(model_dir_or_tables):
         with open(os.path.join(d, PRIOR_FILE), encoding="utf-8") as fh:
             kind = json.load(fh).get("prior", "nb2")
     path = os.path.join(d, kind)
-    return PRIORS[kind](path) if PRIORS[kind].exists(path) else None
+    if not PRIORS[kind].exists(path):
+        return None
+    pre = PRIORS[kind](path)
+    shrink_path = os.path.join(d, SHRINK_FILE)
+    if PRIOR_SHRINK and os.path.exists(shrink_path):
+        with open(shrink_path, encoding="utf-8") as fh:
+            pre = ShrunkPrematch(pre, json.load(fh))
+    return pre
 
 
 def players_book(model_dir_or_tables):

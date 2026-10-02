@@ -21,7 +21,7 @@ from collections import defaultdict
 import numpy as np
 
 from . import playover
-from .pricer import HOME
+from .state import HOME
 
 VALUES = (0, 3, 6, 7, 8, 10, 13, 14, 17, 21)
 MAX_REMAINING = 60

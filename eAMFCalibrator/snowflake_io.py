@@ -41,7 +41,7 @@ def is_model(stream_table):
 
 
 def stream_name(value):
-    """CLI value -> STREAMS entry: 'v1' means the model, a table stays a table.
+    """CLI value -> STREAMS entry: 'v9' means the model, a table stays a table.
     A model with its own lines (v8, v9) read at prod's line instead is
     'v9@prod'.
 
@@ -60,9 +60,12 @@ def stream_name(value):
         config.MODEL_DIRS[label] = directory.strip()
         return stream
     if is_model(value):
-        return MODEL_PREFIX + value.split(":", 1)[1].lower()
+        value = value.split(":", 1)[1]
     version = model_base(value.lower().split("@", 1)[0])
     if version.startswith("v") and version[1:].isdigit():
+        if version not in LINE_MODELS:
+            raise ValueError(f"{value!r}: no such eAMFModel version (there are "
+                             f"{', '.join(LINE_MODELS)})")
         return MODEL_PREFIX + value.lower()
     return value
 
@@ -72,7 +75,7 @@ LINE_MODELS = ("v8", "v9", "v10")     # versions that quote their own lines
 
 def model_version(stream_table):
     """'MODEL:v9@prod' -> ('v9', 'prod'); ('v9', None) without a suffix."""
-    version = stream_table.split(":", 1)[1] or "v1"
+    version = stream_table.split(":", 1)[1]
     name, _, lines = version.lower().partition("@")
     return name, (lines or None)
 
@@ -368,21 +371,13 @@ def fetch_quotes(cur, stream_table, match_codes):
 
 
 def _model_quotes(cur, stream_table, match_codes):
-    """Price the matches with an eAMFModel version, GAMEPLAI-shaped.
-
-    Fetches what the model reads -- prod's quotes (for its pre-match prior
-    and its lines), the plays and the scores -- and returns rows exactly as
-    a stream table would.
-    """
-    from eAMFModel import stream as model_stream
+    """Price the matches with an eAMFModel version, GAMEPLAI-shaped: rows exactly as a stream
+    table would return them."""
     version, lines = model_version(stream_table)
-    if model_base(version) in LINE_MODELS:
-        return _sim_quotes(cur, match_codes, version, lines)
-    prod = fetch_quotes(cur, config.STREAMS["prod"], match_codes)
-    plays = fetch_plays(cur, match_codes, None)
-    scores = fetch_scores(cur, match_codes)
-    return model_stream.quotes_for_matches(model_stream.model_for(version), match_codes,
-                                           plays, scores, prod)
+    if model_base(version) not in LINE_MODELS:
+        raise SystemExit(f"{stream_table}: no such eAMFModel version (there are "
+                         f"{', '.join(LINE_MODELS)})")
+    return _sim_quotes(cur, match_codes, version, lines)
 
 
 _SCOUTING_TABLE = {}                      # located once per run

@@ -193,29 +193,3 @@ def build(matches, handles, drive_params=None):
         book.players[who] = prof
     return book
 
-
-class Pace:
-    """This match's pace so far against what the two players were expected to play at."""
-
-    def __init__(self, book, home_handle, away_handle, prior_seconds=600.0):
-        """Start with the two players' profiles and no snaps seen."""
-        self.book = book
-        self.prior = {"TEAM_A": book.profile(home_handle).pace,
-                      "TEAM_B": book.profile(away_handle).pace}
-        self.prior_seconds = prior_seconds
-        self.used = 0.0
-        self.expected = 0.0
-
-    def add(self, offense, sit, seconds):
-        """Count one more snap interval."""
-        self.used += seconds
-        self.expected += self.book.expected_seconds(sit) * self.prior.get(offense, 1.0)
-
-    def ratio(self):
-        """Observed pace over expected, shrunk toward 1."""
-        k = self.prior_seconds
-        return (k + self.used) / (k + self.expected)
-
-    def profile_pace(self):
-        """The two players' average profile pace."""
-        return 0.5 * (self.prior["TEAM_A"] + self.prior["TEAM_B"])

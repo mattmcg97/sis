@@ -11,7 +11,7 @@ from dataclasses import dataclass, fields
 import numpy as np
 
 from . import glmer_prior, nb2_prior, playover, players, sim9 as sim
-from .pricer import HOME, GameState
+from .state import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100

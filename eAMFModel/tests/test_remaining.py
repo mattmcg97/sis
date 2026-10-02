@@ -5,7 +5,7 @@ import unittest
 import numpy as np
 
 from .. import remaining
-from ..pricer import AWAY, HOME, GameState
+from ..state import AWAY, HOME, GameState
 
 
 def pmf(**mass):
@@ -19,7 +19,7 @@ class TestRemaining(unittest.TestCase):
 
     def test_the_game_state_is_read_off_the_margin_and_the_ball(self):
         s = lambda h, a, off: GameState(offense=off, down=1, distance=10, field_position=25,
-                                        home_score=h, away_score=a, period=4, elapsed_in_period=0.0,
+                                        home_score=h, away_score=a, period=4,
                                         clock_seconds=60)
         self.assertEqual(remaining.game_state(s(7, 7, HOME)), "level")
         self.assertEqual(remaining.game_state(s(14, 7, HOME)), "1 score, leader has ball")

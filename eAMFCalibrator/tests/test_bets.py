@@ -243,12 +243,12 @@ class TestCommand(unittest.TestCase):
                 mock.patch.object(bets, "write_csv") as written, mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
                 mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
-                mock.patch.object(config, "CANDIDATES", ["MODEL:v4", "MODEL:v5", "MODEL:v6"]), \
+                mock.patch.object(config, "CANDIDATES", ["MODEL:v8", "MODEL:v9", "MODEL:v10"]), \
                 mock.patch.object(bets, "check_models"):
             results = bets.run(None, "out")
-        self.assertEqual([n for n, _ in results], ["v4", "v5", "v6"])
-        self.assertIn(mock.call(None, "MODEL:v6", ["M1"]), fq.call_args_list)
-        self.assertIn("candidate_prob_v6", written.call_args_list[-1][0][1][0])
+        self.assertEqual([n for n, _ in results], ["v8", "v9", "v10"])
+        self.assertIn(mock.call(None, "MODEL:v10", ["M1"]), fq.call_args_list)
+        self.assertIn("candidate_prob_v10", written.call_args_list[-1][0][1][0])
 
 
 class TestReading(unittest.TestCase):
@@ -283,9 +283,9 @@ class TestReading(unittest.TestCase):
             config.CANDIDATES = []
             config.STREAMS["candidate"] = "GAMEPLAI_STREAM_CANDIDATE"
             self.assertEqual(bets.candidate_streams(), ["GAMEPLAI_STREAM_CANDIDATE"])
-            config.CANDIDATES = ["MODEL:v4", "MODEL:v5", "MODEL:v6@prod"]
+            config.CANDIDATES = ["MODEL:v8", "MODEL:v9", "MODEL:v10@prod"]
             self.assertEqual([bets.label(s) for s in bets.candidate_streams()],
-                             ["v4", "v5", "v6@prod"])
+                             ["v8", "v9", "v10@prod"])
         finally:
             config.STREAMS["candidate"], config.CANDIDATES = saved
 

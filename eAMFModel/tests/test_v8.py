@@ -14,7 +14,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import glmer_prior, nb2_prior, players, pricer, sim8, v8, v8_stream
+from .. import glmer_prior, nb2_prior, players, sim8, v8, v8_stream
 from .fakes import _matches, _with_handles
 
 

@@ -13,7 +13,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import glmer_prior, nb2_prior, players, pricer, sim9, sim10, v10, v10_stream
+from .. import glmer_prior, nb2_prior, players, sim9, sim10, v10, v10_stream
 from .fakes import _matches, _with_handles
 
 
@@ -1706,6 +1706,125 @@ class TestGlmerPrior(unittest.TestCase):
             with self.assertRaises(SystemExit) as caught:
                 glmer_prior.rscript()
         self.assertIn("install_packages.R", str(caught.exception))
+
+
+class TestPriorPace(unittest.TestCase):
+    """v10: the pre-match prior's expected points carry each player's pace already, so the
+    starting strengths are fitted with the pace response taken out."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim10.Tables.build(_matches(), min_records=20)
+        cls.grid = v10.PriorGrid.build(cls.tables, n_paths=300)
+        cls.grid.pace_home, cls.grid.pace_away = v10.fit_pace_response(cls.tables, n_paths=600)
+
+    def test_the_response_is_one_at_league_pace_and_falls_with_slower_play(self):
+        n = len(v10.PACE_POINTS)
+        for table in (self.grid.pace_home, self.grid.pace_away):
+            self.assertAlmostEqual(table[n // 2, n // 2], 1.0)
+            self.assertGreater(table[0, n // 2], table[-1, n // 2])    # home's pace
+            self.assertGreater(table[n // 2, 0], table[n // 2, -1])    # away's pace
+        self.assertEqual(self.grid.pace_response(1.0, 1.0), (1.0, 1.0))
+        self.assertEqual(v10.PriorGrid(self.grid.margin, self.grid.total).pace_response(0.9, 0.9),
+                         (1.0, 1.0))
+
+    def test_fast_players_start_weaker_so_the_points_match_the_prior(self):
+        means = (19.0, 16.0)
+        plain = v10.prior_theta(self.grid, means)
+        league = v10.prior_theta(self.grid, means, (players.Profile(), players.Profile()))
+        self.assertEqual(plain, league)
+        fast = v10.prior_theta(self.grid, means, (players.Profile(pace=0.88), players.Profile(pace=0.88)))
+        self.assertLess(fast[0], plain[0])
+        self.assertLess(fast[1], plain[1])
+        with mock.patch.object(v10, "PACE_NEUTRAL", False):
+            self.assertEqual(v10.prior_theta(self.grid, means, (players.Profile(pace=0.88),) * 2), plain)
+        self.assertEqual(v10.prior_theta(self.grid, None, (players.Profile(pace=0.88),) * 2),
+                         v10.LEAGUE_THETA)
+
+    def test_the_grid_keeps_its_pace_response(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "g.npz")
+            self.grid.save(path)
+            back = v10.PriorGrid.load(path)
+        self.assertTrue(np.array_equal(back.pace_home, self.grid.pace_home))
+        self.assertEqual(back.pace_response(0.9, 1.1), self.grid.pace_response(0.9, 1.1))
+
+
+class TestPriorShrink(unittest.TestCase):
+    """v10: the pre-match prior's totals are pulled toward the build's average by the slope real
+    totals showed on it out of sample."""
+
+    SHRINK = {"total_slope": 0.8, "margin_slope": 1.0, "total_centre": 35.0, "margin_centre": 0.0}
+    BEFORE = dt.datetime(2026, 9, 20)
+
+    def test_the_total_moves_and_the_margin_holds(self):
+        h, a = v10.shrink_means((25.0, 20.0), self.SHRINK)
+        self.assertAlmostEqual(h + a, 35.0 + 0.8 * 10.0)
+        self.assertAlmostEqual(h - a, 5.0)
+        h, a = v10.shrink_means((17.5, 17.5), self.SHRINK)
+        self.assertAlmostEqual(h + a, 35.0)
+
+    def history(self, n_days=30):
+        import random
+        rng = random.Random(4)
+        rows, preds = [], {}
+        for d in range(n_days):
+            day = self.BEFORE - dt.timedelta(days=n_days - d)
+            for k in range(30):
+                code = f"AF{d:02d}{k:02d}"
+                pt, pm = rng.uniform(27, 43), rng.uniform(-6, 6)
+                rt = 35.0 + 0.7 * (pt - 35.0) + rng.gauss(0, 1.0)
+                rm = 1.0 * pm + rng.gauss(0, 1.0)
+                preds[code] = ((pt + pm) / 2, (pt - pm) / 2)
+                rows.append({"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{day:%Y-%m-%d %H:%M:%S}",
+                             "PLAYER_1_FINAL_SCORE": f"{(rt + rm) / 2:.2f}",
+                             "PLAYER_2_FINAL_SCORE": f"{(rt - rm) / 2:.2f}"})
+        return rows, preds
+
+    def test_the_slope_is_read_out_of_sample(self):
+        rows, preds = self.history()
+        seen = {}
+
+        def fit(history, out_dir, before=None):
+            seen["before"] = before
+
+        def predict(d, schedule, *a, **kw):
+            seen["n"] = len(schedule)
+            return {r["MATCH_CODE"]: preds[r["MATCH_CODE"]] for r in schedule}
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(nb2_prior, "fit", side_effect=fit), \
+                mock.patch.object(nb2_prior, "predict", side_effect=predict):
+            got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d, scale=1.0)
+            self.assertEqual(seen["before"], self.BEFORE - dt.timedelta(days=v10.SHRINK_DAYS))
+            self.assertEqual(seen["n"], 30 * v10.SHRINK_DAYS)
+            self.assertAlmostEqual(got["total_slope"], 0.7, delta=0.03)
+            self.assertAlmostEqual(got["margin_raw"], 1.0, delta=0.05)
+            self.assertEqual(got["margin_slope"], 1.0)                  # read, not applied
+            self.assertEqual((got["total_centre"], got["margin_centre"]), (35.0, 0.5))
+            halved = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d, scale=2.0)
+            self.assertAlmostEqual(halved["total_raw"], got["total_raw"] / 2)
+            self.assertIsNone(v10.fit_shrink(rows[:100], "nb2", self.BEFORE, (35.0, 0.5), d))
+
+    def test_the_build_s_prematch_model_is_shrunk(self):
+        class Pre:
+            league = (17.5, 17.5)
+            scale = 1.0
+
+            def means(self, schedule, **kw):
+                return {r["MATCH_CODE"]: (25.0, 20.0) for r in schedule}
+        shrunk = v10.ShrunkPrematch(Pre(), self.SHRINK)
+        (h, a), = shrunk.means([{"MATCH_CODE": "X"}]).values()
+        self.assertAlmostEqual(h + a, 43.0)
+        self.assertEqual(shrunk.league, (17.5, 17.5))
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(nb2_prior.Prematch, "exists", return_value=True), \
+                    mock.patch.object(nb2_prior.Prematch, "__init__", return_value=None):
+                self.assertNotIsInstance(v10.prematch_model(d), v10.ShrunkPrematch)
+                with open(os.path.join(d, v10.SHRINK_FILE), "w") as fh:
+                    json.dump(self.SHRINK, fh)
+                self.assertIsInstance(v10.prematch_model(d), v10.ShrunkPrematch)
+                with mock.patch.object(v10, "PRIOR_SHRINK", False):
+                    self.assertNotIsInstance(v10.prematch_model(d), v10.ShrunkPrematch)
 
 
 if __name__ == "__main__":

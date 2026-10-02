@@ -3,15 +3,8 @@
 import csv
 from collections import Counter, defaultdict
 
-from dataclasses import replace
-
-from . import backtest, players, pricer
-from .pricer import AWAY, HOME, GameState
-
-PACE_OFF = "off"
-PACE_NEWS = "news"
-PACE_FULL = "full"
-PACE_PRIOR_SECONDS = 600.0
+from . import grading
+from .state import AWAY, HOME, GameState
 
 MARKETS = (50, 51, 52, 53, 54, 55)
 NEXT = "next"
@@ -124,8 +117,8 @@ def state_for(r, state_mode=OVER):
     row_side = side_of(r["offense"], a_side)
     opening = side_of(r.get("opening_offense"), a_side)
     messages = [m for m in (r.get("play_messages") or "").split("|") if m]
-    base = dict(period=period, elapsed_in_period=0.0, home_score=home, away_score=away,
-                clock_seconds=clock_s, opening_receiver=opening)
+    base = dict(period=period, home_score=home, away_score=away, clock_seconds=clock_s,
+                opening_receiver=opening)
 
     def snap(side, prefix=""):
         """The side on the ball and its field position."""
@@ -185,150 +178,22 @@ def state_for(r, state_mode=OVER):
 
 
 def rows_for_match(match_rows):
-    """One backtest row per live prod market in a match, with its state."""
+    """One grading row per prod market quoted in a match, with the export row it came from."""
     out = []
     for r in match_rows:
         for m in MARKETS:
             prob = _float(r.get(f"prob_{m}"))
-            outcome = _int(r.get(f"outcome_{m}"))
             if prob is None:
                 continue
-            row = backtest.Row(
+            row = grading.Row(
                 match_code=r["match_code"], message=_int(r["message"]), period=_int(r["period"]),
                 home_score=_int(r["score_p1"]) or 0, away_score=_int(r["score_p2"]) or 0,
-                offense=None, field_position=None, down=None, distance=None, market_id=m,
-                prod_line=_float(r.get(f"line_{m}")), candidate_line=None,
-                prod_probability=prob, candidate_probability=None,
-                prod_outcome=outcome, candidate_outcome=None,
-                prod_live=_int(r.get(f"live_{m}")), candidate_live=1)
+                market_id=m, prod_line=_float(r.get(f"line_{m}")), prod_probability=prob,
+                prod_outcome=_int(r.get(f"outcome_{m}")), prod_live=_int(r.get(f"live_{m}")))
             row.kind = r["play_kind"]
             row.source = r
             out.append(row)
     return out
-
-
-def prior_for(model, match_rows):
-    """A match's pre-match prior from prod's opening lines (older versions only)."""
-    r = match_rows[0]
-    line52, line54 = _float(r.get("prematch_line_52")), _float(r.get("prematch_line_54"))
-    if line52 is None or line54 is None:
-        line52, line54 = _float(r.get("line_52")), _float(r.get("line_54"))
-        if line52 is None or line54 is None:
-            return None
-        return model.fit_prior(line52, line54, ml_home=_float(r.get("prob_50")),
-                               spread_home=_float(r.get("prob_52")),
-                               over=_float(r.get("prob_54")), on_clock=True)
-    return model.fit_prior(line52, line54, ml_home=_float(r.get("prematch_prob_50")),
-                           spread_home=_float(r.get("prematch_prob_52")),
-                           over=_float(r.get("prematch_prob_54")), on_clock=True)
-
-
-def _pace_by_message(match_rows, book, handles):
-    """The pace so far and the players' profile pace at each snapshot."""
-    pace = (players.Pace(book, *handles, prior_seconds=PACE_PRIOR_SECONDS) if handles
-            else players.Pace(book, None, None, prior_seconds=PACE_PRIOR_SECONDS))
-    intervals = sorted(players.play_intervals(match_rows), key=lambda x: x[3])
-    out = {}
-    j = 0
-    for r in match_rows:
-        m = int(r["message"])
-        while j < len(intervals) and intervals[j][3] <= m:
-            offense, sit, seconds, _ = intervals[j]
-            pace.add(offense, sit, seconds)
-            j += 1
-        out[m] = (pace.ratio(), pace.profile_pace())
-    return out
-
-
-def _player_effects(state, message, pace_table, profiles, effects):
-    """The state with the players' effects applied."""
-    changes = {}
-    home, away = profiles
-    if effects.get("aggression"):
-        changes.update(home_aggression=home.aggression, away_aggression=away.aggression)
-    if effects.get("milk"):
-        changes.update(home_milk=home.milk, away_milk=away.milk)
-    mode = effects.get("pace", PACE_OFF)
-    if mode != PACE_OFF and message in pace_table:
-        ratio, profile_pace = pace_table[message]
-        mult = 1.0 / ratio
-        if mode == PACE_FULL:
-            mult /= profile_pace
-        changes["pace"] = mult
-    return replace(state, **changes) if changes else state
-
-
-def _grade_matches(job):
-    """Worker: grade a list of matches."""
-    (matches, versions, state_mode, scrimmage_only, require_live, book, handles,
-     effects) = job
-    models = {name: pricer.Model(params) for name, params in versions.items()}
-    graded = []
-    skipped = Counter()
-    for match_code, match_rows in matches:
-        priors = {name: prior_for(model, match_rows) for name, model in models.items()}
-        if any(p is None for p in priors.values()):
-            skipped["no_prior"] += 1
-            continue
-        pair = handles.get(match_code) if handles else None
-        profiles = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
-                    else (players.Profile(), players.Profile()))
-        pace_table = _pace_by_message(match_rows, book, pair) if book else {}
-        books = {}
-        for row in rows_for_match(match_rows):
-            src = row.source
-            if row.prod_outcome is None:
-                skipped["push_or_unresolved"] += 1
-                continue
-            if require_live and not row.prod_live:
-                skipped["prod_not_live"] += 1
-                continue
-            if scrimmage_only and row.kind != "SCRIMMAGE":
-                skipped["not_scrimmage"] += 1
-                continue
-            state, why = state_for(src, state_mode)
-            if state is None:
-                skipped[why] += 1
-                continue
-            probs = {}
-            for name, model in models.items():
-                key = (name, row.message)
-                if key not in books:
-                    s = _player_effects(state, row.message, pace_table, profiles,
-                                        effects.get(name, {}))
-                    books[key] = model.book(priors[name], s)
-                probs[name] = books[key].prob(row.market_id, row.prod_line)
-            row.period = state.period
-            row.clock_seconds = state.clock_seconds
-            row.source = None
-            graded.append((match_code, row, probs))
-    return graded, skipped
-
-
-def run(path, versions, state_mode=OVER, scrimmage_only=False, limit=None,
-        require_live=True, workers=1, matches=None, book=None, handles=None,
-        effects=None):
-    """Grade model versions on an export against prod."""
-    data = load(path)
-    items = sorted(data.items())
-    if matches is not None:
-        wanted = set(matches)
-        items = [item for item in items if item[0] in wanted]
-    if limit is not None:
-        items = items[:limit]
-    job = (versions, state_mode, scrimmage_only, require_live, book, handles or {},
-           effects or {})
-    if workers <= 1:
-        return _grade_matches((items,) + job)
-    import multiprocessing
-    chunks = [items[i::workers * 4] for i in range(workers * 4)]
-    graded, skipped = [], Counter()
-    with multiprocessing.Pool(workers) as pool:
-        for g, s in pool.imap_unordered(_grade_matches, [(c,) + job for c in chunks if c]):
-            graded.extend(g)
-            skipped.update(s)
-    graded.sort(key=lambda g: (g[0], g[1].message, g[1].market_id))
-    return graded, skipped
 
 
 def _on_the_board(r, home, away, scorer, points):
