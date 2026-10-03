@@ -78,7 +78,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
-| `--v9-lines own\|prod` | `--candidate v9`: quote v9's own even line, moved as the game moves (`own`, the default), or read v9's price at prod's line (`prod`) |
+| `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines` | the same for `--candidate v8` and `--candidate v10` |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
@@ -1433,7 +1433,7 @@ player handles for the profiles, and the model prices each one by simulation
 - **Prices between snapshots:** like any stream, the model's quote stands until
   its next one. At every message and market prod quoted after a
   `PLAY_OVER`, it quotes that snapshot's book.
-- **Lines:** it quotes its own even line on the spread and the total, so pairs
+- **Lines:** it quotes its own line on the spread and the total, so pairs
   split between the same line (compared on probability) and a different line
   (compared on whose line landed nearer the result). `--v9-lines prod` reads its
   price at the line of the exact prod row the pairing uses there: the first live
