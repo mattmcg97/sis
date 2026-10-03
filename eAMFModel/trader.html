@@ -143,14 +143,14 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
         <div><label>Home expected pts</label><input id="mean_home" type="number" step="0.1"></div>
         <div><label>Away expected pts</label><input id="mean_away" type="number" step="0.1"></div>
       </div>
-      <div class="note" id="nb2note">From the pre-match model, or type your own.</div>
+      <div class="note" id="nb2note"></div>
       <div class="profiles" id="profiles"></div>
       <button class="primary" id="start" style="margin-top:12px;width:100%">Start match</button>
       <datalist id="players"></datalist><datalist id="teams"></datalist>
     </section>
     <section class="panel" id="pad">
       <h2>Next play</h2>
-      <div id="padbody" class="empty">Start a match to make plays.</div>
+      <div id="padbody"></div>
     </section>
   </div>
   <div class="col2">
@@ -167,12 +167,11 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
     </section>
     <section class="panel">
       <h2>Prices <span id="pricenote" style="text-transform:none;letter-spacing:0"></span></h2>
-      <div id="prices" class="empty">No prices yet.</div>
+      <div id="prices"></div>
     </section>
     <section class="panel">
-      <h2>Final margin (home − away)</h2>
-      <div class="legend" id="mlegend"></div>
-      <div class="chart" id="mdist"></div>
+      <h2>Plays</h2>
+      <div class="log" id="log"></div>
     </section>
   </div>
   <div class="col3">
@@ -192,8 +191,9 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       <div class="chart" id="tdist"></div>
     </section>
     <section class="panel">
-      <h2>Plays</h2>
-      <div class="log" id="log"><div class="empty" style="display:block">No plays yet.</div></div>
+      <h2>Final margin (home − away)</h2>
+      <div class="legend" id="mlegend"></div>
+      <div class="chart" id="mdist"></div>
     </section>
   </div>
 </main>
@@ -243,12 +243,11 @@ function readSetup() {
     margin: parseFloat($("margin").value) / 100, paths: parseInt($("paths").value, 10)};
 }
 $("nb2").onclick = async () => {
-  busy(true); $("nb2note").textContent = "Asking the pre-match model…";
+  busy(true); $("nb2note").textContent = "";
   try {
     const r = await api("/api/prematch", {setup: readSetup()});
     $("mean_home").value = r.means[0]; $("mean_away").value = r.means[1];
-    $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` :
-      (r.note ? esc(r.note) : `Expected ${r.means[0]} – ${r.means[1]} (total ${(r.means[0] + r.means[1]).toFixed(1)}). Edit to override.`);
+    $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` : (r.note ? esc(r.note) : "");
     const P = (k, p) => `<b>${k}</b><span>${p.pace}</span><span>${p.aggression >= 0 ? "+" : ""}${p.aggression}</span>`;
     $("profiles").innerHTML = `<span></span><span>pace</span><span>4th-down aggression</span>` +
       P("Home", r.home_profile) + P("Away", r.away_profile);
@@ -257,7 +256,7 @@ $("nb2").onclick = async () => {
 };
 $("start").onclick = async () => {
   const s = readSetup();
-  if (!isFinite(s.means[0]) || !isFinite(s.means[1])) { $("nb2note").innerHTML = '<span class="error">Set both expected points first.</span>'; return; }
+  if (!isFinite(s.means[0]) || !isFinite(s.means[1])) { $("nb2note").innerHTML = '<span class="error">Expected points missing</span>'; return; }
   busy(true);
   try {
     const r = await api("/api/start", {setup: s});
@@ -299,10 +298,10 @@ async function play(p) {
 }
 const num = id => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return isFinite(v) ? v : null; };
 function padHTML(g) {
-  const common = `<div class="btns"><button data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button>
-    <button data-a="to_home" ${g.timeouts_home ? "" : "disabled"}>Timeout home</button>
-    <button data-a="to_away" ${g.timeouts_away ? "" : "disabled"}>Timeout away</button></div>`;
-  if (g.phase === "final") return `<div class="empty">Final. Undo to go back, or start a new match.</div>` + common + editHTML(g);
+  const common = `<div class="btns"><button data-a="to_home" ${g.timeouts_home ? "" : "disabled"}>Timeout home</button>
+    <button data-a="to_away" ${g.timeouts_away ? "" : "disabled"}>Timeout away</button>
+    <button data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button></div>`;
+  if (g.phase === "final") return `<div class="empty">Final</div>` + common + editHTML(g);
   if (g.phase === "kickoff") return `<div class="row"><div><label>Return to (own yd)</label><input id="p_at" type="number" value="25"></div>
       <div><label>Seconds</label><input id="p_secs" type="number" value="0"></div></div>
     <div class="btns"><button class="primary" data-a="kick">Kick-off</button><button data-a="touchback">Touchback</button><button data-a="kick_td">Return TD</button></div>` + common + editHTML(g);
@@ -314,8 +313,7 @@ function padHTML(g) {
     <div class="btns"><button class="primary" data-a="play">Play ▸</button><button data-a="incomplete">Incomplete</button>
       <button data-a="touchdown">Touchdown</button><button data-a="fg">FG good</button><button data-a="fg_miss">FG miss</button>
       <button data-a="punt">Punt</button><button data-a="turnover">Turnover</button><button data-a="turnover_td">Pick six</button>
-      <button data-a="kneel">Kneel</button><button data-a="spike">Spike</button><button data-a="safety">Safety</button></div>
-    <div class="note">Yards and seconds apply to the play buttons; a turnover gives the ball over at its spot.</div>` + common + editHTML(g);
+      <button data-a="kneel">Kneel</button><button data-a="spike">Spike</button><button data-a="safety">Safety</button></div>` + common + editHTML(g);
 }
 function editHTML(g) {
   const opt = (v, cur, t) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${t}</option>`;
@@ -403,8 +401,7 @@ function renderPrices(pr, prev) {
     <div class="ladders"><table><tr><th>Handicap</th><th>Home</th><th>Away</th></tr>${pr.spread.ladder.map(r =>
       `<tr class="${r.line === pr.spread.line ? "quoted" : ""}"><td>${handicap(r.line, "home")}</td><td>${pct(r.home)}</td><td>${pct(1 - r.home)}</td></tr>`).join("")}</table>
       <table><tr><th>Total</th><th>Over</th><th>Under</th></tr>${pr.total.ladder.map(r =>
-      `<tr class="${r.line === pr.total.line ? "quoted" : ""}"><td>${r.line.toFixed(1)}</td><td>${pct(r.over)}</td><td>${pct(1 - r.over)}</td></tr>`).join("")}</table></div>
-    <div class="note">Lines sit in the gap between the key numbers (3, 7, 10…) and hold while they stay inside 40–60%. Odds carry a ${(100 * pr.book_margin).toFixed(1)}% margin.</div>`;
+      `<tr class="${r.line === pr.total.line ? "quoted" : ""}"><td>${r.line.toFixed(1)}</td><td>${pct(r.over)}</td><td>${pct(1 - r.over)}</td></tr>`).join("")}</table></div>`;
 }
 function renderLog() {
   $("log").innerHTML = HIST.map((h, i) => {

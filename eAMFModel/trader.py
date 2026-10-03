@@ -93,7 +93,7 @@ class Trader:
         out = dict(home_profile=self.profile(setup.get("home_player")),
                    away_profile=self.profile(setup.get("away_player")))
         if self.pre is None:
-            out["error"] = "this build has no pre-match model (built without --history)"
+            out["error"] = "No pre-match model in this build"
             out["means"] = [17.0, 17.0]
             return out
         row = {"MATCH_CODE": "TRADER", "SPORT_CODE": "AF",
@@ -106,12 +106,12 @@ class Trader:
         try:
             means = self.pre.means([row])["TRADER"]
         except (Exception, SystemExit) as e:          # pandas missing, an unknown player...
-            out["error"] = f"the pre-match model could not price this match: {e}"
+            out["error"] = f"Pre-match model failed: {e}"
             means = self.pre.league
         out["means"] = [round(float(m), 2) for m in means]
         out["league"] = list(self.pre.league)
         if tuple(out["means"]) == tuple(round(float(m), 2) for m in self.pre.league) and "error" not in out:
-            out["note"] = "the pre-match model does not know this pairing: league average"
+            out["note"] = "Unknown pairing: league average"
         return out
 
     # -- pricing ---------------------------------------------------------------------------

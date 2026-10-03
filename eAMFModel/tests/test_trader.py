@@ -35,7 +35,7 @@ class TestTrader(unittest.TestCase):
 
     def test_without_a_pre_match_model_the_expected_points_are_typed_in(self):
         r = self.call("/api/prematch", setup=self.setup)
-        self.assertIn("no pre-match model", r["error"])
+        self.assertIn("No pre-match model", r["error"])
         self.assertEqual(set(r["home_profile"]), {"plays", "pace", "aggression", "kick"})
         status, reply = trader.respond(self.t, "/api/start", {"setup": {"home_player": "ALPHA"}})
         self.assertEqual(status, 400)
