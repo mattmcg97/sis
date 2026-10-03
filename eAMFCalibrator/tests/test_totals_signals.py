@@ -124,7 +124,7 @@ class FakeModel:
         self.asked = (records, states, messages)
         return [([1.0], [0.0] * (m // 10 + 10) + [1.0]) for m in messages]
 
-    def even_line(self, tpmf, offset):
+    def key_line(self, tpmf, offset):
         return len(tpmf) - 1.5
 
     def market_prob(self, market, line, mpmf, tpmf):

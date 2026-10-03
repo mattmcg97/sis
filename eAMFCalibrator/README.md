@@ -1838,11 +1838,11 @@ somewhere v6 needs fixing too. The per-candidate columns are `simulated_v6`
 and `candidate_revenue_v6`. `line_gap_v6` buckets the bets by v6's line
 less the bet's (whole points, capped at ±3), to separate what moving the
 line did from what the probability did. Running `--candidate v6,v6@prod`
-prices both from one simulation. v10 has more line rules: `v10@anchored`
-(prod's line, moved only as far as it must), `v10@hyst` (its own even line, held
-until far off) and `v10@key` (its own line in the gap between the key numbers).
-See eAMFModel's README. `--candidate v10,v10@hyst,v10@key` prices them all from
-one simulation.
+prices both from one simulation. A model's own line sits in the gap between
+the key numbers; `v10@even` reads it at the half-point line nearest 50%
+instead. v10 also has `v10@anchored` (prod's line, moved only as far as it
+must) and `v10@hyst` (the even line, held until far off). See eAMFModel's
+README. `--candidate v10,v10@even` prices both from one simulation.
 
 **Prod's pre-match by gamer (Aug 25–Sep 10, 1,424 matches).** Prod's
 pre-match misses by gamer are larger than chance. The mean z² runs
@@ -1883,8 +1883,8 @@ Every candidate shares the bets, the lags, the line signs and prod's quotes.
 Each is read at the prod message the bet saw (one lag before it), so the lag
 is the same for all of them. A model version prices every prod message off
 its latest PLAY_OVER at or before it, carrying prod's message and publish
-time. It quotes its own even lines and probabilities, and the bet is settled
-at that line. `v5@prod` reads it at prod's lines instead. A table
+time. It quotes its own lines (in the gap between the key numbers) and
+probabilities, and the bet is settled at that line. `v5@prod` reads it at prod's lines instead. A table
 (`GAMEPLAI_STREAM_CANDIDATE`) can sit in the list too.
 
 A model has no pre-match price (its first quote is the first PLAY_OVER), so

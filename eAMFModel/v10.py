@@ -86,7 +86,7 @@ def held_line(pmf, offset, kept, move=HOLD_MOVE, band=HOLD_BAND):
     return kept if abs(even - kept) < move and abs(q - 0.5) <= band else even
 
 
-# Key numbers ("key" mode). Points come in lumps of 3 and 7, so the distributions are spiky: a
+# Key numbers: how the stream sets its own lines. Points come in lumps of 3 and 7, so the distributions are spiky: a
 # line next to a spike prices far from its neighbours, and a small error in the spike moves its
 # price a lot. Among half-point lines with P(over) inside 50% +- KEY_BAND, take the one with the
 # least mass on the two whole numbers either side (ties: nearest 50%), and keep the market's last

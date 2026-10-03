@@ -1442,16 +1442,17 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(lines("prod"), {(1, 52): 6.5, (1, 53): -6.5, (1, 54): 49.5, (1, 55): 49.5})
         # prod's lines stepped toward even until P(over) and P(home covers) reach 40%
         self.assertEqual(lines("anchored"), {(1, 52): -0.5, (1, 53): 0.5, (1, 54): 45.5, (1, 55): 45.5})
-        self.assertEqual(lines("own"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
+        self.assertEqual(lines("even"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
         # hyst keeps 43.5 while the book drifts a point, and moves once it is two away
         later, far = np.roll(total, 1), np.roll(total, 2)
         books = ((1, margin, total), (2, margin, later), (3, margin, far))
         rows = [row(54, 49.5, m) for m in (1, 2, 3)]
         self.assertEqual(lines("hyst", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 45.5})
-        self.assertEqual(lines("own", books, rows), {(1, 54): 43.5, (2, 54): 44.5, (3, 54): 45.5})
-        # key: a flat book has no spikes, so the line nearest 50%, kept while the book drifts
-        self.assertEqual(lines("key", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 43.5})
-        self.assertEqual(lines("key"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
+        self.assertEqual(lines("even", books, rows), {(1, 54): 43.5, (2, 54): 44.5, (3, 54): 45.5})
+        # own (key numbers): a flat book has no spikes, so the line nearest 50%, kept while the
+        # book drifts and the line stays in the band
+        self.assertEqual(lines("own", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 43.5})
+        self.assertEqual(lines("own"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
         with self.assertRaises(ValueError):
             lines("nearest")
 
