@@ -149,6 +149,12 @@ def cmd_remaining(args):
     print(f"\n  -> {path}")
 
 
+def cmd_trader(args):
+    from . import trader
+    trader.serve(args.model, port=args.port, paths=args.paths, margin=args.margin,
+                 browser=not args.no_browser)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="eAMFModel", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -234,6 +240,15 @@ def main(argv=None):
                    help="the points on the rest of the drive under way at each scrimmage PLAY_OVER "
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
+
+    p = sub.add_parser("trader", help="a local web page to test v10 by hand: set up a match, click "
+                                      "through it play by play, and see v10's prices after each play")
+    p.add_argument("--model", help="the v10 build directory (default $EAMF_V10_MODEL, then ./v10_model)")
+    p.add_argument("--port", type=int, default=8765)
+    p.add_argument("--paths", type=int, default=4000, help="simulated games for each price")
+    p.add_argument("--margin", type=float, default=0.05, help="the book's margin on the odds shown")
+    p.add_argument("--no-browser", action="store_true", help="do not open the page")
+    p.set_defaults(func=cmd_trader)
 
     args = parser.parse_args(argv)
     args.func(args)
