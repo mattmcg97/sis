@@ -78,7 +78,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
-| `--v9-lines own\|prod` | `--candidate v9`: quote v9's own even line, moved as the game moves (`own`, the default), or read v9's price at prod's line (`prod`) |
+| `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines` | the same for `--candidate v8` and `--candidate v10` |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
@@ -1433,7 +1433,7 @@ player handles for the profiles, and the model prices each one by simulation
 - **Prices between snapshots:** like any stream, the model's quote stands until
   its next one. At every message and market prod quoted after a
   `PLAY_OVER`, it quotes that snapshot's book.
-- **Lines:** it quotes its own even line on the spread and the total, so pairs
+- **Lines:** it quotes its own line on the spread and the total, so pairs
   split between the same line (compared on probability) and a different line
   (compared on whose line landed nearer the result). `--v9-lines prod` reads its
   price at the line of the exact prod row the pairing uses there: the first live
@@ -1838,10 +1838,11 @@ somewhere v6 needs fixing too. The per-candidate columns are `simulated_v6`
 and `candidate_revenue_v6`. `line_gap_v6` buckets the bets by v6's line
 less the bet's (whole points, capped at ±3), to separate what moving the
 line did from what the probability did. Running `--candidate v6,v6@prod`
-prices both from one simulation. v10 has two more line rules, `v10@anchored`
-(prod's line, moved only as far as it must) and `v10@hyst` (its own even line,
-held until far off). See eAMFModel's README. `--candidate
-v10,v10@prod,v10@anchored,v10@hyst` prices all four from one simulation.
+prices both from one simulation. A model's own line sits in the gap between
+the key numbers; `v10@even` reads it at the half-point line nearest 50%
+instead. v10 also has `v10@anchored` (prod's line, moved only as far as it
+must) and `v10@hyst` (the even line, held until far off). See eAMFModel's
+README. `--candidate v10,v10@even` prices both from one simulation.
 
 **Prod's pre-match by gamer (Aug 25–Sep 10, 1,424 matches).** Prod's
 pre-match misses by gamer are larger than chance. The mean z² runs
@@ -1882,8 +1883,8 @@ Every candidate shares the bets, the lags, the line signs and prod's quotes.
 Each is read at the prod message the bet saw (one lag before it), so the lag
 is the same for all of them. A model version prices every prod message off
 its latest PLAY_OVER at or before it, carrying prod's message and publish
-time. It quotes its own even lines and probabilities, and the bet is settled
-at that line. `v5@prod` reads it at prod's lines instead. A table
+time. It quotes its own lines (in the gap between the key numbers) and
+probabilities, and the bet is settled at that line. `v5@prod` reads it at prod's lines instead. A table
 (`GAMEPLAI_STREAM_CANDIDATE`) can sit in the list too.
 
 A model has no pre-match price (its first quote is the first PLAY_OVER), so

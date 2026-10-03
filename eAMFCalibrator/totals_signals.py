@@ -379,15 +379,16 @@ class ModelAt:
         return out
 
     def fields(self, books, row):
-        """The model's line, mean total and P(over prod's line) at each checkpoint, its over
-        (final less its line) and its points still to come (its mean less the board)."""
+        """The model's line (in the gap between the key numbers), mean total and P(over prod's
+        line) at each checkpoint, its over (final less its line) and its points still to come (its
+        mean less the board)."""
         out = {}
         for seg in ("pre",) + tuple(s[0] for s in SEGMENTS):
             b = books.get(seg)
             if b is None:
                 continue
             mpmf, tpmf = b
-            line = float(self.model.even_line(tpmf, 0))
+            line = float(self.model.key_line(tpmf, 0))
             mean = float(sum(i * float(p) for i, p in enumerate(tpmf)))
             prod_line = row.get(f"{seg}_line")
             pover = (float(self.model.market_prob(54, prod_line, mpmf, tpmf))

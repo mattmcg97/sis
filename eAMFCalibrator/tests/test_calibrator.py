@@ -1001,7 +1001,7 @@ class TestV8Candidate(unittest.TestCase):
             self.assertEqual(markets.parse_line(r[5]),
                              markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
 
-    def test_by_default_it_quotes_its_own_even_lines(self):
+    def test_by_default_it_quotes_its_own_key_number_lines(self):
         self.assertEqual(getattr(config, f"{self.NAME.upper()}_LINES"), "own")
         rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")}, lines="own")
         by = collections.defaultdict(dict)
@@ -5479,7 +5479,9 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertEqual(sio.stream_name("v10@anchored"), "MODEL:v10@anchored")
         self.assertEqual(sio.stream_name("v10-glmer@hyst"), "MODEL:v10-glmer@hyst")
         self.assertEqual(sio.model_version("MODEL:v10@hyst"), ("v10", "hyst"))
-        for bad in ("v9@anchored", "v10@nearest"):
+        self.assertEqual(sio.stream_name("v10@even"), "MODEL:v10@even")
+        self.assertEqual(sio.stream_name("v8@even"), "MODEL:v8@even")
+        for bad in ("v9@anchored", "v10@nearest", "v10@key"):
             with self.assertRaises(ValueError):
                 sio.stream_name(bad)
 

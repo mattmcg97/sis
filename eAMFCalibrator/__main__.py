@@ -809,26 +809,28 @@ def common_options():
     tuning.add_argument("--v8-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v8 "
                              f"(default {config.V8_PATHS})")
-    tuning.add_argument("--v8-lines", choices=["own", "prod"],
-                        help=f"--candidate v8: its own even lines or prod's (default {config.V8_LINES})")
+    tuning.add_argument("--v8-lines", choices=["own", "even", "prod"],
+                        help=f"--candidate v8: its own lines (in the gap between the key numbers), the"
+                             f" even line or prod's (default {config.V8_LINES})")
     tuning.add_argument("--v9-model", metavar="DIR",
                         help="eAMFModel v9-build's output, for --candidate v9 "
                              "(default $EAMF_V9_MODEL, then ./v9_model)")
     tuning.add_argument("--v9-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v9 "
                              f"(default {config.V9_PATHS})")
-    tuning.add_argument("--v9-lines", choices=["own", "prod"],
-                        help=f"--candidate v9: its own even lines or prod's (default {config.V9_LINES})")
+    tuning.add_argument("--v9-lines", choices=["own", "even", "prod"],
+                        help=f"--candidate v9: its own lines (in the gap between the key numbers), the"
+                             f" even line or prod's (default {config.V9_LINES})")
     tuning.add_argument("--v10-model", metavar="DIR",
                         help="eAMFModel v10-build's output, for --candidate v10 "
                              "(default $EAMF_V10_MODEL, then ./v10_model)")
     tuning.add_argument("--v10-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v10 "
                              f"(default {config.V10_PATHS})")
-    tuning.add_argument("--v10-lines", choices=["own", "prod", "anchored", "hyst"],
-                        help="--candidate v10: its own even lines, prod's, prod's moved only as far as"
-                             " it must (anchored) or its own held until far off (hyst) (default "
-                             f"{config.V10_LINES})")
+    tuning.add_argument("--v10-lines", choices=["own", "even", "prod", "anchored", "hyst"],
+                        help="--candidate v10: its own lines (in the gap between the key numbers), the"
+                             " even line, the even line held until far off (hyst), prod's, or prod's"
+                             f" moved only as far as it must (anchored) (default {config.V10_LINES})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")

@@ -86,6 +86,34 @@ def held_line(pmf, offset, kept, move=HOLD_MOVE, band=HOLD_BAND):
     return kept if abs(even - kept) < move and abs(q - 0.5) <= band else even
 
 
+# Key numbers: how the stream sets its own lines. Points come in lumps of 3 and 7, so the distributions are spiky: a
+# line next to a spike prices far from its neighbours, and a small error in the spike moves its
+# price a lot. Among half-point lines with P(over) inside 50% +- KEY_BAND, take the one with the
+# least mass on the two whole numbers either side (ties: nearest 50%), and keep the market's last
+# line while it is still in the band with at most KEY_HOLD more mass next to it.
+KEY_BAND = 0.10
+KEY_HOLD = 0.02
+
+
+def key_line(pmf, offset, kept=None, band=KEY_BAND, hold=KEY_HOLD):
+    """The half-point line in the gap between the spikes (see KEY_BAND); the even line when none
+    has P(above) in the band."""
+    pmf = np.asarray(pmf, dtype=float)
+    above = 1 - np.cumsum(pmf)[:-1]                 # line k - offset + 0.5: P(above)
+    mass = pmf[:-1] + pmf[1:]                       # on the two whole numbers either side
+    ok = np.abs(above - 0.5) <= band + 1e-12
+    if not ok.any():
+        return even_line(pmf, offset)
+    m = np.where(ok, mass, np.inf)
+    tie = ok & (m <= m.min() + 1e-12)
+    k = int(np.argmin(np.where(tie, np.abs(above - 0.5), np.inf)))
+    if kept is not None and float(kept) % 1 == 0.5:
+        j = int(np.floor(kept)) + offset
+        if 0 <= j < len(above) and ok[j] and mass[j] <= mass[k] + hold:
+            return float(kept)
+    return float(k - offset) + 0.5
+
+
 def prob_above(pmf, offset, line):
     """P(X > line), pushes taken out."""
     x = np.arange(pmf.shape[-1]) - offset

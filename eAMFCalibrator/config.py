@@ -47,9 +47,10 @@ SCOUTING_TABLE = "SCOUTING_FULL"
 CANDIDATE_LABEL = None
 MODEL_WORKERS = None
 # --candidate v8 (its model: `python -m eAMFModel v8-build`; None:
-# $EAMF_V8_MODEL, then ./v8_model). "own" lines: v8 quotes its own even line,
-# moved as the game moves; "prod": its book read at the line prod quoted, so
-# every pair answers one question.
+# $EAMF_V8_MODEL, then ./v8_model). "own" lines: v8 quotes its own line, in
+# the gap between the key numbers, moved as the game moves; "even": the
+# half-point line nearest 50%; "prod": its book read at the line prod quoted,
+# so every pair answers one question.
 V8_MODEL_DIR = None
 V8_PATHS = 2000
 V8_LINES = "own"

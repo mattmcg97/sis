@@ -86,22 +86,39 @@ def paired_prod_rows(prod_quote_rows):
     return {key: row for key, (row, _) in chosen.items()}
 
 
-OWN, PROD_LINES = "own", "prod"
+# How the stream sets a handicap or total line: its own, in the gap between the key numbers
+# (v8.key_line, held from quote to quote); the half-point line nearest 50% (even); or prod's.
+OWN, EVEN, PROD_LINES = "own", "even", "prod"
+LINE_MODES = (OWN, EVEN, PROD_LINES)
 
 
-def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message):
-    """One prod-shaped quote row off a margin and total distribution, at v8's own line or prod's;
+def _line(market_id, prod_row, mpmf, tpmf, lines, held=None):
+    """A handicap or total market's line under a line rule; None where prod's line is needed and
+    cannot be read. `held` carries each group's own line from one quote to the next."""
+    spread = market_id in (SPREAD_HOME, SPREAD_AWAY)
+    pmf, offset = (mpmf, v8.MARGIN_MAX) if spread else (tpmf, 0)
+    sign = -1.0 if market_id == SPREAD_AWAY else 1.0           # the away line is home's, negated
+    if lines == OWN:
+        key = "spread" if spread else "total"
+        x = v8.key_line(pmf, offset, None if held is None else held.get(key))
+        if held is not None:
+            held[key] = x
+    elif lines == EVEN:
+        x = v8.even_line(pmf, offset)
+    elif lines == PROD_LINES:
+        return _parse_line(prod_row[5])
+    else:
+        raise ValueError(f"no such line rule {lines!r} (there are {', '.join(LINE_MODES)})")
+    return sign * x
+
+
+def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=None):
+    """One prod-shaped quote row off a margin and total distribution, at the line `lines` sets;
     None where it cannot be priced."""
     if market_id in (ML_HOME, ML_AWAY):
         line = None
-    elif lines == OWN:
-        if market_id in (SPREAD_HOME, SPREAD_AWAY):
-            home = v8.even_line(mpmf, v8.MARGIN_MAX)
-            line = home if market_id == SPREAD_HOME else -home
-        else:
-            line = v8.even_line(tpmf, 0)
     else:
-        line = _parse_line(prod_row[5])
+        line = _line(market_id, prod_row, mpmf, tpmf, lines, held)
         if line is None:
             return None
     p = float(v8.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
@@ -114,16 +131,16 @@ def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message):
 
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
                kickoff=None):
-    """Prod-shaped quote rows from v8's distributions. With `kickoff` (the pre-match margin and
+    """Prod-shaped quote rows from v8's distributions, at the lines `lines` sets. With `kickoff` (the pre-match margin and
     total distributions), every prod row published before the first play started -- no message,
     or one below first_play_message -- gets v8's pre-match price, on its own message (none for
     none) and publish time."""
     keys = [b[0] for b in books]
-    out = []
+    out, held = [], {}
     if kickoff is not None:
         for r in prod_quote_rows:
             if r[1] in MARKET_IDS and r[3] is not None and r[6] is None:
-                q = _quote(match_code, r[1], r, kickoff[0], kickoff[1], lines, None)
+                q = _quote(match_code, r[1], r, kickoff[0], kickoff[1], lines, None, held)
                 if q:
                     out.append(q)
     for (market_id, message), prod_row in sorted(paired_prod_rows(prod_quote_rows).items(),
@@ -133,14 +150,15 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
         i = bisect_right(keys, message) - 1
         if i < 0:
             if kickoff is not None and _before_play(message, first_play_message):
-                q = _quote(match_code, market_id, prod_row, kickoff[0], kickoff[1], lines, message)
+                q = _quote(match_code, market_id, prod_row, kickoff[0], kickoff[1], lines, message,
+                                   held)
                 if q:
                     out.append(q)
             continue
         if windows is not None and not (keys[i] in windows and message < windows[keys[i]]):
             continue
         _, mpmf, tpmf = books[i]
-        q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message)
+        q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held)
         if q:
             out.append(q)
     return out

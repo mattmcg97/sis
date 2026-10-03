@@ -42,9 +42,10 @@ def is_model(stream_table):
 
 def stream_name(value):
     """CLI value -> STREAMS entry: 'v9' means the model, a table stays a table.
-    A model with its own lines (v8, v9) read at prod's line instead is
-    'v9@prod'. v10 has two more line rules: 'v10@anchored' (prod's line,
-    moved only as far as it must) and 'v10@hyst' (its own, held until far off).
+    A model quotes its own lines, in the gap between the key numbers. Read
+    at prod's line instead it is 'v9@prod'; at the half-point line nearest
+    50%, 'v9@even'. v10 has two more: 'v10@anchored' (prod's line, moved only
+    as far as it must) and 'v10@hyst' (the even line, held until far off).
 
     A second build of a version is named '<version>-<tag>=<model dir>', e.g.
     'v9-glmer=v9_glmer_917': it prices with v9's code off that build, under
@@ -68,15 +69,16 @@ def stream_name(value):
             raise ValueError(f"{value!r}: no such eAMFModel version (there are "
                              f"{', '.join(LINE_MODELS)})")
         lines = value.lower().partition("@")[2]
-        if lines and lines not in LINE_RULES.get(version, ("prod",)):
+        if lines and lines not in LINE_RULES[version]:
             raise ValueError(f"{value!r}: {version} has no '@{lines}' lines (there are "
-                             f"{', '.join('@' + x for x in LINE_RULES.get(version, ('prod',)))})")
+                             f"{', '.join('@' + x for x in LINE_RULES[version])})")
         return MODEL_PREFIX + value.lower()
     return value
 
 
 LINE_MODELS = ("v8", "v9", "v10")     # versions that quote their own lines
-LINE_RULES = {"v10": ("prod", "anchored", "hyst")}   # their '@' suffixes; others: '@prod' alone
+LINE_RULES = {"v8": ("prod", "even"), "v9": ("prod", "even"),        # their '@' suffixes
+              "v10": ("prod", "even", "anchored", "hyst")}
 
 
 def model_version(stream_table):
@@ -548,7 +550,7 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     with the players' handles attached for the player profiles.
 
     Each match is simulated once for every line mode the version has -- its
-    own even lines, prod's, and v10's anchored and held lines -- and the rest
+    own key-number lines, its even lines, prod's, and v10's anchored and held lines -- and the rest
     are kept, so a report that reads the model several ways simulates it once."""
     import importlib
     _need_numpy(name)

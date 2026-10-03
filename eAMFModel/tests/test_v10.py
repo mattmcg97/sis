@@ -1410,6 +1410,24 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(v10.held_line(pmf, 0, 42.5, move=3.0), 42.5)    # 0.57, inside 35-65%
         self.assertEqual(v10.held_line(pmf, 0, 39.5, move=9.0), 44.5)    # 0.67, outside
 
+    def test_the_key_line_sits_in_the_gap_between_the_spikes(self):
+        pmf = np.zeros(60)
+        pmf[[24, 27, 31, 34, 38]] = [0.15, 0.30, 0.25, 0.20, 0.10]   # lumps of 3 and 4
+        # P(over): 26.5 0.85 | 27.5 .. 30.5 0.55 | 31.5 .. 33.5 0.30: the band 40-60% holds
+        # 27.5 .. 30.5; 28.5 and 29.5 have nothing either side, and 28.5 is the first
+        self.assertEqual(v10.key_line(pmf, 0), 28.5)
+        self.assertEqual(v10.even_line(pmf, 0), 30.5)     # the even line (nearest the mean, 30.05) sits on 31
+        self.assertEqual(v10.key_line(pmf, 0, kept=27.5), 28.5)     # 0.30 next to 27.5: too heavy
+        self.assertEqual(v10.key_line(pmf, 0, kept=29.5), 29.5)     # as light: kept
+        self.assertEqual(v10.key_line(pmf, 0, kept=27.5, hold=0.5), 27.5)
+        self.assertEqual(v10.key_line(pmf, 0, kept=33.5, hold=0.5), 28.5)   # outside the band
+        spike = np.zeros(60)
+        spike[30] = 1.0                                             # nothing in the band: even
+        self.assertEqual(v10.key_line(spike, 0), v10.even_line(spike, 0))
+        margin = np.zeros(2 * v10.MARGIN_MAX + 1)
+        margin[v10.MARGIN_MAX + np.array([-7, -3, 3, 7])] = [0.2, 0.3, 0.3, 0.2]
+        self.assertEqual(v10.key_line(margin, v10.MARGIN_MAX, band=0.0), -1.5)   # not -2.5, on the 3
+
     def test_the_stream_quotes_every_line_rule_off_one_book(self):
         margin = np.zeros(2 * v10.MARGIN_MAX + 1)
         margin[v10.MARGIN_MAX - 10:v10.MARGIN_MAX + 8] = 1 / 18          # -10..7: even -1.5
@@ -1424,13 +1442,17 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(lines("prod"), {(1, 52): 6.5, (1, 53): -6.5, (1, 54): 49.5, (1, 55): 49.5})
         # prod's lines stepped toward even until P(over) and P(home covers) reach 40%
         self.assertEqual(lines("anchored"), {(1, 52): -0.5, (1, 53): 0.5, (1, 54): 45.5, (1, 55): 45.5})
-        self.assertEqual(lines("own"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
+        self.assertEqual(lines("even"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
         # hyst keeps 43.5 while the book drifts a point, and moves once it is two away
         later, far = np.roll(total, 1), np.roll(total, 2)
         books = ((1, margin, total), (2, margin, later), (3, margin, far))
         rows = [row(54, 49.5, m) for m in (1, 2, 3)]
         self.assertEqual(lines("hyst", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 45.5})
-        self.assertEqual(lines("own", books, rows), {(1, 54): 43.5, (2, 54): 44.5, (3, 54): 45.5})
+        self.assertEqual(lines("even", books, rows), {(1, 54): 43.5, (2, 54): 44.5, (3, 54): 45.5})
+        # own (key numbers): a flat book has no spikes, so the line nearest 50%, kept while the
+        # book drifts and the line stays in the band
+        self.assertEqual(lines("own", books, rows), {(1, 54): 43.5, (2, 54): 43.5, (3, 54): 43.5})
+        self.assertEqual(lines("own"), {(1, 52): -1.5, (1, 53): 1.5, (1, 54): 43.5, (1, 55): 43.5})
         with self.assertRaises(ValueError):
             lines("nearest")
 

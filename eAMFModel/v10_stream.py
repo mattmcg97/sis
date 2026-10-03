@@ -86,24 +86,26 @@ def paired_prod_rows(prod_quote_rows):
     return {key: row for key, (row, _) in chosen.items()}
 
 
-# How the stream sets a handicap or total line: its own even line, prod's, prod's moved only as far
-# as it must to bring P(over) inside a band (anchored), or its own even line held until it is far
-# off (hyst). v10.anchored_line and v10.held_line say how.
-OWN, PROD_LINES, ANCHORED, HELD = "own", "prod", "anchored", "hyst"
-LINE_MODES = (OWN, PROD_LINES, ANCHORED, HELD)
+# How the stream sets a handicap or total line: its own, in the gap between the key numbers
+# (v10.key_line, held from quote to quote); the half-point line nearest 50% (even); that held
+# until it is far off (hyst); prod's; or prod's moved only as far as it must to bring P(over)
+# inside a band (anchored). v10.key_line, v10.held_line and v10.anchored_line say how.
+OWN, EVEN, PROD_LINES, ANCHORED, HELD = "own", "even", "prod", "anchored", "hyst"
+LINE_MODES = (OWN, EVEN, PROD_LINES, ANCHORED, HELD)
 
 
 def _line(market_id, prod_row, mpmf, tpmf, lines, held=None):
     """A handicap or total market's line under a line rule; None where prod's line is needed and
-    cannot be read. `held` (hyst) carries each group's line from one quote to the next."""
+    cannot be read. `held` (own, hyst) carries each group's line from one quote to the next."""
     spread = market_id in (SPREAD_HOME, SPREAD_AWAY)
     pmf, offset = (mpmf, v10.MARGIN_MAX) if spread else (tpmf, 0)
     sign = -1.0 if market_id == SPREAD_AWAY else 1.0           # the away line is home's, negated
-    if lines == OWN:
+    if lines == EVEN:
         x = v10.even_line(pmf, offset)
-    elif lines == HELD:
+    elif lines in (OWN, HELD):
         key = "spread" if spread else "total"
-        x = v10.held_line(pmf, offset, None if held is None else held.get(key))
+        rule = v10.key_line if lines == OWN else v10.held_line
+        x = rule(pmf, offset, None if held is None else held.get(key))
         if held is not None:
             held[key] = x
     elif lines in (PROD_LINES, ANCHORED):
