@@ -1,24 +1,29 @@
-"""The trader: a local web page to test v10 by hand. Set up a match (the players, teams and stream,
-and the pre-match model's expected points, which can be overwritten), then click through the game a
-play at a time; after every play v10 prices the state it leaves.
+"""The trader: a local web page to test a model version by hand. Set up a match (the players, teams
+and stream, and the pre-match model's expected points, which can be overwritten), then click through
+the game a play at a time; after every play the version prices the state it leaves.
 
     python -m eAMFModel trader --model v10_model
+
+The version is the build's own (v10tables.npz: v10), so a build of any later version copied from
+v10 runs as it is. A version must keep what INTERFACE lists; the tests check every version does.
 
 The server keeps nothing between requests: the page holds the game and its history, and sends
 the state with every request."""
 
 import csv
 import datetime as dt
+import importlib
+import inspect
 import json
 import os
+import re
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-from . import game as gm, players, sim10 as sim, v10
-from .v10_stream import model_paths
+from . import game as gm, players
 
 PAGE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "trader.html")
 DEFAULT_PATHS = 4000
@@ -27,6 +32,41 @@ MARGIN_SHOWN = 35                 # final margins shown either side of level
 TOTAL_SHOWN = 75                  # points shown above the board
 SPREAD_LADDER = 3                 # lines either side of the quoted one
 TOTAL_LADDER = 4
+
+
+# What the trader prices with, in each version (vN.py) and its stream (vN_stream.py).
+INTERFACE = ("MARGIN_MAX", "PriorGrid", "Variant", "prior_theta", "price_states", "price_kickoff",
+             "market_prob", "key_line", "even_line", "players_book", "prematch_model", "match_seed")
+STREAM_INTERFACE = ("model_paths", "sim")
+
+
+def versions():
+    """Every model version with a stream, oldest first: v8, v9, v10, ..."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    names = [f[:-len("_stream.py")] for f in os.listdir(here) if re.fullmatch(r"v\d+_stream\.py", f)]
+    return sorted(names, key=lambda n: int(n[1:]))
+
+
+def load_version(version):
+    """(the version's module, its stream module); stops if it lacks anything the trader uses."""
+    if version not in versions():
+        raise SystemExit(f"no model version {version!r} (there are {', '.join(versions())})")
+    model = importlib.import_module(f"{__package__}.{version}")
+    stream = importlib.import_module(f"{__package__}.{version}_stream")
+    missing = ([n for n in INTERFACE if not hasattr(model, n)]
+               + [f"{version}_stream.{n}" for n in STREAM_INTERFACE if not hasattr(stream, n)])
+    if missing:
+        raise SystemExit(f"{version} lacks what the trader prices with: {', '.join(missing)}")
+    return model, stream
+
+
+def version_of(model_dir):
+    """The version a build directory holds (its <version>tables.npz), newest first; the newest
+    version when no directory is given."""
+    for v in reversed(versions()):
+        if model_dir is None or os.path.exists(os.path.join(model_dir, f"{v}tables.npz")):
+            return v
+    raise SystemExit(f"{model_dir} holds no model build (no {', '.join(v + 'tables.npz' for v in versions())})")
 
 
 def odds(p, margin):
@@ -43,16 +83,20 @@ def _read_csv(path):
 
 
 class Trader:
-    """A v10 build, loaded once, that prices any game state."""
+    """A model build, loaded once, that prices any game state."""
 
-    def __init__(self, model_dir=None, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN):
-        tables_path, grid_path = model_paths(model_dir)
+    def __init__(self, model_dir=None, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, version=None):
+        self.version = version or version_of(model_dir)
+        self.m, stream = load_version(self.version)
+        tables_path, grid_path = stream.model_paths(model_dir)
         self.dir = os.path.dirname(tables_path)
-        self.tables = sim.Tables.load(tables_path)
-        self.grid = v10.PriorGrid.load(grid_path)
-        self.book = v10.players_book(tables_path)
-        self.pre = v10.prematch_model(tables_path)
-        self.variant = v10.Variant("v10")
+        self.tables = stream.sim.Tables.load(tables_path)
+        self.grid = self.m.PriorGrid.load(grid_path)
+        self.book = self.m.players_book(tables_path)
+        self.pre = self.m.prematch_model(tables_path)
+        self.variant = self.m.Variant(self.version)
+        # v10 on: the prior's points are taken net of the players' pace
+        self.prior_takes_pace = len(inspect.signature(self.m.prior_theta).parameters) >= 3
         self.paths, self.margin = paths, margin
         self.lock = threading.Lock()
 
@@ -79,7 +123,8 @@ class Trader:
                 built = json.load(fh).get("before")
         return dict(players=names, teams=sorted(teams), streams=streams or ["1", "2"],
                     league=[round(x, 2) for x in league], prematch=self.pre is not None,
-                    built_before=built, model=self.dir, paths=self.paths, margin=self.margin,
+                    built_before=built, model=self.dir, version=self.version,
+                    paths=self.paths, margin=self.margin,
                     quarter=gm.QUARTER)
 
     def profile(self, handle):
@@ -117,24 +162,28 @@ class Trader:
     # -- pricing ---------------------------------------------------------------------------
 
     def _books(self, setup, game):
-        """v10's final margin and total distributions from this state (from the kick-off, with
+        """The version's final margin and total distributions from this state (from the kick-off, with
         either side receiving, when `game` is None)."""
         home, away = setup.get("home_player"), setup.get("away_player")
         prof = ((self.book.profile(home), self.book.profile(away)) if self.book
                 else (players.Profile(), players.Profile()))
         means = tuple(float(x) for x in setup["means"])
-        theta0 = v10.prior_theta(self.grid, means, prof if self.variant.pace else None)
+        if self.prior_takes_pace:
+            theta0 = self.m.prior_theta(self.grid, means,
+                                        prof if getattr(self.variant, "pace", False) else None)
+        else:
+            theta0 = self.m.prior_theta(self.grid, means)
         paths = int(setup.get("paths") or self.paths)
-        seed = v10.match_seed(f"{home}|{away}|{means}")          # the same paths every state
+        seed = self.m.match_seed(f"{home}|{away}|{means}")          # the same paths every state
         rng = np.random.default_rng(seed)
         with self.lock:
             if game is None:
-                return v10.price_kickoff(self.tables, theta0, self.variant, prof, paths, rng, seed=seed)
-            return v10.price_states(self.tables, theta0, self.variant, [], True,
+                return self.m.price_kickoff(self.tables, theta0, self.variant, prof, paths, rng, seed=seed)
+            return self.m.price_states(self.tables, theta0, self.variant, [], True,
                                     [game.model_state()], [1], prof, paths, rng, seed=seed)[0]
 
     def price(self, setup, game=None, kept=None):
-        """Every market at the state (pre-match with `game` None), at v10's own key-number lines
+        """Every market at the state (pre-match with `game` None), at the version's own key-number lines
         (held from `kept`, the lines quoted before), with ladders, the expected score and the
         distributions."""
         margin = float(setup.get("margin", self.margin))
@@ -142,23 +191,23 @@ class Trader:
             return self._settled(game)
         mpmf, tpmf = self._books(setup, game)
         kept = kept or {}
-        prob = lambda market, line: float(v10.market_prob(market, line, mpmf, tpmf))
+        prob = lambda market, line: float(self.m.market_prob(market, line, mpmf, tpmf))
         side = lambda p: dict(p=round(p, 4), odds=odds(p, margin))
-        h = v10.key_line(mpmf, v10.MARGIN_MAX, kept.get("spread"))
-        t = v10.key_line(tpmf, 0, kept.get("total"))
+        h = self.m.key_line(mpmf, self.m.MARGIN_MAX, kept.get("spread"))
+        t = self.m.key_line(tpmf, 0, kept.get("total"))
         ml_home = prob(50, 0.0)
-        x_m = np.arange(len(mpmf)) - v10.MARGIN_MAX
+        x_m = np.arange(len(mpmf)) - self.m.MARGIN_MAX
         x_t = np.arange(len(tpmf))
         mean_margin, mean_total = float((mpmf * x_m).sum()), float((tpmf * x_t).sum())
         board = 0 if game is None else game.home + game.away
         lo = max(0, board)
         return dict(
             moneyline=dict(home=side(ml_home), away=side(1 - ml_home)),
-            spread=dict(line=h, even=v10.even_line(mpmf, v10.MARGIN_MAX),
+            spread=dict(line=h, even=self.m.even_line(mpmf, self.m.MARGIN_MAX),
                         home=side(prob(52, h)), away=side(prob(53, -h)),
                         ladder=[dict(line=h + d, home=round(prob(52, h + d), 4))
                                 for d in range(-SPREAD_LADDER, SPREAD_LADDER + 1)]),
-            total=dict(line=t, even=v10.even_line(tpmf, 0), over=side(prob(54, t)),
+            total=dict(line=t, even=self.m.even_line(tpmf, 0), over=side(prob(54, t)),
                        under=side(prob(55, t)),
                        ladder=[dict(line=t + d, over=round(prob(54, t + d), 4))
                                for d in range(-TOTAL_LADDER, TOTAL_LADDER + 1)]),
@@ -166,8 +215,8 @@ class Trader:
                           away=round((mean_total - mean_margin) / 2, 2),
                           total=round(mean_total, 2), margin=round(mean_margin, 2)),
             margin_dist=dict(start=-MARGIN_SHOWN, p=[round(float(p), 5) for p in
-                                                     mpmf[v10.MARGIN_MAX - MARGIN_SHOWN:
-                                                          v10.MARGIN_MAX + MARGIN_SHOWN + 1]]),
+                                                     mpmf[self.m.MARGIN_MAX - MARGIN_SHOWN:
+                                                          self.m.MARGIN_MAX + MARGIN_SHOWN + 1]]),
             total_dist=dict(start=lo, p=[round(float(p), 5) for p in tpmf[lo:lo + TOTAL_SHOWN + 1]]),
             kept=dict(spread=h, total=t), book_margin=margin)
 
@@ -237,11 +286,12 @@ def handler_for(trader):
     return Handler
 
 
-def serve(model_dir=None, port=8765, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, browser=True):
-    trader = Trader(model_dir, paths, margin)
+def serve(model_dir=None, port=8765, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, browser=True,
+          version=None):
+    trader = Trader(model_dir, paths, margin, version)
     server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(trader))
     url = f"http://127.0.0.1:{port}/"
-    print(f"  v10 trader on {url} (model {trader.dir}, {paths:,} games a price); Ctrl+C to stop",
+    print(f"  {trader.version} trader on {url} (model {trader.dir}, {paths:,} games a price); Ctrl+C to stop",
           flush=True)
     if browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()

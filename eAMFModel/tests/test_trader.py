@@ -79,7 +79,7 @@ class TestTrader(unittest.TestCase):
         base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
             page = urllib.request.urlopen(base + "/").read().decode("utf-8")
-            self.assertIn("<title>v10 Trader</title>", page)
+            self.assertIn('<h1 id="title">Trader</h1>', page)
             req = urllib.request.Request(base + "/api/start", json.dumps({"setup": self.setup}).encode(),
                                          {"Content-Type": "application/json"})
             reply = json.loads(urllib.request.urlopen(req).read())
@@ -93,9 +93,36 @@ class TestTrader(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_the_version_is_read_off_the_build(self):
+        self.assertEqual(self.t.version, "v10")
+        self.assertEqual(trader.version_of(self.tmp.name), "v10")
+        self.assertEqual(self.call("/api/meta")["version"], "v10")
+        with tempfile.TemporaryDirectory() as empty:
+            with self.assertRaises(SystemExit):
+                trader.version_of(empty)
+        with self.assertRaises(SystemExit):
+            trader.load_version("v99")
+
     def test_odds_carry_the_margin(self):
         self.assertEqual(trader.odds(0.5, 0.0), 2.0)
         self.assertEqual(trader.odds(0.5, 0.05), round(1 / (0.5 * 1.05), 2))
+
+
+class TestEveryVersion(unittest.TestCase):
+    """A new version (copied from the last) must keep everything the trader prices with."""
+
+    def test_every_version_offers_what_the_trader_prices_with(self):
+        names = trader.versions()
+        self.assertIn("v10", names)
+        self.assertEqual(names, sorted(names, key=lambda n: int(n[1:])))
+        for v in names:
+            with self.subTest(version=v):
+                model, stream = trader.load_version(v)
+                for name in ("price_states", "price_kickoff", "key_line", "prior_theta"):
+                    self.assertTrue(callable(getattr(model, name)))
+                self.assertTrue(hasattr(stream.sim, "Tables"))
+                variant = model.Variant(v)
+                self.assertIsNotNone(variant)
 
 
 if __name__ == "__main__":

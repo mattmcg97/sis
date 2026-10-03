@@ -152,7 +152,7 @@ def cmd_remaining(args):
 def cmd_trader(args):
     from . import trader
     trader.serve(args.model, port=args.port, paths=args.paths, margin=args.margin,
-                 browser=not args.no_browser)
+                 browser=not args.no_browser, version=args.version)
 
 
 def main(argv=None):
@@ -241,9 +241,11 @@ def main(argv=None):
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
 
-    p = sub.add_parser("trader", help="a local web page to test v10 by hand: set up a match, click "
-                                      "through it play by play, and see v10's prices after each play")
-    p.add_argument("--model", help="the v10 build directory (default $EAMF_V10_MODEL, then ./v10_model)")
+    p = sub.add_parser("trader", help="a local web page to test a model by hand: set up a match, click "
+                                      "through it play by play, and see its prices after each play")
+    p.add_argument("--model", help="the build directory; its version is read off it (default: the "
+                                   "newest version's $EAMF_VN_MODEL, then ./vN_model)")
+    p.add_argument("--version", help="the version to price with, e.g. v9 (default: the build's own)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--paths", type=int, default=4000, help="simulated games for each price")
     p.add_argument("--margin", type=float, default=0.05, help="the book's margin on the odds shown")

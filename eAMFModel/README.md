@@ -1434,7 +1434,7 @@ on the board and still to come, and the version's probability of each
 value 0 to 36+. Matches whose TEAM_A side isn't known are left out, as the
 streams leave them.
 
-## Testing v10 by hand: `trader`
+## Testing a model by hand: `trader`
 
 ```
 python -m eAMFModel trader --model v10_model
@@ -1465,6 +1465,13 @@ model's expected points need pandas and scipy, like the build.
 
 `game.py` is the play engine and `trader.py` the server; the page holds the game and sends the
 state with every request.
+
+**Any version.** The trader prices with the version whose build it is given (`v10tables.npz`
+means v10; `--version` overrides it), so `--model v9_model` runs v9 and a v11 build runs v11 with
+nothing changed. A version needs what `trader.INTERFACE` lists: `price_states`, `price_kickoff`,
+`prior_theta`, `key_line` and the rest, plus its stream's `model_paths`. Every version copied from
+the last keeps them, and `test_trader.TestEveryVersion` checks each `vN.py` there is, so a new
+version that drops one fails the tests before it reaches the page.
 
 ## Run it
 
