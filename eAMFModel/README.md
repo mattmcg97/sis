@@ -1434,6 +1434,38 @@ on the board and still to come, and the version's probability of each
 value 0 to 36+. Matches whose TEAM_A side isn't known are left out, as the
 streams leave them.
 
+## Testing v10 by hand: `trader`
+
+```
+python -m eAMFModel trader --model v10_model
+```
+
+This opens a local page (http://127.0.0.1:8765) for clicking through a game and seeing v10's
+prices after every play. It needs only the v10 build; nothing else is installed. The pre-match
+model's expected points need pandas and scipy, like the build.
+
+- **Match:** pick the two players, their teams and the stream. *Get expected points* asks the
+  build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points, and
+  shows each player's pace and 4th-down aggression. The points can be typed over before
+  *Start match*.
+- **Plays:** each play button moves the game by the rules the sim plays: 4-minute quarters,
+  downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers,
+  safeties, kneels and spikes. Three timeouts a side each half; the second half is kicked to
+  the side that kicked first. A level game goes to overtime off a kick-off, two timeouts each.
+  Yards and seconds apply to the play buttons. *Edit state* sets anything directly, and *Undo*
+  steps back.
+- **Prices:** after every play v10 prices the state it leaves: moneyline, handicap and total at
+  its own key-number lines (held from play to play), with ladders either side, the expected
+  score, and the final margin and total distributions split at the quoted lines. Odds carry the
+  margin set at the top. The charts follow home's win probability against pre-match, and the
+  expected total against the quoted line. Hover any chart for the play behind it.
+- **Prices are repeatable:** every state of a match is simulated from the same random paths, so
+  a play's price change is the play's alone. `--paths` (or the page's *Games a price*) trades
+  speed for noise: about 0.3 s a price at 4,000.
+
+`game.py` is the play engine and `trader.py` the server; the page holds the game and sends the
+state with every request.
+
 ## Run it
 
 ```bash
