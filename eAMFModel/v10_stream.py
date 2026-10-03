@@ -87,23 +87,25 @@ def paired_prod_rows(prod_quote_rows):
 
 
 # How the stream sets a handicap or total line: its own even line, prod's, prod's moved only as far
-# as it must to bring P(over) inside a band (anchored), or its own even line held until it is far
-# off (hyst). v10.anchored_line and v10.held_line say how.
-OWN, PROD_LINES, ANCHORED, HELD = "own", "prod", "anchored", "hyst"
-LINE_MODES = (OWN, PROD_LINES, ANCHORED, HELD)
+# as it must to bring P(over) inside a band (anchored), its own even line held until it is far
+# off (hyst), or its own line in the gap between the key numbers (key). v10.anchored_line,
+# v10.held_line and v10.key_line say how.
+OWN, PROD_LINES, ANCHORED, HELD, KEY = "own", "prod", "anchored", "hyst", "key"
+LINE_MODES = (OWN, PROD_LINES, ANCHORED, HELD, KEY)
 
 
 def _line(market_id, prod_row, mpmf, tpmf, lines, held=None):
     """A handicap or total market's line under a line rule; None where prod's line is needed and
-    cannot be read. `held` (hyst) carries each group's line from one quote to the next."""
+    cannot be read. `held` (hyst, key) carries each group's line from one quote to the next."""
     spread = market_id in (SPREAD_HOME, SPREAD_AWAY)
     pmf, offset = (mpmf, v10.MARGIN_MAX) if spread else (tpmf, 0)
     sign = -1.0 if market_id == SPREAD_AWAY else 1.0           # the away line is home's, negated
     if lines == OWN:
         x = v10.even_line(pmf, offset)
-    elif lines == HELD:
+    elif lines in (HELD, KEY):
         key = "spread" if spread else "total"
-        x = v10.held_line(pmf, offset, None if held is None else held.get(key))
+        rule = v10.held_line if lines == HELD else v10.key_line
+        x = rule(pmf, offset, None if held is None else held.get(key))
         if held is not None:
             held[key] = x
     elif lines in (PROD_LINES, ANCHORED):

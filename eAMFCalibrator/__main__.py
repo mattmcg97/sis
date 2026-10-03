@@ -825,10 +825,10 @@ def common_options():
     tuning.add_argument("--v10-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v10 "
                              f"(default {config.V10_PATHS})")
-    tuning.add_argument("--v10-lines", choices=["own", "prod", "anchored", "hyst"],
+    tuning.add_argument("--v10-lines", choices=["own", "prod", "anchored", "hyst", "key"],
                         help="--candidate v10: its own even lines, prod's, prod's moved only as far as"
-                             " it must (anchored) or its own held until far off (hyst) (default "
-                             f"{config.V10_LINES})")
+                             " it must (anchored), its own held until far off (hyst) or its own in the"
+                             f" gap between the key numbers (key) (default {config.V10_LINES})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")

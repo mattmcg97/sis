@@ -5479,6 +5479,7 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertEqual(sio.stream_name("v10@anchored"), "MODEL:v10@anchored")
         self.assertEqual(sio.stream_name("v10-glmer@hyst"), "MODEL:v10-glmer@hyst")
         self.assertEqual(sio.model_version("MODEL:v10@hyst"), ("v10", "hyst"))
+        self.assertEqual(sio.stream_name("v10@key"), "MODEL:v10@key")
         for bad in ("v9@anchored", "v10@nearest"):
             with self.assertRaises(ValueError):
                 sio.stream_name(bad)

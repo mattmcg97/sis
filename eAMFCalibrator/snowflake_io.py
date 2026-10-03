@@ -43,8 +43,9 @@ def is_model(stream_table):
 def stream_name(value):
     """CLI value -> STREAMS entry: 'v9' means the model, a table stays a table.
     A model with its own lines (v8, v9) read at prod's line instead is
-    'v9@prod'. v10 has two more line rules: 'v10@anchored' (prod's line,
-    moved only as far as it must) and 'v10@hyst' (its own, held until far off).
+    'v9@prod'. v10 has more line rules: 'v10@anchored' (prod's line, moved
+    only as far as it must), 'v10@hyst' (its own, held until far off) and
+    'v10@key' (its own, in the gap between the key numbers).
 
     A second build of a version is named '<version>-<tag>=<model dir>', e.g.
     'v9-glmer=v9_glmer_917': it prices with v9's code off that build, under
@@ -76,7 +77,7 @@ def stream_name(value):
 
 
 LINE_MODELS = ("v8", "v9", "v10")     # versions that quote their own lines
-LINE_RULES = {"v10": ("prod", "anchored", "hyst")}   # their '@' suffixes; others: '@prod' alone
+LINE_RULES = {"v10": ("prod", "anchored", "hyst", "key")}   # their '@' suffixes; others: '@prod' alone
 
 
 def model_version(stream_table):
@@ -548,7 +549,7 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     with the players' handles attached for the player profiles.
 
     Each match is simulated once for every line mode the version has -- its
-    own even lines, prod's, and v10's anchored and held lines -- and the rest
+    own even lines, prod's, and v10's anchored, held and key lines -- and the rest
     are kept, so a report that reads the model several ways simulates it once."""
     import importlib
     _need_numpy(name)
