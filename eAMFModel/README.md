@@ -21,9 +21,9 @@ The code that runs:
 
 | file | what it is |
 |---|---|
-| `sim8.py`, `sim9.py`, `sim10.py` | each version's simulation: play tables and the snap-by-snap game |
-| `v8.py`, `v9.py`, `v10.py` | each version's build (fits, pre-match grid, profiles) and pricing |
-| `v8_stream.py` … `v10_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
+| `sim8.py` … `sim11.py` | each version's simulation: play tables and the snap-by-snap game |
+| `v8.py` … `v11.py` | each version's build (fits, pre-match grid, profiles) and pricing |
+| `v8_stream.py` … `v11_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
 | `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
 | `stream.py`, `grading.py` | what every stream shares; Brier against prod |
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
@@ -40,13 +40,13 @@ The code that runs:
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
-onward still carries everything they introduced. Their own commands no longer run, so use v8–v10
+onward still carries everything they introduced. Their own commands no longer run, so use v8–v11
 in their place.
 
 ## v3: a play-by-play simulation
 
 > v3's code has been removed (as have v4–v7's). This section and the next four describe what
-> they introduced, which v8–v10 still run.
+> they introduced, which v8–v11 still run.
 
 v3 was the first simulation (`sim.py`, `v3.py`). From the
 snapshot's state it plays the rest of the game snap by snap on the real
@@ -1399,7 +1399,7 @@ Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leade
 
 ### Line rules (own, `@even`, `@prod`, `v10@anchored`, `v10@hyst`)
 
-v8, v9 and v10 quote their own lines in the gap between the key numbers (below). `@even` reads
+v8 to v11 quote their own lines in the gap between the key numbers (below). `@even` reads
 them at the half-point line nearest 50% instead, the old own line, and `@prod` at prod's. v10 has
 two more rules. All of them come off one simulation:
 
@@ -1437,7 +1437,7 @@ A line next to a spike prices far from the lines either side of it. A small erro
 moves its price a lot, and the even line flips across the spike as the game moves. A line in a gap
 between spikes prices about the same as its neighbours, so it can stay put.
 
-The own line (`key_line`, in v8, v9 and v10) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
+The own line (`key_line`, in v8 to v11) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
 rows including kick-offs, 905 matches), each rule against a bettor who learns where it misprices
 (by phase, score, price, side of prod's line and the line's key-number position) on half the
 matches and bets the other half, five splits shared by every rule. The figures are book per 100
@@ -1454,7 +1454,7 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
-## Pricing only what the model is sure of (v8–v10 streams)
+## Pricing only what the model is sure of (v8–v11 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
