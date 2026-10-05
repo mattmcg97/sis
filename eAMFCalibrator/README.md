@@ -1654,6 +1654,48 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### The pre-match models' own test: `bets prematch`
+
+A pre-match model (NB2 or glmer) is judged on the bets placed before
+kick-off. Those bets don't depend on the in-play simulation, so this test
+prices each model version off its kick-off alone. That makes a window of
+many weeks cheap enough to run, and a week of bets says little.
+
+```bash
+# two v10 builds on the same cut-off, differing only in their prior
+python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-08-01 --out v10_nb2_0801 --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv
+python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-08-01 --out v10_glmer_0801 --history eAMFCalibrator/out/match_history.csv --handles eAMFCalibrator/out/match_history.csv --prior glmer
+# every pre-match bet since then, re-priced by each
+python -m eAMFCalibrator bets prematch --since 2026-08-01 --until 2026-09-30 --candidate v10,v10-glmer=v10_glmer_0801 --v10-model v10_nb2_0801
+```
+
+- **The bets.** Only bets the operator flags as not in play
+  (`BET_IN_PLAY`). They're joined and re-priced as in `bets`: each prod
+  quote published before the first play gets the model's kick-off price at
+  the same publish time.
+- **No look-ahead.** glmer's form follows the results.
+  - The run fetches every match settled by `--until`.
+  - Each pre-match quote reads only the results in when it was published:
+    a match counts from its last play in the feed, else 36 minutes after
+    kick-off. See eAMFModel's README, "Form follows results, as it would
+    live".
+  - NB2's ratings stay as they were at its build, as they do live.
+- **Output.**
+  - `bets_prematch_sim.csv` has one row per bet, with each candidate's
+    re-priced revenue.
+  - `bets_prematch.txt` is the report, also printed:
+    - the book's margin with prod, and each candidate's change against it,
+      in points: overall, by market and week by week (the week the bet was
+      placed);
+    - then each candidate against the first: the change in margin, its 95%
+      interval over `--boot` resamples of the matches, and in how many
+      weeks it came out ahead.
+- **Builds age.** Both builds are fitted once, on the same cut-off, so
+  both age over a long window. NB2's ratings and glmer's player effects
+  stay fixed, while glmer's form keeps up. To test how they'd do rebuilt
+  every week or two, run the window in pieces, with fresh builds before
+  each piece.
+
 ### The comparison tables
 
 Every comparison table reads the same way. It opens with N, then grouped columns:

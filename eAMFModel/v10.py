@@ -275,15 +275,20 @@ def prior_theta(grid, means, prof=None):
     return fit_means(grid, *means)
 
 
-# v10: the pre-match model's expected points spread wider than real games do. Refitted
-# SHRINK_DAYS before the build's cut-off and read on those days, real totals and margins move
-# total_slope and margin_slope points for each point of its predictions (out of sample). Every
-# match's expected total and margin are pulled toward the build's average by those slopes.
-# The margin's slope is read but not applied (MARGIN_SHRINK): NB2's margins spread only about
-# +-1.75 points, so two weeks of matches measure their slope to about +-0.15.
+# v10: the pre-match model's expected points spread wider than real games do. Refitted at the
+# start of each of the SHRINK_WINDOWS stretches of SHRINK_DAYS before the build's cut-off and read
+# on them out of sample, as the live model prices (NB2's ratings as fitted, glmer's form following
+# the results), real totals and margins move total_slope and margin_slope points for each point of
+# its predictions, pooled within the stretches. Each slope is moved toward 1 by its standard
+# error -- only as far as the data are sure of -- and kept within SHRINK_RANGE, and every match's
+# expected total and margin are pulled toward the build's average by them (MARGIN_SHRINK: the
+# margin's too). One stretch alone reads a margin slope to about +-0.17: NB2's margins spread only
+# about +-1.75 points.
 PRIOR_SHRINK = True
-MARGIN_SHRINK = False
+MARGIN_SHRINK = True
 SHRINK_DAYS = 14
+SHRINK_WINDOWS = 4
+SHRINK_WORKERS = 2               # refits run side by side (each its own process)
 SHRINK_MIN_MATCHES = 200
 SHRINK_RANGE = (0.5, 1.2)
 SHRINK_FILE = "v10shrink.json"
@@ -298,43 +303,79 @@ def shrink_means(means, shrink):
     return (t + m) / 2, (t - m) / 2
 
 
-def _slope(x, y):
-    """Least-squares slope of y on x."""
-    x, y = np.asarray(x, float), np.asarray(y, float)
-    v = np.var(x)
-    return float(np.cov(x, y, bias=True)[0, 1] / v) if v > 0 else 1.0
+def pooled_slope(windows):
+    """Least-squares slope of y on x pooled within windows (each centred on its own means), and
+    its standard error: windows is [(x, y), ...]. (1, inf) when x never varies."""
+    parts = [(np.asarray(x, float), np.asarray(y, float)) for x, y in windows if len(x) >= 2]
+    parts = [(x - x.mean(), y - y.mean()) for x, y in parts]
+    sxx = sum(float(x @ x) for x, _ in parts)
+    if sxx <= 0:
+        return 1.0, math.inf
+    b = sum(float(x @ y) for x, y in parts) / sxx
+    rss = sum(float(((y - b * x) ** 2).sum()) for x, y in parts)
+    dof = max(1, sum(len(x) for x, _ in parts) - len(parts) - 1)
+    return b, math.sqrt(rss / dof / sxx)
 
 
-def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_DAYS):
-    """Refit the pre-match model `days` before the cut-off, predict those days' matches and
-    regress the real total and margin on the predicted ones: the slopes (within SHRINK_RANGE,
-    corrected by the live model's level `scale`), the build's average (`centre`: total, margin)
-    and the matches read. None when fewer than SHRINK_MIN_MATCHES finished in the window."""
+def toward_one(slope, se):
+    """A slope moved toward 1 by its standard error, never past it."""
+    return min(1.0, slope + se) if slope < 1 else max(1.0, slope - se)
+
+
+def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_DAYS,
+               windows=SHRINK_WINDOWS):
+    """Refit the pre-match model at the start of each of `windows` stretches of `days` before the
+    cut-off, predict each stretch's matches and regress the real total and margin on the predicted
+    ones, pooled within the stretches: the slopes (corrected by the live model's level `scale`,
+    moved toward 1 by their standard errors and kept within SHRINK_RANGE), the build's average
+    (`centre`: total, margin), the matches read and each stretch's own slopes. None when fewer
+    than SHRINK_MIN_MATCHES finished in the stretches."""
     import os
-    start = before - dt.timedelta(days=days)
-    held = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
-            and nb2_prior._start(r) is not None and start <= nb2_prior._start(r) < before]
-    if len(held) < SHRINK_MIN_MATCHES:
-        return None
+    import shutil
+    from concurrent.futures import ThreadPoolExecutor
     module = nb2_prior if prior == "nb2" else glmer_prior
-    d = os.path.join(work_dir, "shrink")
-    module.fit(history, d, before=start)
-    pred = module.predict(d, held)
-    rows = [(pred[r["MATCH_CODE"]], float(r["PLAYER_1_FINAL_SCORE"]), float(r["PLAYER_2_FINAL_SCORE"]))
-            for r in held if r["MATCH_CODE"] in pred]
-    if len(rows) < SHRINK_MIN_MATCHES:
+    finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
+                and r.get("PLAYER_2_FINAL_SCORE") not in ("", None)
+                and nb2_prior._start(r) is not None]
+    stretches = []
+    for k in range(1, windows + 1):
+        start = before - dt.timedelta(days=k * days)
+        end = start + dt.timedelta(days=days)
+        held = [r for r in finished if start <= nb2_prior._start(r) < end]
+        if held:
+            stretches.append((start, held))
+    if sum(len(held) for _, held in stretches) < SHRINK_MIN_MATCHES:
         return None
-    pt = [p[0] + p[1] for p, _, _ in rows]
-    pm = [p[0] - p[1] for p, _, _ in rows]
-    rt = [h + a for _, h, a in rows]
-    rm = [h - a for _, h, a in rows]
-    raw_t, raw_m = _slope(pt, rt) / scale, _slope(pm, rm) / scale
+
+    def read(k):
+        start, held = stretches[k]
+        d = os.path.join(work_dir, "shrink", str(k + 1))
+        module.fit(history, d, before=start)
+        pred = module.predict(d, held)
+        shutil.rmtree(d, ignore_errors=True)               # read once: no need to keep the refit
+        return [(pred[r["MATCH_CODE"]], float(r["PLAYER_1_FINAL_SCORE"]),
+                 float(r["PLAYER_2_FINAL_SCORE"])) for r in held if r["MATCH_CODE"] in pred]
+
+    with ThreadPoolExecutor(max(1, min(SHRINK_WORKERS, len(stretches)))) as pool:
+        got = list(pool.map(read, range(len(stretches))))
+    if sum(len(rows) for rows in got) < SHRINK_MIN_MATCHES:
+        return None
+    totals = [([p[0] + p[1] for p, _, _ in rows], [h + a for _, h, a in rows]) for rows in got]
+    margins = [([p[0] - p[1] for p, _, _ in rows], [h - a for _, h, a in rows]) for rows in got]
+    raw_t, se_t = (v / scale for v in pooled_slope(totals))
+    raw_m, se_m = (v / scale for v in pooled_slope(margins))
     lo, hi = SHRINK_RANGE
-    margin = float(np.clip(raw_m, lo, hi)) if MARGIN_SHRINK else 1.0
-    return {"total_slope": float(np.clip(raw_t, lo, hi)), "margin_slope": margin,
-            "total_raw": raw_t, "margin_raw": raw_m, "total_centre": float(centre[0]),
-            "margin_centre": float(centre[1]), "matches": len(rows), "days": days,
-            "from": start.isoformat(), "before": before.isoformat()}
+    margin = float(np.clip(toward_one(raw_m, se_m), lo, hi)) if MARGIN_SHRINK else 1.0
+    each = []
+    for (start, _), rows, t, m in zip(stretches, got, totals, margins):
+        each.append({"from": start.isoformat(), "matches": len(rows),
+                     "total_raw": pooled_slope([t])[0] / scale,
+                     "margin_raw": pooled_slope([m])[0] / scale})
+    return {"total_slope": float(np.clip(toward_one(raw_t, se_t), lo, hi)), "margin_slope": margin,
+            "total_raw": raw_t, "margin_raw": raw_m, "total_se": se_t, "margin_se": se_m,
+            "total_centre": float(centre[0]), "margin_centre": float(centre[1]),
+            "matches": sum(len(rows) for rows in got), "days": days, "windows": len(stretches),
+            "from": stretches[-1][0].isoformat(), "before": before.isoformat(), "each": each}
 
 
 class ShrunkPrematch:
@@ -1235,7 +1276,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         pre = PRIORS[prior].build(history, os.path.join(out_dir, prior), before)
         with open(os.path.join(out_dir, PRIOR_FILE), "w", encoding="utf-8") as fh:
             json.dump({"prior": prior}, fh)
-        priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in matches], results=history)
         shrink_path = os.path.join(out_dir, SHRINK_FILE)
         if os.path.exists(shrink_path):
             os.remove(shrink_path)
@@ -1243,7 +1284,8 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             centre = (float(np.mean([h + a for h, a in priors.values()])),
                       float(np.mean([h - a for h, a in priors.values()])))
             if verbose:
-                print(f"  prior shrink: refitting the pre-match model {SHRINK_DAYS} days before the cut-off")
+                print(f"  prior shrink: refitting the pre-match model at the start of each of the"
+                      f" {SHRINK_WINDOWS} stretches of {SHRINK_DAYS} days before the cut-off")
             shrink = fit_shrink(history, prior, before, centre, out_dir, scale=pre.scale)
             if shrink is not None:
                 with open(shrink_path, "w", encoding="utf-8") as fh:
@@ -1252,13 +1294,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                 priors = {c: shrink_means(m, shrink) for c, m in priors.items()}
                 if verbose:
                     print(f"  prior shrink: on {shrink['matches']:,} matches out of sample, real totals move"
-                          f" {shrink['total_raw']:.3f} and margins {shrink['margin_raw']:.3f} a point of"
-                          f" the prediction -> totals pulled {shrink['total_slope']:.3f}, margins"
+                          f" {shrink['total_raw']:.3f} (+-{shrink['total_se']:.3f}) and margins"
+                          f" {shrink['margin_raw']:.3f} (+-{shrink['margin_se']:.3f}) a point of the"
+                          f" prediction -> totals pulled {shrink['total_slope']:.3f}, margins"
                           f" {shrink['margin_slope']:.3f} toward {shrink['total_centre']:.2f} /"
                           f" {shrink['margin_centre']:+.2f}")
+                    print("    by stretch: " + "; ".join(
+                        f"{e['from'][:10]} {e['matches']:,} matches, totals {e['total_raw']:.2f},"
+                        f" margins {e['margin_raw']:.2f}" for e in shrink["each"]))
             elif verbose:
                 print(f"  prior shrink: fewer than {SHRINK_MIN_MATCHES} finished matches in the"
-                      f" {SHRINK_DAYS} days before the cut-off, none applied")
+                      f" {SHRINK_WINDOWS * SHRINK_DAYS} days before the cut-off, none applied")
     handles = dict(handles or {})
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
@@ -1344,7 +1390,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
                     and nb2_prior._start(r) is not None and nb2_prior._start(r) < cutoff
                     and nb2_prior._start(r) >= cutoff - dt.timedelta(days=FORM_DAYS)]
-        sides = form_sides(history, pre.means(finished, n_sims=1000), cutoff)
+        sides = form_sides(history, pre.means(finished, n_sims=1000, results=history), cutoff)
         if len(sides) >= 200:
             tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
             if verbose:
@@ -1448,7 +1494,7 @@ def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, work
         if pre is None:
             raise SystemExit("this v10 model has no pre-match model: rebuild it with --history")
         wanted = set(by_match) if matches is None else set(matches)
-        priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted], results=history)
     elif priors is None and pre is not None:
         raise SystemExit("this v10 model prices pre-match with its own model (NB2 or glmer): pass"
                          " --history (the matches' players, teams and streams, e.g. eAMFCalibrator"

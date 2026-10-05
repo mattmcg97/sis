@@ -1233,7 +1233,7 @@ class TestBuild(unittest.TestCase):
             def __init__(self, level):
                 self.level = level
 
-            def means(self, schedule, n_sims=0):
+            def means(self, schedule, n_sims=0, results=None):
                 return {r["MATCH_CODE"]: self.level for r in schedule}
 
         history = [{"MATCH_CODE": c} for c in codes]
@@ -1263,7 +1263,7 @@ class TestBuild(unittest.TestCase):
             league = (17.0, 17.0)
             asked = None
 
-            def means(self, schedule, n_sims=0):
+            def means(self, schedule, n_sims=0, results=None):
                 Fake.asked = schedule
                 return {}
 

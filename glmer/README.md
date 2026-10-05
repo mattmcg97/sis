@@ -383,3 +383,17 @@ runs `fit.R` at build time and `predict.R --n-sims=0` whenever the version
 needs expected points. It uses whatever `fit.R`'s defaults and `config.R`
 say, so changing the chosen half-lives here changes v7's prior at its next
 build. See the v7 section of `eAMFModel/README.md`.
+
+Its form follows the results wherever it prices, the calibrator included.
+- The calibrator fetches every match settled by the window's end, and
+  `predict.R` reads them alongside the model's own history.
+- Each pre-match quote reads only the results in when it was published, so
+  a gamer's back-to-back match still being played is never seen early.
+- `model_info.json` records the global formula. A build whose features read
+  the clock (rest, session, hour) prices every pre-match quote off the
+  kick-off instead.
+
+See "Form follows results, as it would live" in `eAMFModel/README.md`.
+`python -m eAMFCalibrator bets prematch` sets NB2 and glmer builds side
+by side on every pre-match bet over many weeks (see
+`eAMFCalibrator/README.md`).

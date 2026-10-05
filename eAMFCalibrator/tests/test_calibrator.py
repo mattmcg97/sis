@@ -1026,15 +1026,40 @@ class TestV8Candidate(unittest.TestCase):
             league = (17.0, 17.0)
             asked = None
 
-            def means(self, schedule, n_sims=0):
+            def means(self, schedule, n_sims=0, results=None):
                 Fake.asked = schedule
                 return {self_mc: (21.0, 14.0) for self_mc in [r["MATCH_CODE"] for r in schedule]}
 
         with mock.patch.object(self.model(), "prematch_model", return_value=Fake()), \
-                mock.patch.object(sio, "fetch_match_info", return_value=info) as fetch:
+                mock.patch.object(sio, "fetch_match_info", return_value=info) as fetch, \
+                mock.patch.object(sio, "fetch_history") as history:
             rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
         self.assertEqual(fetch.call_args.args[1], [self.MC])
         self.assertEqual(Fake.asked, info)
+        self.assertTrue(rows)
+        history.assert_not_called()                     # NB2's form doesn't follow results
+
+    def test_a_prior_whose_form_follows_results_is_given_every_settled_match(self):
+        from .. import snowflake_io as sio
+        info = [{"MATCH_CODE": self.MC, "PLAYER_1_HANDLE": "ALPHA"}]
+        settled = [{"MATCH_CODE": "OLD", "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "14"}]
+
+        class Fake:
+            league = (17.0, 17.0)
+            FOLLOWS_RESULTS = True
+            given = []
+
+            def means(self, schedule, n_sims=0, results=None):
+                Fake.given.append(results)
+                return {r["MATCH_CODE"]: (21.0, 14.0) for r in schedule}
+
+        with mock.patch.object(self.model(), "prematch_model", return_value=Fake()), \
+                mock.patch.object(sio, "fetch_match_info", return_value=info), \
+                mock.patch.object(sio, "fetch_history", return_value=settled) as history, \
+                mock.patch.object(config, "CUTOFF_END", "2026-09-30"):
+            rows = self.quotes(self.tmp.name, {self.MC: ("ALPHA", "BRAVO")})
+        self.assertEqual(history.call_args.kwargs, {"until": "2026-09-30"})
+        self.assertTrue(Fake.given and all(g is settled for g in Fake.given))
         self.assertTrue(rows)
 
     def test_an_old_model_does_not_ask_for_match_info(self):

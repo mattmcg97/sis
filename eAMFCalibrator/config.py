@@ -20,6 +20,9 @@ STREAMS = {
 CANDIDATES = []
 # A second build of a model version, by name: --candidate v9-glmer=<dir> -> {"v9-glmer": "<dir>"}
 MODEL_DIRS = {}
+# A model version prices only the prod rows published before each match's first play, off its
+# kick-off (no in-play simulation): set by `bets prematch`, the pre-match models' own test.
+PREMATCH_ONLY = False
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
 FETCH_CACHE = False

@@ -561,25 +561,37 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     model_dir = build_dir(name)
     paths = getattr(config, f"{key}_PATHS")
     lines = lines or getattr(config, f"{key}_LINES")
-    cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END)
+    prematch_only = getattr(config, "PREMATCH_ONLY", False)
+    cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
+                 prematch_only)
     caching = getattr(config, "FETCH_CACHE", False)
     if caching and cache_key in _MODEL_QUOTES:
         return list(_MODEL_QUOTES[cache_key][lines])
     tables, _ = stream.model_paths(model_dir)                 # fail early, with instructions
-    nb2 = model.prematch_model(tables) is not None
+    pre = model.prematch_model(tables)
+    nb2 = pre is not None
     if not nb2:
         print(f"  {name}: this model was built without --history, so its pre-match comes from"
               " prod's quotes; rebuild it with --history for our own (NB2)", flush=True)
     snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
     # players, teams and stream for the model's own pre-match model (NB2)
     match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
+    # a pre-match model whose form follows the results (glmer) reads every match settled by the
+    # window's end: each match's kick-off and in-play prices count the results before it, and each
+    # pre-match quote only those in by its publish time (eAMFModel/stream.py known_states)
+    history = None
+    if nb2 and getattr(pre, "FOLLOWS_RESULTS", False):
+        history = fetch_history(cur, until=config.CUTOFF_END)
+        print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
+              " pre-match quote only the results in when it was published", flush=True)
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{paths:,} games each", flush=True)
+          f"{paths:,} games each{' at kick-off only' if prematch_only else ''}", flush=True)
     both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
                                      workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=getattr(stream, "LINE_MODES",
-                                                   (stream.OWN, stream.PROD_LINES)))
+                                                   (stream.OWN, stream.PROD_LINES)),
+                                     history=history, prematch_only=prematch_only)
     if caching:
         _MODEL_QUOTES[cache_key] = both
     return list(both[lines])

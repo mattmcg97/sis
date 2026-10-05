@@ -1065,7 +1065,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         pre = PRIORS[prior].build(history, os.path.join(out_dir, prior), before)
         with open(os.path.join(out_dir, PRIOR_FILE), "w", encoding="utf-8") as fh:
             json.dump({"prior": prior}, fh)
-        priors = pre.means([r for r in history if r["MATCH_CODE"] in matches])
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in matches], results=history)
     handles = dict(handles or {})
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
@@ -1151,7 +1151,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
                     and nb2_prior._start(r) is not None and nb2_prior._start(r) < cutoff
                     and nb2_prior._start(r) >= cutoff - dt.timedelta(days=FORM_DAYS)]
-        sides = form_sides(history, pre.means(finished, n_sims=1000), cutoff)
+        sides = form_sides(history, pre.means(finished, n_sims=1000, results=history), cutoff)
         if len(sides) >= 200:
             tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
             if verbose:
@@ -1240,7 +1240,7 @@ def run(path, tables_path, grid_path, variants, matches=None, n_paths=1000, work
         if pre is None:
             raise SystemExit("this v9 model has no pre-match model: rebuild it with --history")
         wanted = set(by_match) if matches is None else set(matches)
-        priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted])
+        priors = pre.means([r for r in history if r["MATCH_CODE"] in wanted], results=history)
     elif priors is None and pre is not None:
         raise SystemExit("this v9 model prices pre-match with its own model (NB2 or glmer): pass"
                          " --history (the matches' players, teams and streams, e.g. eAMFCalibrator"

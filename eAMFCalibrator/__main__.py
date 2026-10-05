@@ -335,6 +335,9 @@ def cmd_bets(args):
                     fh.write("\n".join(lines) + "\n")
                 print("\n".join(lines))
                 print(f"\n  probe -> {path}")
+            elif args.action == "prematch":
+                bets.run(cur, out_dir, prematch_only=True)
+                print(f"\n  -> {os.path.join(out_dir, 'bets_prematch_sim.csv')} and bets_prematch.txt")
             elif args.action == "check":
                 bets.run(cur, out_dir, only_checks=True)
                 print(f"\n  -> {os.path.join(out_dir, 'bets_checks.csv')}")
@@ -954,10 +957,15 @@ def build_parser():
              "candidate's probability at the moment it was priced (a lag per operator off its odds); "
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
-                             choices=["run", "probe", "lines", "check", "moments", "lag", "totals-moves",
-                                      "totals-signals", "sessions", "favourite"],
+                             choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
+                                      "totals-moves", "totals-signals", "sessions", "favourite"],
                              default="run",
-                             help="favourite: every bet split by the pre-match favourite, the score "
+                             help="prematch: the pre-match models' own test -- only the bets "
+                                  "placed before kick-off, each model version priced off its kick-off "
+                                  "alone (cheap over many weeks), margins week by week and each "
+                                  "candidate against the first with a bootstrap interval "
+                                  "(out/bets_prematch.txt); "
+                                  "favourite: every bet split by the pre-match favourite, the score "
                                   "when it was struck and the side it backs, by temperature: where "
                                   "the stake goes and the book's margin against what prod's price "
                                   "leaves it (out/bets_favourite.txt); "
@@ -987,7 +995,7 @@ def build_parser():
     bets_parser.add_argument("--max-scale", type=float, metavar="X",
                              help=f"book comparison: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
     bets_parser.add_argument("--boot", type=int, metavar="N",
-                             help=f"book comparison: bootstrap resamples over matches (default {config.SIM_BOOT})")
+                             help=f"book comparison and `bets prematch`: bootstrap resamples over matches (default {config.SIM_BOOT})")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",

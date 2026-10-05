@@ -1,6 +1,7 @@
 """The betting simulation: a lag per operator off the odds, the join, and the re-pricing."""
 
 import datetime as dt
+import os
 import unittest
 from unittest import mock
 
@@ -332,6 +333,82 @@ class TestCandidates(unittest.TestCase):
         w = bets.wide([("v4", a), ("v5", b)])
         self.assertEqual((w[1]["simulated_v4"], w[1]["simulated_v5"]), (True, False))
         self.assertNotIn("simulated", w[1])
+
+
+class TestPrematch(unittest.TestCase):
+    """`bets prematch`: the pre-match models' own test, on the bets placed before kick-off."""
+
+    @staticmethod
+    def results():
+        def row(match, day, stake, rev, rev_c, market="spread", in_play=False):
+            return dict(match_code=match, bet_time=dt.datetime(2026, 9, day, 12), stake=stake,
+                        revenue=rev, candidate_revenue=rev_c, simulated=True, market=market,
+                        in_play=in_play)
+        # week 38 (M1): prod 10%, v10 20%, glmer 30%; week 39 (M2): -10%, -20%, -5%
+        v10 = [row("M1", 15, 10, 1, 2), row("M1", 15, 10, 1, 2, market="total"),
+               row("M2", 22, 20, -2, -4), row("M1", 15, 100, 50, 0, in_play=True)]
+        glmer = [dict(r, candidate_revenue=c) for r, c in zip(v10, (3, 3, -1, 0))]
+        return [("v10", v10), ("v10-glmer", glmer)]
+
+    def test_the_report_compares_the_candidates_overall_by_market_and_week(self):
+        lines = bets.prematch_report(self.results(), n_boot=200)
+        text = "\n".join(lines)
+        self.assertIn("3 bets placed before kick-off, re-priced by v10, v10-glmer", text)
+        overall = next(l for l in lines if l.strip().startswith("all "))
+        self.assertEqual(overall.split()[1:], ["3", "40", "0.00%", "+0.00", "+12.50"])
+        week38 = next(l for l in lines if l.strip().startswith("2026-W38"))
+        self.assertEqual(week38.split()[1:], ["2", "20", "10.00%", "+10.00", "+20.00"])
+        week39 = next(l for l in lines if l.strip().startswith("2026-W39"))
+        self.assertEqual(week39.split()[1:], ["1", "20", "-10.00%", "-10.00", "+5.00"])
+        self.assertIn("total ", text)
+        head2head = next(l for l in lines if l.strip().startswith("v10-glmer"))
+        self.assertIn("+12.50", head2head)
+        self.assertIn("ahead in 2 of 2 weeks", head2head)
+        lo, hi = (float(x) for x in head2head.split("[")[1].split("]")[0].split(","))
+        self.assertLessEqual(lo, 12.5)
+        self.assertGreaterEqual(hi, 12.5)
+        # one candidate: no head to head; no pre-match bets: said so
+        self.assertNotIn("each candidate against", "\n".join(bets.prematch_report(self.results()[:1])))
+        none = [("v10", [r for r in self.results()[0][1] if r["in_play"]])]
+        self.assertIn("(none)", "\n".join(bets.prematch_report(none)))
+        self.assertEqual(bets._iso_week(None), "unknown")
+        self.assertEqual(bets._iso_week(dt.datetime(2027, 1, 1)), "2026-W53")
+
+    def test_bets_prematch_prices_only_the_bets_before_kick_off(self):
+        from .. import snowflake_io
+        cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
+                "ODDS", "STAKE_GBP", "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER",
+                "OPERATOR_NAME", "BET_IN_PLAY", "CUSTOMER_TEMPERATURE"]
+        rows = []
+        for (c, new), (_, old) in zip(PRICES[1:], PRICES):
+            for t, p in ((c + 6, old), (c + 7, new)):
+                rows.append((len(rows), "M1", at(t), 1, 1, odds_for(p), 10, 10, None, 2, "FANDUEL",
+                             "No" if len(rows) % 2 else "Yes", "Standard"))
+        seen = []
+
+        def quotes(cur, stream, matches):
+            seen.append((stream, config.PREMATCH_ONLY))
+            return MONEYLINE
+        with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
+                mock.patch.object(snowflake_io, "fetch_quotes", side_effect=quotes), \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(bets, "write_csv") as written, \
+                mock.patch.object(bets, "write_text") as text, mock.patch("builtins.print"), \
+                mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
+                mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
+                mock.patch.object(config, "CANDIDATES", ["MODEL:v10", "MODEL:v10-glmer"]), \
+                mock.patch.object(bets, "check_models"):
+            results = bets.run(None, "out", prematch_only=True)
+        self.assertEqual([n for n, _ in results], ["v10", "v10-glmer"])
+        self.assertEqual(len(results[0][1]), 4)
+        self.assertFalse(any(r["in_play"] for _, rs in results for r in rs))
+        # the models priced pre-match only, and the switch is put back after
+        self.assertEqual([on for s, on in seen if s.startswith("MODEL:")], [True, True])
+        self.assertFalse(config.PREMATCH_ONLY)
+        paths = [c[0][0] for c in written.call_args_list] + [c[0][0] for c in text.call_args_list]
+        self.assertIn(os.path.join("out", "bets_prematch_sim.csv"), paths)
+        self.assertIn(os.path.join("out", "bets_prematch.txt"), paths)
+        self.assertFalse(any(os.path.basename(p) == "bets_sim.csv" for p in paths))
 
 
 if __name__ == "__main__":

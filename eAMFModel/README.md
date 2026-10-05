@@ -1048,11 +1048,29 @@ built with. A model built before `--prior` existed reads as NB2.
 - **No level scale.** The expected points aren't rescaled. Out of sample
   its totals ran 0.2 points under the real ones. NB2's level scale corrects
   a 1.7-point gap that this model doesn't have.
-- **Form follows results when it has them.**
+- **Form follows results, as it would live.** Each match's form counts
+  only results from matches that started before it, never its own.
   - Priced with `--history` (`v7`, `remaining`), the rows carry finals, so
-    each match's form counts every result that started before it.
-  - The calibrator's `match_info` comes from `EVENT` without finals, so
-    there the form stays as it was at the build, as NB2's ratings do.
+    the form reads every earlier result.
+  - In the calibrator, the run fetches every match settled by `--until`,
+    and the stream passes it in (`means(..., results=...)`). A scheduled
+    match takes its final from there, so later matches' form reads it.
+  - **Each pre-match quote reads only the results in when it was
+    published.** The schedule runs a gamer's matches back to back, 36
+    minutes apart, so the previous match is often still on while the next
+    one's pre-match prices go up. Pricing those quotes off the kick-off
+    would hand glmer a result no bettor had yet.
+    - So `stream.known_states` cuts each quote at the earliest of the two
+      gamers' earlier matches still unfinished at its publish time. The
+      match is then priced as if it started a second before that cut.
+    - A result counts from the match's last play in the feed, or 36
+      minutes after kick-off (`RESULT_MINUTES`) where the feed has none.
+    - In-play prices and quotes published after every earlier match
+      ended read every earlier result.
+    - A glmer build whose features read the clock (rest, session, hour:
+      `context`, `form_session`) prices every pre-match quote off the
+      kick-off instead. Its `AS_OF` is false.
+  - NB2's ratings stay as they were at the build, live and here.
 - **It needs R.**
   - Install R 4.x, then `Rscript glmer/install_packages.R`.
   - `Rscript` is found on the PATH or through `RSCRIPT`. On Windows it is

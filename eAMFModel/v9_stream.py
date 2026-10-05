@@ -8,7 +8,8 @@ import numpy as np
 
 from . import playover, players, sim9 as sim, v9
 from .state import ML_AWAY, ML_HOME, MARKET_IDS, SPREAD_AWAY, SPREAD_HOME
-from .stream import OPEN, _parse_line, confident_windows, description, side_known
+from .stream import (OPEN, _parse_line, confident_windows, description, known_states,
+                     match_ends, prematch_publish_times, side_known)
 
 DEFAULT_MODEL_DIR = "v9_model"
 DEFAULT_PATHS = 2000
@@ -131,16 +132,19 @@ def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=Non
 
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
                kickoff=None):
-    """Prod-shaped quote rows from v9's distributions, at the lines `lines` sets. With `kickoff` (the pre-match margin and
-    total distributions), every prod row published before the first play started -- no message,
-    or one below first_play_message -- gets v9's pre-match price, on its own message (none for
-    none) and publish time."""
+    """Prod-shaped quote rows from v9's distributions, at the lines `lines` sets. With `kickoff` (the
+    pre-match margin and total distributions, or a function of the prod row giving them: what was
+    known when it was published), every prod row published before the first play started -- no
+    message, or one below first_play_message -- gets v9's pre-match price, on its own message
+    (none for none) and publish time."""
     keys = [b[0] for b in books]
     out, held = [], {}
+    kickoff_at = kickoff if callable(kickoff) else (lambda row: kickoff)
     if kickoff is not None:
         for r in prod_quote_rows:
             if r[1] in MARKET_IDS and r[3] is not None and r[6] is None:
-                q = _quote(match_code, r[1], r, kickoff[0], kickoff[1], lines, None, held)
+                mpmf, tpmf = kickoff_at(r)
+                q = _quote(match_code, r[1], r, mpmf, tpmf, lines, None, held)
                 if q:
                     out.append(q)
     for (market_id, message), prod_row in sorted(paired_prod_rows(prod_quote_rows).items(),
@@ -150,8 +154,8 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
         i = bisect_right(keys, message) - 1
         if i < 0:
             if kickoff is not None and _before_play(message, first_play_message):
-                q = _quote(match_code, market_id, prod_row, kickoff[0], kickoff[1], lines, message,
-                                   held)
+                mpmf, tpmf = kickoff_at(prod_row)
+                q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held)
                 if q:
                     out.append(q)
             continue
@@ -165,17 +169,25 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
 
 
 def _worker(job):
-    """Worker: price a list of matches."""
-    items, tables_path, grid_path, variant, n_paths, seed, lines = job
+    """Worker: price a list of matches; with prematch_only, the kick-off alone (no in-play books).
+    `known` (publish time -> expected points): the pre-match quotes priced off what was known when
+    they were published, where that differs from the kick-off's."""
+    items, tables_path, grid_path, variant, n_paths, seed, lines, prematch_only = job
     tables = sim.Tables.load(tables_path)
     grid = v9.PriorGrid.load(grid_path)
     rng = np.random.default_rng(seed)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
-    for match_code, snaps, prod_rows, first_play, prof, means in items:
+    for match_code, snaps, prod_rows, first_play, prof, means, known in items:
         kickoff = (kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof, means)
                    if PREMATCH else None)
-        if side_known(snaps):
+        if kickoff is not None and known:
+            # pre-match quotes published before results the form follows came in
+            kicks = {m: kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof, m)
+                     for m in sorted(set(known.values()))}
+            at = {publish: kicks[m] for publish, m in known.items()}
+            kickoff = (lambda row, at=at, own=kickoff: at.get(row[2], own))
+        if side_known(snaps) and not prematch_only:
             books = match_books(tables, grid, variant, snaps, n_paths, rng, prof, means)
             windows = confident_windows(snaps, [b[0] for b in books])
         else:
@@ -188,39 +200,54 @@ def _worker(job):
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, variant=None, book=None, handles=None, seed=0,
-                       match_info=None, lines=OWN):
-    """Quote rows for many matches."""
+                       match_info=None, lines=OWN, history=None, prematch_only=False):
+    """Quote rows for many matches. `history`: settled matches (with finals) known when pricing,
+    for a pre-match model whose form follows them (glmer): the kick-off and in-play prices read
+    every result before the match, and each pre-match quote only those in by its publish time
+    (stream.known_states). `prematch_only`: price only the prod rows published before each match's
+    first play, off the kick-off -- no in-play simulation, so a long window of pre-match bets is
+    cheap."""
     tables_path, grid_path = model_paths(model_dir)
     variant = variant or v9.Variant("v9")
     if book is None:
         book = v9.players_book(tables_path)
     pre = v9.prematch_model(tables_path)
-    means = {}
-    if pre is not None:
-        if match_info is None:
-            raise SystemExit("this v9 model prices off its own pre-match model (NB2 or glmer), which"
-                             " needs each match's players, teams and stream (match_info)")
-        means = pre.means([r for r in match_info if r["MATCH_CODE"] in snapshots_by_match])
     prod_by = {}
     for r in prod_quote_rows:
         prod_by.setdefault(r[0], []).append(r)
-    items = []
+    matches = {}
     for code, snaps in snapshots_by_match.items():
         if not snaps or code not in prod_by:
             continue
         snaps = sorted(snaps, key=lambda r: int(r["message"]))
         first_play = snaps[0].get("first_play_message")
-        first_play = int(first_play) if first_play not in ("", None) else None
+        matches[code] = (snaps, int(first_play) if first_play not in ("", None) else None)
+    means, known = {}, {}
+    if pre is not None:
+        if match_info is None:
+            raise SystemExit("this v9 model prices off its own pre-match model (NB2 or glmer), which"
+                             " needs each match's players, teams and stream (match_info)")
+        rows, code_at = [r for r in match_info if r["MATCH_CODE"] in matches], {}
+        if PREMATCH and history is not None and getattr(pre, "FOLLOWS_RESULTS", False) \
+                and getattr(pre, "AS_OF", True):
+            publish = {c: prematch_publish_times(prod_by[c], fp) for c, (_, fp) in matches.items()}
+            rows, code_at = known_states(rows, publish, history, match_ends(snapshots_by_match))
+        means = pre.means(rows, results=history)
+        for (code, publish), at in code_at.items():
+            if at != code:
+                known.setdefault(code, {})[publish] = means.get(at, pre.league)
+    items = []
+    for code, (snaps, first_play) in matches.items():
         pair = ((handles or {}).get(code) or v9.handles_of(snaps)) if book else None
         prof = (book.profile(pair[0]), book.profile(pair[1])) if pair else None
         items.append((code, snaps, prod_by[code], first_play, prof,
-                      means.get(code, pre.league) if pre is not None else None))
+                      means.get(code, pre.league) if pre is not None else None, known.get(code)))
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     if not items:
         return [] if isinstance(lines, str) else {mode: [] for mode in modes}
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
-    jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i, lines)
-            for i in range(workers)]
+    jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i, lines,
+             prematch_only) for i in range(workers)]
     if workers == 1:
         results = [_worker(j) for j in jobs]
     else:

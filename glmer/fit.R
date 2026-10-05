@@ -114,7 +114,7 @@ write_json(list(feature_set = args$feature_set, weighting = args$weighting,
                 first_match = format(min(train$Time), "%Y-%m-%d %H:%M:%S"),
                 last_match = format(max(train$Time), "%Y-%m-%d %H:%M:%S"),
                 sigma_match = bundle$global$sigma_match, sigma_obs = bundle$global$sigma_obs,
-                history = history_path),
+                formula = bundle$global$formula, history = history_path),
            file.path(out_dir, "model_info.json"))
 
 # ---------------------------------------------------------------------------

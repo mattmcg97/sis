@@ -159,7 +159,7 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
     if pre is not None:
         if history is None:
             raise SystemExit(f"this {name} model prices pre-match with its own model: pass --history")
-        means = pre.means([r for r in history if r["MATCH_CODE"] in set(codes)])
+        means = pre.means([r for r in history if r["MATCH_CODE"] in set(codes)], results=history)
     items = []
     for c in codes:
         pair = (handles or {}).get(c) or (model.handles_of(by_match[c]) if hasattr(model, "handles_of")
