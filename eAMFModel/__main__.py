@@ -13,6 +13,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          and its spread fitted out of sample)
   v11-build / v11        the same for v11 (v10 with close endings, timeouts, overtime and
                          return touchdowns played as real games play them)
+  v12-build / v12        the same for v12 (v11 with level sides' late drives run down to
+                         the kick as real ones are)
   trader                 a local page to click through a game and see a version's prices
   remaining SNAPS.csv    a version's points still to come against what really came
 
@@ -180,7 +182,9 @@ def main(argv=None):
                        ("v10", "v10: v9 with the pre-match prior's pace counted once and its spread "
                                "fitted out of sample (see README)"),
                        ("v11", "v11: v10 with close endings, timeouts, overtime and return touchdowns "
-                               "played as real games play them (see README)")):
+                               "played as real games play them (see README)"),
+                       ("v12", "v12: v11 with level sides' late drives run down to the kick as real "
+                               "ones are (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -228,7 +232,7 @@ def main(argv=None):
                                          "of each game really made, value by value, by quarter and "
                                          "game state (see remaining.py)")
     p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--version", choices=["v8", "v9", "v10", "v11"], default="v9")
+    p.add_argument("--version", choices=["v8", "v9", "v10", "v11", "v12"], default="v9")
     p.add_argument("--model", help="the version's build directory (default <version>_model)")
     p.add_argument("--since", help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD")
