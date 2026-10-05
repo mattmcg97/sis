@@ -92,8 +92,8 @@ SESSION_GAP_HOURS <- bundle$features$session_gap_hours %||% SESSION_GAP_HOURS
 SESSION_SHRINK_MATCHES <- bundle$features$session_shrink %||% SESSION_SHRINK_MATCHES
 EXP_CAP_MATCHES <- bundle$features$exp_cap %||% Inf        # bundles from before the cap: none
 if (nzchar(args$exp_floor)) EXP_FLOOR_MATCHES <- as.numeric(args$exp_floor)
-long <- to_long(combine_matches(history, schedule), exp_floor = EXP_FLOOR_MATCHES)
-rows <- long[long$MatchId %in% schedule$MATCH_CODE, ]
+long <- to_long(combine_matches(history, schedule))
+rows <- floor_experience(long[long$MatchId %in% schedule$MATCH_CODE, ])
 
 src <- predict_sources(bundle, rows)
 pred <- price_matches(bundle, src, mode)

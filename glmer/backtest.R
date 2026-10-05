@@ -154,7 +154,7 @@ run_job <- function(j, start = NULL) {
   t0 <- Sys.time()
   long <- longs[[as.character(job$form_hl)]]
   train <- long[!is.na(long$Score) & long$Time < fold$start, ]
-  test <- long[long$Time >= fold$start & long$Time < fold$end, ]
+  test <- floor_experience(long[long$Time >= fold$start & long$Time < fold$end, ])
   res <- tryCatch({
     b <- fit_bundle(train, fs, wspec, fold$start, verbose = FALSE,
                     fs_name = job$label, w_name = job$weighting,
