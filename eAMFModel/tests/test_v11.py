@@ -15,21 +15,41 @@ from unittest import mock
 import numpy as np
 
 from .. import glmer_prior, nb2_prior, players, sim9, sim11, v11, v11_stream
+from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
 
+V11_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD")
+
+
+class v11_off:
+    """sim11 with v11's own changes switched off, as v10 played."""
+
+    def __enter__(self):
+        self.saved = {k: getattr(sim11, k) for k in V11_SWITCHES}
+        for k in V11_SWITCHES:
+            setattr(sim11, k, False)
+
+    def __exit__(self, *exc):
+        for k, v in self.saved.items():
+            setattr(sim11, k, v)
+
+
 class TestV11IsV9(unittest.TestCase):
-    """v11 starts as v9 copied as it was: the same tables and the same games."""
+    """With its own changes off, v11's simulation plays as v9's (v10 changed only the pricing
+    around it): the same tables and the same games."""
 
     def test_v11_plays_as_v9(self):
         matches = _matches()
-        t10 = sim11.Tables.build(matches, min_records=20)
+        with v11_off():
+            t10 = sim11.Tables.build(matches, min_records=20)
         t9 = sim9.Tables.build(matches, min_records=20)
         st = sim11.Start(4)
         st.period[:], st.clock[:], st.phase[:] = [2, 3, 4, 4], [30.0, 150.0, 50.0, 25.0], sim11.SCRIM
         st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
         st.down[:] = [1, 2, 1, 4]
-        a = sim11.simulate(t10, st, 300, np.random.default_rng(1), seed=9)
+        with v11_off():
+            a = sim11.simulate(t10, st, 300, np.random.default_rng(1), seed=9)
         b = sim9.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
@@ -693,14 +713,15 @@ class TestV9Changes(unittest.TestCase):
         saved = (sim11.NATURAL_SHIFT, sim11.TO_PLAY_SECONDS)
         sim11.NATURAL_SHIFT = sim11.TO_PLAY_SECONDS = False
         try:
-            t9 = sim11.Tables.build(self.matches, min_records=20)
-            t8 = sim8.Tables.build(self.matches, min_records=20)
-            st = sim11.Start(4)
-            st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 150.0, 50.0, 25.0], sim11.SCRIM
-            st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
-            st.down[:] = [1, 2, 1, 4]
-            a = sim11.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
-            b = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
+            with v11_off():
+                t9 = sim11.Tables.build(self.matches, min_records=20)
+                t8 = sim8.Tables.build(self.matches, min_records=20)
+                st = sim11.Start(4)
+                st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 150.0, 50.0, 25.0], sim11.SCRIM
+                st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
+                st.down[:] = [1, 2, 1, 4]
+                a = sim11.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
+                b = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
         finally:
             sim11.NATURAL_SHIFT, sim11.TO_PLAY_SECONDS = saved
         self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
@@ -2019,6 +2040,123 @@ class TestPriorShrink(unittest.TestCase):
                 self.assertIsInstance(v11.prematch_model(d), v11.ShrunkPrematch)
                 with mock.patch.object(v11, "PRIOR_SHRINK", False):
                     self.assertNotIsInstance(v11.prematch_model(d), v11.ShrunkPrematch)
+
+
+def _row(kind, period, clock, offense, field, p1, p2, down="1", messages=""):
+    return dict(play_kind=kind, period=str(period), clock_seconds=str(clock), offense=offense,
+                field_position=str(field), down=down, distance="10", score_p1=str(p1),
+                score_p2=str(p2), play_messages=messages, team_a_side="home")
+
+
+class TestV11CloseEndings(unittest.TestCase):
+    """v11: fourth-quarter kicks level or 1-3 behind as real sides take them; overtime from its
+    first period; kick-offs returned for touchdowns."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim11.Tables.build(_matches(), min_records=20)
+
+    def test_close_kicks_are_recorded_by_class_down_clock_and_range(self):
+        rows = [_row("SCRIMMAGE", 4, 8, "TEAM_A", 80, 10, 10), _row("FIELD_GOAL", 4, 3, "TEAM_A", 80, 10, 10),
+                _row("SCRIMMAGE", 4, 50, "TEAM_A", 80, 7, 10, down="2"),
+                _row("SCRIMMAGE", 4, 40, "TEAM_A", 80, 7, 10, down="3"),
+                _row("SCRIMMAGE", 4, 50, "TEAM_A", 80, 3, 10)]                # 7 behind: not close
+        got = sim11.close_kicks(rows)
+        self.assertEqual(got[0], (0, 0, 1, 1, True))       # level, 1st down, 5-10s, 35-45 yards
+        self.assertEqual(got[1][:2], (2, 1))               # 3 behind on 2nd down: no kick
+        self.assertFalse(got[1][4])
+        self.assertEqual(len(got), 3)
+
+    def test_three_behind_borrows_from_its_own_class_not_from_level_sides(self):
+        recs = [(0, 0, 2, 1, True)] * 40 + [(0, 0, 2, 1, False)] * 10      # level kicks 80%
+        recs += [(2, 0, 2, 2, False)] * 40                                 # 3 behind never
+        p = sim11.fit_close_fg(recs)
+        self.assertGreater(p[0, 0, 2, 1], 0.7)
+        self.assertLess(p[2, 0, 2, 2], 0.1)
+        self.assertLess(p[2, 1, 2, 1], 0.2)                # an empty 3-behind cell stays low
+
+    def test_close_fourth_downs_cover_level_sides(self):
+        rows = [_row("SCRIMMAGE", 4, 20, "TEAM_A", 70, 10, 10, down="4"), _row("FIELD_GOAL", 4, 15, "TEAM_A", 70, 10, 10),
+                _row("SCRIMMAGE", 4, 100, "TEAM_B", 70, 13, 10, down="4"), _row("SCRIMMAGE", 4, 95, "TEAM_B", 76, 13, 10)]
+        self.assertEqual(sim11.close_fourths(rows), [(0, 1, True), (2, 0, False)])
+
+    def test_a_kick_off_returned_for_a_touchdown_is_kept_at_field_100(self):
+        rows = [_row("CONVERSION", 2, 100, "TEAM_A", 35, 7, 0),
+                _row("TOUCHDOWN", 2, 90, "TEAM_B", 100, 7, 6, messages="KICKOFF_TEAM_A|TOUCHDOWN_TEAM_B"),
+                _row("CONVERSION", 2, 90, "TEAM_B", 35, 7, 7),
+                _row("KICKOFF", 2, 85, "TEAM_B", 35, 7, 13, messages="KICKOFF_TEAM_B|TOUCHDOWN_TEAM_B")]
+        got = sim11.kick_records(rows)
+        self.assertEqual(got[0], (False, False, 100, 10.0))     # returned by the receiver
+        self.assertEqual(got[1], (False, True, 100, 5.0))       # recovered and run in by the kicker
+        saved = sim11.KICK_TDS
+        try:
+            sim11.KICK_TDS = False
+            self.assertEqual([r[2] for r in sim11.kick_records(rows)], [35])
+        finally:
+            sim11.KICK_TDS = saved
+
+    def test_a_kick_off_at_field_100_is_a_touchdown_for_the_side_with_the_ball(self):
+        t = sim11.Tables.build(_matches(), min_records=20)
+        t.kick[False] = (np.array([False]), np.array([100], dtype=np.int32), np.array([5.0]))
+        st = sim11.Start(1)
+        st.period[:], st.clock[:], st.phase[:], st.team[:] = 1, 200.0, sim11.KICK, 0   # home kicks
+        stats = {}
+        home, away = sim11.simulate(t, st, 50, np.random.default_rng(1), stats=stats)
+        self.assertGreaterEqual(stats["kick_td"], 50)       # every kick-off is run back
+        self.assertTrue(np.all(away >= 6))
+
+    def test_overtime_starts_in_its_first_period(self):
+        st = sim11.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 4, 2.0, sim11.SCRIM
+        st.team[:], st.y[:], st.down[:], st.home[:], st.away[:] = 0, 30, 1, 14, 14
+        got = {}
+        for flag in (True, False):
+            saved = sim11.OT_FIRST_PERIOD
+            sim11.OT_FIRST_PERIOD = flag
+            try:
+                stats = {}
+                sim11.simulate(self.tables, st, 400, np.random.default_rng(2), seed=5, stats=stats)
+            finally:
+                sim11.OT_FIRST_PERIOD = saved
+            got[flag] = stats.get("ot_carried", 0) / max(1, stats.get("overtime", 0))
+        self.assertGreater(got[False], 0.99)                # v10: every overtime skipped its first
+        self.assertLess(got[True], got[False] - 0.5)
+
+    def test_a_close_side_that_chooses_to_kick_runs_the_clock_out_first(self):
+        t = sim11.Tables.build(_matches(), min_records=20)
+        t.close_fg = np.ones((3, 3, len(sim11.CLOSE_FG_CLOCK), len(sim11.CLOSE_FG_RANGES)))
+        t.close_fourth = np.ones((3, 2))
+        st = sim11.Start(1)
+        st.period[:], st.clock[:], st.phase[:] = 4, 35.0, sim11.SCRIM
+        st.team[:], st.y[:], st.down[:], st.dist[:], st.home[:], st.away[:] = 0, 85, 1, 10, 10, 10
+        stats = {}
+        home, away = sim11.simulate(t, st, 200, np.random.default_rng(3), stats=stats)
+        self.assertEqual(stats["close_burn"], 200)          # 35s, three downs to burn: kicked at 0:00
+        made = home == 13
+        self.assertGreater(made.mean(), 0.5)
+        self.assertTrue(np.all(away[made] == 10))           # nothing left on the clock to answer
+
+    def test_settle_plays_get_their_own_bins(self):
+        saved = sim11.SETTLE_MIN
+        try:
+            sim11.SETTLE_MIN = 1
+            t = sim11.Tables.build(_matches(), min_records=20)
+        finally:
+            sim11.SETTLE_MIN = saved
+        settle = len(t.count) - sim11.N_KEYS
+        self.assertIn(settle, (0, 2))
+        with v11_off():
+            self.assertEqual(len(sim11.Tables.build(_matches(), min_records=20).count), sim11.N_KEYS)
+
+    def test_the_call_rates_scale_to_the_real_timeouts_from_the_two_minute_mark(self):
+        t = sim11.Tables.build(_matches(), min_records=20)
+        state = GameState(period=2, home_score=7, away_score=10, offense=HOME, down=1,
+                          field_position=40, distance=10, clock_seconds=110.0)
+        items = [(2, v11.start_from(state), 2)] * 60
+        n, real, before, after, scale = v11.fit_call_scale(t, items, n_paths=40)[2]
+        self.assertEqual((n, real), (60, 2.0))
+        self.assertLess(abs(after - real), abs(before - real) + 1e-9)
+        self.assertTrue(v11.CALL_FIT_RANGE[0] <= scale <= v11.CALL_FIT_RANGE[1])
 
 
 if __name__ == "__main__":

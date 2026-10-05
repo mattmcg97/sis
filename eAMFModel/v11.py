@@ -901,6 +901,156 @@ def settle_states(matches, grid, priors=None, as_of=None, half_life=None):
     return out
 
 
+# v11: timeouts in the last two minutes of each half. Called at the fitted rates on every running
+# clock, the simulation called 1.6-1.8 timeouts from the two-minute mark of a half where real sides
+# called 2.3-2.7 (80% of them stopping a running clock). CALL_FIT scales each half's call rates, by
+# one factor for Q2 and one for Q4, so that played from the first snap at or inside 2:00 of every
+# real half, the simulation calls as many timeouts as the real sides did from there.
+CALL_FIT = True
+CALL_FIT_PATHS = 60
+CALL_FIT_RANGE = (0.5, 4.0)
+CALL_FIT_STEPS = 10
+CALL_MAX = 0.95
+
+
+def call_states(matches):
+    """For each real half with timeouts known, its first snap at or inside 2:00 of Q2 or Q4: (quarter,
+    start fields, timeouts both sides called from there to the end of the quarter)."""
+    out = []
+    for code, rows in matches.items():
+        rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
+        if not rows or "timeouts_used_a" not in rows[0]:
+            continue
+        for q in ("2", "4"):
+            in_q = [r for r in rows if r["period"] == q]
+            start = None
+            for r in in_q:
+                if r["play_kind"] != "SCRIMMAGE" or not r["clock_seconds"] or float(r["clock_seconds"]) > 120:
+                    continue
+                state, _ = state_for(r)
+                if state is not None and state.has_snap and state.clock_seconds is not None:
+                    start = (r, state)
+                    break
+            if start is None:
+                continue
+            r, state = start
+            used = lambda x: int(x.get("timeouts_used_a") or 0) + int(x.get("timeouts_used_b") or 0)
+            out.append((int(q), start_from(state), max(0, used(in_q[-1]) - used(r))))
+    return out
+
+
+def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0):
+    """Scale each half's call rates (Q2, Q4) so the simulated timeouts from the two-minute mark
+    match the real ones. Returns {quarter: (halves, real, before, after, scale)}."""
+    out = {}
+    for q in (2, 4):
+        its = [it for it in items if it[0] == q]
+        if len(its) < 50:
+            continue
+        start = sim.Start(len(its))
+        for i, (_, fields, _) in enumerate(its):
+            _fill(start, i, fields)
+            start.theta[i] = LEAGUE_THETA
+        real = float(np.mean([it[2] for it in its]))
+        qi = 0 if q == 2 else 1
+        base = tables.call_p[qi].copy()
+
+        def calls(scale):
+            tables.call_p[qi] = np.minimum(base * scale, CALL_MAX)
+            stats = {}
+            sim.simulate(tables, start, n_paths, np.random.default_rng(seed + q), stats=stats)
+            return stats.get(f"timeouts_q{q}", 0) / (len(its) * n_paths)
+
+        before = calls(1.0)
+        lo, hi = CALL_FIT_RANGE
+        for _ in range(CALL_FIT_STEPS):
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if calls(mid) < real else (lo, mid)
+        scale = 0.5 * (lo + hi)
+        out[q] = (len(its), real, before, calls(scale), scale)
+    return out
+
+
+# v11: a side with the ball level in the fourth quarter's last two minutes takes the kick more readily
+# than the close-kick table alone gives it, and gets there more often: real drives from level snaps
+# in those two minutes ended in a field goal 68% of the time and a touchdown 16% (before 10 Sep); the
+# simulation, 55% and 21%. CLOSE_LEVEL fits two shifts on those drives -- the level side's kick odds
+# (close_fg and close_fourth's level rows, in log odds) and its efficiency in Q4's last three
+# 40-second slices -- so the drive under way, played from every real level snap there, kicks and
+# scores as the real ones did.
+CLOSE_LEVEL = True
+CLOSE_LEVEL_PATHS = 100
+CLOSE_LEVEL_KICK = np.arange(0.0, 4.01, 0.5)
+CLOSE_LEVEL_EFF = np.arange(0.0, 0.401, 0.05)
+
+
+def close_level_cells():
+    """The efficiency cells of a level offense in the fourth quarter's last three slices."""
+    return [int(sim._cells_np(np.array(4), np.array(c), np.array(0)))
+            for c in (sim.QUARTER / sim.CLOCK_CELLS * k - 1.0 for k in (1, 2, 3))]
+
+
+def close_level_states(matches, grid, priors=None):
+    """Every real fourth-quarter snap in the last two minutes with the score level: its start fields,
+    the match's prior strengths and the points the real drive under way scored."""
+    from .remaining import real_drive_points
+    out = []
+    for code, rows in matches.items():
+        if priors is not None and code not in priors:
+            continue
+        rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
+        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        for i, r in enumerate(rows):
+            if r["period"] != "4" or r["play_kind"] not in sim.SNAP_KINDS:
+                continue
+            state, _ = state_for(r)
+            if state is None or not state.has_snap or state.clock_seconds is None \
+                    or state.clock_seconds > 120 or state.home_score != state.away_score:
+                continue
+            real = real_drive_points(rows, i, state.offense)
+            if real is not None:
+                out.append((start_from(state), theta0, real))
+    return out
+
+
+def _logit(p):
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
+
+
+def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0):
+    """The level side's kick and efficiency shifts that bring its late drives' field-goal and
+    touchdown shares to the real ones; set on the tables. Returns (states, real (fg, td), before,
+    after, kick shift, efficiency shift)."""
+    if not items or tables.close_fg is None or tables.close_fourth is None:
+        return None
+    start = sim.Start(len(items))
+    for i, (fields, theta, _) in enumerate(items):
+        _fill(start, i, fields)
+        start.theta[i] = theta
+    team = start.team.astype(int)
+    base = np.where(team == 0, start.home, start.away)[:, None]
+    pts = np.array([it[2] for it in items])
+    real = (float(np.mean(pts == 3)), float(np.mean(pts >= 6)))
+    cells = close_level_cells()
+    fg0, f40, eff0 = tables.close_fg[0].copy(), tables.close_fourth[0].copy(), tables.eff_shift[cells].copy()
+
+    def shares(kick, eff):
+        tables.close_fg[0] = 1 / (1 + np.exp(-(_logit(fg0) + kick)))
+        tables.close_fourth[0] = 1 / (1 + np.exp(-(_logit(f40) + kick)))
+        tables.eff_shift[cells] = eff0 + eff
+        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), one_drive=True)
+        got = np.where(team[:, None] == 0, home, away) - base
+        return float(np.mean(got == 3)), float(np.mean(got >= 6))
+
+    err = lambda sh: (sh[0] - real[0]) ** 2 + (sh[1] - real[1]) ** 2
+    before = shares(0.0, 0.0)
+    best = min(((err(shares(k, e)), k, e) for k in CLOSE_LEVEL_KICK for e in CLOSE_LEVEL_EFF))
+    _, kick, eff = best
+    after = shares(kick, eff)
+    return len(items), real, before, after, kick, eff
+
+
 def fit_settle(tables, items, rounds=SETTLE_ROUNDS, n_paths=SETTLE_PATHS, prior=SETTLE_PRIOR,
                seed=0):
     """Each settle cell's share of would-be touchdowns held back, so that one snap played from
@@ -1336,6 +1486,12 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     as_of = (before.date() if before is not None else
              max(days) + dt.timedelta(days=1) if days else None)
     tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
+    if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
+        scaled = fit_call_scale(tables, call_states(matches))
+        if verbose and scaled:
+            print("  timeouts from the two-minute mark, real / simulated before -> after: "
+                  + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f}, {n:,} halves)"
+                              for q, (n, r, b, a, s) in sorted(scaled.items())))
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
@@ -1357,6 +1513,14 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             offsets, got = sim.fit_period_theta(tables, real)
         if verbose:
             _print_settle(settled, tables)
+    if CLOSE_LEVEL and sim.CLOSE_FG:
+        fitted = fit_close_level(tables, close_level_states(matches, quick, priors))
+        if verbose and fitted:
+            n, real, before, after, kick, eff = fitted
+            pct = lambda x: f"field goal {100 * x[0]:.1f}% / touchdown {100 * x[1]:.1f}%"
+            print(f"  close endings: drives from {n:,} real level snaps in Q4's last two minutes, real"
+                  f" {pct(real)}; simulated {pct(before)} -> {pct(after)} (level kick odds {kick:+.1f},"
+                  f" efficiency {eff:+.2f})")
     if verbose and sim.TIMEOUTS:
         if tables.call_p.any():
             source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)

@@ -23,6 +23,11 @@ DECISION_PRIOR = 3.0
 QUARTER = 240.0
 LATE = 120.0
 MAX_OT = 3
+# v11: a game level at the end of the fourth quarter plays overtime from its first period. v10 sent
+# it into overtime and, in the same step, counted it among the overtime periods just ended, so every
+# overtime started in its second (54 real overtimes since 24 Aug: 1.4 periods each, the same as v11
+# from their own kick-offs; v10's counted 2.4).
+OT_FIRST_PERIOD = True
 TD_TAIL = 12.0
 
 GAIN, TURNOVER, DEF_TD = 0, 1, 2
@@ -799,11 +804,30 @@ def _timeouts_at(rec, row):
         rec["timeout_role"] = OFFENCE if caller == row["offense"] else DEFENCE
 
 
+# v11: a kick-off returned for a touchdown (90 since 24 Aug, about one game in 25) or recovered and
+# run in by the kicking side is kept, at field 100: the side with the ball scores. v10's kick-offs
+# never ended in a touchdown -- the row after one is the touchdown, not a kick-off, and was skipped.
+KICK_TDS = True
+
+
 def kick_records(rows):
-    """Every kickoff: onside or not, where the receiver started, and the clock used."""
+    """Every kickoff: kept by the kicking side or not, where the side with the ball started (100: it
+    scored), and the clock used."""
     out = []
     prev = None
     for r in rows:
+        if KICK_TDS and r["play_kind"] == "TOUCHDOWN" and prev is not None \
+                and prev["period"] == r["period"] and prev["play_kind"] in ("CONVERSION", "FIELD_GOAL") \
+                and prev["clock_seconds"] and r["clock_seconds"] and r["period"]:
+            kicker = prev["offense"]
+            scorer = _scorer(r, "TOUCHDOWN_TEAM") or r["offense"]
+            seconds = _f(prev["clock_seconds"]) - _f(r["clock_seconds"])
+            margin, p = _margin(prev, kicker), _i(prev["period"])
+            if margin is not None and p is not None and 0 <= seconds <= 60:
+                desperate = p >= 4 and margin < 0 and half_left(p, _f(prev["clock_seconds"])) <= 180
+                out.append((desperate, scorer == kicker, 100, seconds))
+            prev = r
+            continue
         if r["play_kind"] == "KICKOFF" and r["field_position"] and r["clock_seconds"]:
             if not r["period"]:
                 pass
@@ -817,8 +841,11 @@ def kick_records(rows):
                     prev = r
                     continue
                 desperate = p >= 4 and margin < 0 and half_left(p, _f(prev["clock_seconds"])) <= 180
+                field = _i(r["field_position"])
+                if KICK_TDS and _scorer(r, "TOUCHDOWN_TEAM") is not None:
+                    field = 100                     # recovered by the kicking side and run in
                 if 0 <= seconds <= 60:
-                    out.append((desperate, r["offense"] == kicker, _i(r["field_position"]), seconds))
+                    out.append((desperate, r["offense"] == kicker, field, seconds))
             elif prev is None or prev["period"] != r["period"]:
                 seconds = QUARTER - _f(r["clock_seconds"])
                 if 0 <= seconds <= 60:
@@ -1033,6 +1060,87 @@ def early_kicks(rows):
         else:
             continue
         out.append((sit, cb, rb, b["play_kind"] == "FIELD_GOAL"))
+    return out
+
+
+# v11: close endings. In the fourth quarter a side level or 1-3 points behind, in range on downs 1-3,
+# kicks as real sides do: by how far behind (level, 1-2, 3), the down, the clock left (to 2:00) and the
+# kick's length. Real sides almost never kick early with more than 45 seconds left, and one 3 behind
+# hardly ever kicks to tie before the last 10; v10 instead drained the clock to 0:00 and kicked from 55
+# yards whenever the downs left could run it out (the drain stays for overtime alone). A 4th down
+# level, 1-2 behind or 3 behind in range in the last three minutes kicks at its own fitted rate,
+# not one rate for both trailing classes and the whole-game 4th-down curve for level sides (which went
+# for it on one 4th down in seven in range in the last minute; real level sides kick).
+CLOSE_FG = True
+CLOSE_FG_CLOCK = (5, 10, 20, 30, 45, 60, 120)
+CLOSE_FG_RANGES = (35, 45, 55, 65)
+CLOSE_FG_PRIOR = 5.0
+CLOSE_CLASSES = ("level", "1-2 behind", "3 behind")
+# A side level or 1-2 behind in range (a kick of SETTLE_RANGE yards or less) in the fourth quarter's
+# last SETTLE_CLOCK seconds plays for the kick: about 3 yards and 18 seconds a play, a touchdown on
+# one in ten, almost never a turnover (real plays before 10 Sep). Its plays are drawn from those real
+# plays alone -- two extra play bins after the N_KEYS keyed ones, level and 1-2 behind -- where
+# before they fell back to bins of every late play, most of them going for the end zone.
+SETTLE_PLAYS = True
+SETTLE_RANGE = 50
+SETTLE_CLOCK = 120.0
+SETTLE_MIN = 30
+
+
+def close_class(margin):
+    """0 level, 1 one or two behind, 2 three behind (arrays or a number)."""
+    return np.where(margin >= 0, 0, np.where(margin >= -2, 1, 2))
+
+
+def close_kicks(rows):
+    """Fourth-quarter snaps on downs 1-3 in range in the last 2:00, level or 1-3 behind: (class, down
+    - 1, clock bin, range bin, kicked)."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["play_kind"] not in SNAP_KINDS or a["down"] not in ("1", "2", "3") or a["period"] != "4" \
+                or b["period"] != "4" or not a["field_position"] or not a["clock_seconds"]:
+            continue
+        margin = _margin(a, a["offense"])
+        kick = 100 - _i(a["field_position"]) + 17
+        c = _f(a["clock_seconds"])
+        if margin is None or not -3 <= margin <= 0 or kick > CLOSE_FG_RANGES[-1] or c > CLOSE_FG_CLOCK[-1]:
+            continue
+        out.append((int(close_class(margin)), _i(a["down"]) - 1,
+                    int(np.searchsorted(CLOSE_FG_CLOCK, c)), int(np.searchsorted(CLOSE_FG_RANGES, kick)),
+                    b["play_kind"] == "FIELD_GOAL"))
+    return out
+
+
+def fit_close_fg(records, prior=CLOSE_FG_PRIOR):
+    """P(field goal now) by class, down, clock bin and range bin. Each cell is shrunk toward its
+    class, clock and range over the downs; that toward its class and clock; that toward the clock
+    over every class -- a side 3 behind borrows from its own class first, not from level sides,
+    who kick far more."""
+    shape = (len(CLOSE_CLASSES), 3, len(CLOSE_FG_CLOCK), len(CLOSE_FG_RANGES))
+    n, k = np.zeros(shape), np.zeros(shape)
+    for cls, d, cb, rb, kicked in records:
+        n[cls, d, cb, rb] += 1
+        k[cls, d, cb, rb] += kicked
+    p_clock = (k.sum((0, 1, 3)) + 0.05) / (n.sum((0, 1, 3)) + 1.0)
+    p_cc = (k.sum((1, 3)) + prior * p_clock) / (n.sum((1, 3)) + prior)
+    p_ccr = (k.sum(1) + prior * p_cc[:, :, None]) / (n.sum(1) + prior)
+    return (k + prior * p_ccr[:, None]) / (n + prior)
+
+
+def close_fourths(rows):
+    """Fourth-quarter 4th downs level or 1-3 points behind in the last three minutes within 60 yards
+    of a kick, not punted: (close class, inside 30 seconds, kicked)."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or a["period"] != "4" \
+                or b["period"] != "4" or not a["field_position"] or not a["clock_seconds"]:
+            continue
+        margin = _margin(a, a["offense"])
+        c = _f(a["clock_seconds"])
+        if margin is None or not -3 <= margin <= 0 or c > 180 or 100 - _i(a["field_position"]) + 17 > 60 \
+                or b["play_kind"] == "PUNT":
+            continue
+        out.append((int(close_class(margin)), int(c <= 30), b["play_kind"] == "FIELD_GOAL"))
     return out
 
 
@@ -1368,6 +1476,8 @@ class Tables:
         self.late_fourth = None
         self.big_lead = BIG_LEAD
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
+        self.close_fg = None
+        self.close_fourth = None
         self.fg_shift = np.zeros((4, 7))
         self.player_go = {}
         self.player_kick = {}
@@ -1381,6 +1491,7 @@ class Tables:
         clock fits weight each match by its age (age_weights)."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
         backed, late4, fourth_recs, ot_first, ends = [], [], [], [], []
+        close, close4 = [], []
         for code, rows in matches.items():
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             snaps_before = len(snaps)
@@ -1404,6 +1515,8 @@ class Tables:
             conv += conversions(rows)
             fourths += fourth_down_choices(rows)
             early += early_kicks(rows)
+            close += close_kicks(rows)
+            close4 += close_fourths(rows)
         age_weights(snaps + ends, as_of, half_life)
         t = cls()
         if TIMEOUTS:
@@ -1435,6 +1548,15 @@ class Tables:
             if g not in bins:
                 bins[g] = recs
             chosen.append(g)
+        settle = [r for r in snaps if r["period"] == 4 and r["clock"] <= SETTLE_CLOCK
+                  and -2 <= r["margin"] <= 0 and r["down"] <= 3
+                  and 100 - r["field"] + 17 <= SETTLE_RANGE] if SETTLE_PLAYS else []
+        if len(settle) >= SETTLE_MIN:
+            for c, want in enumerate((lambda m: m == 0, lambda m: m < 0)):
+                recs = [r for r in settle if want(r["margin"])]
+                g = ("settle", c)
+                bins[g] = recs if len(recs) >= SETTLE_MIN else settle
+                chosen.append(g)
         order = list(bins)
         start, count, succ, nstop, ssucc, rsucc, nfresh, nfstop = {}, {}, {}, {}, {}, {}, {}, {}
         kind, gain, newf, secs, rep, tdf = [], [], [], [], [], []
@@ -1522,6 +1644,14 @@ class Tables:
                   and (d[5] <= 30) == late and d[4] != "punt"]
             if ch:
                 t.late_fg[i] = (sum(c == "fg" for c in ch) + 1) / (len(ch) + 2)
+        if close:
+            t.close_fg = fit_close_fg(close)
+        if close4:
+            n4, k4 = np.zeros((len(CLOSE_CLASSES), 2)), np.zeros((len(CLOSE_CLASSES), 2))
+            for cls, late, kicked in close4:
+                n4[cls, late] += 1
+                k4[cls, late] += kicked
+            t.close_fourth = (k4 + 1.0) / (n4 + 2.0)
         t.n_snaps = len(snaps)
         if late4:
             t.late_fourth = fit_late_fourths(late4) if GO_AHEAD else _fit_late_fourths_pooled(late4)
@@ -1562,6 +1692,10 @@ class Tables:
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
+        if self.close_fg is not None:
+            arrays["close_fg"] = self.close_fg
+        if self.close_fourth is not None:
+            arrays["close_fourth"] = self.close_fourth
         if self.backed is not None:
             arrays["backed"] = self.backed
             if self.backed_return is not None:
@@ -1605,6 +1739,10 @@ class Tables:
             t.late_fourth = z["late_fourth"]
         if "early_fg" in z:
             t.early_fg = z["early_fg"]
+        if "close_fg" in z:
+            t.close_fg = z["close_fg"]
+        if "close_fourth" in z:
+            t.close_fourth = z["close_fourth"]
         for d in (False, True):
             t.kick[d] = (z[f"kick{int(d)}_onside"], z[f"kick{int(d)}_field"], z[f"kick{int(d)}_sec"])
         for b in range(3):
@@ -1846,8 +1984,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             phase[go] = KICK
             team[go] = pick(go, 1, 2)
             # an overtime period's end: over only when a side leads and the side behind has had
-            # its possession; otherwise play carries on into the next period, as between quarters
-            ot_e = e[period[e] >= 5]
+            # its possession; otherwise play carries on into the next period, as between quarters.
+            # v11: the paths that ended overtime's periods, not those just sent into overtime above
+            ot_e = ix[p >= 5] if OT_FIRST_PERIOD else e[period[e] >= 5]
             behind = np.where(score[ot_e, 0] < score[ot_e, 1], 0, 1)
             decided = (score[ot_e, 0] != score[ot_e, 1]) & ot_done[ot_e, behind]
             stop = decided | (period[ot_e] >= 4 + MAX_OT)
@@ -1950,12 +2089,16 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     j = pick(sub, 4, len(field))
                     rec = team[sub]
                     team[sub] = np.where(onside[j], rec, 1 - rec)
-                    y[sub] = field[j]
+                    y[sub] = np.minimum(99, field[j])
                     down[sub] = 1
                     dist[sub] = 10
                     clock[sub] -= secs[j]
                     phase[sub] = SCRIM
                     fresh[sub] = True
+                    scored = field[j] >= 100
+                    tally("kick_td", scored.sum())
+                    if scored.any():
+                        score_td(sub[scored], team[sub[scored]])
                 sub = ix[fk]
                 if len(sub):
                     _, _, secs = tables.kick[False]
@@ -2005,7 +2148,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             end_period(kx)
 
         make = fg_make(yy)
-        drain = ~kneel & (p >= 4) & (margin <= 0) & (margin >= -2) & (dn < 4) & \
+        close = np.zeros(len(ix), dtype=bool)
+        if CLOSE_FG and tables.close_fg is not None:
+            close = ~kneel & (p == 4) & (margin <= 0) & (margin >= -3) & (dn < 4)
+        drain = ~kneel & ~close & (p >= 4) & (margin <= 0) & (margin >= -2) & (dn < 4) & \
             (100 - yy + 17 <= 55) & (c <= kneel_seconds * (4 - dn))
         if drain.any():
             clock[ix[drain]] = 0.0
@@ -2017,7 +2163,24 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         rb = np.minimum(np.searchsorted(np.array(EARLY_FG_RANGES, dtype=float), kd_), len(EARLY_FG_RANGES) - 1)
         early_p = np.where((sit >= 0) & (cb < len(EARLY_FG_CLOCK)) & (kd_ <= EARLY_FG_RANGE),
                            tables.early_fg[np.maximum(sit, 0), np.minimum(cb, len(EARLY_FG_CLOCK) - 1), rb], 0.0)
+        if close.any():
+            ccb = np.searchsorted(np.array(CLOSE_FG_CLOCK, dtype=float), c)
+            crb = np.searchsorted(np.array(CLOSE_FG_RANGES, dtype=float), kd_)
+            inside = (ccb < len(CLOSE_FG_CLOCK)) & (crb < len(CLOSE_FG_RANGES))
+            cp = tables.close_fg[close_class(margin), np.clip(dn - 1, 0, 2),
+                                 np.minimum(ccb, len(CLOSE_FG_CLOCK) - 1),
+                                 np.minimum(crb, len(CLOSE_FG_RANGES) - 1)]
+            early_p = np.where(close, np.where(inside, cp, 0.0), early_p)
         fg_now = ~kneel & (drain | ((dn < 4) & (rand(ix, 5) < early_p)))
+        if close.any():
+            # v11: a close side that has chosen to kick, with downs enough to run the clock out,
+            # runs it out first -- real go-ahead kicks from a level score in the last minute left
+            # nothing on the clock three times in four (median 0 seconds)
+            burn = close & fg_now & (c <= kneel_seconds * (4 - dn))
+            if burn.any():
+                clock[ix[burn]] = 0.0
+                c = clock[ix]
+            tally("close_burn", burn.sum())
         fourth = ~kneel & ~fg_now & (dn >= 4)
         u = yy / 100.0
         lt = np.log(np.maximum(1, tt))
@@ -2058,6 +2221,13 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             ot_must = (p >= 5) & (margin < 0) & ot_done[ix, 1 - o]
             go = np.where(ot_must & ((margin < -3) | (make <= 0)), True, go)
             kick_fg = np.where(ot_must & (margin < -3), False, kick_fg)
+        if CLOSE_FG and tables.close_fourth is not None and tables.close_fourth.shape[0] == len(CLOSE_CLASSES):
+            # v11: a close fourth quarter in range kicks at the fitted rate, else goes for it
+            cf = fourth & (p == 4) & (margin <= 0) & (margin >= -3) & (c <= 180) & (kd_ <= 60) & (make >= 0.3)
+            if cf.any():
+                kp = tables.close_fourth[close_class(margin), (c <= 30).astype(np.int64)]
+                kick_fg = np.where(cf, r1 < kp, kick_fg)
+                go = np.where(cf, ~kick_fg, go)
         kick_fg = ~go & kick_fg & (make > 0)
         do_fg = fg_now | (fourth & kick_fg)
         do_punt = fourth & ~go & ~kick_fg
@@ -2113,6 +2283,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                         used = np.where(call, 3.0, used)
                         tos[kx[call], side[call]] -= 1
                         tally("timeouts", call.sum())
+                        if stats is not None:
+                            for q in (2, 4):
+                                tally(f"timeouts_q{q}", (call & (period[kx] == q)).sum())
                     clock[kx] -= used
                     y[kx] = np.maximum(1, y[kx] - 1)
                     down[kx] += 1
@@ -2126,6 +2299,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         lead = score[sx, so] - score[sx, 1 - so]
         mode = _modes_np(period[sx], clock[sx], lead, tables.big_lead, tables.q4_modes)
         key = _keys_np(mode, down[sx], dist[sx], y[sx])
+        if SETTLE_PLAYS and len(tables.count) >= N_KEYS + 2:
+            settle = (period[sx] == 4) & (clock[sx] <= SETTLE_CLOCK) & (lead <= 0) & (lead >= -2) \
+                & (down[sx] <= 3) & (100 - y[sx] + 17 <= SETTLE_RANGE)
+            key = np.where(settle, N_KEYS + (lead < 0), key)
         n = tables.count[key]
         cell = _cells_np(period[sx], clock[sx], lead)
         ns = tables.n_stop[key]
@@ -2195,6 +2372,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                         used[ci] = np.where(np.isfinite(got), np.maximum(1.0, got), used[ci])
                     tos[sx[ci], dc] -= 1
                     tally("timeouts", call.sum())
+                    if stats is not None:
+                        for q in (2, 4):
+                            tally(f"timeouts_q{q}", (period[sx[ci]] == q).sum())
         clock[sx] -= used
         fresh[sx] = False
         tally("clock_used", used.sum())
