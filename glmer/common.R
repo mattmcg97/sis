@@ -172,7 +172,7 @@ combine_matches <- function(history, schedule) {
 to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
                     session_hours = SESSION_HOURS, rest_cap_hours = REST_CAP_HOURS,
                     session_gap_hours = SESSION_GAP_HOURS, session_shrink = SESSION_SHRINK_MATCHES,
-                    exp_cap = EXP_CAP_MATCHES) {
+                    exp_cap = EXP_CAP_MATCHES, exp_floor = 0) {
   home <- data.frame(MatchId = m$MATCH_CODE, Time = m$Time, Side = "H", IsHome = 1,
                      Player = m$P1, OpponentPlayer = m$P2, Team = m$P1Team, OpponentTeam = m$P2Team,
                      Stream = m$Stream, Score = m$P1Score, OppScore = m$P2Score,
@@ -213,7 +213,7 @@ to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
       }
       form_for[i] <- log((s_for + 1) / (league[i] + 1))
       form_against[i] <- log((s_against + 1) / (league[i] + 1))
-      exper[i] <- min(played, exp_cap)
+      exper[i] <- min(max(played, exp_floor), exp_cap)
       rest[i] <- if (is.na(prev_t)) rest_cap_hours else min(rest_cap_hours, (tnum[i] - prev_t) / 3600)
       earlier <- tnum[idx[seq_len(k - 1)]]
       session[i] <- sum(earlier >= tnum[i] - session_hours * 3600 & earlier < tnum[i])

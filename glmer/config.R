@@ -200,6 +200,8 @@ REST_CAP_HOURS <- 168          # RestLog: hours since the previous match, capped
 SESSION_GAP_HOURS <- 2         # a gap longer than this between a side's matches starts a new session
 SESSION_SHRINK_MATCHES <- 2    # SessFormFor / SessFormAgainst: mean x k / (k + this), k earlier matches
 EXP_CAP_MATCHES <- Inf         # ExpLog: matches played so far, capped at this many (Inf: not capped)
+EXP_FLOOR_MATCHES <- 0         # predict.R: price a gamer as if they had played at least this many
+                               # matches (the fit never floors)
 
 # ---------------------------------------------------------------------------
 # Fitting and pricing
