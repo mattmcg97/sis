@@ -1,5 +1,6 @@
 """v12: a fresh copy of v9 (sim12.py, v12.py, v12_stream.py), the base for the next changes."""
 
+import copy
 import csv
 import datetime as dt
 import json
@@ -19,15 +20,20 @@ from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
 
-V12_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD", "CONV_CLOCK")
+V11_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD", "CONV_CLOCK")
+V12_OWN = ("FOURTH_CLOCK", "KICK_CLOCK")
+V12_SWITCHES = V11_SWITCHES + V12_OWN
 
 
 class v12_off:
-    """sim12 with v12's own changes switched off, as v10 played."""
+    """sim12 with v11's and v12's changes switched off, as v10 played (`own`: v12's alone, as v11)."""
+
+    def __init__(self, own=False):
+        self.keys = V12_OWN if own else V12_SWITCHES
 
     def __enter__(self):
-        self.saved = {k: getattr(sim12, k) for k in V12_SWITCHES}
-        for k in V12_SWITCHES:
+        self.saved = {k: getattr(sim12, k) for k in self.keys}
+        for k in self.keys:
             setattr(sim12, k, False)
 
     def __exit__(self, *exc):
@@ -2048,6 +2054,66 @@ def _row(kind, period, clock, offense, field, p1, p2, down="1", messages=""):
                 score_p2=str(p2), play_messages=messages, team_a_side="home")
 
 
+class TestV12IsV11(unittest.TestCase):
+    """With v12's own changes off, sim12 builds v11's tables and plays v11's games."""
+
+    def test_v12_plays_as_v11(self):
+        from .. import sim11
+        matches = _matches()
+        with v12_off(own=True):
+            t12 = sim12.Tables.build(matches, min_records=20)
+        t11 = sim11.Tables.build(matches, min_records=20)
+        np.testing.assert_array_equal(t12.close_fourth, t11.close_fourth)
+        st = sim12.Start(4)
+        st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 110.0, 50.0, 25.0], sim12.SCRIM
+        st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 70, 80, 75], [3, 10, 10, 10], [10, 10, 10, 13]
+        st.down[:] = [1, 2, 1, 4]
+        with v12_off(own=True):
+            a = sim12.simulate(t12, st, 300, np.random.default_rng(1), seed=9)
+        b = sim11.simulate(t11, st, 300, np.random.default_rng(1), seed=9)
+        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
+
+
+class TestV12LevelEndings(unittest.TestCase):
+    """v12: close 4th downs kick by the clock slice; close late kicks take the clock as real ones do."""
+
+    def test_fourth_downs_by_the_clock_slice_shrink_toward_v11s_cell(self):
+        recs = [(0, 90.0, False)] * 20 + [(0, 90.0, True)] * 20 + [(0, 20.0, True)] * 30
+        p = sim12.fit_close_fourths(recs)
+        self.assertEqual(p.shape, (3, len(sim12.FOURTH_CLOCK) + 1))
+        self.assertAlmostEqual(p[0, 3], (20 + sim12.FOURTH_PRIOR * 21 / 42) / (40 + sim12.FOURTH_PRIOR))
+        self.assertGreater(p[0, 1], 0.9)                          # 0:11-0:30: kick
+        self.assertAlmostEqual(p[0, 0], 31 / 32)                  # an empty slice: v11's cell
+        with mock.patch.object(sim12, "FOURTH_CLOCK", ()):
+            self.assertEqual(sim12.fit_close_fourths(recs).shape, (3, 2))
+        self.assertEqual(list(sim12.close_fourth_cells(np.array([5.0, 30.0, 31.0, 150.0]))), [0, 1, 2, 4])
+
+    def test_kick_times_and_their_fit(self):
+        rows = [_row("SCRIMMAGE", 4, 38, "TEAM_A", 75, 10, 10, down="3"), _row("FIELD_GOAL", 4, 0, "TEAM_A", 75, 13, 10),
+                _row("SCRIMMAGE", 4, 90, "TEAM_B", 70, 13, 10, down="4"), _row("FIELD_GOAL", 4, 60, "TEAM_B", 70, 13, 13),
+                _row("SCRIMMAGE", 4, 30, "TEAM_A", 75, 20, 10, down="4"), _row("FIELD_GOAL", 4, 26, "TEAM_A", 75, 23, 10)]
+        self.assertEqual(sim12.close_kick_times(rows), [(38.0, 38.0), (90.0, 30.0)])   # 10 ahead: not close
+        recs = [(30.0, 30.0)] * 30 + [(30.0, 4.0)] * 10 + [(90.0, 35.0)] * 25
+        zero, used = sim12.fit_kick_clock(recs)
+        self.assertAlmostEqual(zero, 31 / 42)
+        self.assertEqual(len(used), 25)
+        self.assertIsNone(sim12.fit_kick_clock(recs[:5]))
+
+    def test_a_close_kick_from_inside_forty_seconds_runs_the_clock_out(self):
+        t = copy.deepcopy(self.tables)
+        t.kick_clock = (1.0, np.array([35.0]))
+        st = sim12.Start(1)
+        st.period[:], st.clock[:], st.phase[:], st.team[:] = 4, 35.0, sim12.SCRIM, 0
+        st.y[:], st.down[:], st.dist[:], st.home[:], st.away[:] = 85, 4, 8, 10, 10
+        stats = {}
+        home, away = sim12.simulate(t, st, 400, np.random.default_rng(3), stats=stats, one_drive=True)
+        self.assertGreater(stats.get("kick_clock_zero", 0), 300)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim12.Tables.build(_matches(), min_records=20)
+
+
 class TestV11CloseEndings(unittest.TestCase):
     """v12: fourth-quarter kicks level or 1-3 behind as real sides take them; overtime from its
     first period; kick-offs returned for touchdowns."""
@@ -2109,7 +2175,7 @@ class TestV11CloseEndings(unittest.TestCase):
     def test_close_fourth_downs_cover_level_sides(self):
         rows = [_row("SCRIMMAGE", 4, 20, "TEAM_A", 70, 10, 10, down="4"), _row("FIELD_GOAL", 4, 15, "TEAM_A", 70, 10, 10),
                 _row("SCRIMMAGE", 4, 100, "TEAM_B", 70, 13, 10, down="4"), _row("SCRIMMAGE", 4, 95, "TEAM_B", 76, 13, 10)]
-        self.assertEqual(sim12.close_fourths(rows), [(0, 1, True), (2, 0, False)])
+        self.assertEqual(sim12.close_fourths(rows), [(0, 20.0, True), (2, 100.0, False)])
 
     def test_a_kick_off_returned_for_a_touchdown_is_kept_at_field_100(self):
         rows = [_row("CONVERSION", 2, 100, "TEAM_A", 35, 7, 0),

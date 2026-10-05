@@ -1123,6 +1123,77 @@ SETTLE_CLOCK = 120.0
 SETTLE_MIN = 30
 
 
+# v12: a close 4th down's kick by the clock. Real level sides in range kick on 4th down 45% of the time
+# with 1:00-3:00 left, 82% from 0:31 to 1:00 and 92% and more after; going for it keeps the drive and
+# the clock running, so the kick comes late. v11 had two cells, inside and outside 30 seconds, and its
+# fitted level kick shift took the outside one to 98%. FOURTH_CLOCK splits the three minutes at these
+# edges; each cell shrinks toward v11's cell it falls in (FOURTH_PRIOR).
+FOURTH_CLOCK = (10.0, 30.0, 60.0, 120.0)
+FOURTH_PRIOR = 5.0
+# v12: the clock a close side's late kick takes. Real sides level or 1-3 behind kicking in the fourth
+# quarter's last 2:00 let the play clock run first: from 0:40 or less, 65% of their kicks leave nothing
+# on the clock (v11: the whole game's kick seconds, a median of 4); from 0:41 to 2:00, a third of them
+# take 25 seconds or more. KICK_CLOCK draws those kicks' seconds from the real ones (Tables.kick_clock).
+KICK_CLOCK = True
+KICK_CLOCK_EDGE = 40.0
+KICK_CLOCK_MIN = 20
+
+
+def close_fourth_cells(clock):
+    """The clock cell of a close 4th down: v11's (1 inside 30 seconds, else 0) or, with FOURTH_CLOCK,
+    the slice (0 for the last 10 seconds, ...)."""
+    if not FOURTH_CLOCK:
+        return (np.asarray(clock) <= 30).astype(np.int64)
+    return np.searchsorted(np.array(FOURTH_CLOCK), clock).astype(np.int64)
+
+
+def fit_close_fourths(records):
+    """P(kick) on a close 4th down by class and clock cell, from (class, clock, kicked): v11's two
+    cells, then with FOURTH_CLOCK the finer slices, each shrunk toward the v11 cell it falls in."""
+    n2, k2 = np.zeros((len(CLOSE_CLASSES), 2)), np.zeros((len(CLOSE_CLASSES), 2))
+    for cls, c, kicked in records:
+        n2[cls, int(c <= 30)] += 1
+        k2[cls, int(c <= 30)] += kicked
+    two = (k2 + 1.0) / (n2 + 2.0)
+    if not FOURTH_CLOCK:
+        return two
+    cells = len(FOURTH_CLOCK) + 1
+    n, k = np.zeros((len(CLOSE_CLASSES), cells)), np.zeros((len(CLOSE_CLASSES), cells))
+    for cls, c, kicked in records:
+        j = int(close_fourth_cells(c))
+        n[cls, j] += 1
+        k[cls, j] += kicked
+    edges = np.array((0.0,) + tuple(FOURTH_CLOCK))
+    parent = two[:, (edges < 30).astype(np.int64)]               # the v11 cell each slice falls in
+    return (k + FOURTH_PRIOR * parent) / (n + FOURTH_PRIOR)
+
+
+def close_kick_times(rows):
+    """Field goals in the fourth quarter's last 2:00 by a side level or 1-3 behind: (clock when the
+    kicking down began, seconds the kick took)."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if b["play_kind"] != "FIELD_GOAL" or a["period"] != "4" or b["period"] != "4" \
+                or not a["clock_seconds"] or not b["clock_seconds"]:
+            continue
+        margin = _margin(a, a["offense"])
+        c0, c1 = _f(a["clock_seconds"]), _f(b["clock_seconds"])
+        if margin is None or not -3 <= margin <= 0 or not 0 < c0 <= 120 or c1 > c0:
+            continue
+        out.append((c0, c0 - c1))
+    return out
+
+
+def fit_kick_clock(records):
+    """(P(the kick takes the clock to 0) from KICK_CLOCK_EDGE or less, the seconds the kicks from
+    further out took), or None with too few of either."""
+    near = [used >= c0 for c0, used in records if c0 <= KICK_CLOCK_EDGE]
+    far = [used for c0, used in records if c0 > KICK_CLOCK_EDGE]
+    if len(near) < KICK_CLOCK_MIN or len(far) < KICK_CLOCK_MIN:
+        return None
+    return (sum(near) + 1.0) / (len(near) + 2.0), np.array(far, dtype=float)
+
+
 def close_class(margin):
     """0 level, 1 one or two behind, 2 three behind (arrays or a number)."""
     return np.where(margin >= 0, 0, np.where(margin >= -2, 1, 2))
@@ -1165,7 +1236,7 @@ def fit_close_fg(records, prior=CLOSE_FG_PRIOR):
 
 def close_fourths(rows):
     """Fourth-quarter 4th downs level or 1-3 points behind in the last three minutes within 60 yards
-    of a kick, not punted: (close class, inside 30 seconds, kicked)."""
+    of a kick, not punted: (close class, clock, kicked)."""
     out = []
     for a, b in zip(rows, rows[1:]):
         if a["down"] != "4" or a["play_kind"] not in SNAP_KINDS or a["period"] != "4" \
@@ -1176,7 +1247,7 @@ def close_fourths(rows):
         if margin is None or not -3 <= margin <= 0 or c > 180 or 100 - _i(a["field_position"]) + 17 > 60 \
                 or b["play_kind"] == "PUNT":
             continue
-        out.append((int(close_class(margin)), int(c <= 30), b["play_kind"] == "FIELD_GOAL"))
+        out.append((int(close_class(margin)), c, b["play_kind"] == "FIELD_GOAL"))
     return out
 
 
@@ -1514,6 +1585,7 @@ class Tables:
         self.early_fg = np.zeros((2, len(EARLY_FG_CLOCK), len(EARLY_FG_RANGES)))
         self.close_fg = None
         self.close_fourth = None
+        self.kick_clock = None
         self.fg_shift = np.zeros((4, 7))
         self.player_go = {}
         self.player_kick = {}
@@ -1527,7 +1599,7 @@ class Tables:
         clock fits weight each match by its age (age_weights)."""
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
         backed, late4, fourth_recs, ot_first, ends = [], [], [], [], []
-        close, close4 = [], []
+        close, close4, kick_times = [], [], []
         for code, rows in matches.items():
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             snaps_before = len(snaps)
@@ -1553,6 +1625,7 @@ class Tables:
             early += early_kicks(rows)
             close += close_kicks(rows)
             close4 += close_fourths(rows)
+            kick_times += close_kick_times(rows)
         age_weights(snaps + ends, as_of, half_life)
         t = cls()
         if TIMEOUTS:
@@ -1677,11 +1750,9 @@ class Tables:
         if close:
             t.close_fg = fit_close_fg(close)
         if close4:
-            n4, k4 = np.zeros((len(CLOSE_CLASSES), 2)), np.zeros((len(CLOSE_CLASSES), 2))
-            for cls, late, kicked in close4:
-                n4[cls, late] += 1
-                k4[cls, late] += kicked
-            t.close_fourth = (k4 + 1.0) / (n4 + 2.0)
+            t.close_fourth = fit_close_fourths(close4)
+        if KICK_CLOCK:
+            t.kick_clock = fit_kick_clock(kick_times)
         t.n_snaps = len(snaps)
         if late4:
             t.late_fourth = fit_late_fourths(late4) if GO_AHEAD else _fit_late_fourths_pooled(late4)
@@ -1726,6 +1797,9 @@ class Tables:
             arrays["close_fg"] = self.close_fg
         if self.close_fourth is not None:
             arrays["close_fourth"] = self.close_fourth
+        if self.kick_clock is not None:
+            arrays["kick_clock_zero"] = np.array([self.kick_clock[0]])
+            arrays["kick_clock_used"] = self.kick_clock[1]
         if self.backed is not None:
             arrays["backed"] = self.backed
             if self.backed_return is not None:
@@ -1775,6 +1849,8 @@ class Tables:
             t.close_fg = z["close_fg"]
         if "close_fourth" in z:
             t.close_fourth = z["close_fourth"]
+        if "kick_clock_zero" in z:
+            t.kick_clock = (float(z["kick_clock_zero"][0]), z["kick_clock_used"])
         for d in (False, True):
             t.kick[d] = (z[f"kick{int(d)}_onside"], z[f"kick{int(d)}_field"], z[f"kick{int(d)}_sec"])
         for b in range(3):
@@ -2261,7 +2337,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             # v11: a close fourth quarter in range kicks at the fitted rate, else goes for it
             cf = fourth & (p == 4) & (margin <= 0) & (margin >= -3) & (c <= 180) & (kd_ <= 60) & (make >= 0.3)
             if cf.any():
-                kp = tables.close_fourth[close_class(margin), (c <= 30).astype(np.int64)]
+                col = (c <= 30).astype(np.int64) if tables.close_fourth.shape[1] == 2 \
+                    else np.searchsorted(np.array(FOURTH_CLOCK), c).astype(np.int64)
+                kp = tables.close_fourth[close_class(margin), np.minimum(col, tables.close_fourth.shape[1] - 1)]
                 kick_fg = np.where(cf, r1 < kp, kick_fg)
                 go = np.where(cf, ~kick_fg, go)
         kick_fg = ~go & kick_fg & (make > 0)
@@ -2281,7 +2359,20 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         fx = ix[do_fg]
         if len(fx):
             j = pick(fx, 8, len(tables.fg_seconds))
-            clock[fx] -= tables.fg_seconds[j]
+            secs = tables.fg_seconds[j].astype(float)
+            if KICK_CLOCK and tables.kick_clock is not None:
+                # v12: a close side's late kick takes the clock as the real ones did
+                fo = team[fx]
+                fm = score[fx, fo] - score[fx, 1 - fo]
+                fc = clock[fx]
+                ck = (period[fx] == 4) & (fm <= 0) & (fm >= -3) & (fc <= 120)
+                zero, used = tables.kick_clock
+                near = ck & (fc <= KICK_CLOCK_EDGE)
+                far = ck & ~near
+                secs = np.where(near & (rand(fx, 33) < zero), fc, secs)
+                secs = np.where(far, used[pick(fx, 34, len(used))], secs)
+                tally("kick_clock_zero", (near & (secs >= fc)).sum())
+            clock[fx] -= secs
             good = rand(fx, 9) < make[do_fg]
             tally("fg_good", good.sum())
             g = fx[good]
