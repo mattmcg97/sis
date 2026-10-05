@@ -127,6 +127,14 @@ FEATURE_SETS <- list(
                    PLAYER_BASE),
     match_re = TRUE, olre = TRUE, player_offset = FALSE),
 
+  # form without the experience terms: a newcomer starts as an average player whose form is
+  # the league's (ExpLog extrapolates their learning curve -- see README.md's newcomer check).
+  form_noexp = list(
+    global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst +", GLOBAL_BASE),
+    player = paste("OwnHome + OwnFormFor + OwnFormAgainst + RivalFormFor + RivalFormAgainst +",
+                   PLAYER_BASE),
+    match_re = TRUE, olre = TRUE, player_offset = FALSE),
+
   # form + how both sides are doing this session, and where in it they are.
   form_session = list(
     global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +",

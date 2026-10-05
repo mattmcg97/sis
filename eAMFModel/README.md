@@ -1279,14 +1279,66 @@ of the rest of the game for each point of surprise. That is why learning from it
   kept in the grid file). A match's expected points are divided by its pace response before its
   starting strengths are fitted. With both paces applied, the sim then averages the prior's
   points.
-- **The prior's totals are pulled in by their out-of-sample slope** (`PRIOR_SHRINK`). At build,
-  the pre-match model (NB2 or glmer) is refitted 14 days before the cut-off. It predicts those
-  days' matches, and the real totals are regressed on its predictions. Every match's expected
-  total is then pulled toward the build's average by that slope (`v10shrink.json`; 0.924 on the
-  build before Sep 10). The margin's slope is read but not applied (`MARGIN_SHRINK`). NB2's
-  margins spread only about ±1.75 points, so two weeks measure their slope only to about ±0.15.
+- **The prior's totals and margins are pulled in by their out-of-sample slopes**
+  (`PRIOR_SHRINK`, `MARGIN_SHRINK`). Both priors predict margins and totals spread wider than
+  real games turn out.
+  - **How the slopes are read.** At build, the pre-match model (NB2 or glmer) is refitted at
+    the start of each of the 4 fortnights before the cut-off (`SHRINK_WINDOWS`,
+    `SHRINK_DAYS`). Each refit predicts its fortnight, out of sample and as it would live:
+    NB2's ratings as fitted, glmer's form following the results.
+  - **Pooled, on established gamers.** The real totals and margins are regressed on the
+    predictions, pooled within the fortnights. Only matches whose two gamers had both played
+    30 earlier matches count (`SHRINK_MIN_EXPERIENCE`); see below.
+  - **Only as far as the data are sure of.** Each slope is moved toward 1 by its standard
+    error and kept within 0.5–1.2.
+  - **Applied.** Every match's expected total and margin are then pulled toward the build's
+    average by those slopes. `v10shrink.json` keeps them, with each fortnight's own.
+  - **Why four fortnights, pooled.** One fortnight measures a margin slope only to about
+    ±0.08. On AMFELO the single-fortnight slopes ran from 0.63 to 1.13 for NB2. Four pooled
+    measure it to about ±0.04.
+  - **Why established gamers only.** In one fortnight in June, a cohort of new gamers dragged
+    glmer's margin slope from 0.78 to 0.27. NB2 can't price a newcomer at all, and glmer
+    extrapolates their learning curve (see "glmer and new gamers" below).
 
-The build refits the pre-match model once more for this, so it takes a few minutes longer.
+  Out of sample on AMFELO, each prior was refitted every 14 days. The shrink was read off the 4
+  fortnights before each, then applied to the next one (8 fortnights, 25 May – 10 Sep, about
+  10,000 matches each):
+
+  | | slopes applied | margin RMSE | total RMSE | moneyline log loss* |
+  |---|---|---|---|---|
+  | NB2 | margin 0.77–0.86, total 0.83–0.96 | 9.260 → 9.241 | 12.263 → 12.248 | 0.6688 → 0.6691 |
+  | glmer | margin 0.76–0.86, total 0.86–0.99 | 9.360 → 9.309 | 12.153 → 12.141 | 0.6698 → 0.6687 |
+
+  \* A normal around the predicted margin, as a stand-in for the sim's own moneyline.
+
+  The margin's best slope for the mean (about 0.77) is stronger than the moneyline's (about
+  0.87). Large predicted margins come back further than small ones. That is why NB2's
+  moneyline gains nothing here, while its spreads and totals do.
+
+  The build refits the pre-match model 4 more times for this, 2 at a time (`SHRINK_WORKERS`).
+  That takes about a minute for NB2 and about 10 for glmer.
+
+### glmer and new gamers
+
+In glmer's `form` model, a gamer's experience term (`ExpLog`, the log of their matches so far)
+extrapolates a learning curve. Against a veteran, a newcomer is predicted to score about half
+the points. Out of sample they don't fall that far behind. Over the 12 fortnights above (14-day
+refits, 15,418 matches), split by the less experienced gamer's earlier matches:
+
+| earlier matches | matches | sd of predicted margin | real margin per predicted point |
+|---|---|---|---|
+| under 10 | 146 | 7.6 | 0.39 |
+| 10–29 | 264 | 6.9 | 0.21 |
+| 30–59 | 394 | 4.8 | 0.52 |
+| 60 or more | 14,614 | 3.1 | 0.79 |
+
+- **Newcomers' matches.** Predicting them level beats glmer's margins: 12.0 against 12.5
+  points RMSE for the under-10 band. NB2 doesn't price them at all, so it falls back to the
+  league average.
+- **When it bites.** A cohort joined in June. In that fortnight 13% of matches had a gamer
+  with under 30 matches behind them.
+- **Fixes being tried.** `glmer/fit.R --exp-cap N` caps the experience at N matches (default:
+  none). The `form_noexp` feature set drops the experience terms altogether.
 
 ### Held out
 
