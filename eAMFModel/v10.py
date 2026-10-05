@@ -282,13 +282,17 @@ def prior_theta(grid, means, prof=None):
 # its predictions, pooled within the stretches. Each slope is moved toward 1 by its standard
 # error -- only as far as the data are sure of -- and kept within SHRINK_RANGE, and every match's
 # expected total and margin are pulled toward the build's average by them (MARGIN_SHRINK: the
-# margin's too). The slopes are read on established gamers' matches only (SHRINK_MIN_EXPERIENCE
+# margin's too, by MARGIN_WEIGHT of its pull: big predicted margins come back further than small
+# ones, so the mean margin's best slope, about 0.77, is stronger than the moneyline's, about 0.87;
+# half keeps most of the spread's gain and leaves the moneyline as it was). The slopes are read on
+# established gamers' matches only (SHRINK_MIN_EXPERIENCE
 # earlier matches each): a newcomer's first matches are priced in another regime -- NB2 can't price
 # them, glmer extrapolates their learning curve -- and a cohort of them swung glmer's margin slope
 # from 0.78 to 0.27 in one fortnight. One fortnight alone reads a margin slope to about +-0.08;
 # four, pooled, to about +-0.04.
 PRIOR_SHRINK = True
 MARGIN_SHRINK = True
+MARGIN_WEIGHT = 0.5
 SHRINK_DAYS = 14
 SHRINK_WINDOWS = 4
 SHRINK_WORKERS = 2               # refits run side by side (each its own process)
@@ -342,9 +346,10 @@ def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_
     """Refit the pre-match model at the start of each of `windows` stretches of `days` before the
     cut-off, predict each stretch's matches between established gamers (SHRINK_MIN_EXPERIENCE)
     and regress the real total and margin on the predicted ones, pooled within the stretches: the
-    slopes (corrected by the live model's level `scale`, moved toward 1 by their standard errors
-    and kept within SHRINK_RANGE), the build's average (`centre`: total, margin), the matches read
-    and each stretch's own slopes. None when fewer than SHRINK_MIN_MATCHES were read."""
+    slopes (corrected by the live model's level `scale`, moved toward 1 by their standard errors,
+    the margin's applied by MARGIN_WEIGHT, and kept within SHRINK_RANGE), the build's average
+    (`centre`: total, margin), the matches read and each stretch's own slopes. None when fewer
+    than SHRINK_MIN_MATCHES were read."""
     import os
     import shutil
     from concurrent.futures import ThreadPoolExecutor
@@ -382,7 +387,8 @@ def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_
     raw_t, se_t = (v / scale for v in pooled_slope(totals))
     raw_m, se_m = (v / scale for v in pooled_slope(margins))
     lo, hi = SHRINK_RANGE
-    margin = float(np.clip(toward_one(raw_m, se_m), lo, hi)) if MARGIN_SHRINK else 1.0
+    margin = (float(np.clip(1 - MARGIN_WEIGHT * (1 - toward_one(raw_m, se_m)), lo, hi))
+              if MARGIN_SHRINK else 1.0)
     each = []
     for (start, _), rows, t, m in zip(stretches, got, totals, margins):
         each.append({"from": start.isoformat(), "matches": len(rows),

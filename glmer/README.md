@@ -188,11 +188,24 @@ entry.
 | `home`        | + home/away side (`IsHome`)                                                               |
 | `context`     | + rest since the last match, matches this session, time of day                           |
 | `form`        | + both sides' recency-weighted points scored and conceded, and experience                 |
+| `form_noexp`  | `form` without the experience terms (tested against newcomers' pricing; worse overall)    |
+| `form_session`| `form` + how both sides are doing this session, and where in it they are                  |
 | `matchup`     | + each player's own team preference, and team-vs-team matchups                            |
 | `home_offset` | `home`, but the per-player models only learn corrections to the global model's prediction (`offset(GlobalEta)`) |
 
 Every feature uses only matches that started before the one being priced;
-a match's own result never leaks into its features. The available columns
+a match's own result never leaks into its features.
+
+**Experience.** `ExpLog` is the log of a gamer's matches so far.
+- `EXP_CAP_MATCHES` (`fit.R --exp-cap`) caps it in the fit. The default is
+  no cap.
+- `EXP_FLOOR_MATCHES` (`predict.R --exp-floor`) prices a gamer as if they
+  had played at least that many matches. The default is 30. It applies only
+  to the rows being priced (`predict.R`, and `backtest.R`'s test rows).
+- Without the floor, glmer extrapolates its learning curve for a newcomer
+  joining a settled league. It predicts them about half a veteran's points,
+  and out of sample they fall far less behind. See "glmer and new gamers" in
+  `eAMFModel/README.md` for the walk-forward check behind the floor. The available columns
 are listed at the top of the `FEATURE_SETS` section in `config.R`.
 
 ### Weightings

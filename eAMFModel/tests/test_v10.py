@@ -1954,7 +1954,11 @@ class TestPriorShrink(unittest.TestCase):
             rows, preds = self.history(margin=0.6)
             got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
             self.assertAlmostEqual(got["margin_raw"], 0.6, delta=0.03)
-            self.assertAlmostEqual(got["margin_slope"], got["margin_raw"] + got["margin_se"])
+            pull = 1 - (got["margin_raw"] + got["margin_se"])          # toward 1 by its error
+            self.assertAlmostEqual(got["margin_slope"], 1 - v10.MARGIN_WEIGHT * pull)
+            with mock.patch.object(v10, "MARGIN_WEIGHT", 1.0):
+                full = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertAlmostEqual(full["margin_slope"], 1 - pull)
             with mock.patch.object(v10, "MARGIN_SHRINK", False):
                 self.assertEqual(v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
                                  ["margin_slope"], 1.0)

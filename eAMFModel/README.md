@@ -1291,29 +1291,42 @@ of the rest of the game for each point of surprise. That is why learning from it
     30 earlier matches count (`SHRINK_MIN_EXPERIENCE`); see below.
   - **Only as far as the data are sure of.** Each slope is moved toward 1 by its standard
     error and kept within 0.5–1.2.
-  - **Applied.** Every match's expected total and margin are then pulled toward the build's
-    average by those slopes. `v10shrink.json` keeps them, with each fortnight's own.
+  - **Applied.** Every match's expected total is pulled toward the build's average by its
+    slope. Its expected margin is pulled by half of its slope's pull (`MARGIN_WEIGHT`).
+    `v10shrink.json` keeps them all, with each fortnight's own.
   - **Why four fortnights, pooled.** One fortnight measures a margin slope only to about
     ±0.08. On AMFELO the single-fortnight slopes ran from 0.63 to 1.13 for NB2. Four pooled
     measure it to about ±0.04.
   - **Why established gamers only.** In one fortnight in June, a cohort of new gamers dragged
     glmer's margin slope from 0.78 to 0.27. NB2 can't price a newcomer at all, and glmer
     extrapolates their learning curve (see "glmer and new gamers" below).
+  - **Why half the margin's pull.** The best slope for the mean margin (about 0.77) is
+    stronger than the moneyline's (about 0.87), because big predicted margins come back
+    further than small ones. The full pull is best for the spread's mean but costs the
+    moneyline. Half keeps most of the spread's gain and leaves the moneyline as it was.
+    Set `MARGIN_WEIGHT = 1` for the full pull.
 
   Out of sample on AMFELO, each prior was refitted every 14 days. The shrink was read off the 4
-  fortnights before each, then applied to the next one (8 fortnights, 25 May – 10 Sep, about
-  10,000 matches each):
+  fortnights before each, then applied to the next one (8 fortnights, 25 May – 10 Sep), over the
+  matches each prior priced:
 
-  | | slopes applied | margin RMSE | total RMSE | moneyline log loss* |
+  | | pull (margin; total) | margin RMSE | total RMSE | moneyline log loss* |
   |---|---|---|---|---|
-  | NB2 | margin 0.77–0.86, total 0.83–0.96 | 9.260 → 9.241 | 12.263 → 12.248 | 0.6688 → 0.6691 |
-  | glmer | margin 0.76–0.86, total 0.86–0.99 | 9.360 → 9.309 | 12.153 → 12.141 | 0.6698 → 0.6687 |
+  | NB2 (9,808 matches) | 0.89–0.93; 0.83–0.96 | 9.260 → 9.246 | 12.263 → 12.248 | 0.6688 → 0.6687 |
+  | glmer (10,116) | 0.88–0.93; 0.86–0.99 | 9.344 → 9.318 | 12.151 → 12.140 | 0.6692 → 0.6686 |
 
-  \* A normal around the predicted margin, as a stand-in for the sim's own moneyline.
+  \* A normal around the predicted margin (sd 9.35), as a stand-in for the sim's own moneyline.
 
-  The margin's best slope for the mean (about 0.77) is stronger than the moneyline's (about
-  0.87). Large predicted margins come back further than small ones. That is why NB2's
-  moneyline gains nothing here, while its spreads and totals do.
+  The full margin pull (`MARGIN_WEIGHT = 1`, slopes 0.76–0.86) takes margin RMSE to 9.241 for
+  NB2 and 9.303 for glmer. It costs NB2's moneyline 0.0003.
+
+  Head to head, on the 9,808 matches both priced, glmer (floored, below) beats NB2 with or
+  without the shrink:
+
+  | | margin RMSE | total RMSE | moneyline log loss |
+  |---|---|---|---|
+  | NB2 | 9.260 → 9.246 | 12.263 → 12.248 | 0.6687 → 0.6686 |
+  | glmer | 9.227 → 9.213 | 12.138 → 12.127 | 0.6645 → 0.6647 |
 
   The build refits the pre-match model 4 more times for this, 2 at a time (`SHRINK_WORKERS`).
   That takes about a minute for NB2 and about 10 for glmer.
@@ -1332,13 +1345,35 @@ refits, 15,418 matches), split by the less experienced gamer's earlier matches:
 | 30–59 | 394 | 4.8 | 0.52 |
 | 60 or more | 14,614 | 3.1 | 0.79 |
 
-- **Newcomers' matches.** Predicting them level beats glmer's margins: 12.0 against 12.5
-  points RMSE for the under-10 band. NB2 doesn't price them at all, so it falls back to the
-  league average.
-- **When it bites.** A cohort joined in June. In that fortnight 13% of matches had a gamer
-  with under 30 matches behind them.
-- **Fixes being tried.** `glmer/fit.R --exp-cap N` caps the experience at N matches (default:
-  none). The `form_noexp` feature set drops the experience terms altogether.
+A cohort joined in June. In that fortnight 13% of matches had a gamer with under 30 matches
+behind them, and glmer's moneyline log loss for the fortnight was 0.710 against about 0.66
+elsewhere. NB2 doesn't price newcomers at all, so it falls back to the league average.
+
+**Fix: price newcomers as if they had 30 matches** (`EXP_FLOOR_MATCHES` in `glmer/config.R`,
+`predict.R --exp-floor`). The floor applies only to the matches being priced. The fit never
+floors, so veterans' prices don't move. Over the same 12 fortnights:
+
+| floor | all: ML log loss | margin RMSE | under 10 earlier: ML | 10–29: ML | fortnights worse |
+|---|---|---|---|---|---|
+| none | 0.66855 | 9.425 | 0.708 | 0.752 | – |
+| 10 | 0.66831 | 9.420 | 0.683 | 0.752 | 1 (+0.0001) |
+| 20 | 0.66825 | 9.417 | 0.682 | 0.749 | 4 (≤ +0.0006) |
+| **30** | **0.66818** | **9.415** | 0.685 | 0.743 | 4 (≤ +0.0009) |
+
+The cohort fortnight gains most: 0.7099 → 0.7050.
+
+Tried and rejected, because each refit cost veterans more than it gained on newcomers:
+- **Capping experience in the fit** (`fit.R --exp-cap 30` / `100`). It wins only in the
+  cohort fortnight and is worse for veterans (+0.0017 to +0.0019 log loss). Over fortnights
+  4–7 it came out at +0.0004 (cap 30) and −0.0005 (cap 100) overall.
+- **Dropping the experience terms** (`form_noexp`). Worse in 4 of 5 fortnights, +0.0029
+  overall. Experience carries real signal among veterans.
+- **A separate, stronger shrink for newcomers' matches.** The June cohort's slopes (0.2–0.3)
+  didn't carry over to later newcomers (0.68), and it worsened their moneyline (0.697 →
+  0.725).
+
+Gamers with 10–29 matches stay overdispersed even with the floor (real margin 0.21 per
+predicted point). The general shrink pulls them in with everyone else.
 
 ### Held out
 
