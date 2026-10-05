@@ -79,7 +79,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
-| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines` | the same for `--candidate v8`, `--candidate v10` and `--candidate v11` |
+| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11` and `--candidate v12` |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -1368,7 +1368,7 @@ Each `scouting_playover.csv` row carries:
 play against the one before it, so dropping one would join two plays into
 a single wrong one. Everything that scores prices skips them.
 
-It is the input to `python -m eAMFModel v8-build` to `v11-build`, `remaining` and `profiles`.
+It is the input to `python -m eAMFModel v8-build` to `v12-build`, `remaining` and `profiles`.
 
 Each row also carries `timeouts_used_a` / `timeouts_used_b`: how many timeouts
 each side had called in the half at that `PLAY_OVER`, off the feed's
@@ -1473,7 +1473,7 @@ Cost: about a second of simulation per match on each core at 2,000 paths
 (`--v9-paths`). The work is spread over all cores but one
 (`config.MODEL_WORKERS`).
 
-`--candidate v8`, `--candidate v10` and `--candidate v11` work the same way off their own builds
+`--candidate v8`, `--candidate v10`, `--candidate v11` and `--candidate v12` work the same way off their own builds
 (`--v8-model`, `--v10-model`). What each version changes is in the eAMFModel README.
 
 ## Several candidates in one report: `--candidate v8,v9`

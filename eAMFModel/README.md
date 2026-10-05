@@ -21,9 +21,9 @@ The code that runs:
 
 | file | what it is |
 |---|---|
-| `sim8.py` … `sim11.py` | each version's simulation: play tables and the snap-by-snap game |
-| `v8.py` … `v11.py` | each version's build (fits, pre-match grid, profiles) and pricing |
-| `v8_stream.py` … `v11_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
+| `sim8.py` … `sim12.py` | each version's simulation: play tables and the snap-by-snap game |
+| `v8.py` … `v12.py` | each version's build (fits, pre-match grid, profiles) and pricing |
+| `v8_stream.py` … `v12_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
 | `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
 | `stream.py`, `grading.py` | what every stream shares; Brier against prod |
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
@@ -38,16 +38,17 @@ The code that runs:
 | v9 | v8 with recent weeks weighing more, and the late timeout plays' real time |
 | v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
 | v11 | v10 with close endings, late conversions by the clock, late-half timeouts, overtime and kick-off touchdowns as played (overtime 5.4% → 3.2% of games, real 2.7%; held out RPS level) |
+| v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
-onward still carries everything they introduced. Their own commands no longer run, so use v8–v11
+onward still carries everything they introduced. Their own commands no longer run, so use v8–v12
 in their place.
 
 ## v3: a play-by-play simulation
 
 > v3's code has been removed (as have v4–v7's). This section and the next four describe what
-> they introduced, which v8–v11 still run.
+> they introduced, which v8–v12 still run.
 
 v3 was the first simulation (`sim.py`, `v3.py`). From the
 snapshot's state it plays the rest of the game snap by snap on the real
@@ -1248,6 +1249,81 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
+## v12: v11 with level sides' late drives run down to the kick
+
+v12 (`sim12.py`, `v12.py`, `v12_stream.py`) started as v11 copied exactly. With its own switches off
+it plays as v11 (`TestV12IsV11`).
+
+### What v11 got wrong
+
+From level states in Q4's last two minutes, v11 went to overtime about twice as often as real games.
+Its side with the ball kicked the go-ahead field goal about as often as real sides do (59% of these
+drives, real 64%), but too early:
+
+| level, 2:00-1:01, the side with the ball kicks the go-ahead field goal | real | v11 |
+|---|---|---|
+| clock left at the kick, median / mean | 0s / 14s | 43s / 40s |
+| the other side's points after it, to the end of regulation | 0.60 | 1.88 |
+| overtime after it | 4% | 14% |
+
+v11's close-endings fit reached the real field-goal share by raising the level side's kick odds +4.0
+everywhere, the top of its grid. So it kicked on early downs, and on 4th down 98% of the time with a
+minute or more left, where real level sides in range go for it about half the time and keep the
+clock running. And the kick itself took the whole game's kick seconds (median 4). Real close sides
+let the play clock run first: from 0:40 or less, 65% of their kicks leave nothing on the clock.
+
+### What v12 changes
+
+- **Close 4th downs by the clock** (`FOURTH_CLOCK`). The close 4th-down kick table has five clock
+  slices (0:10, 0:30, 1:00, 2:00, 3:00) for each class, not two, each shrunk toward the v11 cell it
+  falls in. Level sides in range kick 46% with 1:00-3:00 left, 72% to 0:31 and 91-94% after.
+- **Late kicks take the clock as real ones do** (`KICK_CLOCK`). A side level or 1-3 behind kicking in
+  Q4's last 2:00 runs the clock out from 0:40 or less as often as real kicks did (69%), and from
+  further out takes the seconds a real kick took (a third of them 25s or more).
+- **The level kick shift only in the last 10 seconds** (`CLOSE_LEVEL_LATE`). The build fits it, and
+  the efficiency shift (either way now), to the real field-goal and touchdown shares of the drive
+  under way. On the held-out build: kick +5.5, efficiency -0.10.
+
+Fitting overtime from these states directly was tried. With a 4th-down shift free as well, the fit
+took both kick shifts to the edges of their grids for under a point of overtime, and kicked early
+again. The overtime left is in the reply (below), not the level side's choices.
+
+### Held out
+
+Built before Sep 10, played on Sep 10-22.
+
+| from real level states in Q4 | v11 | v12 | real [95%] |
+|---|---|---|---|
+| 1:00-0:00: other side's points | 1.30 | 0.99 | 0.87 [0.48, 1.34] |
+| 1:00-0:00: field goal only | 77.6% | 72.9% | 73.3% [64.5, 81.7] |
+| 1:00-0:00: overtime | 21.4% | 19.6% | 11.5% [5.0, 18.7] |
+| 2:00-1:01: other side's points | 2.36 | 2.00 | 1.31 [0.85, 1.83] |
+| 2:00-1:01: overtime | 12.6% | 12.8% | 6.1% [1.9, 11.2] |
+
+Points still to come (56,890 snapshots), RPS, v12 minus each [95% over matches]:
+
+| | v10 | v11 | v12 | v12 - v11 | v12 - v10 |
+|---|---|---|---|---|---|
+| all | 3.825 | 3.829 | 3.825 | -0.004 [-0.008, +0.001] | +0.000 [-0.005, +0.006] |
+| Q1 | 3.785 | 3.796 | 3.790 | -0.006 [-0.013, +0.002] | +0.005 [-0.002, +0.012] |
+| Q2 | 4.738 | 4.746 | 4.743 | -0.004 [-0.010, +0.003] | +0.005 [-0.003, +0.013] |
+| Q3 | 4.397 | 4.397 | 4.396 | -0.002 [-0.009, +0.006] | -0.001 [-0.007, +0.006] |
+| Q4 | 2.374 | 2.372 | 2.366 | -0.006 [-0.013, +0.002] | -0.008 [-0.019, +0.002] |
+| Q4 level | 2.068 | 2.090 | 2.042 | -0.048 [-0.090, -0.008] | |
+
+Q4 level states gain clearly, and their mean error falls from +0.50 points to +0.12. Every quarter
+leans better than v11; against v10, v12 is level overall and leans better in Q4. From kick-off,
+games go to overtime 3.6% of the time (v11 3.2%, real 2.7% [1.8, 3.8]).
+
+### Still open
+
+- **Overtime from level states is still about twice real.** The reply of the side behind is the
+  rest: after a go-ahead score from 2:00-1:01 it still scores 2.00 points (real 1.31), and from 1:00
+  1-3 behind it takes the field goal and no more 18% of the time (real 13.5%).
+- **Level drives end in a field goal 55% of the time** (real 68%), more often in nothing: the level
+  side in range gives the ball up on downs or a turnover more often than real ones do. The turnover
+  excess is the whole game's (1.9 a game, real 1.45).
+
 ## v11: v10 with close endings, late-half timeouts, overtime and kick-off touchdowns as played
 
 v11 (`sim11.py`, `v11.py`, `v11_stream.py`) started as v10 copied exactly. With its switches off
@@ -1515,7 +1591,7 @@ Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leade
 
 ### Line rules (own, `@even`, `@prod`, `v10@anchored`, `v10@hyst`)
 
-v8 to v11 quote their own lines in the gap between the key numbers (below). `@even` reads
+v8 to v12 quote their own lines in the gap between the key numbers (below). `@even` reads
 them at the half-point line nearest 50% instead, the old own line, and `@prod` at prod's. v10 has
 two more rules. All of them come off one simulation:
 
@@ -1553,7 +1629,7 @@ A line next to a spike prices far from the lines either side of it. A small erro
 moves its price a lot, and the even line flips across the spike as the game moves. A line in a gap
 between spikes prices about the same as its neighbours, so it can stay put.
 
-The own line (`key_line`, in v8 to v11) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
+The own line (`key_line`, in v8 to v12) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
 rows including kick-offs, 905 matches), each rule against a bettor who learns where it misprices
 (by phase, score, price, side of prod's line and the line's key-number position) on half the
 matches and bets the other half, five splits shared by every rule. The figures are book per 100
@@ -1570,7 +1646,7 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
-## Pricing only what the model is sure of (v8–v11 streams)
+## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
