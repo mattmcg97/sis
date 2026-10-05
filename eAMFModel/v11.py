@@ -1518,10 +1518,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         if fitted:
             offsets, got = sim.fit_period_theta(tables, real)      # the scoring level, refitted after
         if verbose and fitted:
-            n, drives, before, after, kick, eff = fitted
+            n, drives, sim_before, sim_after, kick, eff = fitted
             pct = lambda x: f"field goal {100 * x[0]:.1f}% / touchdown {100 * x[1]:.1f}%"
             print(f"  close endings: drives from {n:,} real level snaps in Q4's last two minutes, real"
-                  f" {pct(drives)}; simulated {pct(before)} -> {pct(after)} (level kick odds {kick:+.1f},"
+                  f" {pct(drives)}; simulated {pct(sim_before)} -> {pct(sim_after)} (level kick odds {kick:+.1f},"
                   f" efficiency {eff:+.2f})")
     if verbose and sim.TIMEOUTS:
         if tables.call_p.any():
