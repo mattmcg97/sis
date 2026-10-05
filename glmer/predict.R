@@ -89,6 +89,7 @@ SESSION_HOURS <- bundle$features$session_hours
 REST_CAP_HOURS <- bundle$features$rest_cap_hours
 SESSION_GAP_HOURS <- bundle$features$session_gap_hours %||% SESSION_GAP_HOURS
 SESSION_SHRINK_MATCHES <- bundle$features$session_shrink %||% SESSION_SHRINK_MATCHES
+EXP_CAP_MATCHES <- bundle$features$exp_cap %||% Inf        # bundles from before the cap: none
 long <- to_long(combine_matches(history, schedule))
 rows <- long[long$MatchId %in% schedule$MATCH_CODE, ]
 

@@ -191,6 +191,7 @@ SESSION_HOURS <- 6             # Session: matches in the previous this-many hour
 REST_CAP_HOURS <- 168          # RestLog: hours since the previous match, capped
 SESSION_GAP_HOURS <- 2         # a gap longer than this between a side's matches starts a new session
 SESSION_SHRINK_MATCHES <- 2    # SessFormFor / SessFormAgainst: mean x k / (k + this), k earlier matches
+EXP_CAP_MATCHES <- Inf         # ExpLog: matches played so far, capped at this many (Inf: not capped)
 
 # ---------------------------------------------------------------------------
 # Fitting and pricing

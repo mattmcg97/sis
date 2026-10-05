@@ -28,6 +28,7 @@ DEFAULTS <- list(
   scalar = "",              # weight scalar in place of the weighting's own; "" = its own
   mode = "global",          # predict.R's default mode for this model
   form_half_life = "",      # "" = FORM_HALF_LIFE_MATCHES in config.R
+  exp_cap = "",             # "" = EXP_CAP_MATCHES in config.R (ExpLog's matches, capped)
   players = "",             # fit per-player models? "" = only when mode isn't global
   before = "",              # "YYYY-MM-DD"; "" = fit on every settled match
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
@@ -68,6 +69,7 @@ fs <- FEATURE_SETS[[args$feature_set]]
 wspec <- WEIGHTINGS[[args$weighting]]
 if (nzchar(args$scalar)) wspec$scalar <- as.numeric(args$scalar)
 if (nzchar(args$form_half_life)) FORM_HALF_LIFE_MATCHES <- as.numeric(args$form_half_life)
+if (nzchar(args$exp_cap)) EXP_CAP_MATCHES <- as.numeric(args$exp_cap)
 with_players <- if (nzchar(args$players)) as_flag(args$players) else args$mode != "global"
 
 history_path <- resolve_history(args$history, repo_root)
@@ -109,7 +111,8 @@ log_line("saved %s (%.0f MB)", file.path(out_dir, "model.rds"),
          file.size(file.path(out_dir, "model.rds")) / 1e6)
 write_json(list(feature_set = args$feature_set, weighting = args$weighting,
                 scalar = wspec$scalar %||% 1, mode = args$mode,
-                form_half_life = FORM_HALF_LIFE_MATCHES, per_player_models = with_players,
+                form_half_life = FORM_HALF_LIFE_MATCHES, exp_cap = EXP_CAP_MATCHES,
+                per_player_models = with_players,
                 before = format(as_of, "%Y-%m-%d %H:%M:%S"), fitted_on = nrow(train) / 2,
                 first_match = format(min(train$Time), "%Y-%m-%d %H:%M:%S"),
                 last_match = format(max(train$Time), "%Y-%m-%d %H:%M:%S"),

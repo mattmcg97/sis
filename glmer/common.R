@@ -107,7 +107,7 @@ parse_cutoff <- function(x) {
 # A flat named list as a JSON object, for the Python side to read.
 write_json <- function(x, path) {
   value <- function(v) {
-    if (is.null(v) || (length(v) == 1 && is.na(v))) return("null")
+    if (is.null(v) || (length(v) == 1 && (is.na(v) || (is.numeric(v) && is.infinite(v))))) return("null")
     if (is.logical(v)) return(tolower(as.character(v)))
     if (is.numeric(v)) return(format(v, digits = 10))
     v <- gsub("\\", "/", as.character(v), fixed = TRUE)   # Windows paths
@@ -171,7 +171,8 @@ combine_matches <- function(history, schedule) {
 # result (or anything later) never leaks into its features.
 to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
                     session_hours = SESSION_HOURS, rest_cap_hours = REST_CAP_HOURS,
-                    session_gap_hours = SESSION_GAP_HOURS, session_shrink = SESSION_SHRINK_MATCHES) {
+                    session_gap_hours = SESSION_GAP_HOURS, session_shrink = SESSION_SHRINK_MATCHES,
+                    exp_cap = EXP_CAP_MATCHES) {
   home <- data.frame(MatchId = m$MATCH_CODE, Time = m$Time, Side = "H", IsHome = 1,
                      Player = m$P1, OpponentPlayer = m$P2, Team = m$P1Team, OpponentTeam = m$P2Team,
                      Stream = m$Stream, Score = m$P1Score, OppScore = m$P2Score,
@@ -212,7 +213,7 @@ to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
       }
       form_for[i] <- log((s_for + 1) / (league[i] + 1))
       form_against[i] <- log((s_against + 1) / (league[i] + 1))
-      exper[i] <- played
+      exper[i] <- min(played, exp_cap)
       rest[i] <- if (is.na(prev_t)) rest_cap_hours else min(rest_cap_hours, (tnum[i] - prev_t) / 3600)
       earlier <- tnum[idx[seq_len(k - 1)]]
       session[i] <- sum(earlier >= tnum[i] - session_hours * 3600 & earlier < tnum[i])
@@ -555,7 +556,7 @@ fit_bundle <- function(train, fs, wspec, as_of, min_matches = MIN_PLAYER_MATCHES
        n_train_rows = nrow(train), failed_player_fits = failed,
        features = list(form_half_life = form_half_life, session_hours = SESSION_HOURS,
                        rest_cap_hours = REST_CAP_HOURS, session_gap_hours = SESSION_GAP_HOURS,
-                       session_shrink = SESSION_SHRINK_MATCHES),
+                       session_shrink = SESSION_SHRINK_MATCHES, exp_cap = EXP_CAP_MATCHES),
        fitted_at = Sys.time())
 }
 

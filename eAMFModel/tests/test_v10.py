@@ -1886,10 +1886,20 @@ class TestPriorShrink(unittest.TestCase):
         h, a = v10.shrink_means((17.5, 17.5), self.SHRINK)
         self.assertAlmostEqual(h + a, 35.0)
 
-    def history(self, n_days=30, margin=1.0):
+    GAMERS = [f"G{i}" for i in range(6)]
+
+    def history(self, n_days=30, margin=1.0, newcomer=0):
+        """Six gamers, established by a season well before the stretches, then n_days of 30 matches
+        a day; `newcomer` matches in the last days between a debutant and one of them, predicted
+        12 points apart and played level."""
         import random
         rng = random.Random(4)
         rows, preds = [], {}
+        old = f"{self.BEFORE - dt.timedelta(days=80):%Y-%m-%d %H:%M:%S}"
+        for k in range(120):
+            rows.append({"MATCH_CODE": f"OLD{k:03d}", "SCHEDULED_START_TIME_UTC": old,
+                         "PLAYER_1_HANDLE": self.GAMERS[k % 6], "PLAYER_2_HANDLE": self.GAMERS[(k + 1) % 6],
+                         "PLAYER_1_FINAL_SCORE": "17", "PLAYER_2_FINAL_SCORE": "17"})
         for d in range(n_days):
             day = self.BEFORE - dt.timedelta(days=n_days - d)
             for k in range(30):
@@ -1898,9 +1908,18 @@ class TestPriorShrink(unittest.TestCase):
                 rt = 35.0 + 0.7 * (pt - 35.0) + rng.gauss(0, 1.0)
                 rm = margin * pm + rng.gauss(0, 1.0)
                 preds[code] = ((pt + pm) / 2, (pt - pm) / 2)
+                a, b = rng.sample(self.GAMERS, 2)
                 rows.append({"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{day:%Y-%m-%d %H:%M:%S}",
+                             "PLAYER_1_HANDLE": a, "PLAYER_2_HANDLE": b,
                              "PLAYER_1_FINAL_SCORE": f"{(rt + rm) / 2:.2f}",
                              "PLAYER_2_FINAL_SCORE": f"{(rt - rm) / 2:.2f}"})
+        for k in range(newcomer):
+            code = f"NEW{k:02d}"
+            day = self.BEFORE - dt.timedelta(days=1) + dt.timedelta(minutes=k)
+            preds[code] = (11.5, 23.5)
+            rows.append({"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{day:%Y-%m-%d %H:%M:%S}",
+                         "PLAYER_1_HANDLE": "DEBUT", "PLAYER_2_HANDLE": self.GAMERS[k % 6],
+                         "PLAYER_1_FINAL_SCORE": "17", "PLAYER_2_FINAL_SCORE": "17"})
         return rows, preds
 
     def test_the_slope_is_read_out_of_sample(self):
@@ -1939,6 +1958,28 @@ class TestPriorShrink(unittest.TestCase):
             with mock.patch.object(v10, "MARGIN_SHRINK", False):
                 self.assertEqual(v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
                                  ["margin_slope"], 1.0)
+
+    def test_a_newcomer_s_first_matches_are_not_read(self):
+        rows, preds = self.history(newcomer=25)
+        seen = []
+
+        def predict(d, schedule, *a, **kw):
+            seen.extend(r["MATCH_CODE"] for r in schedule)
+            return {r["MATCH_CODE"]: preds[r["MATCH_CODE"]] for r in schedule}
+        played = v10.experience(rows)
+        self.assertEqual(played["OLD000"], 0)
+        self.assertEqual(played["NEW00"], 0)
+        self.assertEqual(played["NEW24"], 24)
+        self.assertGreaterEqual(min(played[c] for c in played if c.startswith("AF")), 40)
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(nb2_prior, "fit"), \
+                mock.patch.object(nb2_prior, "predict", side_effect=predict):
+            got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertFalse(any(c.startswith("NEW") for c in seen))
+            self.assertAlmostEqual(got["margin_raw"], 1.0, delta=0.05)
+            with mock.patch.object(v10, "SHRINK_MIN_EXPERIENCE", 0):
+                swung = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertLess(swung["margin_raw"], 0.85)          # 25 debut matches drag it down
 
     def test_the_slopes_pool_within_windows_and_move_toward_one_by_their_error(self):
         # two windows on different levels, each with slope 2: pooled within them, 2 exactly

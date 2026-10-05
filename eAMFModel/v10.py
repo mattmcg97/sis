@@ -282,13 +282,17 @@ def prior_theta(grid, means, prof=None):
 # its predictions, pooled within the stretches. Each slope is moved toward 1 by its standard
 # error -- only as far as the data are sure of -- and kept within SHRINK_RANGE, and every match's
 # expected total and margin are pulled toward the build's average by them (MARGIN_SHRINK: the
-# margin's too). One stretch alone reads a margin slope to about +-0.17: NB2's margins spread only
-# about +-1.75 points.
+# margin's too). The slopes are read on established gamers' matches only (SHRINK_MIN_EXPERIENCE
+# earlier matches each): a newcomer's first matches are priced in another regime -- NB2 can't price
+# them, glmer extrapolates their learning curve -- and a cohort of them swung glmer's margin slope
+# from 0.78 to 0.27 in one fortnight. One fortnight alone reads a margin slope to about +-0.08;
+# four, pooled, to about +-0.04.
 PRIOR_SHRINK = True
 MARGIN_SHRINK = True
 SHRINK_DAYS = 14
 SHRINK_WINDOWS = 4
 SHRINK_WORKERS = 2               # refits run side by side (each its own process)
+SHRINK_MIN_EXPERIENCE = 30
 SHRINK_MIN_MATCHES = 200
 SHRINK_RANGE = (0.5, 1.2)
 SHRINK_FILE = "v10shrink.json"
@@ -322,14 +326,25 @@ def toward_one(slope, se):
     return min(1.0, slope + se) if slope < 1 else max(1.0, slope - se)
 
 
+def experience(history):
+    """match -> the fewer settled matches its two gamers had played before it."""
+    seen, out = Counter(), {}
+    for r in sorted(history, key=nb2_prior._start):
+        gamers = [str(r.get(k) or "").strip().upper() for k in ("PLAYER_1_HANDLE", "PLAYER_2_HANDLE")]
+        out[r["MATCH_CODE"]] = min(seen[g] for g in gamers)
+        for g in gamers:
+            seen[g] += 1
+    return out
+
+
 def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_DAYS,
                windows=SHRINK_WINDOWS):
     """Refit the pre-match model at the start of each of `windows` stretches of `days` before the
-    cut-off, predict each stretch's matches and regress the real total and margin on the predicted
-    ones, pooled within the stretches: the slopes (corrected by the live model's level `scale`,
-    moved toward 1 by their standard errors and kept within SHRINK_RANGE), the build's average
-    (`centre`: total, margin), the matches read and each stretch's own slopes. None when fewer
-    than SHRINK_MIN_MATCHES finished in the stretches."""
+    cut-off, predict each stretch's matches between established gamers (SHRINK_MIN_EXPERIENCE)
+    and regress the real total and margin on the predicted ones, pooled within the stretches: the
+    slopes (corrected by the live model's level `scale`, moved toward 1 by their standard errors
+    and kept within SHRINK_RANGE), the build's average (`centre`: total, margin), the matches read
+    and each stretch's own slopes. None when fewer than SHRINK_MIN_MATCHES were read."""
     import os
     import shutil
     from concurrent.futures import ThreadPoolExecutor
@@ -337,11 +352,13 @@ def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_
     finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
                 and r.get("PLAYER_2_FINAL_SCORE") not in ("", None)
                 and nb2_prior._start(r) is not None]
+    played = experience(finished)
     stretches = []
     for k in range(1, windows + 1):
         start = before - dt.timedelta(days=k * days)
         end = start + dt.timedelta(days=days)
-        held = [r for r in finished if start <= nb2_prior._start(r) < end]
+        held = [r for r in finished if start <= nb2_prior._start(r) < end
+                and played[r["MATCH_CODE"]] >= SHRINK_MIN_EXPERIENCE]
         if held:
             stretches.append((start, held))
     if sum(len(held) for _, held in stretches) < SHRINK_MIN_MATCHES:
