@@ -19,7 +19,7 @@ from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
 
-V11_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD")
+V11_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD", "CONV_CLOCK")
 
 
 class v11_off:
@@ -2074,6 +2074,37 @@ class TestV11CloseEndings(unittest.TestCase):
         self.assertGreater(p[0, 0, 2, 1], 0.7)
         self.assertLess(p[2, 0, 2, 2], 0.1)
         self.assertLess(p[2, 1, 2, 1], 0.2)                # an empty 3-behind cell stays low
+
+    def test_late_conversions_are_split_by_the_clock(self):
+        td = lambda clock, msg: [_row("TOUCHDOWN", 4, clock, "TEAM_A", 100, 12, 13),
+                                 _row("CONVERSION", 4, clock, "TEAM_A", 97, 12, 13, messages=msg)]
+        two, kick = "TWO_POINT_CONVERSION_FAILED_TEAM_A", "EXTRA_POINT_GOOD_TEAM_A"
+        cells = [c[0] for c in sim11.conversions(td(10, two) + td(45, two) + td(100, kick) + td(150, kick) + td(400, kick))]
+        self.assertEqual(cells, [4, 5, 6, 3, 2])
+        self.assertEqual(sim11.conversion_cell(5, 0.0), sim11.CONV_CELLS - 1)
+        self.assertEqual(sim11.conversion_cell(4, 30.0), 4)
+        self.assertEqual(sim11.decision_phase(4, 10.0), 3)            # 4th downs keep their 4 phases
+
+    def test_one_behind_after_the_six_goes_for_two_late_and_kicks_earlier(self):
+        m = sim11.CONV_MARGIN - 1
+        p = sim11.fit_go_for_two([(4, -1, True, True)] * 30 + [(3, -1, False, True)] * 30)
+        self.assertEqual(p.shape[0], sim11.CONV_CELLS)
+        self.assertGreater(p[4, m], 0.8)                   # last 30 seconds: go for the win
+        self.assertLess(p[3, m], 0.2)                      # 2:00-3:00: kick
+        self.assertAlmostEqual(p[5, m], 0.5)               # an empty slice: the three minutes' rate
+        self.assertGreater(self.tables.go_for_two.shape[0], 4)
+
+    def test_a_build_from_before_the_clock_slices_still_loads(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "t.npz")
+            self.tables.save(path)
+            z = dict(np.load(path))
+            z["go_for_two"] = z["go_for_two"][:4]
+            np.savez_compressed(path, **z)
+            t = sim11.Tables.load(path)
+        self.assertEqual(t.go_for_two.shape[0], sim11.CONV_CELLS)
+        np.testing.assert_array_equal(t.go_for_two[-1], t.go_for_two[3])
 
     def test_close_fourth_downs_cover_level_sides(self):
         rows = [_row("SCRIMMAGE", 4, 20, "TEAM_A", 70, 10, 10, down="4"), _row("FIELD_GOAL", 4, 15, "TEAM_A", 70, 10, 10),

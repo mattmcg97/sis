@@ -973,7 +973,43 @@ def _logistic_in_y(ys, n, k, iterations=25, ridge=1.0):
 
 
 CONV_MARGIN = 16
+# v11: the conversion after a fourth-quarter touchdown in the last three minutes, by the clock. Real
+# sides 7 behind who score go for two to win on 94% of tries in the last 30 seconds, 70% to 1:00, 37%
+# to 2:00 and 12% to 3:00 (2,320 matches); v10 had one rate, 66%, for the whole three minutes, so it
+# kicked to tie, and went to overtime, with seconds left. Cells: the three minutes split at
+# CONV_CLOCK, then overtime on its own; each shrinks toward v10's one cell for them all.
+CONV_CLOCK = (30.0, 60.0, 120.0)
+CONV_CELLS = 4 + len(CONV_CLOCK) + 1
 
+
+def conversion_cell(period, clock):
+    """The cell of the go-for-two table: the decision phase, or with CONV_CLOCK set, the last
+    three minutes' clock slice (4, 5, ...; 3 from 2:00 to 3:00) or overtime (the last cell)."""
+    phase = conversion_phase(period, clock)
+    if phase != 3 or not CONV_CLOCK:
+        return phase
+    if period >= 5:
+        return CONV_CELLS - 1
+    for i, edge in enumerate(CONV_CLOCK):
+        if clock <= edge:
+            return 4 + i
+    return 3
+
+
+
+def fit_go_for_two(conv):
+    """P(go for two) by cell and margin after the six. The four phases shrink toward their own
+    rate; the late cells (the last three minutes' slices and overtime) toward the four's last."""
+    size = 2 * CONV_MARGIN + 1
+    tries, twos = np.zeros((CONV_CELLS, size)), np.zeros((CONV_CELLS, size))
+    for cell, margin, two, _ in conv:
+        tries[cell, margin + CONV_MARGIN] += 1
+        twos[cell, margin + CONV_MARGIN] += two
+    tries4 = np.vstack([tries[:3], tries[3:].sum(0)])
+    twos4 = np.vstack([twos[:3], twos[3:].sum(0)])
+    base = twos4.sum(1, keepdims=True) / np.maximum(1, tries4.sum(1, keepdims=True))
+    pooled = (twos4 + CONV_PRIOR * base) / (tries4 + CONV_PRIOR)
+    return np.vstack([pooled[:3], (twos[3:] + CONV_PRIOR * pooled[3]) / (tries[3:] + CONV_PRIOR)])
 
 def conversion_phase(period, clock):
     """The part of the game for a conversion decision."""
@@ -999,7 +1035,7 @@ def conversions(rows):
         margin = _margin(a, scorer)
         if margin is None:
             continue
-        out.append((conversion_phase(_i(a["period"]), _f(a["clock_seconds"]) or 0.0),
+        out.append((conversion_cell(_i(a["period"]), _f(a["clock_seconds"]) or 0.0),
                     max(-CONV_MARGIN, min(CONV_MARGIN, margin)), two, good))
     return out
 
@@ -1616,13 +1652,7 @@ class Tables:
         t.fg_seconds = np.array([d[3] for d in fgs]) if fgs else np.array([5.0])
         misses = [(d[1], d[4]) for d in fgs if d[4] is not None]
         t.fg_after = (float(np.mean([100 - a - y for y, a in misses])) if misses else 7.0)
-        size = 2 * CONV_MARGIN + 1
-        tries, twos = np.zeros((4, size)), np.zeros((4, size))
-        for phase, margin, two, good in conv:
-            tries[phase, margin + CONV_MARGIN] += 1
-            twos[phase, margin + CONV_MARGIN] += two
-        base = twos.sum(1, keepdims=True) / np.maximum(1, tries.sum(1, keepdims=True))
-        t.go_for_two = (twos + CONV_PRIOR * base) / (tries + CONV_PRIOR)
+        t.go_for_two = fit_go_for_two(conv)
         two = [good for _, _, went, good in conv if went]
         kick = [good for _, _, went, good in conv if not went]
         t.two_good = float(np.mean(two)) if two else 0.57
@@ -1714,6 +1744,8 @@ class Tables:
         for name in ("start", "count", "success", "kind", "gain", "new_field", "seconds",
                      "replay", "td_from", "fg_seconds", "go_for_two"):
             setattr(t, name, z[name])
+        if len(t.go_for_two) < CONV_CELLS:                    # a build from before the clock slices
+            t.go_for_two = np.vstack([t.go_for_two] + [t.go_for_two[3:4]] * (CONV_CELLS - len(t.go_for_two)))
         t.fg_after = float(z["fg_after"][0])
         t.two_good, t.kick_good = (float(x) for x in z["conv_rates"])
         if "late_theta" in z:
@@ -2062,6 +2094,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
             margin = np.clip(score[ix, s_] - score[ix, 1 - s_], -CONV_MARGIN, CONV_MARGIN)
             cp = np.where(period[ix] <= 2, 0, np.where(period[ix] == 3, 1,
                           np.where((period[ix] >= 5) | (clock[ix] <= 180), 3, 2)))
+            if CONV_CLOCK:
+                cp = np.where(period[ix] >= 5, CONV_CELLS - 1, cp)
+                for i, edge in reversed(list(enumerate(CONV_CLOCK))):
+                    cp = np.where((period[ix] == 4) & (clock[ix] <= edge), 4 + i, cp)
             two = rand(ix, 2) < tables.go_for_two[cp, margin + CONV_MARGIN]
             two |= (period[ix] >= 5) & ot_done[ix, 1 - s_] & ((margin == -1) | (margin == -2))
             good = rand(ix, 3) < np.where(two, tables.two_good, tables.kick_good)
