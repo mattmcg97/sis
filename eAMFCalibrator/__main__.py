@@ -797,7 +797,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v8, v9, v10 -- see eAMFModel) priced "
+                             "or a model version (v8 to v11 -- see eAMFModel) priced "
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
@@ -834,6 +834,15 @@ def common_options():
                         help="--candidate v10: its own lines (in the gap between the key numbers), the"
                              " even line, the even line held until far off (hyst), prod's, or prod's"
                              f" moved only as far as it must (anchored) (default {config.V10_LINES})")
+    tuning.add_argument("--v11-model", metavar="DIR",
+                        help="eAMFModel v11-build's output, for --candidate v11 "
+                             "(default $EAMF_V11_MODEL, then ./v11_model)")
+    tuning.add_argument("--v11-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v11 "
+                             f"(default {config.V11_PATHS})")
+    tuning.add_argument("--v11-lines", choices=["own", "even", "prod", "anchored", "hyst"],
+                        help="--candidate v11: as --v10-lines "
+                             f"(default {config.V11_LINES})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -866,7 +875,10 @@ def apply_overrides(args):
                            ("v9_lines", "V9_LINES"),
                            ("v10_model", "V10_MODEL_DIR"),
                            ("v10_paths", "V10_PATHS"),
-                           ("v10_lines", "V10_LINES")):
+                           ("v10_lines", "V10_LINES"),
+                           ("v11_model", "V11_MODEL_DIR"),
+                           ("v11_paths", "V11_PATHS"),
+                           ("v11_lines", "V11_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
