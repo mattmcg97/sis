@@ -3,6 +3,7 @@
 import csv
 import datetime as dt
 import json
+import math
 import os
 import random
 import sys
@@ -1330,7 +1331,7 @@ class TestBuild(unittest.TestCase):
             def __init__(self, level):
                 self.level = level
 
-            def means(self, schedule, n_sims=0):
+            def means(self, schedule, n_sims=0, results=None):
                 return {r["MATCH_CODE"]: self.level for r in schedule}
 
         history = [{"MATCH_CODE": c} for c in codes]
@@ -1360,7 +1361,7 @@ class TestBuild(unittest.TestCase):
             league = (17.0, 17.0)
             asked = None
 
-            def means(self, schedule, n_sims=0):
+            def means(self, schedule, n_sims=0, results=None):
                 Fake.asked = schedule
                 return {}
 
@@ -1371,6 +1372,57 @@ class TestBuild(unittest.TestCase):
                                                   workers=1, match_info=[])
         self.assertTrue(quotes)
         self.assertEqual(Fake.asked, [])
+
+    def test_a_prior_that_follows_results_prices_each_prematch_quote_off_what_was_known(self):
+        rows = next(iter(self.matches.values()))
+        code = rows[0]["match_code"]
+        start = dt.datetime(2026, 9, 1, 12, 0)
+        early, late = start - dt.timedelta(minutes=50), start - dt.timedelta(minutes=5)
+        line = "Total points over 40.5"
+        prod = [(code, 54, t, 50.0, 2.0, line, None, "OPEN", "true") for t in (early, late)]
+        prod += [(code, 54, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true")
+                 for r in rows[5:8]]
+        teams = {"SPORT_CODE": "AF", "STREAM_NUMBER": "1", "PLAYER_1_TEAM": "T1",
+                 "PLAYER_2_TEAM": "T2"}
+        info = [dict(teams, MATCH_CODE=code, SCHEDULED_START_TIME_UTC="2026-09-01 12:00:00",
+                     PLAYER_1_HANDLE="ann", PLAYER_2_HANDLE="bob")]
+        # ann's previous match, from 10:48 (its result in by 11:24), is still on 50 minutes before
+        # kick-off and over 5 minutes before
+        history = [dict(teams, MATCH_CODE="PREV", SCHEDULED_START_TIME_UTC="2026-09-01 10:48:00",
+                        PLAYER_1_HANDLE="ann", PLAYER_2_HANDLE="cat", PLAYER_1_FINAL_SCORE="20",
+                        PLAYER_2_FINAL_SCORE="10")]
+
+        class Fake:
+            league = (17.0, 17.0)
+            FOLLOWS_RESULTS = True
+            asked = []
+
+            def means(self, schedule, n_sims=0, results=None):
+                Fake.asked.append((schedule, results))
+                return {r["MATCH_CODE"]: (10.0, 10.0) if "@" in r["MATCH_CODE"] else (30.0, 30.0)
+                        for r in schedule}
+
+        price = lambda **kw: v10_stream.quotes_for_matches(
+            {code: rows}, prod, self.tmp.name, n_paths=200, workers=1, match_info=info,
+            lines=v10_stream.PROD_LINES, **kw)
+        with mock.patch.object(v10, "prematch_model", return_value=Fake()):
+            quotes = price(history=history)
+            pre_only = price(history=history, prematch_only=True)
+            frozen = price()
+        before = {q[2]: q[3] for q in quotes if q[6] is None}
+        self.assertLess(before[early], 20.0)          # priced off ann's form before PREV's result
+        self.assertGreater(before[late], before[early] + 30)          # and after it
+        schedule, results = Fake.asked[0]
+        self.assertIs(results, history)
+        self.assertEqual([r["MATCH_CODE"] for r in schedule], [code, code + "@1"])
+        self.assertEqual(schedule[1]["SCHEDULED_START_TIME_UTC"], "2026-09-01 10:47:59")
+        self.assertTrue(any(q[6] is not None for q in quotes))
+        # prematch_only: the quotes before kick-off alone, the same prices
+        self.assertEqual({q[6] for q in pre_only}, {None})
+        self.assertEqual({q[2]: q[3] for q in pre_only}, before)
+        # no results known when pricing: every quote off the kick-off's
+        self.assertEqual([r["MATCH_CODE"] for r in Fake.asked[2][0]], [code])
+        self.assertEqual(len({q[3] for q in frozen if q[6] is None}), 1)
 
 
     def test_the_even_line_is_the_half_point_nearest_even_money(self):
@@ -1821,8 +1873,8 @@ class TestPriorPace(unittest.TestCase):
 
 
 class TestPriorShrink(unittest.TestCase):
-    """v10: the pre-match prior's totals are pulled toward the build's average by the slope real
-    totals showed on it out of sample."""
+    """v10: the pre-match prior's totals and margins are pulled toward the build's average by the
+    slopes real ones showed on it out of sample, pooled over several refits."""
 
     SHRINK = {"total_slope": 0.8, "margin_slope": 1.0, "total_centre": 35.0, "margin_centre": 0.0}
     BEFORE = dt.datetime(2026, 9, 20)
@@ -1834,46 +1886,118 @@ class TestPriorShrink(unittest.TestCase):
         h, a = v10.shrink_means((17.5, 17.5), self.SHRINK)
         self.assertAlmostEqual(h + a, 35.0)
 
-    def history(self, n_days=30):
+    GAMERS = [f"G{i}" for i in range(6)]
+
+    def history(self, n_days=30, margin=1.0, newcomer=0):
+        """Six gamers, established by a season well before the stretches, then n_days of 30 matches
+        a day; `newcomer` matches in the last days between a debutant and one of them, predicted
+        12 points apart and played level."""
         import random
         rng = random.Random(4)
         rows, preds = [], {}
+        old = f"{self.BEFORE - dt.timedelta(days=80):%Y-%m-%d %H:%M:%S}"
+        for k in range(120):
+            rows.append({"MATCH_CODE": f"OLD{k:03d}", "SCHEDULED_START_TIME_UTC": old,
+                         "PLAYER_1_HANDLE": self.GAMERS[k % 6], "PLAYER_2_HANDLE": self.GAMERS[(k + 1) % 6],
+                         "PLAYER_1_FINAL_SCORE": "17", "PLAYER_2_FINAL_SCORE": "17"})
         for d in range(n_days):
             day = self.BEFORE - dt.timedelta(days=n_days - d)
             for k in range(30):
                 code = f"AF{d:02d}{k:02d}"
                 pt, pm = rng.uniform(27, 43), rng.uniform(-6, 6)
                 rt = 35.0 + 0.7 * (pt - 35.0) + rng.gauss(0, 1.0)
-                rm = 1.0 * pm + rng.gauss(0, 1.0)
+                rm = margin * pm + rng.gauss(0, 1.0)
                 preds[code] = ((pt + pm) / 2, (pt - pm) / 2)
+                a, b = rng.sample(self.GAMERS, 2)
                 rows.append({"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{day:%Y-%m-%d %H:%M:%S}",
+                             "PLAYER_1_HANDLE": a, "PLAYER_2_HANDLE": b,
                              "PLAYER_1_FINAL_SCORE": f"{(rt + rm) / 2:.2f}",
                              "PLAYER_2_FINAL_SCORE": f"{(rt - rm) / 2:.2f}"})
+        for k in range(newcomer):
+            code = f"NEW{k:02d}"
+            day = self.BEFORE - dt.timedelta(days=1) + dt.timedelta(minutes=k)
+            preds[code] = (11.5, 23.5)
+            rows.append({"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{day:%Y-%m-%d %H:%M:%S}",
+                         "PLAYER_1_HANDLE": "DEBUT", "PLAYER_2_HANDLE": self.GAMERS[k % 6],
+                         "PLAYER_1_FINAL_SCORE": "17", "PLAYER_2_FINAL_SCORE": "17"})
         return rows, preds
 
     def test_the_slope_is_read_out_of_sample(self):
         rows, preds = self.history()
-        seen = {}
+        seen = {"before": [], "n": 0}
 
         def fit(history, out_dir, before=None):
-            seen["before"] = before
+            seen["before"].append(before)
 
         def predict(d, schedule, *a, **kw):
-            seen["n"] = len(schedule)
+            seen["n"] += len(schedule)
             return {r["MATCH_CODE"]: preds[r["MATCH_CODE"]] for r in schedule}
         with tempfile.TemporaryDirectory() as d, \
                 mock.patch.object(nb2_prior, "fit", side_effect=fit), \
                 mock.patch.object(nb2_prior, "predict", side_effect=predict):
             got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d, scale=1.0)
-            self.assertEqual(seen["before"], self.BEFORE - dt.timedelta(days=v10.SHRINK_DAYS))
-            self.assertEqual(seen["n"], 30 * v10.SHRINK_DAYS)
+            # a refit at the start of each 14-day stretch; 30 days of history fill two and a bit
+            step = dt.timedelta(days=v10.SHRINK_DAYS)
+            self.assertEqual(sorted(seen["before"]), [self.BEFORE - 3 * step, self.BEFORE - 2 * step,
+                                                      self.BEFORE - step])
+            self.assertEqual(seen["n"], 30 * 30)
+            self.assertEqual((got["matches"], got["windows"], len(got["each"])), (900, 3, 3))
             self.assertAlmostEqual(got["total_slope"], 0.7, delta=0.03)
+            self.assertLess(got["total_se"], 0.02)
             self.assertAlmostEqual(got["margin_raw"], 1.0, delta=0.05)
-            self.assertEqual(got["margin_slope"], 1.0)                  # read, not applied
+            self.assertAlmostEqual(got["margin_slope"], 1.0, delta=0.05)
             self.assertEqual((got["total_centre"], got["margin_centre"]), (35.0, 0.5))
             halved = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d, scale=2.0)
             self.assertAlmostEqual(halved["total_raw"], got["total_raw"] / 2)
             self.assertIsNone(v10.fit_shrink(rows[:100], "nb2", self.BEFORE, (35.0, 0.5), d))
+            # margins that spread too wide are pulled in too, unless switched off
+            rows, preds = self.history(margin=0.6)
+            got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertAlmostEqual(got["margin_raw"], 0.6, delta=0.03)
+            pull = 1 - (got["margin_raw"] + got["margin_se"])          # toward 1 by its error
+            self.assertAlmostEqual(got["margin_slope"], 1 - v10.MARGIN_WEIGHT * pull)
+            with mock.patch.object(v10, "MARGIN_WEIGHT", 1.0):
+                full = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertAlmostEqual(full["margin_slope"], 1 - pull)
+            with mock.patch.object(v10, "MARGIN_SHRINK", False):
+                self.assertEqual(v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+                                 ["margin_slope"], 1.0)
+
+    def test_a_newcomer_s_first_matches_are_not_read(self):
+        rows, preds = self.history(newcomer=25)
+        seen = []
+
+        def predict(d, schedule, *a, **kw):
+            seen.extend(r["MATCH_CODE"] for r in schedule)
+            return {r["MATCH_CODE"]: preds[r["MATCH_CODE"]] for r in schedule}
+        played = v10.experience(rows)
+        self.assertEqual(played["OLD000"], 0)
+        self.assertEqual(played["NEW00"], 0)
+        self.assertEqual(played["NEW24"], 24)
+        self.assertGreaterEqual(min(played[c] for c in played if c.startswith("AF")), 40)
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(nb2_prior, "fit"), \
+                mock.patch.object(nb2_prior, "predict", side_effect=predict):
+            got = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertFalse(any(c.startswith("NEW") for c in seen))
+            self.assertAlmostEqual(got["margin_raw"], 1.0, delta=0.05)
+            with mock.patch.object(v10, "SHRINK_MIN_EXPERIENCE", 0):
+                swung = v10.fit_shrink(rows, "nb2", self.BEFORE, (35.0, 0.5), d)
+            self.assertLess(swung["margin_raw"], 0.85)          # 25 debut matches drag it down
+
+    def test_the_slopes_pool_within_windows_and_move_toward_one_by_their_error(self):
+        # two windows on different levels, each with slope 2: pooled within them, 2 exactly
+        b, se = v10.pooled_slope([([0, 1, 2], [10, 12, 14]), ([5, 6, 7], [0, 2, 4])])
+        self.assertAlmostEqual(b, 2.0)
+        self.assertAlmostEqual(se, 0.0)
+        self.assertEqual(v10.pooled_slope([([3, 3, 3], [1, 2, 3])]), (1.0, math.inf))
+        b, se = v10.pooled_slope([([0, 1, 2, 3], [0, 2, 1, 3])])
+        self.assertAlmostEqual(b, 0.8)
+        self.assertAlmostEqual(se, math.sqrt(1.8 / 2 / 5))           # rss 1.8 on 4 - 2 points
+        self.assertAlmostEqual(v10.toward_one(0.6, 0.1), 0.7)
+        self.assertEqual(v10.toward_one(0.95, 0.1), 1.0)
+        self.assertAlmostEqual(v10.toward_one(1.3, 0.1), 1.2)
+        self.assertEqual(v10.toward_one(1.05, 0.1), 1.0)
 
     def test_the_build_s_prematch_model_is_shrunk(self):
         class Pre:

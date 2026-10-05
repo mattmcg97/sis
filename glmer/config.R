@@ -60,6 +60,10 @@ PLAYER_MAX_SHIFT <- 0.5
 #   FormFor, FormAgainst          side's recency-weighted points scored / conceded over
 #   OppFormFor, OppFormAgainst      its previous matches, as a log ratio to the league
 #   ExpLog, OppExpLog             log1p(previous matches played)
+#   SessBand, OppSessBand         position in the side's session: s1, s2, s3_4, s5_6, s7_8, s9p
+#   SessFormFor, SessFormAgainst  how the side has scored / conceded so far this session against
+#   OppSessFormFor, ...             a pre-match expectation from the form features (log ratio,
+#                                   shrunk toward 0 for a short session); 0 on a session's first match
 #
 # Per-player models -- the same rows seen from the modelled player's side,
 # so one formula means the same in their attack model (points they score)
@@ -70,7 +74,8 @@ PLAYER_MAX_SHIFT <- 0.5
 #   OwnHome                       1 when they're PLAYER_1
 #   OwnFormFor, OwnFormAgainst,   their own and the rival's form, rest, session
 #   RivalFormFor, RivalFormAgainst, OwnRestLog, RivalRestLog, OwnSession,
-#   RivalSession, OwnExpLog, RivalExpLog
+#   RivalSession, OwnExpLog, RivalExpLog, OwnSessBand, RivalSessBand, OwnSessFormFor,
+#   OwnSessFormAgainst, RivalSessFormFor, RivalSessFormAgainst
 #
 # Both: Stream, HourBlock (UTC 4-hour block, "h00".."h20"), Weekday ("d1".."d7").
 #
@@ -122,6 +127,23 @@ FEATURE_SETS <- list(
                    PLAYER_BASE),
     match_re = TRUE, olre = TRUE, player_offset = FALSE),
 
+  # form without the experience terms: a newcomer starts as an average player whose form is
+  # the league's (ExpLog extrapolates their learning curve -- see README.md's newcomer check).
+  form_noexp = list(
+    global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst +", GLOBAL_BASE),
+    player = paste("OwnHome + OwnFormFor + OwnFormAgainst + RivalFormFor + RivalFormAgainst +",
+                   PLAYER_BASE),
+    match_re = TRUE, olre = TRUE, player_offset = FALSE),
+
+  # form + how both sides are doing this session, and where in it they are.
+  form_session = list(
+    global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +",
+                   "SessFormFor + SessFormAgainst + OppSessFormFor + OppSessFormAgainst +",
+                   "SessBand + OppSessBand +", GLOBAL_BASE),
+    player = paste("OwnHome + OwnFormFor + OwnFormAgainst + RivalFormFor + RivalFormAgainst +",
+                   "OwnSessFormFor + RivalSessFormAgainst +", PLAYER_BASE),
+    match_re = TRUE, olre = TRUE, player_offset = FALSE),
+
   # + player-specific team preference and team-vs-team matchups.
   matchup = list(
     global = paste("IsHome +", GLOBAL_BASE,
@@ -163,7 +185,9 @@ WEIGHTINGS <- list(
   m150         = list(type = "exp_matches", half_life = 150),
   win120       = list(type = "window", days = 120),
   hl60_burnin  = list(type = "exp_days", half_life = 60, drop_before = "2026-01-15"),
-  hl60_x2      = list(type = "exp_days", half_life = 60, scalar = 2)
+  hl60_x0.5    = list(type = "exp_days", half_life = 60, scalar = 0.5),
+  hl60_x2      = list(type = "exp_days", half_life = 60, scalar = 2),
+  hl60_x4      = list(type = "exp_days", half_life = 60, scalar = 4)
 )
 
 # ---------------------------------------------------------------------------
@@ -173,6 +197,11 @@ WEIGHTINGS <- list(
 FORM_HALF_LIFE_MATCHES <- 10   # FormFor / FormAgainst EWMA half-life, in matches
 SESSION_HOURS <- 6             # Session: matches in the previous this-many hours
 REST_CAP_HOURS <- 168          # RestLog: hours since the previous match, capped
+SESSION_GAP_HOURS <- 2         # a gap longer than this between a side's matches starts a new session
+SESSION_SHRINK_MATCHES <- 2    # SessFormFor / SessFormAgainst: mean x k / (k + this), k earlier matches
+EXP_CAP_MATCHES <- Inf         # ExpLog: matches played so far, capped at this many (Inf: not capped)
+EXP_FLOOR_MATCHES <- 30        # pricing (predict.R, backtest.R's test rows): a gamer as if they had
+                               # played at least this many matches; the fit never floors
 
 # ---------------------------------------------------------------------------
 # Fitting and pricing

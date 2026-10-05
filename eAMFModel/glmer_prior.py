@@ -65,10 +65,32 @@ def fit(history, out_dir, before):
     return len(rows)
 
 
-def predict(model_dir, schedule):
+def _settled(rows):
+    """The rows with both finals."""
+    return [r for r in rows or () if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
+            and r.get("PLAYER_2_FINAL_SCORE") not in ("", None)]
+
+
+def _live_history(model_dir, work, settled):
+    """The model's own history with `settled` (matches settled when pricing) added, as a CSV for
+    predict.R; the model's own file when there are none."""
+    own = os.path.join(model_dir, HISTORY)
+    if not settled:
+        return own
+    with open(own, newline="", encoding="utf-8") as fh:
+        rows = {r["MATCH_CODE"]: r for r in csv.DictReader(fh)}
+    for r in settled:
+        rows[r["MATCH_CODE"]] = r
+    path = os.path.join(work, "history_live.csv")
+    nb2_prior._write(path, list(rows.values()), nb2_prior.HISTORY_FIELDS)
+    return path
+
+
+def predict(model_dir, schedule, results=None):
     """Each match's expected (home, away) points from a fitted model. The form features look back
-    over the model's own history and any finals the schedule rows carry, each match seeing only
-    matches that started before it."""
+    over the model's own history, any finals the schedule rows carry and `results` (settled
+    matches known when pricing, e.g. eAMFCalibrator history's rows), each match seeing only
+    matches that started before it -- so its form follows every result, as it would live."""
     if not schedule:
         return {}
     model_dir = os.path.abspath(model_dir)
@@ -76,10 +98,17 @@ def predict(model_dir, schedule):
     os.makedirs(work, exist_ok=True)
     sched = os.path.join(work, "schedule.csv")
     out = os.path.join(work, "predictions.csv")
+    settled = _settled(results)
+    finals = {r["MATCH_CODE"]: r for r in settled}
+    # predict.R takes a schedule row over the history's for the same match, so a scheduled match
+    # carries its final where one is known: later matches' form reads it (its own never does)
+    schedule = [dict(r, PLAYER_1_FINAL_SCORE=finals[r["MATCH_CODE"]]["PLAYER_1_FINAL_SCORE"],
+                     PLAYER_2_FINAL_SCORE=finals[r["MATCH_CODE"]]["PLAYER_2_FINAL_SCORE"])
+                if r["MATCH_CODE"] in finals and not _settled([r]) else r for r in schedule]
     nb2_prior._write(sched, schedule, nb2_prior.HISTORY_FIELDS)
+    history = _live_history(model_dir, work, settled)
     _run(PREDICT_SCRIPT, [f"--model={os.path.join(model_dir, MODEL)}", f"--schedule={sched}",
-                          f"--history={os.path.join(model_dir, HISTORY)}", "--n-sims=0",
-                          f"--out={out}"])
+                          f"--history={history}", "--n-sims=0", f"--out={out}"])
     got = {}
     with open(out, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
@@ -88,8 +117,17 @@ def predict(model_dir, schedule):
     return got
 
 
+# Features a schedule fixes in advance but read off the clock (rest, the session, the hour): a match
+# priced as of an earlier time (stream.known_states) would read them wrong, so a model with any
+# prices every pre-match quote off the kick-off instead.
+CLOCK_TERMS = ("RestLog", "Session", "Sess", "HourBlock", "Weekday")
+CLOCK_SETS = ("context", "form_session")       # the sets with them, for builds that saved no formula
+
+
 class Prematch:
     """A fitted glmer model saved in one directory, used as nb2_prior.Prematch is."""
+
+    FOLLOWS_RESULTS = True           # means() reads the results known when pricing (its form)
 
     def __init__(self, directory):
         """Load what the build saved: the cut-off, the league average and the model's settings."""
@@ -99,6 +137,15 @@ class Prematch:
         self.scale = meta["scale"]
         self.league = tuple(meta["league_average"])
         self.meta = meta
+
+    @property
+    def AS_OF(self):
+        """Whether a match can be priced as of an earlier time: no feature reads the clock."""
+        m = self.meta.get("model", {})
+        formula = m.get("formula")
+        if formula:
+            return not any(t in formula for t in CLOCK_TERMS)
+        return m.get("feature_set") not in CLOCK_SETS
 
     @classmethod
     def build(cls, history, directory, before):
@@ -122,13 +169,19 @@ class Prematch:
     def describe(self):
         """One line on what was fitted, for a build's log."""
         m = self.meta.get("model", {})
-        return (f"glmer {m.get('feature_set', '?')} / {m.get('weighting', '?')} (form half-life "
-                f"{m.get('form_half_life', '?')} matches, {m.get('mode', '?')} model) fitted on "
+        scalar = m.get("scalar", 1)
+        weighting = f"{m.get('weighting', '?')}" + (f" x{scalar:g}" if scalar != 1 else "")
+        cap = m.get("exp_cap")
+        return (f"glmer {m.get('feature_set', '?')} / {weighting} (form half-life "
+                f"{m.get('form_half_life', '?')} matches"
+                + (f", experience capped at {cap:g} matches" if cap is not None else "")
+                + f", {m.get('mode', '?')} model) fitted on "
                 f"{self.meta['fitted_on']:,} matches before {self.meta['before'][:10]}; expected "
                 "points not rescaled")
 
-    def means(self, schedule, n_sims=None):
+    def means(self, schedule, n_sims=None, results=None):
         """Each match's expected (home, away) points; the league average for any the model can't
-        price. `n_sims` is unused: the expected points are exact, not simulated."""
-        pred = predict(self.directory, schedule)
+        price. `results`: settled matches known when pricing, so the form features follow them
+        (see predict). `n_sims` is unused: the expected points are exact, not simulated."""
+        pred = predict(self.directory, schedule, results)
         return {r["MATCH_CODE"]: pred.get(r["MATCH_CODE"], self.league) for r in schedule}

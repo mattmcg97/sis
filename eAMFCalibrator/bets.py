@@ -600,16 +600,20 @@ def fetch_checks(cur, matches, prod_rows):
     return checks
 
 
-def run(cur, out_dir, only_checks=False, summary=None):
+def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     """The whole pipeline: fetch, lag, check, join each candidate, write the CSVs and print the
     summary. only_checks stops after the checks (no candidate is priced). `summary` (a dict)
-    collects the candidates' rows and the lags, for html_section."""
+    collects the candidates' rows and the lags, for html_section. prematch_only: the pre-match
+    models' own test -- only the bets placed before kick-off, each model version priced off its
+    kick-off alone (no in-play simulation), so a long window stays cheap (bets_prematch_*)."""
     from . import bet_checks, bet_moments
     if not only_checks:
         check_models(candidate_streams())
     sql, params, _ = bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     bets = to_bets(cols, raw)
+    if prematch_only:
+        bets = [b for b in bets if not b.in_play]
     matches = sorted({b.match_code for b in bets})
     print(f"  {len(bets):,} bets on {len(matches):,} matches from {bet_table()} "
           f"({sum(b.in_play for b in bets):,} in play)")
@@ -635,8 +639,9 @@ def run(cur, out_dir, only_checks=False, summary=None):
         print("\n".join(bet_moments.report([("prod", rows)])))
         return rows
     results = []
-    cached = config.FETCH_CACHE
+    cached, prematch_was = config.FETCH_CACHE, config.PREMATCH_ONLY
     config.FETCH_CACHE = True             # one simulation per model, whatever lines each reads
+    config.PREMATCH_ONLY = prematch_only
     try:
         for stream in candidate_streams():
             print(f"\n  pricing the bets with {label(stream)}", flush=True)
@@ -646,17 +651,18 @@ def run(cur, out_dir, only_checks=False, summary=None):
                                                  same_state=snowflake_io.is_model(stream))))
             del cand_rows
     finally:
-        config.FETCH_CACHE = cached
+        config.FETCH_CACHE, config.PREMATCH_ONLY = cached, prematch_was
         snowflake_io.clear_fetch_cache()
     bet_moments.annotate(results, bets, checks, checks.timelines)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
                      **{f"misfit_{k}s": round(v, 5) for k, v in sorted(lag.curve.items())})
                 for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0]))]
-    write_csv(os.path.join(out_dir, "bets_latency.csv"), lag_rows)
+    prefix = "bets_prematch" if prematch_only else "bets"
+    write_csv(os.path.join(out_dir, f"{prefix}_latency.csv"), lag_rows)
     if len(results) == 1:
-        write_csv(os.path.join(out_dir, "bets_sim.csv"), results[0][1])
+        write_csv(os.path.join(out_dir, f"{prefix}_sim.csv"), results[0][1])
     else:
-        write_csv(os.path.join(out_dir, "bets_sim.csv"), wide(results))
+        write_csv(os.path.join(out_dir, f"{prefix}_sim.csv"), wide(results))
     report_prod(results[0][1], lags, signs)
     print("\n".join(bet_checks.report(results[0][1], checks)))
     for name, rows in results:
@@ -665,6 +671,13 @@ def run(cur, out_dir, only_checks=False, summary=None):
         report_candidate(rows, name)
     if len(results) > 1:
         print("\n".join(compare_report(results)))
+    if prematch_only:
+        lines = prematch_report(results)
+        print("\n".join(lines))
+        write_text(os.path.join(out_dir, "bets_prematch.txt"), lines)
+        if summary is not None:
+            summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches))
+        return results[0][1] if len(results) == 1 else results
     print("\n".join(bet_moments.report(results)))
     from . import book_comparison
     books = book_comparison.compute(results)
@@ -675,6 +688,84 @@ def run(cur, out_dir, only_checks=False, summary=None):
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
                        book_comparison=books)
     return results[0][1] if len(results) == 1 else results
+
+
+def _iso_week(t):
+    """'2026-W37' for a bet's time; 'unknown' without one."""
+    if t is None:
+        return "unknown"
+    year, week, _ = t.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def prematch_report(results, n_boot=None, seed=0):
+    """Lines of text: the pre-match models' own test. On the pre-match bets every candidate
+    re-priced (the same money for each), prod's margin and each candidate's change against it --
+    overall, by market and week by week -- then each candidate against the first with a bootstrap
+    interval over matches (config.SIM_BOOT resamples): a week of bets says little, many do."""
+    import random
+    n_boot = config.SIM_BOOT if n_boot is None else n_boot
+    names = [n for n, _ in results]
+    base = results[0][1]
+    ii = [i for i in common(results) if not base[i]["in_play"]]
+    lines = [f"\n  pre-match test: {len(ii):,} bets placed before kick-off, re-priced by "
+             f"{', '.join(names)}"]
+    if not ii:
+        return lines + ["  (none)"]
+
+    def margins(idx):
+        stake = sum(base[i]["stake"] for i in idx)
+        if not stake:
+            return stake, None, [None] * len(results)
+        prod = 100 * sum(base[i]["revenue"] for i in idx) / stake
+        return stake, prod, [100 * sum(rows[i]["candidate_revenue"] for i in idx) / stake
+                             for _, rows in results]
+
+    head = (f"  {'':16s} {'bets':>7s} {'stake':>12s} {'prod':>8s} "
+            + " ".join(f"{n[:10]:>10s}" for n in names))
+    for title, key in (("overall", lambda r: "all"), ("by market", lambda r: r["market"]),
+                       ("week by week (bet placed)", lambda r: _iso_week(r["bet_time"]))):
+        groups = defaultdict(list)
+        for i in ii:
+            groups[key(base[i])].append(i)
+        lines += [f"\n  {title}", head]
+        for g in sorted(groups, key=str):
+            stake, prod, cands = margins(groups[g])
+            if prod is None:
+                continue
+            lines.append(f"  {str(g)[:16]:16s} {len(groups[g]):7,d} {stake:12,.0f} {prod:7.2f}% "
+                         + " ".join(f"{c - prod:+10.2f}" for c in cands))
+    lines.append("  (candidate columns: the change in the book's margin, points, against prod's)")
+    if len(results) > 1:
+        by_match = defaultdict(list)
+        for i in ii:
+            by_match[base[i]["match_code"]].append(i)
+        keys = sorted(by_match)
+        rng = random.Random(seed)
+        weeks = defaultdict(list)
+        for i in ii:
+            weeks[_iso_week(base[i]["bet_time"])].append(i)
+        lines.append(f"\n  each candidate against {names[0]}: the change in margin, points "
+                     f"(95% interval: {n_boot:,} resamples of the {len(keys):,} matches), and the "
+                     "weeks it came out ahead")
+        for k in range(1, len(results)):
+            def diff(idx):
+                stake, _, cands = margins(idx)
+                return None if not stake else cands[k] - cands[0]
+            point = diff(ii)
+            draws = []
+            for _ in range(n_boot):
+                idx = [i for m in (rng.choice(keys) for _ in keys) for i in by_match[m]]
+                d = diff(idx)
+                if d is not None:
+                    draws.append(d)
+            draws.sort()
+            lo = draws[int(0.025 * len(draws))] if draws else float("nan")
+            hi = draws[min(len(draws) - 1, int(0.975 * len(draws)))] if draws else float("nan")
+            ahead = sum(1 for w in weeks.values() if (diff(w) or 0) > 0)
+            lines.append(f"  {names[k]:20s} {point:+7.2f}  [{lo:+.2f}, {hi:+.2f}]   ahead in "
+                         f"{ahead} of {len(weeks)} weeks")
+    return lines
 
 
 def common(results):

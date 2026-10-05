@@ -169,9 +169,10 @@ class Prematch:
         """Whether a fitted model is saved in this directory."""
         return os.path.exists(os.path.join(directory, "level.json"))
 
-    def means(self, schedule, n_sims=N_SIMS):
+    def means(self, schedule, n_sims=N_SIMS, results=None):
         """Each match's expected (home, away) points, scaled; the league average when NB2 cannot
-        price it."""
+        price it. `results` is unused: NB2's ratings move only when it is refitted (glmer_prior
+        reads them for its form)."""
         pred = predict(self.directory, schedule, n_sims)
         out = {}
         for r in schedule:

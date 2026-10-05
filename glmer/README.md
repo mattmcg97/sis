@@ -104,8 +104,10 @@ Rscript glmer/backtest.R --feature-sets=form --weightings=hl30,hl60,hl120 --form
 
 `--form-half-lives` adds the form features' own half-life (in matches) to
 the grid; the outputs then call the feature set `form_f5`, `form_f10`, and
-so on. `--players=FALSE` fits the global model only, which scores mode
-`global` and saves the per-player fits' time.
+so on. `--scalars=0.25,0.5` does the same for the weight scalar: each scalar
+is applied to every weighting, named `hl60_x0.25` and so on. `--players=FALSE`
+fits the global model only, which scores mode `global` and saves the
+per-player fits' time.
 
 For each feature set × weighting, the backtest does three things:
 1. fits the global model and every player's models on the matches before
@@ -136,6 +138,7 @@ Rscript glmer/fit.R                                                  # form / hl
 Rscript glmer/fit.R --feature-set=home --weighting=hl60 --mode=blend
 Rscript glmer/fit.R --before=2026-09-24 --out=glmer/out/model_0924   # fit only on matches before a date
 Rscript glmer/fit.R --form-half-life=20 --weighting=hl30             # other half-lives
+Rscript glmer/fit.R --scalar=0.5                                     # another weight scalar
 ```
 
 Per-player models are fitted only when `--mode` needs them, unless
@@ -185,11 +188,24 @@ entry.
 | `home`        | + home/away side (`IsHome`)                                                               |
 | `context`     | + rest since the last match, matches this session, time of day                           |
 | `form`        | + both sides' recency-weighted points scored and conceded, and experience                 |
+| `form_noexp`  | `form` without the experience terms (tested against newcomers' pricing; worse overall)    |
+| `form_session`| `form` + how both sides are doing this session, and where in it they are                  |
 | `matchup`     | + each player's own team preference, and team-vs-team matchups                            |
 | `home_offset` | `home`, but the per-player models only learn corrections to the global model's prediction (`offset(GlobalEta)`) |
 
 Every feature uses only matches that started before the one being priced;
-a match's own result never leaks into its features. The available columns
+a match's own result never leaks into its features.
+
+**Experience.** `ExpLog` is the log of a gamer's matches so far.
+- `EXP_CAP_MATCHES` (`fit.R --exp-cap`) caps it in the fit. The default is
+  no cap.
+- `EXP_FLOOR_MATCHES` (`predict.R --exp-floor`) prices a gamer as if they
+  had played at least that many matches. The default is 30. It applies only
+  to the rows being priced (`predict.R`, and `backtest.R`'s test rows).
+- Without the floor, glmer extrapolates its learning curve for a newcomer
+  joining a settled league. It predicts them about half a veteran's points,
+  and out of sample they fall far less behind. See "glmer and new gamers" in
+  `eAMFModel/README.md` for the walk-forward check behind the floor. The available columns
 are listed at the top of the `FEATURE_SETS` section in `config.R`.
 
 ### Weightings
@@ -262,6 +278,56 @@ That is about the size of the difference between two machines fitting the
 same model: fits are exact on one machine, but the optimiser stops a hair
 apart on another.
 
+**Weight scalar.** Same model and refits: form half-life 10 matches, rows
+60 days. The scalar multiplies every row weight after the weights are
+normalised to mean 1:
+
+| scalar | Brier  | log loss | vs scalar 1 (t, fortnights better) | totals RMSE | totals bias | sd of win prob |
+|--------|--------|----------|------------------------------------|-------------|-------------|----------------|
+| 0.5    | 0.2352 | 0.6628   | −0.0006 (−1.1, 4 of 5)             | 12.31       | +0.15       | 0.121          |
+| 1      | 0.2355 | 0.6634   | n/a                                | 12.32       | +0.22       | 0.107          |
+| 2      | 0.2360 | 0.6643   | +0.0009 (+2.5, 0 of 5)             | 12.34       | −0.06       | 0.100          |
+| 4      | 0.2364 | 0.6653   | +0.0019 (+3.7, 0 of 5)             | 12.40       | −0.83       | 0.096          |
+
+- **What a bigger scalar does.** It tells the model it has more data than it
+  really does. From scalar 0.5 to 4, the player ratings spread further
+  (player sd 0.160 → 0.204, opponent 0.125 → 0.155). The per-row
+  overdispersion grows much more (0.25 → 0.55). Our pricing simulates with
+  that overdispersion, so moneylines drift toward 50% and expected totals
+  rise.
+- **The data's real weight.** The 60-day weights' effective sample size
+  (Kish) is only 62–71% of the rows. A scalar of about 0.65 would count the
+  data at its true weight.
+- **So 0.5 edges 1,** though not significantly on log loss. It is
+  significantly better on totals (t −2.4).
+- **Stream is noise here.** Its variance component isn't identified with
+  only three streams: it jumps between 0 and 2.5 across refits, while the
+  stream effects stay near 0.
+
+**Scalar × half-life sweep.** Scalars 0.25 / 0.5 / 0.75 crossed with form
+half-life 5 / 10 / 20 matches and row half-life 30 / 60 / 120 days: 135
+fits, same refits as above. The scalar-1 rows come from the half-life
+sweep. Log loss, averaged over the three form half-lives:
+
+| scalar | rows 30 days | rows 60 days | rows 120 days |
+|--------|--------------|--------------|---------------|
+| 0.25   | 0.6642       | 0.6669       | 0.6674        |
+| 0.5    | **0.6633**   | **0.6630**   | **0.6637**    |
+| 0.75   | 0.6638       | 0.6633       | 0.6638        |
+| 1      | 0.6639       | 0.6635       | 0.6639        |
+| ESS / rows | 0.39     | 0.67         | 0.88          |
+
+- **Best single setting: form 10 matches / rows 60 days / scalar 0.5.**
+  Log loss 0.6628, −0.0006 against the defaults (t −1.1, better in 4 of 5
+  fortnights); totals RMSE 12.31 (t −2.4).
+- **Scalar 0.25 is too low** unless the rows decay fast. With 60- or
+  120-day rows it costs 0.003–0.004 (t ≈ +2).
+- **The pattern follows the effective sample size.** The faster the rows
+  decay, the less real data there is, and the lower the scalar the model
+  wants. At 120 days, 0.5–1 are level.
+- **The half-lives stay flat at every scalar.** Form 5–20 matches and rows
+  30–120 days all land within about 0.001 once the scalar is 0.5 or more.
+
 What the numbers say:
 
 - **The form features are the gain.** These are both sides'
@@ -330,3 +396,17 @@ runs `fit.R` at build time and `predict.R --n-sims=0` whenever the version
 needs expected points. It uses whatever `fit.R`'s defaults and `config.R`
 say, so changing the chosen half-lives here changes v7's prior at its next
 build. See the v7 section of `eAMFModel/README.md`.
+
+Its form follows the results wherever it prices, the calibrator included.
+- The calibrator fetches every match settled by the window's end, and
+  `predict.R` reads them alongside the model's own history.
+- Each pre-match quote reads only the results in when it was published, so
+  a gamer's back-to-back match still being played is never seen early.
+- `model_info.json` records the global formula. A build whose features read
+  the clock (rest, session, hour) prices every pre-match quote off the
+  kick-off instead.
+
+See "Form follows results, as it would live" in `eAMFModel/README.md`.
+`python -m eAMFCalibrator bets prematch` sets NB2 and glmer builds side
+by side on every pre-match bet over many weeks (see
+`eAMFCalibrator/README.md`).

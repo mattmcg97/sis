@@ -18,6 +18,10 @@
 #   Rscript glmer/backtest.R --test-from=2026-07-01 --refit-days=14
 #   Rscript glmer/backtest.R --feature-sets=form --weightings=hl30,hl60,hl120 \
 #       --form-half-lives=5,10,20 --players=FALSE --refit-days=14   # half-life sweep
+#   Rscript glmer/backtest.R --feature-sets=form --weightings=hl60 --scalars=0.5,1,2 \
+#       --players=FALSE --refit-days=14                               # weight-scalar sweep
+#   Rscript glmer/backtest.R --feature-sets=form,form_session --weightings=hl60 \
+#       --players=FALSE --refit-days=1 --warm-start=TRUE              # refit every day
 #
 # In RStudio: set the defaults just below and Source the file.
 #
@@ -26,7 +30,7 @@
 #   calibration.csv  moneyline calibration in probability deciles, per configuration
 #   predictions.csv.gz  every priced test match, every configuration (gzipped)
 #   by_player.csv    per-player errors, and how each mode compares with global
-#   fits.csv         what each fit saw: rows, variance components, warnings, time
+#   fits.csv         what each fit saw: rows, every variance component, warnings, time
 
 DEFAULTS <- list(
   history = "",             # "" = first of HISTORY_CANDIDATES in config.R
@@ -42,10 +46,16 @@ DEFAULTS <- list(
                             #   "" = FORM_HALF_LIFE_MATCHES. More than one adds "_f<n>" to the
                             #   feature set's name in the outputs.
   players = "TRUE",         # FALSE = global model only (no per-player fits; mode global)
+  scalars = "",             # comma-separated weight scalars, each applied to every weighting
+                            #   (in place of its own); "" = each weighting's own. The outputs
+                            #   call them "<weighting>_x<scalar>".
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
   nagq = "",                # "" = GLMER_NAGQ
   optimizer = "",           # "" = GLMER_OPTIMIZER (nloptwrap or bobyqa)
   n_sims = "",              # "" = N_SIMS
+  warm_start = "FALSE",     # TRUE: each worker refits a run of consecutive folds, each fit starting
+                            #   from the previous one's variance parameters -- much quicker for
+                            #   daily refits, where one day's data barely moves them
   cores = ""                # "" = all but one
 )
 
@@ -77,6 +87,7 @@ if (nzchar(args$optimizer)) GLMER_OPTIMIZER <- args$optimizer
 if (nzchar(args$n_sims)) N_SIMS <- as.integer(args$n_sims)
 fs_names <- if (nzchar(args$feature_sets)) split_list(args$feature_sets) else names(FEATURE_SETS)
 w_names <- if (nzchar(args$weightings)) split_list(args$weightings) else names(WEIGHTINGS)
+scalars <- if (nzchar(args$scalars)) as.numeric(split_list(args$scalars)) else NA_real_
 modes <- if (nzchar(args$modes)) split_list(args$modes) else PREDICT_MODES
 with_players <- as_flag(args$players)
 if (!with_players) modes <- "global"
@@ -112,36 +123,42 @@ starts <- if (refit_days > 0) seq(test_from, test_until, by = refit_days * 86400
 starts <- starts[starts < test_until]
 folds <- data.frame(fold = seq_along(starts), start = starts,
                     end = c(starts[-1], test_until))
+has_matches <- vapply(seq_len(nrow(folds)), function(k)
+  any(matches$Time >= folds$start[k] & matches$Time < folds$end[k]), logical(1))
+folds <- folds[has_matches, ]
+folds$fold <- seq_len(nrow(folds))
 test_n <- sum(matches$Time >= test_from & matches$Time < test_until)
 log_line("train before %s (%d matches); test %s -> %s (%d matches) in %d fold(s)",
          format(test_from), sum(matches$Time < test_from), format(test_from),
          format(test_until), test_n, nrow(folds))
 
-jobs <- expand.grid(fold = folds$fold, form_hl = form_hls, weighting = w_names,
+jobs <- expand.grid(fold = folds$fold, form_hl = form_hls, scalar = scalars, weighting = w_names,
                     feature_set = fs_names, stringsAsFactors = FALSE)
-jobs <- jobs[, c("feature_set", "form_hl", "weighting", "fold")]
+jobs <- jobs[, c("feature_set", "form_hl", "weighting", "scalar", "fold")]
 jobs$label <- if (length(form_hls) > 1) sprintf("%s_f%g", jobs$feature_set, jobs$form_hl) else jobs$feature_set
-log_line("%d feature sets x %d form half-lives x %d weightings x %d folds = %d fits (each: global%s)",
-         length(fs_names), length(form_hls), length(w_names), nrow(folds), nrow(jobs),
+jobs$wlabel <- if (all(is.na(scalars))) jobs$weighting else sprintf("%s_x%g", jobs$weighting, jobs$scalar)
+log_line("%d feature sets x %d form half-lives x %d weightings x %d scalars x %d folds = %d fits (each: global%s)",
+         length(fs_names), length(form_hls), length(w_names), length(scalars), nrow(folds), nrow(jobs),
          if (with_players) " + per-player" else " only")
 
 # ---------------------------------------------------------------------------
 # One job: fit before the fold, price the fold
 # ---------------------------------------------------------------------------
 
-run_job <- function(j) {
+run_job <- function(j, start = NULL) {
   job <- jobs[j, ]
   fold <- folds[folds$fold == job$fold, ]
   fs <- FEATURE_SETS[[job$feature_set]]
   wspec <- WEIGHTINGS[[job$weighting]]
+  if (!is.na(job$scalar)) wspec$scalar <- job$scalar
   t0 <- Sys.time()
   long <- longs[[as.character(job$form_hl)]]
   train <- long[!is.na(long$Score) & long$Time < fold$start, ]
-  test <- long[long$Time >= fold$start & long$Time < fold$end, ]
+  test <- floor_experience(long[long$Time >= fold$start & long$Time < fold$end, ])
   res <- tryCatch({
     b <- fit_bundle(train, fs, wspec, fold$start, verbose = FALSE,
                     fs_name = job$label, w_name = job$weighting,
-                    with_players = with_players, form_half_life = job$form_hl)
+                    with_players = with_players, form_half_life = job$form_hl, start = start)
     src <- predict_sources(b, test)
     # A test match is "seen" when both players and both teams appear in
     # this fold's training rows -- NB2's backtest only prices those.
@@ -151,14 +168,17 @@ run_job <- function(j) {
     preds <- do.call(rbind, lapply(modes, function(mode) {
       p <- price_matches(b, src, mode)
       p$Seen <- seen[match(p$MATCH_CODE, h$MatchId)]
-      cbind(FeatureSet = job$label, Weighting = job$weighting, Mode = mode,
+      cbind(FeatureSet = job$label, Weighting = job$wlabel, Mode = mode,
             Fold = job$fold, p, stringsAsFactors = FALSE)
     }))
     info <- data.frame(
-      FeatureSet = job$label, Weighting = job$weighting, Fold = job$fold,
+      FeatureSet = job$label, Weighting = job$wlabel, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = b$global$n,
       GlobalFormula = b$global$formula,
       SigmaMatch = b$global$sigma_match, SigmaObs = b$global$sigma_obs,
+      VarComp = with(as.data.frame(VarCorr(b$global$fit)),
+                     paste(sprintf("%s %.4f", grp, sdcor)[is.na(var2)], collapse = "; ")),
+      FixEf = paste(sprintf("%s %.4f", names(fixef(b$global$fit)), fixef(b$global$fit)), collapse = "; "),
       GlobalWarnings = paste(b$global$warnings, collapse = " | "),
       AttackModels = sum(vapply(b$players, function(p) !is.null(p$attack), logical(1))),
       DefenceModels = sum(vapply(b$players, function(p) !is.null(p$defence), logical(1))),
@@ -168,26 +188,50 @@ run_job <- function(j) {
       CappedPlayerPreds = sum(src$capped_attack) + sum(src$capped_defence),
       Seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
       Error = "", stringsAsFactors = FALSE)
-    list(preds = preds, info = info)
+    list(preds = preds, info = info, theta = getME(b$global$fit, "theta"))
   }, error = function(e) {
     list(preds = NULL, info = data.frame(
-      FeatureSet = job$label, Weighting = job$weighting, Fold = job$fold,
+      FeatureSet = job$label, Weighting = job$wlabel, Fold = job$fold,
       FoldStart = format(fold$start), GlobalRows = NA, GlobalFormula = NA, SigmaMatch = NA,
-      SigmaObs = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
+      SigmaObs = NA, VarComp = NA, FixEf = NA, GlobalWarnings = NA, AttackModels = NA, DefenceModels = NA,
       FailedPlayerFits = NA, PlayerFitsWithWarnings = NA, CappedPlayerPreds = NA,
       Seconds = round(as.numeric(difftime(Sys.time(), t0, units = "secs"))),
       Error = conditionMessage(e), stringsAsFactors = FALSE))
   })
   cat(sprintf("[%s] done %s / %s / fold %d in %ss%s\n", format(Sys.time(), "%H:%M:%S"),
-              job$label, job$weighting, job$fold, res$info$Seconds,
+              job$label, job$wlabel, job$fold, res$info$Seconds,
               if (nzchar(res$info$Error)) paste(" -- FAILED:", res$info$Error) else ""))
   flush.console()
   res
 }
 
+# A task is one fold, or with --warm-start a run of one configuration's
+# consecutive folds, each refit starting from the fit before it.
+warm <- as_flag(args$warm_start) && nrow(folds) > 1
 cores <- if (nzchar(args$cores)) as.integer(args$cores) else max(1, parallel::detectCores() - 1)
-cores <- max(1, min(cores, nrow(jobs)))
-log_line("running on %d core(s)%s", cores,
+if (warm) {
+  per_config <- split(seq_len(nrow(jobs)), paste(jobs$label, jobs$wlabel))
+  n_runs <- max(1, ceiling(2 * cores / length(per_config)))      # about two tasks per core
+  tasks <- unlist(lapply(per_config, function(rows) {
+    rows <- rows[order(jobs$fold[rows])]
+    split(rows, ceiling(seq_along(rows) / ceiling(length(rows) / n_runs)))
+  }), recursive = FALSE)
+} else {
+  tasks <- as.list(seq_len(nrow(jobs)))
+}
+run_task <- function(rows) {
+  out <- list()
+  start <- NULL
+  for (j in rows) {
+    res <- run_job(j, start = start)
+    start <- if (warm) res$theta else NULL
+    out[[length(out) + 1]] <- res
+  }
+  list(preds = do.call(rbind, lapply(out, `[[`, "preds")), info = do.call(rbind, lapply(out, `[[`, "info")))
+}
+cores <- max(1, min(cores, length(tasks)))
+log_line("running on %d core(s)%s%s", cores,
+         if (warm) sprintf(", %d warm-started runs of consecutive folds", length(tasks)) else "",
          if (cores > 1) " -- per-job progress lines appear as each finishes" else "")
 t_all <- Sys.time()
 if (cores > 1) {
@@ -199,11 +243,12 @@ if (cores > 1) {
       NULL
     }, .here)
     parallel::clusterExport(cl, c("longs", "jobs", "folds", "modes", "with_players", "run_job",
-                                  "MIN_PLAYER_MATCHES", "GLMER_NAGQ", "GLMER_OPTIMIZER", "N_SIMS"))
-    parallel::parLapplyLB(cl, seq_len(nrow(jobs)), function(j) run_job(j))
+                                  "run_task", "warm", "MIN_PLAYER_MATCHES", "GLMER_NAGQ",
+                                  "GLMER_OPTIMIZER", "N_SIMS"))
+    parallel::parLapplyLB(cl, tasks, function(rows) run_task(rows))
   }, finally = parallel::stopCluster(cl))
 } else {
-  results <- lapply(seq_len(nrow(jobs)), run_job)
+  results <- lapply(tasks, run_task)
 }
 log_line("all fits done in %.1f min", as.numeric(difftime(Sys.time(), t_all, units = "mins")))
 

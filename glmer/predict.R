@@ -29,7 +29,8 @@ DEFAULTS <- list(
   history = "",             # "" = the history the model was fitted on
   mode = "",                # "" = the model's default (fit.R --mode)
   out = "",                 # "" = glmer/out/predictions.csv
-  n_sims = ""               # "" = N_SIMS; 0 = expected points only (no moneyline)
+  n_sims = "",              # "" = N_SIMS; 0 = expected points only (no moneyline)
+  exp_floor = ""            # "" = EXP_FLOOR_MATCHES: price a gamer as if they had played at least this many
 )
 
 .here <- local({
@@ -87,8 +88,12 @@ if (nzchar(args$schedule)) {
 FORM_HALF_LIFE_MATCHES <- bundle$features$form_half_life
 SESSION_HOURS <- bundle$features$session_hours
 REST_CAP_HOURS <- bundle$features$rest_cap_hours
+SESSION_GAP_HOURS <- bundle$features$session_gap_hours %||% SESSION_GAP_HOURS
+SESSION_SHRINK_MATCHES <- bundle$features$session_shrink %||% SESSION_SHRINK_MATCHES
+EXP_CAP_MATCHES <- bundle$features$exp_cap %||% Inf        # bundles from before the cap: none
+if (nzchar(args$exp_floor)) EXP_FLOOR_MATCHES <- as.numeric(args$exp_floor)
 long <- to_long(combine_matches(history, schedule))
-rows <- long[long$MatchId %in% schedule$MATCH_CODE, ]
+rows <- floor_experience(long[long$MatchId %in% schedule$MATCH_CODE, ])
 
 src <- predict_sources(bundle, rows)
 pred <- price_matches(bundle, src, mode)
