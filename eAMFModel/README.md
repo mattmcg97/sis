@@ -37,6 +37,7 @@ The code that runs:
 | v8 | the clock to the last second, timeouts, kneels and overtime as played |
 | v9 | v8 with recent weeks weighing more, and the late timeout plays' real time |
 | v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
+| v11 | v10 with close endings, late conversions by the clock, late-half timeouts, overtime and kick-off touchdowns as played (overtime 5.4% → 3.2% of games, real 2.7%; held out RPS level) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
@@ -1246,6 +1247,121 @@ Points still to come, built before Sep 10, played on Sep 10–22 (56,890 snapsho
 The two-score states come down; level states rise a little. A half-life can only follow a trend
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
+
+## v11: v10 with close endings, late-half timeouts, overtime and kick-off touchdowns as played
+
+v11 (`sim11.py`, `v11.py`, `v11_stream.py`) started as v10 copied exactly. With its switches off
+it still plays as v10 (`TestV11IsV9`, `v11_off`). The changes come from a census of the simulation
+against the real feed (Sep 10–22, held out): every event the feed records, counted per game
+from kick-off, and the last two minutes of each half played forward from the real states.
+
+### What v10 got wrong
+
+- **Close endings.** A side level or 1–3 behind late in Q4 drained the clock to 0:00 and kicked
+  from up to 55 yards whenever its downs could run the clock out. Real sides almost never kick
+  early with more than 45 seconds left. One 3 behind hardly ever kicks to tie before the last 10
+  seconds. In the last minute, sides 1–3 behind took a field goal and nothing more 25.6% of the time
+  (real 13.5%) and went to overtime 28.5% of the time (real 15.1%).
+- **Going for two late.** A side 7 behind that scores a touchdown late goes for two to win, and
+  how often depends on the clock: 94% of the time in the last 30 seconds, 70% to 1:00, 37% to 2:00
+  and 12% to 3:00 (2,320 matches). v10 had one rate, 66%, for the whole last three minutes. So with
+  seconds left it kicked to tie, and went to overtime, a third of the time.
+- **Overtime.** A game level after regulation was sent into overtime and, in the same step, counted
+  among the periods just ended, so every overtime started in its second. Games went to overtime
+  5.4% of the time (real 2.7%) and played 2.44 periods there (real 1.33).
+- **Late-half timeouts.** Called at the fitted rate on every running clock, the simulation called
+  1.8 timeouts in Q2 and 1.7 in Q4 (real 2.5 and 2.7).
+- **Kick-off return touchdowns** never happened (real 0.042 a game, about one game in 25). The
+  row after one is the touchdown, not a kick-off, and was skipped.
+
+### What v11 changes
+
+- **Close kicks by how far behind, the down, the clock and the length** (`CLOSE_FG`). In Q4 a side
+  level, 1–2 behind or 3 behind, in range on downs 1–3, kicks at its own fitted rate for each
+  down × clock-left slice (to 2:00) × kick length. The rate shrinks toward the clock slice, then
+  the class. On 4th down in the last three minutes each class kicks at its own rate, not the
+  whole-game 4th-down curve. The drain stays for overtime alone.
+- **Burning the clock before the kick.** Real go-ahead field goals leave a median of 0 seconds. A
+  close side that commits to the kick with the clock inside what its downs can run off kicks
+  with none left.
+- **Playing for the kick** (`SETTLE_PLAYS`). A side level or 1–2 behind and in range in Q4's last
+  two minutes draws its plays from the real plays in that spot (about 3 yards and 18 seconds a
+  play, a touchdown on one in ten, almost never a turnover). Before, it fell back to bins of every
+  late play, most of them going for the end zone.
+- **Level sides kick sooner and get there more often** (`CLOSE_LEVEL`). Real drives from level
+  snaps in the last two minutes ended in a field goal 67.7% of the time and a touchdown 16.1%. The
+  build fits a kick-odds shift (+4.0 in log odds) and an efficiency shift (+0.20) for level sides
+  there. Together they bring the simulated drives from 51.5% / 20.8% to 67.2% / 15.9%. The scoring
+  level by quarter is refitted after.
+- **The conversion by the clock** (`CONV_CLOCK`). The go-for-two table's last-three-minutes cell
+  is split at 0:30, 1:00 and 2:00, with overtime its own cell. Each shrinks toward the old single
+  cell. A model built before this change loads with the single cell repeated.
+- **Timeouts fitted to real counts** (`CALL_FIT`). From the first snap at or inside 2:00 of every
+  real half, the build scales each half's call rates until the simulation calls as many timeouts
+  as the real sides did (Q2 ×1.24, Q4 ×1.68 on the held-out build).
+- **Overtime from its first period** (`OT_FIRST_PERIOD`). `MAX_OT` stays 3: at 2, 6.75% of games
+  ended level.
+- **Kick-off touchdowns** (`KICK_TDS`). A kick-off returned for a touchdown, or recovered and run in
+  by the kicking side, is kept in the kick-off table at field 100: the side with the ball scores.
+
+### Held out
+
+Built before Sep 10 with the same export, history, handles and timeouts as v10, played on Sep
+10–22.
+
+Per game from kick-off (905 matches, 543,000 simulated games each):
+
+| | v10 | v11 | real [95%] |
+|---|---|---|---|
+| games to overtime | 5.4% | 3.2% | 2.7% [1.8, 3.8] |
+| overtime periods | 0.131 | 0.047 | 0.035 [0.022, 0.051] |
+| kick-off return touchdowns | 0 | 0.042 | 0.042 [0.029, 0.056] |
+| two-point tries | 0.365 | 0.355 | 0.351 [0.312, 0.392] |
+| timeouts Q2 / Q4 | 1.81 / 1.73 | 2.28 / 2.55 | 2.53 / 2.71 |
+| final margin 1 / 2 / 3 (%) | 8.3 / 5.5 / 20.4 | 7.9 / 4.8 / 20.6 | 8.4 / 5.0 / 22.2 |
+| points | 35.33 | 35.58 | 35.15 [34.33, 35.99] |
+
+From real states in Q4's last two minutes, played to the end:
+
+| | v10 | v11 | real [95%] |
+|---|---|---|---|
+| trail 1–3, 1:00–0:00: field goal only | 25.6% | 18.8% | 13.5% [7.7, 19.7] |
+| trail 1–3, 1:00–0:00: overtime | 28.5% | 17.6% | 15.1% [8.2, 22.6] |
+| trail 1–3, 2:00–1:01: overtime | 15.3% | 7.5% | 6.1% [1.8, 11.7] |
+| trail 4–8, 2:00–1:01: overtime | 10.6% | 6.9% | 4.5% [2.0, 7.6] |
+| level, 2:00–1:01: overtime | 16.7% | 12.6% | 6.1% [1.9, 11.2] |
+| level, 1:00–0:00: overtime | 21.9% | 21.4% | 11.5% [5.0, 18.7] |
+
+Points still to come, held out (56,890 snapshots); the difference is v11 minus v10 with a 95%
+interval from resampling matches:
+
+| | v10 rps | v11 rps | v11 − v10 [95%] |
+|---|---|---|---|
+| all | 3.825 | 3.829 | +0.004 [−0.002, +0.010] |
+| Q1 | 3.785 | 3.796 | +0.010 [+0.003, +0.018] |
+| Q2 | 4.738 | 4.746 | +0.009 [−0.001, +0.018] |
+| Q3 | 4.397 | 4.397 | +0.001 [−0.008, +0.010] |
+| Q4 | 2.374 | 2.372 | −0.003 [−0.015, +0.009] |
+| OT | 2.270 | 2.248 | −0.022 [−0.057, +0.014] |
+
+Overall the two are level. v11's changes are about how games end, so the gain shows late. Q1
+loses a little. That isn't any one of the simulation's switches: turned off one at a time on the
+same build, none moves Q1. It comes with the rebuild, most likely the scoring level refitted
+around kick-off touchdowns and the level sides' shifts. Switched off one at a time, the
+conversion by the clock is the largest gain (−0.008 [−0.014, −0.003] overall, −0.019 in Q4), and
+playing for the kick next (−0.002 [−0.003, −0.000]). The close-kick table is neutral on RPS; its
+gain is in the endings above.
+
+### Still open
+
+- **Level in the last two minutes.** These states still go to overtime about twice as often as real
+  ones. The trouble is the reply: after a late go-ahead score, the other side scores back 2.36
+  points from 2:00–1:01 (real 1.31) and 1.30 from the last minute (real 0.87).
+- **Snaps late in halves.** The extra timeouts buy more plays than real ones do: 15.7 snaps in Q2
+  (real 14.6) and 13.3 in Q4 (real 12.9).
+- **Q1 held out** is +0.010 RPS on v10 (above).
+- **Turnovers and field goals.** These were already high in v10 and are unchanged: interceptions
+  and fumbles 1.9 a game (real 1.45), field goals 1.29 (real 1.08).
 
 ## v10: v9 with the prior's pace counted once, and its totals' spread fitted out of sample
 
