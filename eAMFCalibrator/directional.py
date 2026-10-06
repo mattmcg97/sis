@@ -30,6 +30,7 @@ When those two disagree, trust the match level.
 import math
 import random
 import statistics
+import time
 from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass
@@ -630,8 +631,12 @@ def run(verbose=True, sink=None, prematch_sink=None):
                 batch = match_codes[start:start + chunk]
                 if verbose:
                     print(f"  chunk {start // chunk + 1}: {len(batch)} matches", flush=True)
+                t0 = time.time()
                 pairs.extend(build_pairs(cur, batch, time_column, stats, scan,
                                          sink, prematch_sink))
+                if verbose:
+                    print(f"  chunk {start // chunk + 1} took {snowflake_io._mins(time.time() - t0)}",
+                          flush=True)
     finally:
         conn.close()
 
