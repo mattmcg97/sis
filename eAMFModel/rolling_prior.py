@@ -45,6 +45,8 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
     size = -(-len(days) // n)
     runs = [days[k:k + size] for k in range(0, len(days), size)]
 
+    failed = {}
+
     def run(chunk):
         prev = None
         for day in chunk:
@@ -52,7 +54,14 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
             if not model.exists(path):
                 t0 = time.time()
                 kw = {"start": prev} if warm and prev else {}
-                model.build(history, path, dt.datetime.combine(day, dt.time()), **kw)
+                try:
+                    model.build(history, path, dt.datetime.combine(day, dt.time()), **kw)
+                except BaseException as error:             # R's SystemExit included
+                    # said now, not when the other runs finish; the next day fits cold
+                    failed[day] = str(error)
+                    print(f"  {prior} fit before {day} FAILED: {str(error)[-1500:]}", flush=True)
+                    prev = None
+                    continue
                 if verbose:
                     print(f"  {prior} fitted before {day} ({time.time() - t0:.0f}s"
                           f"{', warm' if kw else ''})", flush=True)
@@ -61,8 +70,16 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
 
     with ThreadPoolExecutor(len(runs)) as pool:
         list(pool.map(run, runs))
+    fitted = [d for d in days if d not in failed]
+    if not fitted:
+        raise SystemExit(f"every {prior} fit failed; the first: {next(iter(failed.values()))[-1500:]}")
     with open(os.path.join(out_dir, INDEX), "w", encoding="utf-8") as fh:
-        json.dump({"prior": prior, "days": [d.isoformat() for d in days]}, fh, indent=1)
+        json.dump({"prior": prior, "days": [d.isoformat() for d in fitted]}, fh, indent=1)
+    if failed:
+        # a match on a failed day is priced by the latest fit before it; rerun to fill them in
+        print(f"  {len(failed)} of {len(days)} fits FAILED ({', '.join(d.isoformat() for d in sorted(failed))});"
+              f" their matches use the day before's fit. Rerun the same command to retry them.",
+              flush=True)
     return Rolling(out_dir)
 
 

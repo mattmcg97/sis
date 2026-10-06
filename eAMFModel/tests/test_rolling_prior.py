@@ -69,6 +69,22 @@ class TestRollingPrior(unittest.TestCase):
         rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 12), verbose=False)
         self.assertEqual(FakeFit.built, [dt.datetime(2026, 9, 12)])
 
+    def test_a_failed_day_is_said_and_skipped_and_its_matches_use_the_day_before(self):
+        real = FakeFit.build.__func__
+
+        def flaky(cls, history, directory, before):
+            if before.day == 11:
+                raise SystemExit("glmer/fit.R failed: boom")
+            return real(cls, history, directory, before)
+
+        with mock.patch.object(FakeFit, "build", classmethod(flaky)), \
+                mock.patch("builtins.print") as said:
+            r = rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 12),
+                                  verbose=False)
+        self.assertEqual(r.days, [dt.date(2026, 9, 10), dt.date(2026, 9, 12)])
+        self.assertTrue(any("2026-09-11 FAILED" in str(c) for c in said.call_args_list))
+        self.assertEqual(r.means([_row("b", "2026-09-11 12:00:00")], results=[])["b"][0], 10)
+
     def test_attach_points_a_build_at_the_fits_and_checks_the_kind(self):
         rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 10), verbose=False)
         build = os.path.join(self.tmp.name, "v12_model")
