@@ -102,12 +102,21 @@ class Trader:
 
     # -- what the page offers to choose from ---------------------------------------------------
 
+    def prior_fit(self):
+        """The pre-match fit pricing a match today: the build's own, or with a rolling prior attached
+        (`eAMFModel prior-daily`) its latest day's fit."""
+        inner = getattr(self.pre, "pre", self.pre)                     # under the prior shrink
+        return inner.fit_for(dt.date.today()) if hasattr(inner, "fit_for") else inner
+
     def meta(self):
         """Players, teams and streams the pre-match model knows, its league average and the
         build's settings."""
-        prior_dir = getattr(self.pre, "directory", None) if self.pre is not None else None
-        nb2 = prior_dir or os.path.join(self.dir, "nb2")
-        board = _read_csv(os.path.join(nb2, "NB2_player_leaderboardsept_team_joint.csv"))
+        fit = self.prior_fit() if self.pre is not None else None
+        prior_dir = getattr(fit, "directory", None)
+        board_name = "NB2_player_leaderboardsept_team_joint.csv"
+        nb2 = next((d for d in (prior_dir, os.path.join(self.dir, "nb2"))
+                    if d and os.path.exists(os.path.join(d, board_name))), os.path.join(self.dir, "nb2"))
+        board = _read_csv(os.path.join(nb2, board_name))
         names = [r["Player"] for r in board if r.get("Player")]
         known = set(names)
         names += sorted(h for h in (self.book.players if self.book else {}) if h not in known)
@@ -116,14 +125,15 @@ class Trader:
         streams = [r["Stream"] for r in _read_csv(os.path.join(nb2, "NB2_stream_effectssept_team_joint.csv"))
                    if r.get("Stream")]
         league = list(self.pre.league) if self.pre is not None else [17.0, 17.0]
-        built = None
-        meta_path = os.path.join(nb2, "level.json")
-        if os.path.exists(meta_path):
-            with open(meta_path, encoding="utf-8") as fh:
-                built = json.load(fh).get("before")
+        built = (getattr(fit, "meta", None) or {}).get("before")
+        inner = getattr(self.pre, "pre", self.pre)
+        kind = {"nb2": "NB2"}.get(getattr(inner, "kind", None), getattr(inner, "kind", None)) or ("glmer" if fit is not None and "glmer" in type(fit).__module__ else "NB2")
+        prior = None if fit is None else (
+            f"{kind} refitted daily, latest fit before {str(built)[:10]}" if hasattr(inner, "fit_for")
+            else f"{kind} fitted before {str(built)[:10]}")
         return dict(players=names, teams=sorted(teams), streams=streams or ["1", "2"],
                     league=[round(x, 2) for x in league], prematch=self.pre is not None,
-                    built_before=built, model=self.dir, version=self.version,
+                    built_before=built, prior=prior, model=self.dir, version=self.version,
                     paths=self.paths, margin=self.margin,
                     quarter=gm.QUARTER)
 

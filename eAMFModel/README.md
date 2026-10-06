@@ -1668,6 +1668,15 @@ python -m eAMFModel prior-daily --prior glmer --history eAMFCalibrator/out/match
 - Only the prior is refitted. The simulation's tables, the shrink and the form spread stay as the
   build fitted them.
 
+The trader prices a match as of today, so with a rolling prior attached it uses the latest day's
+fit. To give it an up-to-date pre-match model without rebuilding, refresh the history and fit
+today's day onto the build it runs (the header shows which fit it is using):
+
+```powershell
+python -m eAMFCalibrator history
+python -m eAMFModel prior-daily --prior nb2 --history eAMFCalibrator/out/match_history.csv --since 2026-10-06 --until 2026-10-06 --out nb2_live --attach v12_model
+```
+
 ## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that

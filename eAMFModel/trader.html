@@ -11,7 +11,7 @@
   --surface-0: #f3f3f1; --surface-1: #fcfcfb; --surface-2: #f0efec; --border: #dddcd7;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
   --grid: #e6e5e0; --accent: #2a78d6;
-  --home: #2a78d6; --away: #eb6834; --over: #1baf7a; --under: #eda100; --series-x: #4a3aa7;
+  --home: #2a78d6; --away: #eb6834; --over: #1baf7a; --under: #d64545; --first-down: #eda100; --series-x: #4a3aa7;
   --critical: #d03b3b; --field: #e3efe3; --field-line: #b7cdb7;
 }
 @media (prefers-color-scheme: dark) {
@@ -20,7 +20,7 @@
     --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #33332f;
     --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
     --grid: #2c2c29; --accent: #3987e5;
-    --home: #3987e5; --away: #d95926; --over: #199e70; --under: #c98500; --series-x: #9085e9;
+    --home: #3987e5; --away: #d95926; --over: #199e70; --under: #e05a5a; --first-down: #c98500; --series-x: #9085e9;
     --critical: #e66767; --field: #1d2a1f; --field-line: #2f4532;
   }
 }
@@ -29,7 +29,7 @@
   --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #33332f;
   --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
   --grid: #2c2c29; --accent: #3987e5;
-  --home: #3987e5; --away: #d95926; --over: #199e70; --under: #c98500; --series-x: #9085e9;
+  --home: #3987e5; --away: #d95926; --over: #199e70; --under: #e05a5a; --first-down: #c98500; --series-x: #9085e9;
   --critical: #e66767; --field: #1d2a1f; --field-line: #2f4532;
 }
 * { box-sizing: border-box; }
@@ -363,10 +363,10 @@ function applyTeamColours() {
 async function init() {
   try { META = await api("/api/meta"); } catch (e) { $("modelmeta").textContent = "could not load the model: " + e.message; return; }
   document.title = `${META.version} Trader`; $("title").textContent = `${META.version} Trader`;
-  $("modelmeta").textContent = `${META.model}` + (META.built_before ? ` · built before ${META.built_before.slice(0, 10)}` : "") +
+  $("modelmeta").textContent = `${META.model}` + (META.prior ? ` · prior: ${META.prior}` : "") +
     (META.prematch ? "" : " · no pre-match model");
   $("players").innerHTML = META.players.map(p => `<option value="${esc(p)}">`).join("");
-  $("teams").innerHTML = META.teams.map(t => `<option value="${esc(t)}">`).join("");
+  $("teams").innerHTML = [...new Set([...META.teams, ...Object.keys(TEAM_COLOURS)])].sort().map(t => `<option value="${esc(t)}">`).join("");
   $("stream").innerHTML = META.streams.map(s => `<option>${esc(s)}</option>`).join("");
   $("mean_home").value = META.league[0]; $("mean_away").value = META.league[1];
   $("margin").value = (100 * META.margin).toFixed(1);
@@ -678,7 +678,7 @@ function drawField(g) {
   if (g.phase !== "scrimmage") return;
   const abs = g.side === "home" ? g.field : 100 - g.field, dir = g.side === "home" ? 1 : -1;
   const togo = Math.min(100, Math.max(0, abs + dir * g.distance));
-  el("line", {x1: X(togo), x2: X(togo), y1: f.y0, y2: f.y1, stroke: css("--under"), "stroke-width": 2}, f.svg);
+  el("line", {x1: X(togo), x2: X(togo), y1: f.y0, y2: f.y1, stroke: css("--first-down"), "stroke-width": 2}, f.svg);
   el("line", {x1: X(abs), x2: X(abs), y1: f.y0, y2: f.y1, stroke: css("--text-primary"), "stroke-width": 2}, f.svg);
   el("circle", {cx: X(abs), cy: (f.y0 + f.y1) / 2, r: 6, fill: css(g.side === "home" ? "--home" : "--away"), stroke: css("--surface-1"), "stroke-width": 2}, f.svg);
 }
