@@ -124,6 +124,8 @@ dialog .acts { display: flex; gap: 8px; justify-content: flex-end; }
 .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
 .gain { color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
 .ball { color: var(--text-secondary); }
+.pigskin { width: 30px; height: 17px; vertical-align: -3px; margin: 0 6px; visibility: hidden; }
+.pigskin.on { visibility: visible; }
 svg text { fill: var(--text-secondary); font-size: 11px; }
 /* prices */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -203,14 +205,14 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <div class="cell" style="grid-area:mid">
     <section class="panel">
       <div class="score">
-        <div class="team"><span class="name"><span class="side-tag away-tag"></span><span id="aname">Away</span></span>
+        <div class="team"><span class="name"><span class="side-tag away-tag"></span><span id="aname">Away</span><svg class="pigskin" id="aball" viewBox="0 0 40 22" aria-label="has the ball"><title>Has the ball</title><path d="M2 11 C 8 1, 32 1, 38 11 C 32 21, 8 21, 2 11 Z" fill="#8a4b22" stroke="#5a2d10" stroke-width="1.2"/><path d="M7 7.5 Q 4.5 11 7 14.5 M33 7.5 Q 35.5 11 33 14.5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M13 11 H27 M15 8.6 V13.4 M18 8.6 V13.4 M21 8.6 V13.4 M24 8.6 V13.4" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg></span>
           <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
           <button class="tobtn" id="ato" disabled>Timeout</button></div>
         <div class="clock"><div class="at">@</div><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
           <div class="clockctl"><button id="run" title="Run or stop the clock (space)">▶</button>
             <input id="ff" type="number" min="1" value="20" title="Seconds to run the clock forward"><span class="u">s</span>
             <button id="ffbtn" title="Run the clock forward">⏩</button></div></div>
-        <div class="team right"><span class="name"><span id="hname">Home</span><span class="side-tag home-tag" style="margin:0 0 0 6px"></span></span>
+        <div class="team right"><span class="name"><svg class="pigskin" id="hball" viewBox="0 0 40 22" aria-label="has the ball"><title>Has the ball</title><path d="M2 11 C 8 1, 32 1, 38 11 C 32 21, 8 21, 2 11 Z" fill="#8a4b22" stroke="#5a2d10" stroke-width="1.2"/><path d="M7 7.5 Q 4.5 11 7 14.5 M33 7.5 Q 35.5 11 33 14.5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M13 11 H27 M15 8.6 V13.4 M18 8.6 V13.4 M21 8.6 V13.4 M24 8.6 V13.4" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg><span id="hname">Home</span><span class="side-tag home-tag" style="margin:0 0 0 6px"></span></span>
           <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
           <button class="tobtn" id="hto" disabled>Timeout</button></div>
       </div>
@@ -522,7 +524,7 @@ function spotHTML(label) {
   return `<div class="spot"><label>${label}</label>
     <div class="seg"><button data-half="away" class="${SPOT.half === "away" ? "on" : ""}">${esc(sideName("away"))} half</button>
       <button data-half="home" class="${SPOT.half === "home" ? "on" : ""}">${esc(sideName("home"))} half</button></div>
-    <input id="p_yard" type="number" min="1" max="50" value="${SPOT.yard}"><span class="gain" id="gain"></span></div>`;
+    <input id="p_yard" type="text" inputmode="numeric" value="${SPOT.yard}" title="Scroll up or ↑ to move the ball forward for the side with it, past the 50 into the other half (shift: 5 yards)"><span class="gain" id="gain"></span></div>`;
 }
 function padHTML(g) {
   const undo = `<button class="danger" data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button>`;
@@ -601,7 +603,29 @@ $("undo_yes").onclick = () => {
   stopClock(false); HIST.pop(); LIVE.shown = curGame().clock; render();
 };
 $("padbody").addEventListener("input", ev => { if (ev.target.id === "p_yard") { SPOT.yard = num("p_yard") ?? SPOT.yard; showGain(); } });
+// Scrolling the yard line (or ↑ / ↓) moves the ball forward or back for the side with it -- the
+// kick-off's receiver at a kick-off -- through the 50 into the other half.
+function nudgeSpot(steps) {
+  const g = curGame(); if (!g || (g.phase !== "scrimmage" && g.phase !== "kickoff")) return;
+  const yard = Math.min(50, Math.max(1, num("p_yard") ?? SPOT.yard));
+  const own = Math.min(99, Math.max(1, ownOf(g.side, {half: SPOT.half, yard}) + steps));
+  SPOT = spotOf(g.side, own);
+  $("p_yard").value = SPOT.yard;
+  $("padbody").querySelectorAll("button[data-half]").forEach(b => b.classList.toggle("on", b.dataset.half === SPOT.half));
+  showGain();
+}
+let WHEEL = 0;
+$("padbody").addEventListener("wheel", ev => {
+  if (ev.target.id !== "p_yard") return;
+  ev.preventDefault();
+  WHEEL += ev.deltaY;
+  const notch = ev.deltaMode === 1 ? 1 : 100;           // a wheel click: a line (Firefox) or 100 pixels
+  while (Math.abs(WHEEL) >= notch) { const up = WHEEL < 0; WHEEL += up ? notch : -notch; nudgeSpot((up ? 1 : -1) * (ev.shiftKey ? 5 : 1)); }
+}, {passive: false});
 $("padbody").addEventListener("keydown", ev => {
+  if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && ev.target.id === "p_yard") {
+    ev.preventDefault(); nudgeSpot((ev.key === "ArrowUp" ? 1 : -1) * (ev.shiftKey ? 5 : 1)); return;
+  }
   if (ev.key === "Enter" && ev.target.matches("input")) {
     const g = curGame();
     const main = $("padbody").querySelector("button.primary"); if (main && g.phase !== "final") main.click();
@@ -619,6 +643,9 @@ function render() {
   $("hpts").textContent = g.home; $("apts").textContent = g.away;
   const tos = n => [0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   $("htos").innerHTML = tos(g.timeouts_home); $("atos").innerHTML = tos(g.timeouts_away);
+  // the ball: the offence at a snap, the receiver at a kick-off, the scorer at a conversion
+  const has = g.phase === "final" ? null : g.side;
+  $("hball").classList.toggle("on", has === "home"); $("aball").classList.toggle("on", has === "away");
   $("hto").disabled = !g.timeouts_home || g.phase === "final"; $("ato").disabled = !g.timeouts_away || g.phase === "final";
   $("period").textContent = g.phase === "final" ? "Final" : periodName(g.period);
   if (!LIVE.running) LIVE.shown = g.clock;

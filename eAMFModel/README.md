@@ -1779,6 +1779,8 @@ model's expected points need pandas and scipy, like the build.
 - **Away @ home:** the page lays a match out the American way: the away side on the left of the
   scoreboard, the field and the match pane, the home side on the right, an @ between them, and
   in the prices the away side's column (with the over) first.
+- **Possession:** a football beside a side's name on the scoreboard marks the side with the ball
+  (the receiver at a kick-off, the scorer at a conversion).
 - **Team colours:** each side is drawn in its NFL team's main colour (all 32 teams, in
   `trader.html`'s `TEAM_COLOURS`), lightened or darkened to stand out on the page's theme. When
   the two are too alike (CIE76 delta E under 35, or the same team) the away side takes its next
@@ -1790,7 +1792,9 @@ model's expected points need pandas and scipy, like the build.
   side's timeouts on the scoreboard; the second half is kicked to
   the side that kicked first. A level game goes to overtime off a kick-off, two timeouts each.
   *Ball now at* is where the ball is after the play: a half (home's or away's) and a yard line
-  1-50, set to the ball's spot before it, with the gain shown beside it. *Play*, *Punt*,
+  1-50, set to the ball's spot before it, with the gain shown beside it. Scrolling up over the
+  yard line (or ↑) moves the ball forward for the side with it, through the 50 into the other
+  half; down (or ↓) moves it back; shift moves 5 yards at a time. *Play*, *Punt*,
   *Turnover* and *Kick-off* take it from there. *Edit state* sets anything directly, and *Undo*
   (in red, under the first play button) steps back once you confirm it.
 - **Clock:** it runs on the scoreboard. ▶ starts it (or the space bar) and ⏸ stops it; ⏩ runs it
