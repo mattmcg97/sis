@@ -522,7 +522,7 @@ function spotHTML(label) {
   return `<div class="spot"><label>${label}</label>
     <div class="seg"><button data-half="away" class="${SPOT.half === "away" ? "on" : ""}">${esc(sideName("away"))} half</button>
       <button data-half="home" class="${SPOT.half === "home" ? "on" : ""}">${esc(sideName("home"))} half</button></div>
-    <input id="p_yard" type="number" min="1" max="50" value="${SPOT.yard}"><span class="gain" id="gain"></span></div>`;
+    <input id="p_yard" type="text" inputmode="numeric" value="${SPOT.yard}" title="Scroll up or ↑ to move the ball forward for the side with it, past the 50 into the other half (shift: 5 yards)"><span class="gain" id="gain"></span></div>`;
 }
 function padHTML(g) {
   const undo = `<button class="danger" data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button>`;
@@ -601,7 +601,29 @@ $("undo_yes").onclick = () => {
   stopClock(false); HIST.pop(); LIVE.shown = curGame().clock; render();
 };
 $("padbody").addEventListener("input", ev => { if (ev.target.id === "p_yard") { SPOT.yard = num("p_yard") ?? SPOT.yard; showGain(); } });
+// Scrolling the yard line (or ↑ / ↓) moves the ball forward or back for the side with it -- the
+// kick-off's receiver at a kick-off -- through the 50 into the other half.
+function nudgeSpot(steps) {
+  const g = curGame(); if (!g || (g.phase !== "scrimmage" && g.phase !== "kickoff")) return;
+  const yard = Math.min(50, Math.max(1, num("p_yard") ?? SPOT.yard));
+  const own = Math.min(99, Math.max(1, ownOf(g.side, {half: SPOT.half, yard}) + steps));
+  SPOT = spotOf(g.side, own);
+  $("p_yard").value = SPOT.yard;
+  $("padbody").querySelectorAll("button[data-half]").forEach(b => b.classList.toggle("on", b.dataset.half === SPOT.half));
+  showGain();
+}
+let WHEEL = 0;
+$("padbody").addEventListener("wheel", ev => {
+  if (ev.target.id !== "p_yard") return;
+  ev.preventDefault();
+  WHEEL += ev.deltaY;
+  const notch = ev.deltaMode === 1 ? 1 : 100;           // a wheel click: a line (Firefox) or 100 pixels
+  while (Math.abs(WHEEL) >= notch) { const up = WHEEL < 0; WHEEL += up ? notch : -notch; nudgeSpot((up ? 1 : -1) * (ev.shiftKey ? 5 : 1)); }
+}, {passive: false});
 $("padbody").addEventListener("keydown", ev => {
+  if ((ev.key === "ArrowUp" || ev.key === "ArrowDown") && ev.target.id === "p_yard") {
+    ev.preventDefault(); nudgeSpot((ev.key === "ArrowUp" ? 1 : -1) * (ev.shiftKey ? 5 : 1)); return;
+  }
   if (ev.key === "Enter" && ev.target.matches("input")) {
     const g = curGame();
     const main = $("padbody").querySelector("button.primary"); if (main && g.phase !== "final") main.click();
