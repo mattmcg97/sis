@@ -111,6 +111,32 @@ def _num(play, key, default):
     return default if v in (None, "") else float(v)
 
 
+def _spot(play, side):
+    """The play's "spot" -- where the ball is now, as {"half": "home" or "away", "yard": 1-50}, the
+    yard line in that side's half -- as yards from `side`'s own goal; None when the play has none."""
+    spot = play.get("spot")
+    if not spot:
+        return None
+    half, yard = spot.get("half"), float(spot.get("yard"))
+    if half not in (HOME, AWAY) or not 0 < yard <= 50:
+        raise ValueError("a spot is a half (home or away) and a yard line from 1 to 50")
+    from_home = yard if half == HOME else 100 - yard
+    return from_home if side == HOME else 100 - from_home
+
+
+def _set_clock(g, play):
+    """A play's "clock" -- the game clock when it happened, the clock having run since the last
+    play -- runs the clock down to it. Returns whether one was given."""
+    c = play.get("clock")
+    if c in (None, ""):
+        return False
+    c = float(c)
+    if c > g.clock + 1e-6:
+        raise ValueError("the clock only runs down")
+    g.clock = max(0.0, c)
+    return True
+
+
 def _score(g, side, points):
     if side == HOME:
         g.home += points
@@ -204,13 +230,24 @@ DEFAULT_SECONDS = {"play": 25, "incomplete": 6, "touchdown": 8, "field_goal": 5,
 
 def apply(game, play):
     """(the game after `play`, what happened). A play is a dict with a "type" and, as it needs
-    them, "yards", "seconds", "at" (yards from the new side's own goal), "made", "touchdown",
-    "kind" (a conversion's: xp, xp_miss, two, two_fail), "side" (a timeout's) or "state" (set)."""
+    them, "spot" (where the ball is now: a half and a yard line, see _spot) or "yards" (the gain;
+    a punt's net), "clock" (the game clock when it happened) or "seconds" (the time it took), "at"
+    (yards from the new side's own goal), "made", "touchdown", "kind" (a conversion's: xp,
+    xp_miss, two, two_fail), "side" (a timeout's) or "state" (set). A "clock" play only runs the
+    clock down to its "clock" (a pause or fast-forward), ending the period at 0:00."""
     g = Game.from_dict(game.to_dict() if isinstance(game, Game) else game)
     kind = play.get("type")
     if kind == "set":
         g = Game.from_dict({**g.to_dict(), **(play.get("state") or {})})
         return g, "state set"
+    if kind == "clock":
+        if g.phase == FINAL:
+            raise ValueError("the game is over")
+        _set_clock(g, play)
+        what = f"clock to {int(g.clock) // 60}:{int(g.clock) % 60:02d}"
+        end = _end_period(g) if g.clock <= 0 and g.phase != CONVERSION else None
+        return g, _join(what, end)
+    timed = _set_clock(g, play)
     if kind == "timeout":
         side = play.get("side")
         attr = f"timeouts_{side}"
@@ -220,7 +257,7 @@ def apply(game, play):
         return g, f"timeout {side}"
     if g.phase == FINAL:
         raise ValueError("the game is over")
-    seconds = _num(play, "seconds", DEFAULT_SECONDS.get(kind, 0))
+    seconds = _num(play, "seconds", 0 if timed else DEFAULT_SECONDS.get(kind, 0))
     if g.phase == KICKOFF:
         if kind != "kickoff":
             raise ValueError("a kick-off comes next")
@@ -229,7 +266,8 @@ def apply(game, play):
             _touchdown(g, receiver)
             what = f"kick-off returned for a touchdown by {receiver}"
         else:
-            at = _num(play, "at", TOUCHBACK)
+            spot = _spot(play, receiver)
+            at = spot if spot is not None else _num(play, "at", TOUCHBACK)
             _ball(g, receiver, at)
             what = "touchback" if at == TOUCHBACK and not seconds else f"kick-off to the {int(at)}"
         return g, _join(what, _tick(g, seconds))
@@ -251,7 +289,8 @@ def apply(game, play):
     if g.period >= 5 and side not in g.ot_had_ball:
         g.ot_had_ball = g.ot_had_ball + [side]
     if kind in ("play", "kneel"):
-        yards = -1 if kind == "kneel" else _num(play, "yards", 0)
+        spot = _spot(play, side)
+        yards = spot - g.field if spot is not None else (-1 if kind == "kneel" else _num(play, "yards", 0))
         result = _advance(g, yards)
         what = f"{side} {kind} {int(round(yards)):+d}" + (f", {result}" if result else "")
     elif kind in ("incomplete", "spike"):
@@ -275,15 +314,18 @@ def apply(game, play):
             _ball(g, other(side), max(MISSED_FG_MIN, 100 - (g.field - KICK_BEHIND)))
             what = f"{side} field goal missed"
     elif kind == "punt":
+        spot = _spot(play, other(side))
         lands = g.field + _num(play, "yards", 40)
-        _ball(g, other(side), PUNT_TOUCHBACK if lands >= 100 else 100 - lands)
+        _ball(g, other(side), spot if spot is not None else
+              PUNT_TOUCHBACK if lands >= 100 else 100 - lands)
         what = f"{side} punt"
     else:                                                     # turnover
         if play.get("touchdown"):
             _touchdown(g, other(side))
             what = f"{side} turnover, returned for a touchdown"
         else:
-            _ball(g, other(side), _num(play, "at", 100 - g.field))
+            spot = _spot(play, other(side))
+            _ball(g, other(side), spot if spot is not None else _num(play, "at", 100 - g.field))
             what = f"{side} turnover"
     return g, _join(what, _tick(g, seconds))
 

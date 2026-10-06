@@ -1764,15 +1764,23 @@ prices after every play. It needs only the v10 build; nothing else is installed.
 model's expected points need pandas and scipy, like the build.
 
 - **Match:** pick the two players, their teams and the stream. *Get expected points* asks the
-  build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points, and
-  shows each player's pace and 4th-down aggression. The points can be typed over before
-  *Start match*.
+  build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The
+  points can be typed over before *Start match*, after which the pane shows the pre-match
+  prices.
 - **Plays:** each play button moves the game by the rules the sim plays: 4-minute quarters,
-  downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers,
-  safeties, kneels and spikes. Three timeouts a side each half; the second half is kicked to
+  downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers
+  and safeties. Three timeouts a side each half, called with the *Timeout* button under each
+  side's timeouts on the scoreboard; the second half is kicked to
   the side that kicked first. A level game goes to overtime off a kick-off, two timeouts each.
-  Yards and seconds apply to the play buttons. *Edit state* sets anything directly, and *Undo*
-  steps back.
+  *Ball now at* is where the ball is after the play: a half (home's or away's) and a yard line
+  1-50, set to the ball's spot before it, with the gain shown beside it. *Play*, *Punt*,
+  *Turnover* and *Kick-off* take it from there. *Edit state* sets anything directly, and *Undo*
+  (in red, under the first play button) steps back once you confirm it.
+- **Clock:** it runs on the scoreboard. ▶ starts it (or the space bar) and ⏸ stops it; ⏩ runs it
+  forward the seconds beside it (20 by default). Each play is recorded at the clock showing when
+  it is entered. Plays that stop a real clock (incompletions, scores, kicks, turnovers, timeouts)
+  stop it; a run or a completion leaves it running. Stopping it and fast-forwarding
+  reprice; at 0:00 the period ends by itself.
 - **Prices:** after every play v10 prices the state it leaves: moneyline, handicap and total at
   its own key-number lines (held from play to play), with ladders either side, the expected
   score, and the final margin and total distributions split at the quoted lines. Odds carry the

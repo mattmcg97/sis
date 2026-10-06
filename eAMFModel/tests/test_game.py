@@ -102,6 +102,39 @@ class TestPlays(unittest.TestCase):
         with self.assertRaises(ValueError):
             gm.apply(gm.Game.start(), {"type": "play", "yards": 3})                 # a kick-off first
 
+    def test_a_spot_is_where_the_ball_is_now_by_half_and_yard_line(self):
+        g, what = gm.apply(snap(field=25), {"type": "play", "spot": {"half": "home", "yard": 32}})
+        self.assertEqual((g.field, g.down, g.distance), (32, 2, 3))
+        self.assertIn("+7", what)
+        g = run(snap(field=45), {"type": "play", "spot": {"half": "away", "yard": 40}})
+        self.assertEqual((g.field, g.down), (60, 1))                              # +15, first down
+        away = run(snap(side=gm.AWAY, field=30), {"type": "play", "spot": {"half": "home", "yard": 45}})
+        self.assertEqual(away.field, 55)                                          # the away side's own 55
+        punt = run(snap(field=30), {"type": "punt", "spot": {"half": "away", "yard": 12}})
+        self.assertEqual((punt.side, punt.field), (gm.AWAY, 12))
+        lost = run(snap(field=60), {"type": "turnover", "spot": {"half": "away", "yard": 30}})
+        self.assertEqual((lost.side, lost.field), (gm.AWAY, 30))
+        kick = run(gm.Game.start(gm.AWAY), {"type": "kickoff", "spot": {"half": "away", "yard": 22}})
+        self.assertEqual((kick.side, kick.field), (gm.AWAY, 22))
+        with self.assertRaises(ValueError):
+            gm.apply(snap(), {"type": "play", "spot": {"half": "home", "yard": 51}})
+
+    def test_the_clock_is_read_off_the_scoreboard(self):
+        g = run(snap(clock=200), {"type": "play", "spot": {"half": "home", "yard": 30}, "clock": 171})
+        self.assertEqual(g.clock, 171)                                            # no seconds added
+        g, what = gm.apply(g, {"type": "clock", "clock": 151})
+        self.assertEqual((g.clock, g.field, g.down), (151, 30, 2))
+        self.assertEqual(what, "clock to 2:31")
+        g = run(g, {"type": "timeout", "side": "away", "clock": 140})
+        self.assertEqual((g.clock, g.timeouts_away), (140, 2))
+        end, what = gm.apply(snap(period=1, clock=12), {"type": "clock", "clock": 0})
+        self.assertEqual((end.period, end.clock), (2, gm.QUARTER))
+        self.assertIn("end of Q1", what)
+        with self.assertRaises(ValueError):
+            gm.apply(snap(clock=100), {"type": "clock", "clock": 120})           # it only runs down
+        conv = run(gm.Game(phase=gm.CONVERSION, side=gm.HOME, period=2, clock=3), {"type": "clock", "clock": 0})
+        self.assertEqual((conv.phase, conv.period), (gm.CONVERSION, 2))           # the try still comes
+
     def test_the_model_reads_each_phase(self):
         s = snap(side=gm.AWAY, field=80, distance=10, down=3).model_state()
         self.assertEqual((s.offense, s.down, s.field_position, s.distance), (gm.AWAY, 3, 80, 10))

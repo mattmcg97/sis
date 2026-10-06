@@ -40,9 +40,21 @@ header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; bord
 header h1 { font-size: 15px; margin: 0; font-weight: 650; }
 header .meta { color: var(--text-muted); font-size: 12px; }
 header .spacer { flex: 1; }
-main { display: grid; grid-template-columns: 300px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
-@media (max-width: 1250px) { main { grid-template-columns: 300px minmax(0, 1fr); } .col3 { grid-column: 1 / -1; } }
-@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
+/* two rows of three cells, each row's cells the same height: match | scoreboard + next play | prices,
+   then plays | charts | distributions */
+main { display: grid; grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px;
+  grid-template-areas: "setup mid prices" "plays charts dists"; }
+.cell { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cell > .panel { margin-bottom: 0; }
+.cell > .panel:last-child { flex: 1 1 auto; }
+.cell.plays { position: relative; min-height: 240px; }
+.cell.plays > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.cell.plays .log { flex: 1 1 0; max-height: none; min-height: 0; }
+@media (max-width: 1250px) { main { grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-areas: "setup mid" "plays charts" "prices prices" "dists dists"; } }
+@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "setup" "mid" "prices" "plays" "charts" "dists"; }
+  .cell.plays > .panel { position: static; } .cell.plays .log { max-height: 320px; flex: none; } }
 .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 10px; font-weight: 600; }
 label { display: block; color: var(--text-secondary); font-size: 12px; margin: 6px 0 2px; }
@@ -57,12 +69,29 @@ button:hover { border-color: var(--text-muted); }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 button:disabled { opacity: .45; cursor: default; }
 .btns { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 6px; margin-top: 8px; }
+.btns.five { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.btns.five button { overflow: hidden; text-overflow: ellipsis; }
+button.danger { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+dialog { background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px;
+  padding: 16px; max-width: 360px; box-shadow: 0 8px 32px rgba(0,0,0,.4); }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog p { margin: 0 0 14px; }
+dialog .acts { display: flex; gap: 8px; justify-content: flex-end; }
 .side-tag { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
 .home-tag { background: var(--home); } .away-tag { background: var(--away); }
 .note { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
 .error { color: var(--critical); }
-.profiles { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px 10px; font-size: 12px; margin-top: 8px; color: var(--text-secondary); }
-.profiles b { color: var(--text-primary); font-weight: 600; }
+#setup { display: flex; flex-direction: column; }
+.calc { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-evenly; gap: 8px; margin: 8px 0; }
+.calc table td, .calc table th { padding: 3px 6px; font-size: 12px; }
+.calc table td:first-child { color: var(--text-secondary); }
+.calc > table th:not(:first-child), .calc > table td:not(:first-child) { width: 30%; }
+.calc input { padding: 3px 6px; text-align: right; }
+.calc .sum { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.calc .sum b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.calc h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 4px; font-weight: 600; }
+.tobtn { margin-top: 6px; padding: 3px 10px; font-size: 12px; align-self: flex-start; }
+.team.away .tobtn { align-self: flex-end; }
 /* scoreboard */
 .score { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .team { display: flex; flex-direction: column; gap: 2px; }
@@ -77,6 +106,19 @@ button:disabled { opacity: .45; cursor: default; }
 .clock .q { color: var(--text-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
 .clock .t { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .situation { text-align: center; margin-top: 10px; font-weight: 600; }
+.clockctl { display: flex; gap: 6px; justify-content: center; align-items: center; margin-top: 6px; }
+.clockctl button { padding: 4px 10px; min-width: 38px; }
+.clockctl button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.clockctl input { width: 56px; padding: 4px 6px; text-align: right; }
+.clockctl .u { color: var(--text-muted); font-size: 12px; }
+.clock .t.running { color: var(--accent); }
+.spot { display: grid; grid-template-columns: auto 1fr 70px auto; gap: 8px; align-items: center; }
+.spot > label { margin: 0; }
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: var(--surface-2); overflow: hidden; text-overflow: ellipsis; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
+.gain { color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
 .ball { color: var(--text-secondary); }
 svg text { fill: var(--text-secondary); font-size: 11px; }
 /* prices */
@@ -104,7 +146,7 @@ tr.quoted td { background: var(--surface-2); font-weight: 650; }
   padding: 6px 8px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.25); display: none; z-index: 10; max-width: 280px; }
 #tip b { font-variant-numeric: tabular-nums; }
 .log { max-height: 320px; overflow: auto; font-size: 12px; }
-.log div { display: grid; grid-template-columns: 34px 62px 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--grid); }
+.log div { display: grid; grid-template-columns: 30px 56px 1fr auto; gap: 8px; padding: 4px 0; border-bottom: 1px solid var(--grid); }
 .log .n, .log .t { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .log .v { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10px; }
@@ -123,7 +165,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <button id="theme" title="Light or dark">◐</button>
 </header>
 <main>
-  <div class="col1">
+  <div class="cell" style="grid-area:setup">
     <section class="panel" id="setup">
       <h2>Match</h2>
       <div class="row">
@@ -139,42 +181,53 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
         <div><label>Receives first</label><select id="opening_receiver"><option value="home">Home</option><option value="away">Away</option></select></div>
       </div>
       <button id="nb2" style="margin-top:10px;width:100%">Get expected points</button>
-      <div class="row">
-        <div><label>Home expected pts</label><input id="mean_home" type="number" step="0.1"></div>
-        <div><label>Away expected pts</label><input id="mean_away" type="number" step="0.1"></div>
-      </div>
       <div class="note" id="nb2note"></div>
-      <div class="profiles" id="profiles"></div>
-      <button class="primary" id="start" style="margin-top:12px;width:100%">Start match</button>
+      <div class="calc">
+        <table>
+          <tr><th></th><th id="c_hn">Home</th><th id="c_an">Away</th></tr>
+          <tr><td>Expected points</td><td><input id="mean_home" type="number" step="0.1"></td><td><input id="mean_away" type="number" step="0.1"></td></tr>
+        </table>
+        <div><h3>Pre-match prices</h3><div id="c_pre" class="note">Start the match for its pre-match prices</div></div>
+      </div>
+      <button class="primary" id="start" style="width:100%">Start match</button>
       <datalist id="players"></datalist><datalist id="teams"></datalist>
     </section>
-    <section class="panel" id="pad">
-      <h2>Next play</h2>
-      <div id="padbody"></div>
-    </section>
   </div>
-  <div class="col2">
+  <div class="cell" style="grid-area:mid">
     <section class="panel">
       <div class="score">
         <div class="team"><span class="name"><span class="side-tag home-tag"></span><span id="hname">Home</span></span>
-          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span></div>
-        <div class="clock"><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div></div>
+          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
+          <button class="tobtn" id="hto" disabled>Timeout</button></div>
+        <div class="clock"><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
+          <div class="clockctl"><button id="run" title="Run or stop the clock (space)">▶</button>
+            <input id="ff" type="number" min="1" value="20" title="Seconds to run the clock forward"><span class="u">s</span>
+            <button id="ffbtn" title="Run the clock forward">⏩</button></div></div>
         <div class="team away"><span class="name"><span id="aname">Away</span><span class="side-tag away-tag" style="margin:0 0 0 6px"></span></span>
-          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span></div>
+          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
+          <button class="tobtn" id="ato" disabled>Timeout</button></div>
       </div>
       <div class="situation" id="situation">—</div>
       <div class="chart" id="field" style="margin-top:10px"></div>
     </section>
+    <section class="panel" id="pad">
+      <h2>Next play</h2>
+      <div id="padbody"><div class="empty">Start a match</div></div>
+    </section>
+  </div>
+  <div class="cell" style="grid-area:prices">
     <section class="panel">
       <h2>Prices <span id="pricenote" style="text-transform:none;letter-spacing:0"></span></h2>
       <div id="prices"></div>
     </section>
+  </div>
+  <div class="cell plays" style="grid-area:plays">
     <section class="panel">
       <h2>Plays</h2>
       <div class="log" id="log"></div>
     </section>
   </div>
-  <div class="col3">
+  <div class="cell" style="grid-area:charts">
     <section class="panel">
       <h2>Home win probability</h2>
       <div class="legend"><span style="--c:var(--home)">Home win %</span><span class="dash" style="--c:var(--text-muted)">Pre-match</span></div>
@@ -185,6 +238,8 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       <div class="legend"><span style="--c:var(--series-x)">Expected total</span><span class="dash" style="--c:var(--text-muted)">Quoted line</span></div>
       <div class="chart" id="totchart"></div>
     </section>
+  </div>
+  <div class="cell" style="grid-area:dists">
     <section class="panel">
       <h2>Final total</h2>
       <div class="legend" id="tlegend"></div>
@@ -198,6 +253,8 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   </div>
 </main>
 <div id="tip"></div>
+<dialog id="undo_dlg"><p>Undo <b id="undo_what"></b>?</p>
+  <div class="acts"><button id="undo_no">Cancel</button><button class="danger" id="undo_yes">Undo</button></div></dialog>
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
@@ -235,6 +292,7 @@ async function init() {
   $("margin").value = (100 * META.margin).toFixed(1);
   $("paths").value = String(META.paths);
   if (![...$("paths").options].some(o => o.value === String(META.paths))) $("paths").add(new Option(META.paths, META.paths, true, true));
+  renderCalc();
 }
 function readSetup() {
   return {home_player: $("home_player").value.trim(), away_player: $("away_player").value.trim(),
@@ -249,9 +307,7 @@ $("nb2").onclick = async () => {
     const r = await api("/api/prematch", {setup: readSetup()});
     $("mean_home").value = r.means[0]; $("mean_away").value = r.means[1];
     $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` : (r.note ? esc(r.note) : "");
-    const P = (k, p) => `<b>${k}</b><span>${p.pace}</span><span>${p.aggression >= 0 ? "+" : ""}${p.aggression}</span>`;
-    $("profiles").innerHTML = `<span></span><span>pace</span><span>4th-down aggression</span>` +
-      P("Home", r.home_profile) + P("Away", r.away_profile);
+    renderCalc();
   } catch (e) { $("nb2note").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
   busy(false);
 };
@@ -263,7 +319,8 @@ $("start").onclick = async () => {
     const r = await api("/api/start", {setup: s});
     SETUP = s; PRE = r.prematch;
     HIST = [{game: r.game, text: r.text, what: "kick-off", price: r.price}];
-    render();
+    LIVE.running = false; LIVE.shown = r.game.clock;
+    render(); renderCalc();
   } catch (e) { flash(e.message); }
   busy(false);
 };
@@ -280,6 +337,23 @@ async function reprice() {
   busy(false);
 }
 $("margin").onchange = reprice; $("paths").onchange = reprice;
+$("home_player").onchange = $("away_player").onchange = () => renderCalc();
+function renderCalc() {
+  const hn = $("home_player").value.trim() || "Home", an = $("away_player").value.trim() || "Away";
+  $("c_hn").textContent = hn; $("c_an").textContent = an;
+  const pre = PRE && !PRE.final ? PRE : null;
+  if (!pre) { $("c_pre").className = "note"; $("c_pre").textContent = "Start the match for its pre-match prices"; return; }
+  const c = x => `<span class="odds">${x.odds.toFixed(2)}</span><span class="p">${pct(x.p)}</span>`;
+  $("c_pre").className = "";
+  $("c_pre").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>${esc(hn)} / Over</th><th>${esc(an)} / Under</th></tr>
+    <tr><td>Moneyline</td><td class="line">—</td><td>${c(pre.moneyline.home)}</td><td>${c(pre.moneyline.away)}</td></tr>
+    <tr><td>Handicap</td><td class="line">${handicap(pre.spread.line, "home")}</td><td>${c(pre.spread.home)}</td><td>${c(pre.spread.away)}</td></tr>
+    <tr><td>Total</td><td class="line">${pre.total.line.toFixed(1)}</td><td>${c(pre.total.over)}</td><td>${c(pre.total.under)}</td></tr></table>
+    <div class="sum" style="margin-top:6px"><span>Expected <b>${pre.expected.home.toFixed(1)} – ${pre.expected.away.toFixed(1)}</b></span>
+      <span>Total <b>${pre.expected.total.toFixed(1)}</b></span></div>`;
+}
+$("hto").onclick = () => send({type: "timeout", side: "home"});
+$("ato").onclick = () => send({type: "timeout", side: "away"});
 $("theme").onclick = () => {
   const root = document.documentElement;
   root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
@@ -287,34 +361,103 @@ $("theme").onclick = () => {
 };
 
 // ---- plays ------------------------------------------------------------------------------
-async function play(p) {
-  const cur = HIST[HIST.length - 1];
+// The ball's spot is entered as where it is now: a half (home's or away's) and a yard line 1-50.
+// The clock runs on the scoreboard; each play is recorded at the clock showing when it is entered.
+let SPOT = {half: "home", yard: 25};
+const LIVE = {running: false, base: 240, t0: 0, shown: 240};
+const STOPS = new Set(["incomplete", "touchdown", "field_goal", "punt", "turnover", "safety", "spike", "timeout",
+  "kickoff", "conversion", "set"]);
+const curGame = () => HIST.length ? HIST[HIST.length - 1].game : null;
+const sideName = side => SETUP && (side === "home" ? SETUP.home_player : SETUP.away_player) || (side === "home" ? "Home" : "Away");
+const fromHome = sp => sp.half === "home" ? sp.yard : 100 - sp.yard;              // yards from the home goal
+const spotOf = (side, own) => { const a = side === "home" ? own : 100 - own;     // a side's own yard -> half & yard
+  return a <= 50 ? {half: "home", yard: Math.round(a)} : {half: "away", yard: Math.round(100 - a)}; };
+const ownOf = (side, sp) => side === "home" ? fromHome(sp) : 100 - fromHome(sp);
+
+async function send(p, recordClock = true) {
+  const cur = HIST[HIST.length - 1], g = cur.game;
+  if (recordClock && (g.phase === "scrimmage" || g.phase === "kickoff" || p.type === "timeout" || p.type === "clock"))
+    p.clock = p.clock ?? Math.min(g.clock, Math.round(LIVE.shown));
+  const wasRunning = LIVE.running;
+  if (STOPS.has(p.type)) stopClock(false);
+  if (LIVE.running) { LIVE.base = p.clock ?? LIVE.shown; LIVE.t0 = performance.now(); }
   busy(true);
   try {
-    const r = await api("/api/play", {setup: SETUP, game: cur.game, play: p, kept: cur.price.kept || null});
+    const r = await api("/api/play", {setup: SETUP, game: g, play: p, kept: cur.price.kept || null});
     HIST.push({game: r.game, text: r.text, what: r.what, price: r.price});
+    const n = r.game;
+    if (n.phase !== "scrimmage" || n.period !== g.period) stopClock(false);
+    if (!LIVE.running) LIVE.shown = n.clock;
     render();
-  } catch (e) { flash(e.message); }
+  } catch (e) { if (wasRunning && !LIVE.running && !STOPS.has(p.type)) startClock(); flash(e.message); }
   busy(false);
 }
+function startClock() {
+  const g = curGame(); if (!g || g.phase !== "scrimmage" || LIVE.shown <= 0) return;
+  LIVE.running = true; LIVE.base = LIVE.shown; LIVE.t0 = performance.now(); paintClock();
+}
+function stopClock(record = true) {
+  if (!LIVE.running) return;
+  LIVE.running = false; paintClock();
+  const g = curGame();
+  if (record && g && Math.round(LIVE.shown) < Math.round(g.clock)) send({type: "clock", clock: Math.round(LIVE.shown)});
+}
+function paintClock() {
+  const g = curGame();
+  $("clock").textContent = fmtClock(LIVE.shown);
+  $("clock").classList.toggle("running", LIVE.running);
+  $("run").textContent = LIVE.running ? "⏸" : "▶"; $("run").classList.toggle("on", LIVE.running);
+  const can = g && g.phase === "scrimmage";
+  $("run").disabled = !can && !LIVE.running; $("ffbtn").disabled = !g || g.phase === "final" || g.phase === "conversion";
+  if (LIVE.running && !$("pricenote").querySelector(".error")) $("pricenote").textContent = `· priced at ${fmtClock(g.clock)}, clock running`;
+}
+setInterval(() => {
+  if (!LIVE.running) return;
+  LIVE.shown = Math.max(0, LIVE.base - (performance.now() - LIVE.t0) / 1000);
+  paintClock();
+  if (LIVE.shown <= 0) { LIVE.running = false; paintClock(); send({type: "clock", clock: 0}); }
+}, 200);
+$("run").onclick = () => LIVE.running ? stopClock() : startClock();
+$("ffbtn").onclick = () => {
+  const g = curGame(), ff = num("ff") ?? 20; if (!g || ff <= 0) return;
+  const to = Math.max(0, Math.round(LIVE.shown) - ff);
+  if (LIVE.running) { LIVE.base -= ff; LIVE.shown = Math.max(0, LIVE.shown - ff); }
+  send({type: "clock", clock: to});
+};
+document.addEventListener("keydown", ev => {
+  if (ev.key === " " && !ev.target.matches("input, select, textarea") && HIST.length) {
+    ev.preventDefault(); LIVE.running ? stopClock() : startClock();
+  }
+});
+
 const num = id => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return isFinite(v) ? v : null; };
+function spotHTML(label) {
+  return `<div class="spot"><label>${label}</label>
+    <div class="seg"><button data-half="home" class="${SPOT.half === "home" ? "on" : ""}">${esc(sideName("home"))} half</button>
+      <button data-half="away" class="${SPOT.half === "away" ? "on" : ""}">${esc(sideName("away"))} half</button></div>
+    <input id="p_yard" type="number" min="1" max="50" value="${SPOT.yard}"><span class="gain" id="gain"></span></div>`;
+}
 function padHTML(g) {
-  const common = `<div class="btns"><button data-a="to_home" ${g.timeouts_home ? "" : "disabled"}>Timeout home</button>
-    <button data-a="to_away" ${g.timeouts_away ? "" : "disabled"}>Timeout away</button>
-    <button data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button></div>`;
-  if (g.phase === "final") return `<div class="empty">Final</div>` + common + editHTML(g);
-  if (g.phase === "kickoff") return `<div class="row"><div><label>Return to (own yd)</label><input id="p_at" type="number" value="25"></div>
-      <div><label>Seconds</label><input id="p_secs" type="number" value="0"></div></div>
-    <div class="btns"><button class="primary" data-a="kick">Kick-off</button><button data-a="touchback">Touchback</button><button data-a="kick_td">Return TD</button></div>` + common + editHTML(g);
-  if (g.phase === "conversion") return `<div class="btns"><button class="primary" data-a="xp">XP good</button><button data-a="xp_miss">XP miss</button>
-    <button data-a="two">2-pt good</button><button data-a="two_fail">2-pt fail</button></div>` + common + editHTML(g);
-  return `<div class="row3"><div><label>Yards</label><input id="p_yards" type="number" value="5"></div>
-      <div><label>Seconds</label><input id="p_secs" type="number" value="25"></div>
-      <div><label>Punt net</label><input id="p_net" type="number" value="40"></div></div>
-    <div class="btns"><button class="primary" data-a="play">Play ▸</button><button data-a="incomplete">Incomplete</button>
+  const undo = `<button class="danger" data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button>`;
+  if (g.phase === "final") return `<div class="empty">Final</div><div class="btns five">${undo}</div>` + editHTML(g);
+  if (g.phase === "kickoff") return spotHTML("Returned to") +
+    `<div class="btns five"><button class="primary" data-a="kick">Kick-off ▸</button><button data-a="touchback">Touchback</button>
+      <button data-a="kick_td">Return TD</button><span></span><span></span>${undo}</div>` + editHTML(g);
+  if (g.phase === "conversion") return `<div class="btns five"><button class="primary" data-a="xp">XP good</button><button data-a="xp_miss">XP miss</button>
+    <button data-a="two">2-pt good</button><button data-a="two_fail">2-pt fail</button><span></span>${undo}</div>` + editHTML(g);
+  return spotHTML("Ball now at") +
+    `<div class="btns five"><button class="primary" data-a="play">Play ▸</button><button data-a="incomplete">Incomplete</button>
       <button data-a="touchdown">Touchdown</button><button data-a="fg">FG good</button><button data-a="fg_miss">FG miss</button>
-      <button data-a="punt">Punt</button><button data-a="turnover">Turnover</button><button data-a="turnover_td">Pick six</button>
-      <button data-a="kneel">Kneel</button><button data-a="spike">Spike</button><button data-a="safety">Safety</button></div>` + common + editHTML(g);
+      ${undo}<button data-a="punt" title="Punted to the spot above">Punt</button>
+      <button data-a="turnover" title="The other side takes over at the spot above">Turnover</button><button data-a="turnover_td">Pick six</button>
+      <button data-a="safety">Safety</button></div>` + editHTML(g);
+}
+function showGain() {
+  const g = curGame(), el_ = $("gain"); if (!g || !el_) return;
+  if (g.phase !== "scrimmage") { el_.textContent = ""; return; }
+  const yard = num("p_yard"); if (yard === null) { el_.textContent = ""; return; }
+  const d = Math.round(ownOf(g.side, {half: SPOT.half, yard}) - g.field);
+  el_.textContent = (d > 0 ? "+" : d < 0 ? "−" : "±") + Math.abs(d) + " yd";
 }
 function editHTML(g) {
   const opt = (v, cur, t) => `<option value="${v}" ${String(v) === String(cur) ? "selected" : ""}>${t}</option>`;
@@ -334,34 +477,46 @@ function editHTML(g) {
     <button data-a="set" style="margin-top:8px;width:100%">Apply</button></details>`;
 }
 $("padbody").addEventListener("click", ev => {
+  const h = ev.target.closest("button[data-half]");
+  if (h) { SPOT.half = h.dataset.half; SPOT.yard = num("p_yard") ?? SPOT.yard;
+    $("padbody").querySelectorAll("button[data-half]").forEach(b => b.classList.toggle("on", b.dataset.half === SPOT.half)); showGain(); return; }
   const b = ev.target.closest("button[data-a]"); if (!b) return;
-  const a = b.dataset.a, secs = num("p_secs");
+  const a = b.dataset.a, yard = num("p_yard"), spot = yard === null ? null : {half: SPOT.half, yard: Math.min(50, Math.max(1, yard))};
   const P = {
-    play: () => ({type: "play", yards: num("p_yards") ?? 0, seconds: secs}),
-    incomplete: () => ({type: "incomplete", seconds: secs ?? 6}), touchdown: () => ({type: "touchdown", seconds: secs}),
-    fg: () => ({type: "field_goal", made: true, seconds: 5}), fg_miss: () => ({type: "field_goal", made: false, seconds: 5}),
-    punt: () => ({type: "punt", yards: num("p_net") ?? 40, seconds: 10}),
-    turnover: () => ({type: "turnover", seconds: secs}), turnover_td: () => ({type: "turnover", touchdown: true, seconds: secs}),
-    kneel: () => ({type: "kneel", seconds: 40}), spike: () => ({type: "spike", seconds: 3}), safety: () => ({type: "safety", seconds: secs}),
-    kick: () => ({type: "kickoff", at: num("p_at") ?? 25, seconds: secs ?? 0}), touchback: () => ({type: "kickoff", at: 25, seconds: 0}),
-    kick_td: () => ({type: "kickoff", touchdown: true, seconds: 12}),
+    play: () => ({type: "play", spot}), incomplete: () => ({type: "incomplete"}), touchdown: () => ({type: "touchdown"}),
+    fg: () => ({type: "field_goal", made: true}), fg_miss: () => ({type: "field_goal", made: false}),
+    punt: () => ({type: "punt", spot}),
+    turnover: () => ({type: "turnover", spot}), turnover_td: () => ({type: "turnover", touchdown: true}),
+    safety: () => ({type: "safety"}),
+    kick: () => ({type: "kickoff", spot}), touchback: () => ({type: "kickoff", at: 25}), kick_td: () => ({type: "kickoff", touchdown: true}),
     xp: () => ({type: "conversion", kind: "xp"}), xp_miss: () => ({type: "conversion", kind: "xp_miss"}),
     two: () => ({type: "conversion", kind: "two"}), two_fail: () => ({type: "conversion", kind: "two_fail"}),
-    to_home: () => ({type: "timeout", side: "home"}), to_away: () => ({type: "timeout", side: "away"}),
     set: () => {
-      const [m, s] = $("e_clock").value.split(":").map(Number);
-      return {type: "set", state: {period: +$("e_period").value, clock: Math.min(240, (m || 0) * 60 + (s || 0)), phase: $("e_phase").value,
+      const [m, sec] = $("e_clock").value.split(":").map(Number);
+      return {type: "set", state: {period: +$("e_period").value, clock: Math.min(240, (m || 0) * 60 + (sec || 0)), phase: $("e_phase").value,
         home: +$("e_home").value, away: +$("e_away").value, side: $("e_side").value, down: +$("e_down").value,
         distance: +$("e_dist").value, field: +$("e_field").value, timeouts_home: +$("e_toh").value, timeouts_away: +$("e_toa").value,
         fresh: false}};
     },
   };
-  if (a === "undo") { HIST.pop(); render(); return; }
-  play(P[a]());
+  if (a === "undo") { confirmUndo(); return; }
+  if (["play", "punt", "turnover", "kick"].includes(a) && !spot) { flash("Enter where the ball is now"); return; }
+  send(P[a](), a !== "set");
 });
+function confirmUndo() {
+  if (HIST.length < 2) return;
+  $("undo_what").textContent = HIST[HIST.length - 1].what || "the last play";
+  $("undo_dlg").showModal();
+}
+$("undo_no").onclick = () => $("undo_dlg").close();
+$("undo_yes").onclick = () => {
+  $("undo_dlg").close();
+  stopClock(false); HIST.pop(); LIVE.shown = curGame().clock; render();
+};
+$("padbody").addEventListener("input", ev => { if (ev.target.id === "p_yard") { SPOT.yard = num("p_yard") ?? SPOT.yard; showGain(); } });
 $("padbody").addEventListener("keydown", ev => {
   if (ev.key === "Enter" && ev.target.matches("input")) {
-    const g = HIST[HIST.length - 1].game;
+    const g = curGame();
     const main = $("padbody").querySelector("button.primary"); if (main && g.phase !== "final") main.click();
   }
 });
@@ -376,11 +531,14 @@ function render() {
   $("hpts").textContent = g.home; $("apts").textContent = g.away;
   const tos = n => [0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   $("htos").innerHTML = tos(g.timeouts_home); $("atos").innerHTML = tos(g.timeouts_away);
+  $("hto").disabled = !g.timeouts_home || g.phase === "final"; $("ato").disabled = !g.timeouts_away || g.phase === "final";
   $("period").textContent = g.phase === "final" ? "Final" : periodName(g.period);
-  $("clock").textContent = fmtClock(g.clock);
+  if (!LIVE.running) LIVE.shown = g.clock;
+  SPOT = g.phase === "kickoff" ? spotOf(g.side, 25) : g.phase === "scrimmage" ? spotOf(g.side, g.field) : SPOT;
   $("situation").innerHTML = esc(cur.text.replace(/^Home/, SETUP.home_player || "Home").replace(/^Away/, SETUP.away_player || "Away"));
   $("padbody").className = ""; $("padbody").innerHTML = padHTML(g);
   $("pricenote").textContent = "";
+  paintClock(); showGain();
   drawField(g); renderPrices(pr, prevPrice); drawDists(pr, g); drawWin(); drawTotal(); renderLog();
 }
 function renderPrices(pr, prev) {
@@ -443,7 +601,7 @@ function drawField(g) {
   el("circle", {cx: X(abs), cy: (f.y0 + f.y1) / 2, r: 6, fill: css(g.side === "home" ? "--home" : "--away"), stroke: css("--surface-1"), "stroke-width": 2}, f.svg);
 }
 function lineChart(host, series, opts) {
-  const W = 600, H = 210, f = frame(host, W, H, {l: 40, r: 70, t: 10, b: 22});
+  const W = 600, H = 200, f = frame(host, W, H, {l: 40, r: 70, t: 10, b: 22});
   const n = HIST.length, xs = i => f.x0 + (n <= 1 ? 0 : (f.x1 - f.x0) * i / (n - 1));
   const [lo, hi] = opts.range(series);
   const ys = v => f.y1 - (f.y1 - f.y0) * (v - lo) / (hi - lo || 1);
@@ -496,7 +654,7 @@ function drawTotal() {
      fmt: (v, full) => full ? v.toFixed(1) : String(v)});
 }
 function barChart(host, start, probs, cut, colors, names, fmtX) {
-  const W = 600, H = 190, f = frame(host, W, H, {l: 40, r: 10, t: 14, b: 22});
+  const W = 600, H = 200, f = frame(host, W, H, {l: 40, r: 10, t: 14, b: 22});
   const n = probs.length, bw = (f.x1 - f.x0) / n, max = Math.max(...probs, 0.001);
   const top = Math.ceil(max * 100 / 2) * 2 / 100 || 0.02;
   const ys = p => f.y1 - (f.y1 - f.y0) * p / top;
