@@ -720,6 +720,18 @@ class RecordingCursor:
         return self._rows
 
 
+class TestInStartOrder(unittest.TestCase):
+    """Chunks run in kick-off order, not match-code order (codes are not in date order)."""
+
+    def test_matches_come_in_kick_off_order_and_unknown_ones_last(self):
+        from .. import snowflake_io as io
+        cur = RecordingCursor([("AF2", dt.datetime(2026, 9, 1, 9)), ("AF1", dt.datetime(2026, 9, 3, 9)),
+                               ("AF3", dt.datetime(2026, 9, 1, 8))])
+        with mock.patch.object(io.config, "FETCH_CACHE", False):
+            got = io.in_start_order(cur, ["AF1", "AF2", "AF3", "AF0"])
+        self.assertEqual(got, ["AF3", "AF2", "AF1", "AF0"])
+
+
 class TestGeneratedQueries(unittest.TestCase):
     """Every query binds as many parameters as it has placeholders.
 
@@ -734,6 +746,7 @@ class TestGeneratedQueries(unittest.TestCase):
         cases = [
             ("describe_columns", lambda c: io.describe_columns(c, "T")),
             ("match_universe", lambda c: io.match_universe(c, "S")),
+            ("in_start_order", lambda c: io.in_start_order(c, ["A", "B"])),
             ("team_vocabulary", lambda c: io.team_vocabulary(c, "S")),
             ("market_descriptions", lambda c: io.market_descriptions(c, "S")),
             ("team_join_test", lambda c: io.team_join_test(c, "S")),

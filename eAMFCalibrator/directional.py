@@ -617,7 +617,7 @@ def run(verbose=True, sink=None, prematch_sink=None):
             # Only matches both streams cover can be paired at all.
             prod_matches = set(snowflake_io.match_universe(cur, config.STREAMS[PROD]))
             candidate_matches = set(snowflake_io.match_universe(cur, config.STREAMS[CANDIDATE]))
-            match_codes = sorted(prod_matches & candidate_matches)
+            match_codes = snowflake_io.in_start_order(cur, sorted(prod_matches & candidate_matches))
             header["prod_only_matches"] = len(prod_matches - candidate_matches)
             header["candidate_only_matches"] = len(candidate_matches - prod_matches)
             header["paired_matches"] = len(match_codes)

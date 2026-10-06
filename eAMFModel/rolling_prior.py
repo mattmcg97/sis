@@ -22,6 +22,7 @@ from . import glmer_prior, nb2_prior
 PRIORS = {"nb2": nb2_prior.Prematch, "glmer": glmer_prior.Prematch}
 INDEX = "rolling.json"
 WORKERS = 2                       # fits run side by side (each glmer fit is its own R process)
+PREDICT_WORKERS = 4               # days of a glmer rolling prior predicted side by side
 
 
 def _day(row):
@@ -134,10 +135,21 @@ class Rolling:
         for r in schedule:
             fit_ = self.fit_for(_day(r))
             groups.setdefault(id(fit_), (fit_, []))[1].append(r)
-        out = {}
-        for fit_, rows in groups.values():
+        def price(group):
+            fit_, rows = group
             kw = {"results": results} if getattr(fit_, "FOLLOWS_RESULTS", False) else {}
             if n_sims is not None:
                 kw["n_sims"] = n_sims
-            out.update(fit_.means(rows, **kw))
+            return fit_.means(rows, **kw)
+
+        out = {}
+        # glmer's fits each predict in their own R process: several days' side by side
+        workers = min(len(groups), PREDICT_WORKERS) if self.kind == "glmer" else 1
+        if workers > 1:
+            with ThreadPoolExecutor(workers) as pool:
+                for got in pool.map(price, groups.values()):
+                    out.update(got)
+        else:
+            for group in groups.values():
+                out.update(price(group))
         return out
