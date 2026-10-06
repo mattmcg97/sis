@@ -73,8 +73,17 @@ button:disabled { opacity: .45; cursor: default; }
 .home-tag { background: var(--home); } .away-tag { background: var(--away); }
 .note { color: var(--text-muted); font-size: 12px; margin-top: 6px; }
 .error { color: var(--critical); }
-.profiles { display: grid; grid-template-columns: auto 1fr 1fr; gap: 2px 10px; font-size: 12px; margin-top: 8px; color: var(--text-secondary); }
-.profiles b { color: var(--text-primary); font-weight: 600; }
+#setup { display: flex; flex-direction: column; }
+.calc { flex: 1 1 auto; display: flex; flex-direction: column; justify-content: space-evenly; gap: 8px; margin: 8px 0; }
+.calc table td, .calc table th { padding: 3px 6px; font-size: 12px; }
+.calc table td:first-child { color: var(--text-secondary); }
+.calc table th:not(:first-child), .calc table td:not(:first-child) { width: 30%; }
+.calc input { padding: 3px 6px; text-align: right; }
+.calc .sum { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
+.calc .sum b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.calc h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 4px; font-weight: 600; }
+.tobtn { margin-top: 6px; padding: 3px 10px; font-size: 12px; align-self: flex-start; }
+.team.away .tobtn { align-self: flex-end; }
 /* scoreboard */
 .score { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .team { display: flex; flex-direction: column; gap: 2px; }
@@ -164,13 +173,20 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
         <div><label>Receives first</label><select id="opening_receiver"><option value="home">Home</option><option value="away">Away</option></select></div>
       </div>
       <button id="nb2" style="margin-top:10px;width:100%">Get expected points</button>
-      <div class="row">
-        <div><label>Home expected pts</label><input id="mean_home" type="number" step="0.1"></div>
-        <div><label>Away expected pts</label><input id="mean_away" type="number" step="0.1"></div>
-      </div>
       <div class="note" id="nb2note"></div>
-      <div class="profiles" id="profiles"></div>
-      <button class="primary" id="start" style="margin-top:12px;width:100%">Start match</button>
+      <div class="calc">
+        <table>
+          <tr><th></th><th id="c_hn">Home</th><th id="c_an">Away</th></tr>
+          <tr><td>Expected points</td><td><input id="mean_home" type="number" step="0.1"></td><td><input id="mean_away" type="number" step="0.1"></td></tr>
+          <tr><td>Pace</td><td id="c_pace_h">—</td><td id="c_pace_a">—</td></tr>
+          <tr><td title="4th-down aggression: log odds of going for it against the league">4th-down go</td><td id="c_agg_h">—</td><td id="c_agg_a">—</td></tr>
+          <tr><td title="Kicking a field goal rather than punting, log odds against the league">Kick vs punt</td><td id="c_kick_h">—</td><td id="c_kick_a">—</td></tr>
+          <tr><td>Plays on record</td><td id="c_n_h">—</td><td id="c_n_a">—</td></tr>
+          <tr><td>Pre-match win</td><td id="c_win_h">—</td><td id="c_win_a">—</td></tr>
+        </table>
+        <div class="sum" id="c_sum"></div>
+      </div>
+      <button class="primary" id="start" style="width:100%">Start match</button>
       <datalist id="players"></datalist><datalist id="teams"></datalist>
     </section>
   </div>
@@ -178,13 +194,15 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
     <section class="panel">
       <div class="score">
         <div class="team"><span class="name"><span class="side-tag home-tag"></span><span id="hname">Home</span></span>
-          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span></div>
+          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
+          <button class="tobtn" id="hto" disabled>Timeout</button></div>
         <div class="clock"><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
           <div class="clockctl"><button id="run" title="Run or stop the clock (space)">▶</button>
             <input id="ff" type="number" min="1" value="20" title="Seconds to run the clock forward"><span class="u">s</span>
             <button id="ffbtn" title="Run the clock forward">⏩</button></div></div>
         <div class="team away"><span class="name"><span id="aname">Away</span><span class="side-tag away-tag" style="margin:0 0 0 6px"></span></span>
-          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span></div>
+          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
+          <button class="tobtn" id="ato" disabled>Timeout</button></div>
       </div>
       <div class="situation" id="situation">—</div>
       <div class="chart" id="field" style="margin-top:10px"></div>
@@ -236,7 +254,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
 "use strict";
 const $ = id => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
-let META = null, SETUP = null, HIST = [], PRE = null;
+let META = null, SETUP = null, HIST = [], PRE = null, PROF = null;
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -269,6 +287,7 @@ async function init() {
   $("margin").value = (100 * META.margin).toFixed(1);
   $("paths").value = String(META.paths);
   if (![...$("paths").options].some(o => o.value === String(META.paths))) $("paths").add(new Option(META.paths, META.paths, true, true));
+  renderCalc();
 }
 function readSetup() {
   return {home_player: $("home_player").value.trim(), away_player: $("away_player").value.trim(),
@@ -283,9 +302,7 @@ $("nb2").onclick = async () => {
     const r = await api("/api/prematch", {setup: readSetup()});
     $("mean_home").value = r.means[0]; $("mean_away").value = r.means[1];
     $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` : (r.note ? esc(r.note) : "");
-    const P = (k, p) => `<b>${k}</b><span>${p.pace}</span><span>${p.aggression >= 0 ? "+" : ""}${p.aggression}</span>`;
-    $("profiles").innerHTML = `<span></span><span>pace</span><span>4th-down aggression</span>` +
-      P("Home", r.home_profile) + P("Away", r.away_profile);
+    PROF = [r.home_profile, r.away_profile]; renderCalc();
   } catch (e) { $("nb2note").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
   busy(false);
 };
@@ -298,7 +315,7 @@ $("start").onclick = async () => {
     SETUP = s; PRE = r.prematch;
     HIST = [{game: r.game, text: r.text, what: "kick-off", price: r.price}];
     LIVE.running = false; LIVE.shown = r.game.clock;
-    render();
+    render(); renderCalc();
   } catch (e) { flash(e.message); }
   busy(false);
 };
@@ -315,6 +332,25 @@ async function reprice() {
   busy(false);
 }
 $("margin").onchange = reprice; $("paths").onchange = reprice;
+$("mean_home").oninput = $("mean_away").oninput = () => renderCalc();
+$("home_player").onchange = $("away_player").onchange = () => { PROF = null; renderCalc(); };
+function renderCalc() {
+  const mh = parseFloat($("mean_home").value), ma = parseFloat($("mean_away").value);
+  $("c_hn").textContent = $("home_player").value.trim() || "Home"; $("c_an").textContent = $("away_player").value.trim() || "Away";
+  const f = (v, d, sg) => v === undefined || v === null ? "—" : (sg && v > 0 ? "+" : "") + Number(v).toFixed(d);
+  const [ph, pa] = PROF || [{}, {}];
+  $("c_pace_h").textContent = f(ph.pace, 3); $("c_pace_a").textContent = f(pa.pace, 3);
+  $("c_agg_h").textContent = f(ph.aggression, 2, true); $("c_agg_a").textContent = f(pa.aggression, 2, true);
+  $("c_kick_h").textContent = f(ph.kick, 2, true); $("c_kick_a").textContent = f(pa.kick, 2, true);
+  $("c_n_h").textContent = ph.plays ?? "—"; $("c_n_a").textContent = pa.plays ?? "—";
+  const pre = PRE && !PRE.final ? PRE : null;
+  const win = s => pre ? `${pre.moneyline[s].odds.toFixed(2)} <span class="p">${pct(pre.moneyline[s].p)}</span>` : "—";
+  $("c_win_h").innerHTML = win("home"); $("c_win_a").innerHTML = win("away");
+  $("c_sum").innerHTML = (isFinite(mh) && isFinite(ma) ? `<span>Total <b>${(mh + ma).toFixed(1)}</b></span><span>Margin <b>${signed(+(mh - ma).toFixed(1))}</b></span>` : "") +
+    (pre ? `<span>Lines <b>${handicap(pre.spread.line, "home")}</b> · <b>${pre.total.line.toFixed(1)}</b></span>` : "");
+}
+$("hto").onclick = () => send({type: "timeout", side: "home"});
+$("ato").onclick = () => send({type: "timeout", side: "away"});
 $("theme").onclick = () => {
   const root = document.documentElement;
   root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
@@ -399,9 +435,7 @@ function spotHTML(label) {
     <input id="p_yard" type="number" min="1" max="50" value="${SPOT.yard}"><span class="gain" id="gain"></span></div>`;
 }
 function padHTML(g) {
-  const common = `<div class="btns"><button data-a="to_home" ${g.timeouts_home ? "" : "disabled"}>Timeout ${esc(sideName("home"))}</button>
-    <button data-a="to_away" ${g.timeouts_away ? "" : "disabled"}>Timeout ${esc(sideName("away"))}</button>
-    <button data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button></div>`;
+  const common = `<div class="btns"><button data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button></div>`;
   if (g.phase === "final") return `<div class="empty">Final</div>` + common + editHTML(g);
   if (g.phase === "kickoff") return spotHTML("Returned to") +
     `<div class="btns"><button class="primary" data-a="kick">Kick-off ▸</button><button data-a="touchback">Touchback</button><button data-a="kick_td">Return TD</button></div>` + common + editHTML(g);
@@ -410,9 +444,9 @@ function padHTML(g) {
   return spotHTML("Ball now at") +
     `<div class="btns"><button class="primary" data-a="play">Play ▸</button><button data-a="incomplete">Incomplete</button>
       <button data-a="touchdown">Touchdown</button><button data-a="fg">FG good</button><button data-a="fg_miss">FG miss</button>
-      <button data-a="punt" title="Punted to the spot above">Punt</button><button data-a="punt_tb">Punt touchback</button>
+      <button data-a="punt" title="Punted to the spot above">Punt</button>
       <button data-a="turnover" title="The other side takes over at the spot above">Turnover</button><button data-a="turnover_td">Pick six</button>
-      <button data-a="kneel">Kneel</button><button data-a="spike">Spike</button><button data-a="safety">Safety</button></div>` + common + editHTML(g);
+      <button data-a="safety">Safety</button></div>` + common + editHTML(g);
 }
 function showGain() {
   const g = curGame(), el_ = $("gain"); if (!g || !el_) return;
@@ -447,13 +481,12 @@ $("padbody").addEventListener("click", ev => {
   const P = {
     play: () => ({type: "play", spot}), incomplete: () => ({type: "incomplete"}), touchdown: () => ({type: "touchdown"}),
     fg: () => ({type: "field_goal", made: true}), fg_miss: () => ({type: "field_goal", made: false}),
-    punt: () => ({type: "punt", spot}), punt_tb: () => ({type: "punt", yards: 100}),
+    punt: () => ({type: "punt", spot}),
     turnover: () => ({type: "turnover", spot}), turnover_td: () => ({type: "turnover", touchdown: true}),
-    kneel: () => ({type: "kneel"}), spike: () => ({type: "spike"}), safety: () => ({type: "safety"}),
+    safety: () => ({type: "safety"}),
     kick: () => ({type: "kickoff", spot}), touchback: () => ({type: "kickoff", at: 25}), kick_td: () => ({type: "kickoff", touchdown: true}),
     xp: () => ({type: "conversion", kind: "xp"}), xp_miss: () => ({type: "conversion", kind: "xp_miss"}),
     two: () => ({type: "conversion", kind: "two"}), two_fail: () => ({type: "conversion", kind: "two_fail"}),
-    to_home: () => ({type: "timeout", side: "home"}), to_away: () => ({type: "timeout", side: "away"}),
     set: () => {
       const [m, sec] = $("e_clock").value.split(":").map(Number);
       return {type: "set", state: {period: +$("e_period").value, clock: Math.min(240, (m || 0) * 60 + (sec || 0)), phase: $("e_phase").value,
@@ -484,6 +517,7 @@ function render() {
   $("hpts").textContent = g.home; $("apts").textContent = g.away;
   const tos = n => [0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   $("htos").innerHTML = tos(g.timeouts_home); $("atos").innerHTML = tos(g.timeouts_away);
+  $("hto").disabled = !g.timeouts_home || g.phase === "final"; $("ato").disabled = !g.timeouts_away || g.phase === "final";
   $("period").textContent = g.phase === "final" ? "Final" : periodName(g.period);
   if (!LIVE.running) LIVE.shown = g.clock;
   SPOT = g.phase === "kickoff" ? spotOf(g.side, 25) : g.phase === "scrimmage" ? spotOf(g.side, g.field) : SPOT;
