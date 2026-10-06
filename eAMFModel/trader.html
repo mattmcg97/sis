@@ -124,6 +124,8 @@ dialog .acts { display: flex; gap: 8px; justify-content: flex-end; }
 .seg button.on { background: var(--accent); color: #fff; font-weight: 600; }
 .gain { color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 44px; text-align: right; }
 .ball { color: var(--text-secondary); }
+.pigskin { width: 30px; height: 17px; vertical-align: -3px; margin: 0 6px; visibility: hidden; }
+.pigskin.on { visibility: visible; }
 svg text { fill: var(--text-secondary); font-size: 11px; }
 /* prices */
 table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
@@ -203,14 +205,14 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <div class="cell" style="grid-area:mid">
     <section class="panel">
       <div class="score">
-        <div class="team"><span class="name"><span class="side-tag away-tag"></span><span id="aname">Away</span></span>
+        <div class="team"><span class="name"><span class="side-tag away-tag"></span><span id="aname">Away</span><svg class="pigskin" id="aball" viewBox="0 0 40 22" aria-label="has the ball"><title>Has the ball</title><path d="M2 11 C 8 1, 32 1, 38 11 C 32 21, 8 21, 2 11 Z" fill="#8a4b22" stroke="#5a2d10" stroke-width="1.2"/><path d="M7 7.5 Q 4.5 11 7 14.5 M33 7.5 Q 35.5 11 33 14.5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M13 11 H27 M15 8.6 V13.4 M18 8.6 V13.4 M21 8.6 V13.4 M24 8.6 V13.4" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg></span>
           <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
           <button class="tobtn" id="ato" disabled>Timeout</button></div>
         <div class="clock"><div class="at">@</div><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
           <div class="clockctl"><button id="run" title="Run or stop the clock (space)">▶</button>
             <input id="ff" type="number" min="1" value="20" title="Seconds to run the clock forward"><span class="u">s</span>
             <button id="ffbtn" title="Run the clock forward">⏩</button></div></div>
-        <div class="team right"><span class="name"><span id="hname">Home</span><span class="side-tag home-tag" style="margin:0 0 0 6px"></span></span>
+        <div class="team right"><span class="name"><svg class="pigskin" id="hball" viewBox="0 0 40 22" aria-label="has the ball"><title>Has the ball</title><path d="M2 11 C 8 1, 32 1, 38 11 C 32 21, 8 21, 2 11 Z" fill="#8a4b22" stroke="#5a2d10" stroke-width="1.2"/><path d="M7 7.5 Q 4.5 11 7 14.5 M33 7.5 Q 35.5 11 33 14.5" stroke="#fff" stroke-width="1.6" fill="none"/><path d="M13 11 H27 M15 8.6 V13.4 M18 8.6 V13.4 M21 8.6 V13.4 M24 8.6 V13.4" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg><span id="hname">Home</span><span class="side-tag home-tag" style="margin:0 0 0 6px"></span></span>
           <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
           <button class="tobtn" id="hto" disabled>Timeout</button></div>
       </div>
@@ -641,6 +643,9 @@ function render() {
   $("hpts").textContent = g.home; $("apts").textContent = g.away;
   const tos = n => [0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   $("htos").innerHTML = tos(g.timeouts_home); $("atos").innerHTML = tos(g.timeouts_away);
+  // the ball: the offence at a snap, the receiver at a kick-off, the scorer at a conversion
+  const has = g.phase === "final" ? null : g.side;
+  $("hball").classList.toggle("on", has === "home"); $("aball").classList.toggle("on", has === "away");
   $("hto").disabled = !g.timeouts_home || g.phase === "final"; $("ato").disabled = !g.timeouts_away || g.phase === "final";
   $("period").textContent = g.phase === "final" ? "Final" : periodName(g.period);
   if (!LIVE.running) LIVE.shown = g.clock;
