@@ -2,6 +2,7 @@
 
 import math
 import os
+import time
 from bisect import bisect_right
 
 import numpy as np
@@ -206,6 +207,9 @@ def _worker(job):
     return out
 
 
+LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, simulate (and workers)
+
+
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, variant=None, book=None, handles=None, seed=0,
                        match_info=None, lines=OWN, history=None, prematch_only=False):
@@ -231,6 +235,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         first_play = snaps[0].get("first_play_message")
         matches[code] = (snaps, int(first_play) if first_play not in ("", None) else None)
     means, known = {}, {}
+    LAST_TIMING.clear()
+    t0 = time.time()
     if pre is not None:
         if match_info is None:
             raise SystemExit("this v11 model prices off its own pre-match model (NB2 or glmer), which"
@@ -244,6 +250,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         for (code, publish), at in code_at.items():
             if at != code:
                 known.setdefault(code, {})[publish] = means.get(at, pre.league)
+    LAST_TIMING.update(prematch=time.time() - t0, cuts=sum(len(set(k.values())) for k in known.values()))
     items = []
     for code, (snaps, first_play) in matches.items():
         pair = ((handles or {}).get(code) or v11.handles_of(snaps)) if book else None
@@ -256,10 +263,12 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
     jobs = [(items[i::workers], tables_path, grid_path, variant, n_paths, seed + i, lines,
              prematch_only) for i in range(workers)]
+    t0 = time.time()
     if workers == 1:
         results = [_worker(j) for j in jobs]
     else:
         with v11.pool_context().Pool(workers) as pool:
             results = pool.map(_worker, jobs)
+    LAST_TIMING.update(simulate=time.time() - t0, workers=workers)
     out = {mode: [row for part in results for row in part[mode]] for mode in modes}
     return out[lines] if isinstance(lines, str) else out

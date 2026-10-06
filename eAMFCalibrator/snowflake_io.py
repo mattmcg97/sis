@@ -12,6 +12,7 @@ timestamp, it is preferred over the reconstruction automatically.
 """
 
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
@@ -570,6 +571,7 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if caching and cache_key in _MODEL_QUOTES:
         return list(_MODEL_QUOTES[cache_key][lines])
     tables, _ = stream.model_paths(model_dir)                 # fail early, with instructions
+    t0 = time.time()
     pre = model.prematch_model(tables)
     nb2 = pre is not None
     if not nb2:
@@ -594,9 +596,22 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
                                      history=history, prematch_only=prematch_only)
+    took = getattr(stream, "LAST_TIMING", {})
+    if took.get("simulate") is not None:
+        fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
+        print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "
+              f"model {_mins(took.get('prematch', 0.0))}"
+              + (f" (+{took['cuts']:,} earlier pre-match states)" if took.get("cuts") else "")
+              + f", simulating {_mins(took['simulate'])} on {took['workers']} workers", flush=True)
     if caching:
         _MODEL_QUOTES[cache_key] = both
     return list(both[lines])
+
+
+def _mins(seconds):
+    """Seconds as '42s' or '3m05s'."""
+    seconds = int(round(seconds))
+    return f"{seconds}s" if seconds < 60 else f"{seconds // 60}m{seconds % 60:02d}s"
 
 
 def status_profile(cur, stream_table):
