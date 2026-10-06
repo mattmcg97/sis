@@ -195,6 +195,25 @@ def match_universe(cur, stream_table):
     return [r[0] for r in rows]
 
 
+def in_start_order(cur, match_codes):
+    """The matches in kick-off order (EVENT's scheduled start; any without one last, by code).
+    Match codes are not in date order, so a chunk of codes spans every day of a window -- and a
+    pre-match model refitted daily (prior-daily) then runs one fit's prediction per day in every
+    chunk. In kick-off order a chunk spans a day or two."""
+    codes = list(match_codes)
+    start = {}
+    for i in range(0, len(codes), config.MATCH_CHUNK_SIZE):
+        batch = codes[i:i + config.MATCH_CHUNK_SIZE]
+        _, rows = fetch_all(cur, f"""
+            SELECT MATCH_CODE, MIN(SCHEDULED_START_TIME_UTC)
+            FROM {qualified(EVENT_TABLE)}
+            WHERE MATCH_CODE IN ({_in_clause(batch)})
+            GROUP BY 1
+        """, tuple(batch))
+        start.update({str(c): str(t) for c, t in rows if t is not None})
+    return sorted(codes, key=lambda c: (c not in start, start.get(str(c), ""), c))
+
+
 def rows_per_message(cur, stream_table):
     """How many rows a single (match, market, message) really carries.
 
@@ -591,6 +610,8 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
           f"{paths:,} games each{' at kick-off only' if prematch_only else ''}", flush=True)
+    from eAMFModel import glmer_prior
+    r_before = dict(glmer_prior.PREDICTS)
     both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
                                      workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=getattr(stream, "LINE_MODES",
@@ -601,11 +622,20 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
         print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "
               f"model {_mins(took.get('prematch', 0.0))}"
+              + _r_calls(r_before, glmer_prior.PREDICTS)
               + (f" (+{took['cuts']:,} earlier pre-match states)" if took.get("cuts") else "")
               + f", simulating {_mins(took['simulate'])} on {took['workers']} workers", flush=True)
     if caching:
         _MODEL_QUOTES[cache_key] = both
     return list(both[lines])
+
+
+def _r_calls(before, after):
+    """' (N R predictions, Xs each)' for the glmer predictions run since `before`, else ''."""
+    calls = after["calls"] - before["calls"]
+    if not calls:
+        return ""
+    return f" ({calls} R prediction{'s' if calls > 1 else ''}, {_mins((after['seconds'] - before['seconds']) / calls)} each)"
 
 
 def _mins(seconds):

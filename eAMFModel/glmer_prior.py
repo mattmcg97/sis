@@ -13,6 +13,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 from . import nb2_prior
 
@@ -25,6 +27,8 @@ INFO = "model_info.json"
 META = "prior.json"
 HISTORY = "history.csv"
 RSCRIPT = None                       # the Rscript to run; None: $RSCRIPT, the PATH, Program Files
+PREDICTS = {"calls": 0, "seconds": 0.0}  # predict.R runs so far, and their time (a run reports it)
+_PREDICTS_LOCK = threading.Lock()
 
 
 def rscript():
@@ -110,8 +114,12 @@ def predict(model_dir, schedule, results=None):
                 if r["MATCH_CODE"] in finals and not _settled([r]) else r for r in schedule]
     nb2_prior._write(sched, schedule, nb2_prior.HISTORY_FIELDS)
     history = _live_history(model_dir, work, settled)
+    t0 = time.time()
     _run(PREDICT_SCRIPT, [f"--model={os.path.join(model_dir, MODEL)}", f"--schedule={sched}",
                           f"--history={history}", "--n-sims=0", f"--out={out}"])
+    with _PREDICTS_LOCK:
+        PREDICTS["calls"] += 1
+        PREDICTS["seconds"] += time.time() - t0
     got = {}
     with open(out, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
