@@ -1398,6 +1398,7 @@ before `--break`. Matches that started in the last 4 hours are `LIVE` and not ju
 | `HEAD_MISSING` | the first message count is later than the baseline's usual first |
 | `FEW_MESSAGES` / `FEW_PLAYS` | under half the baseline's median messages / `PLAY_OVER`s a match |
 | `NO_DETAIL` / `NO_CLOCK` | field position on under half the `PLAY_OVER`s / the clock on under half the messages, where the baseline had them |
+| `NO_DOWN` | a usable down and distance (down 1–4, distance above 0) on under half the `PLAY_OVER`s, where the baseline had them |
 | `SCORE` | the scoring messages (TD 6, XP 1, two-point 2, FG 3, safety 2) do not add up to the final |
 | `NOT_SCHEDULED`, `NO_FINAL`, `DUPLICATES` | information only: not in EVENT, not settled yet, a message loaded more than once |
 
@@ -1408,6 +1409,14 @@ before `--break`. Matches that started in the last 4 hours are `LIVE` and not ju
 | `scouting_check_matches.csv` | one row a match, with its flags and the numbers behind them |
 | `scouting_check_columns.csv` | every column's fill a day, over all rows and over the `PLAY_OVER` rows |
 | `scouting_check_messages.csv` | every message kind's count a day, and per match |
+| `scouting_check_detail_days.csv` / `_hours.csv` | down and distance a day / an hour: the messages and `PLAY_OVER`s with a usable down and distance (and with a field position, an offensive team), the matches with any, the first and last such message, the latest `FILE_LOADED` |
+| `scouting_check_detail_values.csv` | the commonest down, distance, field position and offensive team values on each day's `PLAY_OVER`s, so a placeholder shows |
+
+The summary ends with the **down & distance** section: a line a day, the last message in the
+window with a down and distance (and how many `PLAY_OVER`s have come since without), every hour
+where the `PLAY_OVER`s' down-and-distance share jumped more than 30 points from the hour before
+(the hour a change landed), and each day's downs. A message kind is only listed as changed when it
+was off on 3+ days since the break, each with 5+ of it expected or seen.
 
 Rerun it after a backfill: a day is fully complete when every scheduled match that started is in
 scouting with no flag.
