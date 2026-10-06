@@ -1771,8 +1771,15 @@ model's expected points need pandas and scipy, like the build.
   downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers,
   safeties, kneels and spikes. Three timeouts a side each half; the second half is kicked to
   the side that kicked first. A level game goes to overtime off a kick-off, two timeouts each.
-  Yards and seconds apply to the play buttons. *Edit state* sets anything directly, and *Undo*
+  *Ball now at* is where the ball is after the play: a half (home's or away's) and a yard line
+  1-50, set to the ball's spot before it, with the gain shown beside it. *Play*, *Punt*,
+  *Turnover* and *Kick-off* take it from there. *Edit state* sets anything directly, and *Undo*
   steps back.
+- **Clock:** it runs on the scoreboard. ▶ starts it (or the space bar) and ⏸ stops it; ⏩ runs it
+  forward the seconds beside it (20 by default). Each play is recorded at the clock showing when
+  it is entered. Plays that stop a real clock (incompletions, scores, kicks, turnovers, timeouts)
+  stop it; a run, a completion or a kneel leaves it running. Stopping it and fast-forwarding
+  reprice; at 0:00 the period ends by itself.
 - **Prices:** after every play v10 prices the state it leaves: moneyline, handicap and total at
   its own key-number lines (held from play to play), with ladders either side, the expected
   score, and the final margin and total distributions split at the quoted lines. Odds carry the
