@@ -11,7 +11,7 @@
   --surface-0: #f3f3f1; --surface-1: #fcfcfb; --surface-2: #f0efec; --border: #dddcd7;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
   --grid: #e6e5e0; --accent: #2a78d6;
-  --home: #2a78d6; --away: #eb6834; --over: #1baf7a; --under: #eda100; --series-x: #4a3aa7;
+  --home: #2a78d6; --away: #eb6834; --over: #1baf7a; --under: #d64545; --first-down: #eda100; --series-x: #4a3aa7;
   --critical: #d03b3b; --field: #e3efe3; --field-line: #b7cdb7;
 }
 @media (prefers-color-scheme: dark) {
@@ -20,7 +20,7 @@
     --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #33332f;
     --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
     --grid: #2c2c29; --accent: #3987e5;
-    --home: #3987e5; --away: #d95926; --over: #199e70; --under: #c98500; --series-x: #9085e9;
+    --home: #3987e5; --away: #d95926; --over: #199e70; --under: #e05a5a; --first-down: #c98500; --series-x: #9085e9;
     --critical: #e66767; --field: #1d2a1f; --field-line: #2f4532;
   }
 }
@@ -29,7 +29,7 @@
   --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #33332f;
   --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #8d8c84;
   --grid: #2c2c29; --accent: #3987e5;
-  --home: #3987e5; --away: #d95926; --over: #199e70; --under: #c98500; --series-x: #9085e9;
+  --home: #3987e5; --away: #d95926; --over: #199e70; --under: #e05a5a; --first-down: #c98500; --series-x: #9085e9;
   --critical: #e66767; --field: #1d2a1f; --field-line: #2f4532;
 }
 * { box-sizing: border-box; }
@@ -176,6 +176,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
         <div><label>Home team</label><input id="home_team" list="teams" autocomplete="off"></div>
         <div><label>Away team</label><input id="away_team" list="teams" autocomplete="off"></div>
       </div>
+      <div class="note" id="colournote" style="margin-top:2px"></div>
       <div class="row">
         <div><label>Stream</label><select id="stream"></select></div>
         <div><label>Receives first</label><select id="opening_receiver"><option value="home">Home</option><option value="away">Away</option></select></div>
@@ -279,14 +280,93 @@ function handicap(h, side) {      // h: the margin home must beat; shown as each
   return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(1);
 }
 
+// ---- team colours -----------------------------------------------------------------------
+// Each NFL team's colours, main first. Road jerseys are white, which cannot mark a side on a chart,
+// so when the two main colours are alike the away side takes its next colour (its kit's trim).
+// Black main colours (Raiders, Steelers) are given as their identifying silver and gold.
+const TEAM_COLOURS = {
+  "Arizona Cardinals": ["#97233F", "#FFB612", "#000000"], "Atlanta Falcons": ["#A71930", "#000000", "#A5ACAF"],
+  "Baltimore Ravens": ["#241773", "#9E7C0C", "#000000"], "Buffalo Bills": ["#00338D", "#C60C30"],
+  "Carolina Panthers": ["#0085CA", "#101820", "#BFC0BF"], "Chicago Bears": ["#0B162A", "#C83803"],
+  "Cincinnati Bengals": ["#FB4F14", "#000000"], "Cleveland Browns": ["#311D00", "#FF3C00"],
+  "Dallas Cowboys": ["#003594", "#869397", "#041E42"], "Denver Broncos": ["#FB4F14", "#002244"],
+  "Detroit Lions": ["#0076B6", "#B0B7BC"], "Green Bay Packers": ["#203731", "#FFB612"],
+  "Houston Texans": ["#03202F", "#A71930"], "Indianapolis Colts": ["#002C5F", "#A2AAAD"],
+  "Jacksonville Jaguars": ["#006778", "#D7A22A", "#101820"], "Kansas City Chiefs": ["#E31837", "#FFB81C"],
+  "Las Vegas Raiders": ["#A5ACAF", "#000000"], "Los Angeles Chargers": ["#0080C6", "#FFC20E"],
+  "Los Angeles Rams": ["#003594", "#FFA300", "#FFD100"], "Miami Dolphins": ["#008E97", "#FC4C02", "#005778"],
+  "Minnesota Vikings": ["#4F2683", "#FFC62F"], "New England Patriots": ["#002244", "#C60C30", "#B0B7BC"],
+  "New Orleans Saints": ["#D3BC8D", "#101820"], "New York Giants": ["#0B2265", "#A71930", "#A5ACAF"],
+  "New York Jets": ["#125740", "#000000"], "Philadelphia Eagles": ["#004C54", "#A5ACAF", "#ACC0C6"],
+  "Pittsburgh Steelers": ["#FFB612", "#101820"], "San Francisco 49ers": ["#AA0000", "#B3995D"],
+  "Seattle Seahawks": ["#002244", "#69BE28", "#A5ACAF"], "Tampa Bay Buccaneers": ["#D50A0A", "#FF7900", "#34302B"],
+  "Tennessee Titans": ["#0C2340", "#4B92DB", "#C8102E"], "Washington Commanders": ["#5A1414", "#FFB612"],
+};
+const CLASH = 35;                   // colours closer than this (CIE76 delta E) are too alike to tell apart
+function teamColours(name) {
+  const n = (name || "").trim().toLowerCase(); if (!n) return null;
+  const hit = Object.keys(TEAM_COLOURS).find(k => k.toLowerCase() === n) ||
+    Object.keys(TEAM_COLOURS).find(k => k.toLowerCase().split(" ").pop() === n.split(" ").pop());
+  return hit ? {team: hit, colours: TEAM_COLOURS[hit]} : null;
+}
+const rgbOf = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const hexOf = c => "#" + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+function lumOf(c) { const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const [r, g, b] = c.map(f); return 0.2126 * r + 0.7152 * g + 0.0722 * b; }
+const contrast = (a, b) => { const [x, y] = [lumOf(a), lumOf(b)].sort((p, q) => q - p); return (x + 0.05) / (y + 0.05); };
+function labOf(c) {
+  const lin = c.map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  const xyz = [[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]].map(r => r[0] * lin[0] + r[1] * lin[1] + r[2] * lin[2]);
+  const f = t => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  const [fx, fy, fz] = [xyz[0] / 0.95047, xyz[1], xyz[2] / 1.08883].map(f);
+  return [116 * fy - 16, 500 * (fx - fy), 200 * (fy - fz)];
+}
+const deltaE = (a, b) => { const [p, q] = [labOf(a), labOf(b)]; return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]); };
+function hslOf([r, g, b]) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn;
+  if (!d) return [0, 0, l];
+  const s = d / (1 - Math.abs(2 * l - 1));
+  const h = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [(h * 60 + 360) % 360, s, l];
+}
+function rgbOfHsl([h, s, l]) {
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((h / 60) % 2 - 1)), m = l - c / 2;
+  const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  return [r, g, b].map(v => (v + m) * 255);
+}
+function legible(hex) {             // lightened (dark page) or darkened (light page), hue and saturation kept, until it stands out
+  const bg = rgbOf(css("--surface-1").length === 7 ? css("--surface-1") : "#1a1a19"), dark = lumOf(bg) < 0.2;
+  const [h, sat, l0] = hslOf(rgbOf(hex));
+  let l = l0, c = rgbOf(hex);
+  for (let k = 0; k < 40 && contrast(c, bg) < 3; k++) { l = dark ? Math.min(0.95, l + 0.02) : Math.max(0.05, l - 0.02); c = rgbOfHsl([h, sat, l]); }
+  return c;
+}
+function applyTeamColours() {
+  const root = document.documentElement, note = $("colournote");
+  root.style.removeProperty("--home"); root.style.removeProperty("--away");
+  const h = teamColours($("home_team").value), a = teamColours($("away_team").value);
+  let msg = "";
+  const home = h ? legible(h.colours[0]) : rgbOf(css("--home"));
+  if (h) root.style.setProperty("--home", hexOf(home));
+  if (a) {
+    const options = a.colours.map(legible);
+    let pick = options.findIndex(c => deltaE(c, home) >= CLASH);
+    if (pick < 0) pick = options.reduce((best, c, i) => deltaE(c, home) > deltaE(options[best], home) ? i : best, 0);
+    root.style.setProperty("--away", hexOf(options[pick]));
+    if (pick > 0) msg = `${a.team} in their second colour (their main one is too close to ${h ? h.team : "home"})`;
+  }
+  if (note) note.textContent = msg;
+}
+
 // ---- setup ------------------------------------------------------------------------------
 async function init() {
   try { META = await api("/api/meta"); } catch (e) { $("modelmeta").textContent = "could not load the model: " + e.message; return; }
   document.title = `${META.version} Trader`; $("title").textContent = `${META.version} Trader`;
-  $("modelmeta").textContent = `${META.model}` + (META.built_before ? ` · built before ${META.built_before.slice(0, 10)}` : "") +
+  $("modelmeta").textContent = `${META.model}` + (META.prior ? ` · prior: ${META.prior}` : "") +
     (META.prematch ? "" : " · no pre-match model");
   $("players").innerHTML = META.players.map(p => `<option value="${esc(p)}">`).join("");
-  $("teams").innerHTML = META.teams.map(t => `<option value="${esc(t)}">`).join("");
+  $("teams").innerHTML = [...new Set([...META.teams, ...Object.keys(TEAM_COLOURS)])].sort().map(t => `<option value="${esc(t)}">`).join("");
   $("stream").innerHTML = META.streams.map(s => `<option>${esc(s)}</option>`).join("");
   $("mean_home").value = META.league[0]; $("mean_away").value = META.league[1];
   $("margin").value = (100 * META.margin).toFixed(1);
@@ -338,6 +418,7 @@ async function reprice() {
 }
 $("margin").onchange = reprice; $("paths").onchange = reprice;
 $("home_player").onchange = $("away_player").onchange = () => renderCalc();
+$("home_team").oninput = $("away_team").oninput = () => { applyTeamColours(); if (HIST.length) render(); };
 function renderCalc() {
   const hn = $("home_player").value.trim() || "Home", an = $("away_player").value.trim() || "Away";
   $("c_hn").textContent = hn; $("c_an").textContent = an;
@@ -357,7 +438,7 @@ $("ato").onclick = () => send({type: "timeout", side: "away"});
 $("theme").onclick = () => {
   const root = document.documentElement;
   root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
-  render();
+  applyTeamColours(); render();
 };
 
 // ---- plays ------------------------------------------------------------------------------
@@ -523,6 +604,7 @@ $("padbody").addEventListener("keydown", ev => {
 
 // ---- rendering ---------------------------------------------------------------------------
 function render() {
+  applyTeamColours();
   if (!HIST.length) return;
   const cur = HIST[HIST.length - 1], g = cur.game, pr = cur.price;
   const prevPrice = HIST.length > 1 ? HIST[HIST.length - 2].price : null;
@@ -596,7 +678,7 @@ function drawField(g) {
   if (g.phase !== "scrimmage") return;
   const abs = g.side === "home" ? g.field : 100 - g.field, dir = g.side === "home" ? 1 : -1;
   const togo = Math.min(100, Math.max(0, abs + dir * g.distance));
-  el("line", {x1: X(togo), x2: X(togo), y1: f.y0, y2: f.y1, stroke: css("--under"), "stroke-width": 2}, f.svg);
+  el("line", {x1: X(togo), x2: X(togo), y1: f.y0, y2: f.y1, stroke: css("--first-down"), "stroke-width": 2}, f.svg);
   el("line", {x1: X(abs), x2: X(abs), y1: f.y0, y2: f.y1, stroke: css("--text-primary"), "stroke-width": 2}, f.svg);
   el("circle", {cx: X(abs), cy: (f.y0 + f.y1) / 2, r: 6, fill: css(g.side === "home" ? "--home" : "--away"), stroke: css("--surface-1"), "stroke-width": 2}, f.svg);
 }
