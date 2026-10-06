@@ -1376,6 +1376,42 @@ each side had called in the half at that `PLAY_OVER`, off the feed's
 knows each side's timeouts left. Exports made before this have no such columns;
 v8 then assumes three each.
 
+## Is SCOUTING_FULL complete? `scouting-check`
+
+```
+python -m eAMFCalibrator scouting-check                          # 9 Sep (baseline) to today, break 23 Sep
+python -m eAMFCalibrator scouting-check --since 2026-09-01 --until 2026-10-06 --break 2026-09-23
+```
+
+Checks every match day from `--since` (default two weeks before `--break`) to `--until` (default
+today, UTC days). The expected matches are those EVENT schedules for the sport, with the result off
+SCORE_ENDGAME where settled. Each match SCOUTING_FULL has is read whole (a day either side of the
+window, deduplicated to the latest load) and judged against a **baseline**: the matches on the days
+before `--break`. Matches that started in the last 4 hours are `LIVE` and not judged.
+
+| Flag | Meaning |
+|---|---|
+| `MISSING` | scheduled and started, but no scouting rows at all |
+| `NO_START` / `NO_END` | no `FIRST_QUARTER_STARTED` / no `ENDED` |
+| `QUARTERS` | fewer than four quarter starts |
+| `GAPS` | holes in `EVENT_MESSAGE_COUNT` between the first and the last |
+| `HEAD_MISSING` | the first message count is later than the baseline's usual first |
+| `FEW_MESSAGES` / `FEW_PLAYS` | under half the baseline's median messages / `PLAY_OVER`s a match |
+| `NO_DETAIL` / `NO_CLOCK` | field position on under half the `PLAY_OVER`s / the clock on under half the messages, where the baseline had them |
+| `SCORE` | the scoring messages (TD 6, XP 1, two-point 2, FG 3, safety 2) do not add up to the final |
+| `NOT_SCHEDULED`, `NO_FINAL`, `DUPLICATES` | information only: not in EVENT, not settled yet, a message loaded more than once |
+
+| File | What |
+|---|---|
+| `scouting_check.txt` | the summary: the baseline, a line a day (scheduled, settled, in scouting, complete, incomplete, missing, median messages and plays, detail and clock fill, scores agreeing, the problems), the days with a hole since the break, the columns whose daily fill moved 20+ points off the baseline, and the message kinds whose rate a match halved, doubled or appeared |
+| `scouting_check_days.csv` | one row a day, with a count of each flag and the latest `FILE_LOADED` (when a backfill landed) |
+| `scouting_check_matches.csv` | one row a match, with its flags and the numbers behind them |
+| `scouting_check_columns.csv` | every column's fill a day, over all rows and over the `PLAY_OVER` rows |
+| `scouting_check_messages.csv` | every message kind's count a day, and per match |
+
+Rerun it after a backfill: a day is fully complete when every scheduled match that started is in
+scouting with no flag.
+
 ## Every timeout: `timeouts`
 
 ```bash
