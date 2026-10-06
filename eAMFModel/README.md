@@ -1764,10 +1764,9 @@ prices after every play. It needs only the v10 build; nothing else is installed.
 model's expected points need pandas and scipy, like the build.
 
 - **Match:** pick the two players, their teams and the stream. *Get expected points* asks the
-  build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points, and
-  fills the table under it with each player's pace, 4th-down and kick-or-punt tendencies and
-  plays on record. The points can be typed over before *Start match*, after which the table
-  shows the pre-match prices too.
+  build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The
+  points can be typed over before *Start match*, after which the pane shows the pre-match
+  prices.
 - **Plays:** each play button moves the game by the rules the sim plays: 4-minute quarters,
   downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers
   and safeties. Three timeouts a side each half, called with the *Timeout* button under each
@@ -1776,7 +1775,7 @@ model's expected points need pandas and scipy, like the build.
   *Ball now at* is where the ball is after the play: a half (home's or away's) and a yard line
   1-50, set to the ball's spot before it, with the gain shown beside it. *Play*, *Punt*,
   *Turnover* and *Kick-off* take it from there. *Edit state* sets anything directly, and *Undo*
-  steps back.
+  (in red, under the first play button) steps back once you confirm it.
 - **Clock:** it runs on the scoreboard. ▶ starts it (or the space bar) and ⏸ stops it; ⏩ runs it
   forward the seconds beside it (20 by default). Each play is recorded at the clock showing when
   it is entered. Plays that stop a real clock (incompletions, scores, kicks, turnovers, timeouts)
