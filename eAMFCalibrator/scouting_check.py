@@ -16,6 +16,7 @@ SCORE_ENDGAME); every match SCOUTING_FULL has is checked on its own deduplicated
     FEW_MESSAGES   under half the baseline's median messages a match
     FEW_PLAYS      under half the baseline's median PLAY_OVERs a match
     NO_DETAIL      the PLAY_OVERs' field position mostly empty (where the baseline had it)
+    NO_DOWN        the PLAY_OVERs' down and distance mostly missing (down 1-4, distance above 0)
     NO_CLOCK       the clock mostly empty (where the baseline had it)
     SCORE          the scoring messages do not add up to the settled final
     (info) NOT_SCHEDULED in scouting, not in EVENT; NO_FINAL no result yet; LIVE started in the
@@ -28,6 +29,11 @@ Writes to --out:
     scouting_check_matches.csv   one row a match, with its flags
     scouting_check_columns.csv   every column's fill rate a day (all rows, and PLAY_OVER rows)
     scouting_check_messages.csv  every message kind's count a day
+    scouting_check_detail_days.csv / _hours.csv
+                                 down and distance (and field position, offensive team) a day / an
+                                 hour: messages and PLAY_OVERs carrying them, the last such message
+    scouting_check_detail_values.csv
+                                 the commonest down, distance, field and team values a day
 """
 
 import csv
@@ -47,8 +53,10 @@ FEW = 0.5                          # under this share of the baseline median is 
 FILLED = 0.5                       # a column under this fill (where the baseline had 0.8+) is empty
 COLUMN_SHIFT = 0.2                 # a column's daily fill this far off the baseline is reported
 KIND_SHIFT = 0.5                   # a message kind's daily rate off the baseline by this factor
+KIND_MIN = 5                       # ... on a day it was expected (or seen) at least this many times
+KIND_DAYS = 3                      # ... on at least this many days
 
-PROBLEMS = ("MISSING", "NO_START", "NO_END", "QUARTERS", "GAPS", "HEAD_MISSING",
+PROBLEMS = ("MISSING", "NO_START", "NO_END", "QUARTERS", "GAPS", "HEAD_MISSING", "NO_DOWN",
             "FEW_MESSAGES", "FEW_PLAYS", "NO_DETAIL", "NO_CLOCK", "SCORE")
 INFO = ("NOT_SCHEDULED", "NO_FINAL", "LIVE", "DUPLICATES")
 
@@ -57,6 +65,9 @@ POINTS = {"TOUCHDOWN": 6, "EXTRA_POINT_GOOD": 1, "TWO_POINT_CONVERSION_SUCCESSFU
 QUARTERS = ("FIRST_QUARTER_STARTED", "SECOND_QUARTER_STARTED",
             "THIRD_QUARTER_STARTED", "FOURTH_QUARTER_STARTED")
 PLAIN = re.compile(r"^[A-Z_][A-Z0-9_$]*$")
+JUMP = 0.3                         # an hour's down-and-distance share this far off the hour before
+MIN_HOUR = 20                      # PLAY_OVERs an hour needs before its share is compared
+TOP_VALUES = 12                    # values listed a day for each detail column
 
 
 # ---------------------------------------------------------------------------
@@ -68,6 +79,21 @@ def _filled(column, kind):
     if (kind or "").upper().startswith(("TEXT", "VARCHAR", "STRING", "CHAR")):
         return f"IFF(NULLIF(TRIM({column}), '') IS NOT NULL, 1, 0)"
     return f"IFF({column} IS NOT NULL, 1, 0)"
+
+
+def _down_ok():
+    """1 where the message carries a usable down (1-4)."""
+    return (f"IFF(TRY_TO_DOUBLE(TRIM(TO_VARCHAR({scouting.DOWN}))) BETWEEN 1 AND 4, 1, 0)")
+
+
+def _dist_ok():
+    """1 where the message carries a usable distance (above 0)."""
+    return f"IFF(TRY_TO_DOUBLE(TRIM(TO_VARCHAR({scouting.DIST}))) > 0, 1, 0)"
+
+
+def _dd_ok():
+    """1 where the message carries both a usable down and distance."""
+    return f"({_down_ok()} * {_dist_ok()})"
 
 
 def _rows_cte(table, start, end):
@@ -143,6 +169,8 @@ def match_sql(table, start, end):
                {detail(scouting.FIELD)} AS PO_FIELD,
                {detail(scouting.TEAM)} AS PO_TEAM,
                {detail(scouting.DOWN)} AS PO_DOWN,
+               SUM(IFF({play_over}, {_dd_ok()}, 0)) AS PO_DD,
+               SUM({_dd_ok()}) AS DD,
                SUM({_filled(scouting.CLOCK, cols.get(scouting.CLOCK))}) AS CLOCK_FILLED,
                {points("A")} AS POINTS_A,
                {points("B")} AS POINTS_B
@@ -170,6 +198,51 @@ def columns_sql(table, start, end):
         FROM s GROUP BY 1 ORDER BY 1
     """
     return sql, params, checked
+
+
+def detail_sql(table, start, end, hourly=False):
+    """Down and distance a day (or an hour): the messages and PLAY_OVERs carrying a usable down
+    and distance, and each detail column on its own, with the first and last such message and the
+    latest load."""
+    rows, params = _rows_cte(table, start, end)
+    po = f"IFF({scouting.MESSAGE} = 'PLAY_OVER', 1, 0)"
+    cols = table.columns
+    field = _filled(scouting.FIELD, cols.get(scouting.FIELD))
+    team = _filled(scouting.TEAM, cols.get(scouting.TEAM))
+    key = "DATE_TRUNC('HOUR', CHECK_FT)" if hourly else "TO_DATE(CHECK_FT)"
+    sql = f"""
+        WITH {rows},
+        d AS (SELECT MATCH_CODE, CHECK_FT, CHECK_FL, {key} AS K, {po} AS PO, {_down_ok()} AS DOWN_OK,
+                     {_dist_ok()} AS DIST_OK, {_dd_ok()} AS DD, {field} AS FIELD_OK, {team} AS TEAM_OK
+              FROM s)
+        SELECT K, COUNT(*) AS N, COUNT(DISTINCT MATCH_CODE) AS MATCHES, SUM(PO) AS N_PO,
+               SUM(DOWN_OK) AS DOWN_OK, SUM(DIST_OK) AS DIST_OK, SUM(DD) AS DD,
+               SUM(FIELD_OK) AS FIELD_OK, SUM(TEAM_OK) AS TEAM_OK,
+               SUM(PO * DD) AS DD_PO, SUM(PO * FIELD_OK) AS FIELD_PO, SUM(PO * TEAM_OK) AS TEAM_PO,
+               COUNT(DISTINCT IFF(DD = 1, MATCH_CODE, NULL)) AS MATCHES_DD,
+               MIN(IFF(DD = 1, CHECK_FT, NULL)) AS FIRST_DD,
+               MAX(IFF(DD = 1, CHECK_FT, NULL)) AS LAST_DD,
+               MAX(CHECK_FL) AS LAST_LOADED
+        FROM d GROUP BY 1 ORDER BY 1
+    """
+    return sql, params
+
+
+def values_sql(table, start, end):
+    """The commonest values a day of each detail column on the PLAY_OVERs (blank as '(none)')."""
+    rows, params = _rows_cte(table, start, end)
+    parts = [f"""SELECT TO_DATE(CHECK_FT) AS DAY, '{c}' AS COL,
+                        COALESCE(NULLIF(TRIM(TO_VARCHAR({c})), ''), '(none)') AS VAL
+                 FROM s WHERE {scouting.MESSAGE} = 'PLAY_OVER'"""
+             for c in (scouting.DOWN, scouting.DIST, scouting.FIELD, scouting.TEAM)]
+    sql = f"""
+        WITH {rows},
+        v AS ({" UNION ALL ".join(parts)})
+        SELECT DAY, COL, VAL, COUNT(*) AS N FROM v GROUP BY 1, 2, 3
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY DAY, COL ORDER BY COUNT(*) DESC) <= {TOP_VALUES}
+        ORDER BY 1, 2, 4 DESC
+    """
+    return sql, params
 
 
 def messages_sql(table, start, end):
@@ -230,6 +303,7 @@ def scouting_matches(cols, rows):
             "started": bool(_num(d["STARTED"])), "ended": bool(_num(d["ENDED"])),
             "quarters": _num(d["QUARTERS"]), "po_field": _num(d["PO_FIELD"]),
             "po_team": _num(d["PO_TEAM"]), "po_down": _num(d["PO_DOWN"]),
+            "po_dd": _num(d["PO_DD"]), "dd": _num(d["DD"]),
             "clock_filled": _num(d["CLOCK_FILLED"]),
             "points": (_num(d["POINTS_A"]), _num(d["POINTS_B"])),
         }
@@ -250,18 +324,20 @@ def assess(expected, found, since, until, brk, now):
                "final": (e or {}).get("final"), "in_scouting": s is not None}
         for key in ("messages", "distinct", "first_count", "last_count", "first_time", "last_time",
                     "last_loaded", "raw_rows", "play_overs", "play_starts", "started", "ended",
-                    "quarters", "po_field", "po_team", "po_down", "clock_filled", "points"):
+                    "quarters", "po_field", "po_team", "po_down", "po_dd", "dd", "clock_filled",
+                    "points"):
             row[key] = (s or {}).get(key)
         if s:
             span = (s["last_count"] - s["first_count"] + 1) if s["first_count"] is not None else 0
             row["gaps"] = max(0, span - (s["distinct"] or 0))
             row["field_fill"] = _share(s["po_field"] or 0, s["play_overs"])
+            row["dd_fill"] = _share(s["po_dd"] or 0, s["play_overs"])
             row["clock_fill"] = _share(s["clock_filled"] or 0, s["messages"])
             a, b = s["points"]
             row["score_agrees"] = (None if row["final"] is None or a is None else
                                    sorted((a, b)) == sorted(row["final"]))
         else:
-            row.update(gaps=None, field_fill=None, clock_fill=None, score_agrees=None)
+            row.update(gaps=None, field_fill=None, dd_fill=None, clock_fill=None, score_agrees=None)
         row["live"] = (dt.timedelta(0) <= now - start < dt.timedelta(hours=LIVE_HOURS)
                        and not (s and s["ended"]))
         rows.append(row)
@@ -274,6 +350,7 @@ def assess(expected, found, since, until, brk, now):
         "messages": _median(r["messages"] for r in base),
         "play_overs": _median(r["play_overs"] for r in base),
         "field_fill": _median(r["field_fill"] for r in base),
+        "dd_fill": _median(r["dd_fill"] for r in base),
         "clock_fill": _median(r["clock_fill"] for r in base),
         "first_count": firsts.most_common(1)[0][0] if firsts else None,
         "score_agrees": _share(sum(1 for r in base if r["score_agrees"]),
@@ -315,6 +392,8 @@ def _flags(r, base, now):
         flags.append("FEW_PLAYS")
     if (base["field_fill"] or 0) >= 0.8 and (r["field_fill"] or 0) < FILLED:
         flags.append("NO_DETAIL")
+    if (base["dd_fill"] or 0) >= 0.8 and (r["dd_fill"] or 0) < FILLED:
+        flags.append("NO_DOWN")
     if (base["clock_fill"] or 0) >= 0.8 and (r["clock_fill"] or 0) < FILLED:
         flags.append("NO_CLOCK")
     if r["score_agrees"] is False:
@@ -348,6 +427,7 @@ def days(rows, since, until, brk):
             "messages": _median(m["messages"] for m in present),
             "play_overs": _median(m["play_overs"] for m in present),
             "field_fill": _median(m["field_fill"] for m in present),
+            "dd_fill": _median(m["dd_fill"] for m in present),
             "clock_fill": _median(m["clock_fill"] for m in present),
             "score_agrees": _share(sum(1 for m in scored if m["score_agrees"]), len(scored)),
             "last_loaded": max(loaded) if loaded else None,
@@ -382,9 +462,18 @@ def column_changes(cols, rows, checked, brk):
     return long_rows, sorted(changed)
 
 
+def _kind_off(base, rate, matches):
+    """Is a day's rate a match off the baseline, on enough messages to tell?"""
+    expected, seen = base * matches, rate * matches
+    if max(expected, seen) < KIND_MIN:
+        return False
+    return seen > 0 if base == 0 else rate < KIND_SHIFT * base or rate > base / KIND_SHIFT
+
+
 def kind_changes(rows, matches_by_day, brk):
     """Per-day message counts, and the kinds whose rate a match moved off the baseline (or that
-    vanished, or appeared). Returns (long rows, [(kind, baseline rate, {day: rate})])."""
+    vanished, or appeared) on KIND_DAYS+ days since the break. Returns (long rows,
+    [(kind, baseline rate, {day: rate}, [days off])])."""
     long_rows, rate = [], defaultdict(dict)
     for day_value, kind, n in rows:
         day = _time(day_value).date()
@@ -399,17 +488,102 @@ def kind_changes(rows, matches_by_day, brk):
     after_days = [d for d in all_days if d >= brk and matches_by_day[d]]
     changed = []
     for kind, by_day in rate.items():
-        base = _median([by_day.get(d, 0.0) for d in base_days]) if base_days else None
-        after = [by_day.get(d, 0.0) for d in after_days]
-        if base is None or not after:
+        if not base_days or not after_days:
             continue
-        if base == 0:
-            moved = any(v > 0 for v in after)
-        else:
-            moved = any(v < KIND_SHIFT * base or v > base / KIND_SHIFT for v in after)
-        if moved and (base >= 0.05 or max(after) >= 0.05):          # ignore the very rare kinds
-            changed.append((kind, base, {d: by_day.get(d, 0.0) for d in all_days}))
+        base = _median([by_day.get(d, 0.0) for d in base_days])
+        off = [d for d in after_days if _kind_off(base, by_day.get(d, 0.0), matches_by_day[d])]
+        if len(off) >= KIND_DAYS:
+            changed.append((kind, base, {d: by_day.get(d, 0.0) for d in all_days}, off))
     return long_rows, sorted(changed, key=lambda t: -t[1])
+
+
+def detail_rows(cols, rows):
+    """detail_sql's rows as dicts, with the shares worked out."""
+    out = []
+    for r in rows:
+        d = {c.lower(): v for c, v in zip([c.upper() for c in cols], r)}
+        row = {"when": _time(d["k"]), "first_dd": _time(d["first_dd"]),
+               "last_dd": _time(d["last_dd"]), "last_loaded": _time(d["last_loaded"])}
+        for k in ("n", "matches", "n_po", "down_ok", "dist_ok", "dd", "field_ok", "team_ok",
+                  "dd_po", "field_po", "team_po", "matches_dd"):
+            row[k] = _num(d[k]) or 0
+        row["dd_share"] = _share(row["dd"], row["n"])
+        row["dd_po_share"] = _share(row["dd_po"], row["n_po"])
+        row["field_po_share"] = _share(row["field_po"], row["n_po"])
+        row["team_po_share"] = _share(row["team_po"], row["n_po"])
+        out.append(row)
+    return out
+
+
+def hour_jumps(hours):
+    """The hours where the PLAY_OVERs' down-and-distance share moved more than JUMP from the
+    hour before (both with MIN_HOUR+ PLAY_OVERs): [(before, after)]."""
+    full = [h for h in hours if h["n_po"] >= MIN_HOUR]
+    return [(a, b) for a, b in zip(full, full[1:])
+            if abs(b["dd_po_share"] - a["dd_po_share"]) > JUMP]
+
+
+def value_shares(rows, day_detail):
+    """{(day, column): [(value, share of that day's PLAY_OVERs)]}, commonest first."""
+    n_po = {d["when"].date(): d["n_po"] for d in day_detail}
+    out = defaultdict(list)
+    for day_value, column, value, n in rows:
+        day = _time(day_value).date()
+        out[(day, column)].append((str(value), _share(_num(n) or 0, n_po.get(day))))
+    for k in out:
+        out[k].sort(key=lambda t: -(t[1] or 0))
+    return out
+
+
+def detail_report(day_detail, hours, values, brk):
+    """The down-and-distance section, as lines."""
+    lines = []
+    say = lines.append
+    say("Down & distance (usable: down 1-4 and distance above 0), day by day:")
+    head = (f"{'day':<12}{'msgs':>8}{'d&d':>8}{'':>5}{'PLAY_OVER':>10}{'d&d':>7}{'':>5}"
+            f"{'field':>6}{'team':>6}{'matches':>10}  {'last d&d':<17}{'loaded':<17}")
+    say(head)
+    say("-" * len(head))
+    for d in day_detail:
+        day = d["when"].date()
+        if day == brk:
+            say(f"{'-- ' + brk.isoformat() + ' (break) ':-<{len(head)}}")
+        say(f"{day.isoformat():<12}{d['n']:>8,}{d['dd']:>8,}{_pct(d['dd_share']):>5}{d['n_po']:>10,}"
+            f"{d['dd_po']:>7,}{_pct(d['dd_po_share']):>5}{_pct(d['field_po_share']):>6}"
+            f"{_pct(d['team_po_share']):>6}{d['matches_dd']:>5}/{d['matches']:<4}  "
+            f"{_stamp(d['last_dd']):<17}{_stamp(d['last_loaded']):<17}")
+    say("")
+    say("msgs / d&d: messages, and those with a usable down and distance; PLAY_OVER / d&d: the same on "
+        "the PLAY_OVERs; field, team: PLAY_OVERs with a field position / offensive team; matches: "
+        "matches with any down and distance / matches; last d&d: the day's last message with them; "
+        "loaded: the day's latest FILE_LOADED")
+    last = max((d["last_dd"] for d in day_detail if d["last_dd"]), default=None)
+    if last:
+        since = [h for h in hours if h["when"] > last.replace(minute=0, second=0, microsecond=0)]
+        say(f"Last message with a down and distance: {_stamp(last)}; since then "
+            f"{sum(h['n_po'] for h in since):,} PLAY_OVERs in {sum(1 for h in since if h['n_po']):,} hours")
+    else:
+        say("No message in the window has a usable down and distance")
+    say("")
+    jumps = hour_jumps(hours)
+    say(f"Hours where the PLAY_OVERs' down & distance share moved more than {100 * JUMP:.0f} points "
+        f"from the hour before (hours with {MIN_HOUR}+ PLAY_OVERs):")
+    if not jumps:
+        say("  none")
+    for a, b in jumps:
+        say(f"  {_stamp(a['when'])} {_pct(a['dd_po_share']):>5} ({a['n_po']:,})  ->  "
+            f"{_stamp(b['when'])} {_pct(b['dd_po_share']):>5} ({b['n_po']:,})")
+    say("")
+    say("Downs on the PLAY_OVERs, day by day (share of the day's PLAY_OVERs):")
+    for d in day_detail:
+        day = d["when"].date()
+        shown = values.get((day, scouting.DOWN), [])[:7]
+        say(f"  {day.isoformat():<12}" + "  ".join(f"{v} {_pct(sh)}" for v, sh in shown))
+    return lines
+
+
+def _stamp(value):
+    return "-" if value is None else value.strftime("%Y-%m-%d %H:%M")
 
 
 # ---------------------------------------------------------------------------
@@ -439,14 +613,19 @@ def _write_csv(path, rows, fields):
 MATCH_FIELDS = ["match_code", "day", "start", "stream", "scheduled", "in_scouting", "problems",
                 "flags", "final", "points", "score_agrees", "messages", "raw_rows", "first_count",
                 "last_count", "distinct", "gaps", "play_starts", "play_overs", "started", "ended",
-                "quarters", "po_field", "po_team", "po_down", "field_fill", "clock_fill",
+                "quarters", "po_field", "po_team", "po_down", "po_dd", "dd", "field_fill", "dd_fill",
+                "clock_fill",
                 "first_time", "last_time", "last_loaded"]
+DETAIL_FIELDS = ["when", "n", "matches", "n_po", "down_ok", "dist_ok", "dd", "dd_share", "dd_po",
+                 "dd_po_share", "field_ok", "field_po", "field_po_share", "team_ok", "team_po",
+                 "team_po_share", "matches_dd", "first_dd", "last_dd", "last_loaded"]
 DAY_FIELDS = ["day", "period", "scheduled", "settled", "in_scouting", "complete", "incomplete",
-              "missing", "live", "messages", "play_overs", "field_fill", "clock_fill",
+              "missing", "live", "messages", "play_overs", "field_fill", "dd_fill", "clock_fill",
               "score_agrees", "last_loaded"] + [f.lower() for f in PROBLEMS]
 
 
-def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind_changed, now):
+def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind_changed, now,
+           detail=()):
     """The summary, as lines."""
     lines = []
     say = lines.append
@@ -458,13 +637,14 @@ def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind
         say(f"Baseline: {baseline['matches']:,} matches over {baseline['days']} days; a match has a "
             f"median {_n(baseline['messages'])} messages and {_n(baseline['play_overs'])} PLAY_OVERs, "
             f"first message count {baseline['first_count']}, field position on "
-            f"{_pct(baseline['field_fill'])} of PLAY_OVERs, the clock on {_pct(baseline['clock_fill'])} "
+            f"{_pct(baseline['field_fill'])} and down & distance on {_pct(baseline['dd_fill'])} "
+            f"of PLAY_OVERs, the clock on {_pct(baseline['clock_fill'])} "
             f"of messages; scoring messages add up to the final in {_pct(baseline['score_agrees'])}")
     else:
         say(f"No baseline: no scouting matches before {brk} in the window (start --since earlier)")
     say("")
     head = (f"{'day':<12}{'sched':>6}{'final':>6}{'scout':>6}{'ok':>6}{'bad':>5}{'miss':>5}"
-            f"{'msgs':>7}{'plays':>6}{'field':>6}{'clock':>6}{'score':>6}  problems")
+            f"{'msgs':>7}{'plays':>6}{'field':>6}{'d&d':>6}{'clock':>6}{'score':>6}  problems")
     say(head)
     say("-" * len(head))
     for d in day_rows:
@@ -473,12 +653,14 @@ def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind
         probs = ", ".join(f"{f} {d['flags'][f]}" for f in PROBLEMS if d["flags"][f] and f != "MISSING")
         say(f"{d['day'].isoformat():<12}{d['scheduled']:>6}{d['settled']:>6}{d['in_scouting']:>6}"
             f"{d['complete']:>6}{d['incomplete']:>5}{d['missing']:>5}{_n(d['messages']):>7}"
-            f"{_n(d['play_overs']):>6}{_pct(d['field_fill']):>6}{_pct(d['clock_fill']):>6}"
+            f"{_n(d['play_overs']):>6}{_pct(d['field_fill']):>6}{_pct(d['dd_fill']):>6}"
+            f"{_pct(d['clock_fill']):>6}"
             f"{_pct(d['score_agrees']):>6}  {probs}" + (f"  ({d['live']} live)" if d["live"] else ""))
     say("")
     say("sched: EVENT's matches that day; final: settled; scout: in SCOUTING_FULL; ok / bad: in "
         "scouting with no problem / with one; miss: started, none in scouting; msgs, plays: median "
-        "messages and PLAY_OVERs a match; field: median share of PLAY_OVERs with a field position; "
+        "messages and PLAY_OVERs a match; field, d&d: median share of PLAY_OVERs with a field position, "
+        "with a down and distance; "
         "clock: median share of messages with the clock; score: scoring messages add up to the final")
 
     after = [r for r in rows if r["day"] >= brk]
@@ -514,17 +696,18 @@ def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind
 
     say("")
     say(f"Message kinds whose daily rate a match fell under {KIND_SHIFT:.0%} or rose over "
-        f"{1 / KIND_SHIFT:.0f}x of the baseline, or appeared:")
+        f"{1 / KIND_SHIFT:.0f}x of the baseline, or appeared, on {KIND_DAYS}+ days (days with "
+        f"{KIND_MIN}+ expected or seen):")
     if not kind_changed:
         say("  none")
-    for kind, base, by_day in kind_changed:
-        after_v = [(d, v) for d, v in by_day.items() if d >= brk]
-        off = [d for d, v in after_v if (v > 0 if base == 0 else
-                                         v < KIND_SHIFT * base or v > base / KIND_SHIFT)]
-        recent = [v for _, v in after_v][-3:]
+    for kind, base, by_day, off in kind_changed:
+        recent = [v for d, v in by_day.items() if d >= brk][-3:]
         say(f"  {str(kind)[:43]:<44} baseline {base:>7.2f}/match  first off "
             f"{off[0].isoformat() if off else '-'}  last days {' '.join(f'{v:.2f}' for v in recent)}"
             f"  (off on {len(off)} days)")
+    if detail:
+        say("")
+        lines.extend(detail)
     return lines
 
 
@@ -559,6 +742,17 @@ def run(cur, table, since, until, brk, out_dir, now=None):
     kind_long, kind_changed = kind_changes(krows, {d["day"]: in_scouting[d["day"]] for d in day_rows},
                                            brk)
 
+    print("  down & distance a day and an hour ...", flush=True)
+    window = (start.strftime(fmt), end.strftime(fmt))
+    sql, params = detail_sql(table, *window)
+    day_detail = detail_rows(*fetch_all(cur, sql, tuple(params)))
+    sql, params = detail_sql(table, *window, hourly=True)
+    hours = detail_rows(*fetch_all(cur, sql, tuple(params)))
+    sql, params = values_sql(table, *window)
+    _, vrows = fetch_all(cur, sql, tuple(params))
+    values = value_shares(vrows, day_detail)
+    detail = detail_report(day_detail, hours, values, brk)
+
     for d in day_rows:
         for f in PROBLEMS:
             d[f.lower()] = d["flags"][f]
@@ -569,11 +763,12 @@ def run(cur, table, since, until, brk, out_dir, now=None):
         r2["problems"] = " ".join(r["problems"])
         r2["final"] = "" if r["final"] is None else f"{r['final'][0]}-{r['final'][1]}"
         r2["points"] = "" if not r["in_scouting"] else f"{r['points'][0]}-{r['points'][1]}"
-        for k in ("field_fill", "clock_fill"):
+        for k in ("field_fill", "dd_fill", "clock_fill"):
             r2[k] = _round(r[k])
         match_out.append(r2)
     match_out.sort(key=lambda r: (r["day"], r["start"] or dt.datetime.min, r["match_code"]))
-    day_out = [dict(d, **{k: _round(d[k]) for k in ("field_fill", "clock_fill", "score_agrees")})
+    day_out = [dict(d, **{k: _round(d[k]) for k in ("field_fill", "dd_fill", "clock_fill",
+                                                      "score_agrees")})
                for d in day_rows]
 
     _write_csv(os.path.join(out_dir, "scouting_check_matches.csv"), match_out, MATCH_FIELDS)
@@ -583,11 +778,22 @@ def run(cur, table, since, until, brk, out_dir, now=None):
                 "play_over_fill"])
     _write_csv(os.path.join(out_dir, "scouting_check_messages.csv"), kind_long,
                ["day", "kind", "messages", "matches", "per_match"])
-    lines = report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind_changed, now)
+    shares = ("dd_share", "dd_po_share", "field_po_share", "team_po_share")
+    for name, rows_ in (("days", day_detail), ("hours", hours)):
+        _write_csv(os.path.join(out_dir, f"scouting_check_detail_{name}.csv"),
+                   [dict(r, **{k: _round(r[k]) for k in shares}) for r in rows_], DETAIL_FIELDS)
+    _write_csv(os.path.join(out_dir, "scouting_check_detail_values.csv"),
+               [{"day": day, "column": col, "value": v, "play_over_share": _round(sh)}
+                for (day, col), vs in sorted(values.items()) for v, sh in vs],
+               ["day", "column", "value", "play_over_share"])
+    lines = report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind_changed, now,
+                   detail)
     with open(os.path.join(out_dir, "scouting_check.txt"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
     print()
     print("\n".join(lines))
     print(f"\n  -> {out_dir}: scouting_check.txt, scouting_check_days.csv, "
-          "scouting_check_matches.csv, scouting_check_columns.csv, scouting_check_messages.csv")
+          "scouting_check_matches.csv, scouting_check_columns.csv, scouting_check_messages.csv, "
+          "scouting_check_detail_days.csv, scouting_check_detail_hours.csv, "
+          "scouting_check_detail_values.csv")
     return lines
