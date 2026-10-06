@@ -411,11 +411,11 @@ build_formula <- function(rhs, d, extra = character(), offset = FALSE) {
 # glmer(poisson) with warnings collected rather than printed (singular fits
 # and convergence notes are routine with this many variance components)
 # and errors turned into NULL.
-fit_glmer <- function(formula, d, start = NULL) {
+fit_glmer <- function(formula, d, start = NULL, nagq = GLMER_NAGQ) {
   warns <- character()
   fit <- tryCatch(
     withCallingHandlers(
-      glmer(formula, data = d, family = poisson, weights = .w, nAGQ = GLMER_NAGQ, start = start,
+      glmer(formula, data = d, family = poisson, weights = .w, nAGQ = nagq, start = start,
             control = glmerControl(optimizer = GLMER_OPTIMIZER, calc.derivs = FALSE,
                                    check.conv.singular = "ignore",
                                    optCtrl = if (GLMER_OPTIMIZER == "nloptwrap") {
@@ -491,6 +491,18 @@ fit_global <- function(train, fs, wspec, as_of, start = NULL) {
   f <- build_formula(fs$global, train, extra)
   res <- fit_glmer(f, train, start = if (is.null(start)) NULL else list(theta = start))
   if (is.null(res$fit) && !is.null(start)) res <- fit_glmer(f, train)   # the warm start didn't fit
+  if (is.null(res$fit) && GLMER_NAGQ > 0) {
+    # PIRLS can fail from lme4's default start ("Downdated VtV is not positive definite"): the
+    # nAGQ = 0 fit is sturdier, and its variance parameters start the full fit; failing that,
+    # it stands (README: nAGQ 0 and 1 give the same model here)
+    first <- res$warnings
+    rough <- fit_glmer(f, train, nagq = 0)
+    if (!is.null(rough$fit)) {
+      res <- fit_glmer(f, train, start = list(theta = lme4::getME(rough$fit, "theta")))
+      if (is.null(res$fit)) res <- rough
+      res$warnings <- unique(c(first, "refitted from an nAGQ = 0 start", res$warnings))
+    }
+  }
   if (is.null(res$fit)) stop(sprintf("global model failed: %s", paste(res$warnings, collapse = "; ")))
   list(fit = res$fit, formula = deparse1(f), n = nrow(train),
        sigma_obs = re_sd(res$fit, "ObsID"), sigma_match = re_sd(res$fit, "MatchId"),
