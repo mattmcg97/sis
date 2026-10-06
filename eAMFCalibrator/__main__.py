@@ -185,6 +185,29 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_scouting_check(args):
+    """Is SCOUTING_FULL complete? Each day and match from --since to --until (default today),
+    against a baseline of the days before --break."""
+    from . import scouting_check
+    brk = dt.date.fromisoformat(args.break_day)
+    until = (dt.date.fromisoformat(args.until[:10]) if args.until
+             else dt.datetime.utcnow().date())
+    if args.days:
+        since = until - dt.timedelta(days=int(args.days))
+    elif args.since:
+        since = dt.date.fromisoformat(args.since[:10])
+    else:
+        since = brk - dt.timedelta(days=scouting_check.BASELINE_DAYS)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            scouting_check.run(cur, table, since, until, brk, args.out or DEFAULT_OUT)
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_timeouts(args):
     """Every timeout in SCOUTING_FULL over the window: who called it, when, at what score, and
     how many each side had left at the end of each half -- what the model's timeout windows are
@@ -1076,6 +1099,18 @@ def build_parser():
     sc_parser.add_argument("--no-probe", action="store_true")
     sc_parser.add_argument("--no-export", action="store_true")
 
+    ck_parser = sub.add_parser(
+        "scouting-check", parents=[shared],
+        help="is SCOUTING_FULL complete? every match day from --since (default two weeks before "
+             "--break) to --until (default today): matches scheduled against those in scouting, "
+             "and each one's messages, sequence, quarters, ENDED, plays, detail, clock and score "
+             "against a baseline of the days before --break (-> scouting_check*.txt/csv)")
+    ck_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    ck_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE")
+    ck_parser.add_argument("--break", dest="break_day", default="2026-09-23", metavar="DATE",
+                           help="the first day after the baseline (default 2026-09-23)")
+
     to_parser = sub.add_parser(
         "timeouts", parents=[shared],
         help="every timeout in SCOUTING_FULL: who called it (with or without the ball), when and "
@@ -1164,6 +1199,8 @@ def main(argv=None):
         return cmd_scouting(args)
     if args.command == "timeouts":
         return cmd_timeouts(args)
+    if args.command == "scouting-check":
+        return cmd_scouting_check(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
