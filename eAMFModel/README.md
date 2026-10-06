@@ -1767,6 +1767,11 @@ model's expected points need pandas and scipy, like the build.
   build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The
   points can be typed over before *Start match*, after which the pane shows the pre-match
   prices.
+- **Team colours:** each side is drawn in its NFL team's main colour (all 32 teams, in
+  `trader.html`'s `TEAM_COLOURS`), lightened or darkened to stand out on the page's theme. When
+  the two are too alike (CIE76 delta E under 35, or the same team) the away side takes its next
+  colour -- road kits are white, so that is the kit's trim (49ers gold against the Chiefs' red,
+  Seahawks green against the Patriots' navy) -- and the match pane says so.
 - **Plays:** each play button moves the game by the rules the sim plays: 4-minute quarters,
   downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers
   and safeties. Three timeouts a side each half, called with the *Timeout* button under each
