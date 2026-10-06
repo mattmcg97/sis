@@ -90,12 +90,16 @@ dialog .acts { display: flex; gap: 8px; justify-content: flex-end; }
 .calc .sum { display: flex; gap: 10px; flex-wrap: wrap; color: var(--text-secondary); font-size: 12px; white-space: nowrap; }
 .calc .sum b { color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .calc h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 4px; font-weight: 600; }
+.at { font-weight: 800; color: var(--text-primary); text-align: center; }
+.row.vs { grid-template-columns: 1fr 18px 1fr; align-items: end; }
+.row.vs .at { padding-bottom: 7px; font-size: 15px; }
+.clock .at { font-size: 18px; line-height: 1; margin-bottom: 2px; }
 .tobtn { margin-top: 6px; padding: 3px 10px; font-size: 12px; align-self: flex-start; }
-.team.away .tobtn { align-self: flex-end; }
+.team.right .tobtn { align-self: flex-end; }
 /* scoreboard */
 .score { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; }
 .team { display: flex; flex-direction: column; gap: 2px; }
-.team.away { align-items: flex-end; text-align: right; }
+.team.right { align-items: flex-end; text-align: right; }
 .team .name { font-weight: 600; font-size: 14px; }
 .team .sub { color: var(--text-muted); font-size: 12px; }
 .team .pts { font-size: 38px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; }
@@ -168,25 +172,27 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <div class="cell" style="grid-area:setup">
     <section class="panel" id="setup">
       <h2>Match</h2>
-      <div class="row">
-        <div><label><span class="side-tag home-tag"></span>Home player</label><input id="home_player" list="players" autocomplete="off"></div>
+      <div class="row vs">
         <div><label><span class="side-tag away-tag"></span>Away player</label><input id="away_player" list="players" autocomplete="off"></div>
+        <span class="at">@</span>
+        <div><label><span class="side-tag home-tag"></span>Home player</label><input id="home_player" list="players" autocomplete="off"></div>
       </div>
-      <div class="row">
-        <div><label>Home team</label><input id="home_team" list="teams" autocomplete="off"></div>
+      <div class="row vs">
         <div><label>Away team</label><input id="away_team" list="teams" autocomplete="off"></div>
+        <span class="at">@</span>
+        <div><label>Home team</label><input id="home_team" list="teams" autocomplete="off"></div>
       </div>
       <div class="note" id="colournote" style="margin-top:2px"></div>
       <div class="row">
         <div><label>Stream</label><select id="stream"></select></div>
-        <div><label>Receives first</label><select id="opening_receiver"><option value="home">Home</option><option value="away">Away</option></select></div>
+        <div><label>Receives first</label><select id="opening_receiver"><option value="away">Away</option><option value="home" selected>Home</option></select></div>
       </div>
       <button id="nb2" style="margin-top:10px;width:100%">Get expected points</button>
       <div class="note" id="nb2note"></div>
       <div class="calc">
         <table>
-          <tr><th></th><th id="c_hn">Home</th><th id="c_an">Away</th></tr>
-          <tr><td>Expected points</td><td><input id="mean_home" type="number" step="0.1"></td><td><input id="mean_away" type="number" step="0.1"></td></tr>
+          <tr><th></th><th id="c_an">Away</th><th id="c_hn">Home</th></tr>
+          <tr><td>Expected points</td><td><input id="mean_away" type="number" step="0.1"></td><td><input id="mean_home" type="number" step="0.1"></td></tr>
         </table>
         <div><h3>Pre-match prices</h3><div id="c_pre" class="note">Start the match for its pre-match prices</div></div>
       </div>
@@ -197,16 +203,16 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <div class="cell" style="grid-area:mid">
     <section class="panel">
       <div class="score">
-        <div class="team"><span class="name"><span class="side-tag home-tag"></span><span id="hname">Home</span></span>
-          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
-          <button class="tobtn" id="hto" disabled>Timeout</button></div>
-        <div class="clock"><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
+        <div class="team"><span class="name"><span class="side-tag away-tag"></span><span id="aname">Away</span></span>
+          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
+          <button class="tobtn" id="ato" disabled>Timeout</button></div>
+        <div class="clock"><div class="at">@</div><div class="q" id="period">Pre-match</div><div class="t" id="clock">4:00</div>
           <div class="clockctl"><button id="run" title="Run or stop the clock (space)">▶</button>
             <input id="ff" type="number" min="1" value="20" title="Seconds to run the clock forward"><span class="u">s</span>
             <button id="ffbtn" title="Run the clock forward">⏩</button></div></div>
-        <div class="team away"><span class="name"><span id="aname">Away</span><span class="side-tag away-tag" style="margin:0 0 0 6px"></span></span>
-          <span class="sub" id="ateam"></span><span class="pts" id="apts">0</span><span class="tos" id="atos"></span>
-          <button class="tobtn" id="ato" disabled>Timeout</button></div>
+        <div class="team right"><span class="name"><span id="hname">Home</span><span class="side-tag home-tag" style="margin:0 0 0 6px"></span></span>
+          <span class="sub" id="hteam"></span><span class="pts" id="hpts">0</span><span class="tos" id="htos"></span>
+          <button class="tobtn" id="hto" disabled>Timeout</button></div>
       </div>
       <div class="situation" id="situation">—</div>
       <div class="chart" id="field" style="margin-top:10px"></div>
@@ -242,14 +248,14 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   </div>
   <div class="cell" style="grid-area:dists">
     <section class="panel">
-      <h2>Final total</h2>
-      <div class="legend" id="tlegend"></div>
-      <div class="chart" id="tdist"></div>
-    </section>
-    <section class="panel">
       <h2>Final margin (home − away)</h2>
       <div class="legend" id="mlegend"></div>
       <div class="chart" id="mdist"></div>
+    </section>
+    <section class="panel">
+      <h2>Final total</h2>
+      <div class="legend" id="tlegend"></div>
+      <div class="chart" id="tdist"></div>
     </section>
   </div>
 </main>
@@ -426,11 +432,11 @@ function renderCalc() {
   if (!pre) { $("c_pre").className = "note"; $("c_pre").textContent = "Start the match for its pre-match prices"; return; }
   const c = x => `<span class="odds">${x.odds.toFixed(2)}</span><span class="p">${pct(x.p)}</span>`;
   $("c_pre").className = "";
-  $("c_pre").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>${esc(hn)} / Over</th><th>${esc(an)} / Under</th></tr>
-    <tr><td>Moneyline</td><td class="line">—</td><td>${c(pre.moneyline.home)}</td><td>${c(pre.moneyline.away)}</td></tr>
-    <tr><td>Handicap</td><td class="line">${handicap(pre.spread.line, "home")}</td><td>${c(pre.spread.home)}</td><td>${c(pre.spread.away)}</td></tr>
+  $("c_pre").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>${esc(an)} / Over</th><th>${esc(hn)} / Under</th></tr>
+    <tr><td>Moneyline</td><td class="line">—</td><td>${c(pre.moneyline.away)}</td><td>${c(pre.moneyline.home)}</td></tr>
+    <tr><td>Handicap</td><td class="line">${handicap(pre.spread.line, "away")}</td><td>${c(pre.spread.away)}</td><td>${c(pre.spread.home)}</td></tr>
     <tr><td>Total</td><td class="line">${pre.total.line.toFixed(1)}</td><td>${c(pre.total.over)}</td><td>${c(pre.total.under)}</td></tr></table>
-    <div class="sum" style="margin-top:6px"><span>Expected <b>${pre.expected.home.toFixed(1)} – ${pre.expected.away.toFixed(1)}</b></span>
+    <div class="sum" style="margin-top:6px"><span>Expected <b>${pre.expected.away.toFixed(1)} @ ${pre.expected.home.toFixed(1)}</b></span>
       <span>Total <b>${pre.expected.total.toFixed(1)}</b></span></div>`;
 }
 $("hto").onclick = () => send({type: "timeout", side: "home"});
@@ -514,8 +520,8 @@ document.addEventListener("keydown", ev => {
 const num = id => { const e = $(id); const v = e ? parseFloat(e.value) : NaN; return isFinite(v) ? v : null; };
 function spotHTML(label) {
   return `<div class="spot"><label>${label}</label>
-    <div class="seg"><button data-half="home" class="${SPOT.half === "home" ? "on" : ""}">${esc(sideName("home"))} half</button>
-      <button data-half="away" class="${SPOT.half === "away" ? "on" : ""}">${esc(sideName("away"))} half</button></div>
+    <div class="seg"><button data-half="away" class="${SPOT.half === "away" ? "on" : ""}">${esc(sideName("away"))} half</button>
+      <button data-half="home" class="${SPOT.half === "home" ? "on" : ""}">${esc(sideName("home"))} half</button></div>
     <input id="p_yard" type="number" min="1" max="50" value="${SPOT.yard}"><span class="gain" id="gain"></span></div>`;
 }
 function padHTML(g) {
@@ -625,22 +631,23 @@ function render() {
 }
 function renderPrices(pr, prev) {
   if (pr.final) {
-    $("prices").innerHTML = `<div class="empty">Settled: ${pr.expected.home} – ${pr.expected.away}</div>`; return;
+    $("prices").innerHTML = `<div class="empty">Settled: ${pr.expected.away} @ ${pr.expected.home}</div>`; return;
   }
   const d = (a, b) => b === undefined || b === null ? "" : (() => { const x = 100 * (a - b); return Math.abs(x) < 0.05 ? "" : `<span class="delta">${x > 0 ? "▲" : "▼"}${Math.abs(x).toFixed(1)}</span>`; })();
   const cell = (s, ps) => `<span class="odds">${s.odds.toFixed(2)}</span><span class="p">${pct(s.p)}</span>${d(s.p, ps && ps.p)}`;
   const pv = prev && !prev.final ? prev : null;
-  $("prices").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>Home / Over</th><th>Away / Under</th></tr>
-    <tr><td class="mk">Moneyline</td><td class="line">—</td><td>${cell(pr.moneyline.home, pv && pv.moneyline.home)}</td><td>${cell(pr.moneyline.away, pv && pv.moneyline.away)}</td></tr>
-    <tr><td class="mk">Handicap</td><td class="line">${handicap(pr.spread.line, "home")} / ${handicap(pr.spread.line, "away")}</td>
-      <td>${cell(pr.spread.home, pv && pv.spread.line === pr.spread.line ? pv.spread.home : null)}</td><td>${cell(pr.spread.away, pv && pv.spread.line === pr.spread.line ? pv.spread.away : null)}</td></tr>
+  const an = esc(SETUP.away_player || "Away"), hn = esc(SETUP.home_player || "Home");
+  $("prices").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>${an} / Over</th><th>${hn} / Under</th></tr>
+    <tr><td class="mk">Moneyline</td><td class="line">—</td><td>${cell(pr.moneyline.away, pv && pv.moneyline.away)}</td><td>${cell(pr.moneyline.home, pv && pv.moneyline.home)}</td></tr>
+    <tr><td class="mk">Handicap</td><td class="line">${handicap(pr.spread.line, "away")} / ${handicap(pr.spread.line, "home")}</td>
+      <td>${cell(pr.spread.away, pv && pv.spread.line === pr.spread.line ? pv.spread.away : null)}</td><td>${cell(pr.spread.home, pv && pv.spread.line === pr.spread.line ? pv.spread.home : null)}</td></tr>
     <tr><td class="mk">Total</td><td class="line">${pr.total.line.toFixed(1)}</td>
       <td>${cell(pr.total.over, pv && pv.total.line === pr.total.line ? pv.total.over : null)}</td><td>${cell(pr.total.under, pv && pv.total.line === pr.total.line ? pv.total.under : null)}</td></tr></table>
-    <div class="expected"><span>Expected <b>${pr.expected.home.toFixed(1)} – ${pr.expected.away.toFixed(1)}</b></span>
+    <div class="expected"><span>Expected <b>${pr.expected.away.toFixed(1)} @ ${pr.expected.home.toFixed(1)}</b></span>
       <span>Margin <b>${signed(+pr.expected.margin.toFixed(1))}</b></span><span>Total <b>${pr.expected.total.toFixed(1)}</b></span>
       <span>Even lines <b>${handicap(pr.spread.even, "home")}</b> · <b>${pr.total.even.toFixed(1)}</b></span></div>
-    <div class="ladders"><table><tr><th>Handicap</th><th>Home</th><th>Away</th></tr>${pr.spread.ladder.map(r =>
-      `<tr class="${r.line === pr.spread.line ? "quoted" : ""}"><td>${handicap(r.line, "home")}</td><td>${pct(r.home)}</td><td>${pct(1 - r.home)}</td></tr>`).join("")}</table>
+    <div class="ladders"><table><tr><th>Handicap</th><th>${an}</th><th>${hn}</th></tr>${pr.spread.ladder.map(r =>
+      `<tr class="${r.line === pr.spread.line ? "quoted" : ""}"><td>${handicap(r.line, "away")}</td><td>${pct(1 - r.home)}</td><td>${pct(r.home)}</td></tr>`).join("")}</table>
       <table><tr><th>Total</th><th>Over</th><th>Under</th></tr>${pr.total.ladder.map(r =>
       `<tr class="${r.line === pr.total.line ? "quoted" : ""}"><td>${r.line.toFixed(1)}</td><td>${pct(r.over)}</td><td>${pct(1 - r.over)}</td></tr>`).join("")}</table></div>`;
 }
@@ -649,7 +656,7 @@ function renderLog() {
     const p = h.price, g = h.game;
     const v = p.final ? "final" : `${pct(p.moneyline.home.p)} · ${p.total.line.toFixed(1)}`;
     return `<div><span class="n">#${i}</span><span class="t">${g.phase === "final" ? "Final" : periodName(g.period) + " " + fmtClock(g.clock)}</span>
-      <span>${esc(h.what || "")} <span style="color:var(--text-muted)">${g.home}–${g.away}</span></span><span class="v">${v}</span></div>`;
+      <span>${esc(h.what || "")} <span style="color:var(--text-muted)">${g.away}–${g.home}</span></span><span class="v">${v}</span></div>`;
   }).reverse().join("");
 }
 
@@ -667,10 +674,10 @@ function frame(host, W, H, m) {
 }
 function drawField(g) {
   const W = 600, H = 54, f = frame($("field"), W, H, {l: 30, r: 30, t: 6, b: 16});
-  const X = yd => f.x0 + (f.x1 - f.x0) * yd / 100;        // yards from the home goal (home attacks right)
+  const X = yd => f.x1 - (f.x1 - f.x0) * yd / 100;        // yards from the home goal, on the right (away @ home)
   el("rect", {x: 0, y: f.y0, width: W, height: f.y1 - f.y0, rx: 4, fill: css("--field")}, f.svg);
-  el("rect", {x: 0, y: f.y0, width: f.x0, height: f.y1 - f.y0, rx: 4, fill: css("--home"), opacity: .35}, f.svg);
-  el("rect", {x: f.x1, y: f.y0, width: W - f.x1, height: f.y1 - f.y0, rx: 4, fill: css("--away"), opacity: .35}, f.svg);
+  el("rect", {x: 0, y: f.y0, width: f.x0, height: f.y1 - f.y0, rx: 4, fill: css("--away"), opacity: .35}, f.svg);
+  el("rect", {x: f.x1, y: f.y0, width: W - f.x1, height: f.y1 - f.y0, rx: 4, fill: css("--home"), opacity: .35}, f.svg);
   for (let yd = 10; yd < 100; yd += 10) {
     el("line", {x1: X(yd), x2: X(yd), y1: f.y0, y2: f.y1, stroke: css("--field-line"), "stroke-width": 1}, f.svg);
     const t = el("text", {x: X(yd), y: H - 3, "text-anchor": "middle"}, f.svg); t.textContent = yd <= 50 ? yd : 100 - yd;
@@ -712,7 +719,7 @@ function lineChart(host, series, opts) {
       if (v === null) { dots[k].setAttribute("visibility", "hidden"); return; }
       dots[k].setAttribute("cx", xs(i)); dots[k].setAttribute("cy", ys(v)); dots[k].setAttribute("visibility", "visible"); });
     const h = HIST[i], g = h.game;
-    showTip(ev, `<div style="color:var(--text-muted)">#${i} · ${g.phase === "final" ? "Final" : periodName(g.period) + " " + fmtClock(g.clock)} · ${g.home}–${g.away}</div>
+    showTip(ev, `<div style="color:var(--text-muted)">#${i} · ${g.phase === "final" ? "Final" : periodName(g.period) + " " + fmtClock(g.clock)} · ${g.away}–${g.home}</div>
       <div>${esc(h.what || "")}</div>` + series.map(s => s.values[i] === null ? "" : `<div>${s.name}: <b>${opts.fmt(s.values[i], true)}</b></div>`).join(""));
   });
   hit.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); hideTip(); });
@@ -761,7 +768,7 @@ function barChart(host, start, probs, cut, colors, names, fmtX) {
 function drawDists(pr, g) {
   if (pr.final) { $("mdist").innerHTML = $("tdist").innerHTML = `<div class="empty">Final</div>`; $("mlegend").innerHTML = $("tlegend").innerHTML = ""; return; }
   const h = pr.spread.line, t = pr.total.line;
-  $("mlegend").innerHTML = `<span style="--c:var(--home)">Home covers ${handicap(h, "home")}</span><span style="--c:var(--away)">Away covers ${handicap(h, "away")}</span>`;
+  $("mlegend").innerHTML = `<span style="--c:var(--away)">${esc(SETUP.away_player || "Away")} covers ${handicap(h, "away")}</span><span style="--c:var(--home)">${esc(SETUP.home_player || "Home")} covers ${handicap(h, "home")}</span>`;
   barChart($("mdist"), pr.margin_dist.start, pr.margin_dist.p, h, [css("--home"), css("--away")], [`home covers ${handicap(h, "home")}`, `away covers ${handicap(h, "away")}`], v => signed(v));
   $("tlegend").innerHTML = `<span style="--c:var(--over)">Over ${t.toFixed(1)}</span><span style="--c:var(--under)">Under ${t.toFixed(1)}</span>`;
   barChart($("tdist"), pr.total_dist.start, pr.total_dist.p, t, [css("--over"), css("--under")], [`over ${t.toFixed(1)}`, `under ${t.toFixed(1)}`], v => String(v));

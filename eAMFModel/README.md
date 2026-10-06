@@ -1776,6 +1776,9 @@ model's expected points need pandas and scipy, like the build.
   build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The
   points can be typed over before *Start match*, after which the pane shows the pre-match
   prices.
+- **Away @ home:** the page lays a match out the American way: the away side on the left of the
+  scoreboard, the field and the match pane, the home side on the right, an @ between them, and
+  in the prices the away side's column (with the over) first.
 - **Team colours:** each side is drawn in its NFL team's main colour (all 32 teams, in
   `trader.html`'s `TEAM_COLOURS`), lightened or darkened to stand out on the page's theme. When
   the two are too alike (CIE76 delta E under 35, or the same team) the away side takes its next
