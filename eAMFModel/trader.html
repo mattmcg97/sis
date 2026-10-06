@@ -40,9 +40,21 @@ header { display: flex; align-items: center; gap: 16px; padding: 10px 16px; bord
 header h1 { font-size: 15px; margin: 0; font-weight: 650; }
 header .meta { color: var(--text-muted); font-size: 12px; }
 header .spacer { flex: 1; }
-main { display: grid; grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px; }
-@media (max-width: 1250px) { main { grid-template-columns: 340px minmax(0, 1fr); } .col3 { grid-column: 1 / -1; } }
-@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); } }
+/* two rows of three cells, each row's cells the same height: match | scoreboard + next play | prices,
+   then plays | charts | distributions */
+main { display: grid; grid-template-columns: 340px minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 12px 16px;
+  grid-template-areas: "setup mid prices" "plays charts dists"; }
+.cell { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.cell > .panel { margin-bottom: 0; }
+.cell > .panel:last-child { flex: 1 1 auto; }
+.cell.plays { position: relative; min-height: 240px; }
+.cell.plays > .panel { position: absolute; inset: 0; display: flex; flex-direction: column; }
+.cell.plays .log { flex: 1 1 0; max-height: none; min-height: 0; }
+@media (max-width: 1250px) { main { grid-template-columns: 340px minmax(0, 1fr);
+  grid-template-areas: "setup mid" "plays charts" "prices prices" "dists dists"; } }
+@media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "setup" "mid" "prices" "plays" "charts" "dists"; }
+  .cell.plays > .panel { position: static; } .cell.plays .log { max-height: 320px; flex: none; } }
 .panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
 .panel h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin: 0 0 10px; font-weight: 600; }
 label { display: block; color: var(--text-secondary); font-size: 12px; margin: 6px 0 2px; }
@@ -136,7 +148,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <button id="theme" title="Light or dark">◐</button>
 </header>
 <main>
-  <div class="col1">
+  <div class="cell" style="grid-area:setup">
     <section class="panel" id="setup">
       <h2>Match</h2>
       <div class="row">
@@ -161,12 +173,8 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       <button class="primary" id="start" style="margin-top:12px;width:100%">Start match</button>
       <datalist id="players"></datalist><datalist id="teams"></datalist>
     </section>
-    <section class="panel">
-      <h2>Plays</h2>
-      <div class="log" id="log"></div>
-    </section>
   </div>
-  <div class="col2">
+  <div class="cell" style="grid-area:mid">
     <section class="panel">
       <div class="score">
         <div class="team"><span class="name"><span class="side-tag home-tag"></span><span id="hname">Home</span></span>
@@ -185,6 +193,20 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       <h2>Next play</h2>
       <div id="padbody"><div class="empty">Start a match</div></div>
     </section>
+  </div>
+  <div class="cell" style="grid-area:prices">
+    <section class="panel">
+      <h2>Prices <span id="pricenote" style="text-transform:none;letter-spacing:0"></span></h2>
+      <div id="prices"></div>
+    </section>
+  </div>
+  <div class="cell plays" style="grid-area:plays">
+    <section class="panel">
+      <h2>Plays</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+  <div class="cell" style="grid-area:charts">
     <section class="panel">
       <h2>Home win probability</h2>
       <div class="legend"><span style="--c:var(--home)">Home win %</span><span class="dash" style="--c:var(--text-muted)">Pre-match</span></div>
@@ -196,11 +218,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       <div class="chart" id="totchart"></div>
     </section>
   </div>
-  <div class="col3">
-    <section class="panel">
-      <h2>Prices <span id="pricenote" style="text-transform:none;letter-spacing:0"></span></h2>
-      <div id="prices"></div>
-    </section>
+  <div class="cell" style="grid-area:dists">
     <section class="panel">
       <h2>Final total</h2>
       <div class="legend" id="tlegend"></div>
@@ -535,7 +553,7 @@ function drawField(g) {
   el("circle", {cx: X(abs), cy: (f.y0 + f.y1) / 2, r: 6, fill: css(g.side === "home" ? "--home" : "--away"), stroke: css("--surface-1"), "stroke-width": 2}, f.svg);
 }
 function lineChart(host, series, opts) {
-  const W = 600, H = 210, f = frame(host, W, H, {l: 40, r: 70, t: 10, b: 22});
+  const W = 600, H = 200, f = frame(host, W, H, {l: 40, r: 70, t: 10, b: 22});
   const n = HIST.length, xs = i => f.x0 + (n <= 1 ? 0 : (f.x1 - f.x0) * i / (n - 1));
   const [lo, hi] = opts.range(series);
   const ys = v => f.y1 - (f.y1 - f.y0) * (v - lo) / (hi - lo || 1);
@@ -588,7 +606,7 @@ function drawTotal() {
      fmt: (v, full) => full ? v.toFixed(1) : String(v)});
 }
 function barChart(host, start, probs, cut, colors, names, fmtX) {
-  const W = 600, H = 190, f = frame(host, W, H, {l: 40, r: 10, t: 14, b: 22});
+  const W = 600, H = 200, f = frame(host, W, H, {l: 40, r: 10, t: 14, b: 22});
   const n = probs.length, bw = (f.x1 - f.x0) / n, max = Math.max(...probs, 0.001);
   const top = Math.ceil(max * 100 / 2) * 2 / 100 || 0.02;
   const ys = p => f.y1 - (f.y1 - f.y0) * p / top;
