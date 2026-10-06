@@ -1483,14 +1483,19 @@ def prematch_model(model_dir_or_tables):
     """The model's pre-match model -- NB2 or glmer, whichever it was built with -- or None."""
     import os
     d = model_dir_or_tables if os.path.isdir(model_dir_or_tables) else os.path.dirname(model_dir_or_tables)
-    kind = "nb2"                     # a model built before the choice existed
+    kind, meta = "nb2", {}           # nb2: a model built before the choice existed
     if os.path.exists(os.path.join(d, PRIOR_FILE)):
         with open(os.path.join(d, PRIOR_FILE), encoding="utf-8") as fh:
-            kind = json.load(fh).get("prior", "nb2")
+            meta = json.load(fh)
+        kind = meta.get("prior", "nb2")
     path = os.path.join(d, kind)
-    if not PRIORS[kind].exists(path):
+    if meta.get("rolling"):          # refitted every day (rolling_prior; `eAMFModel prior-daily`)
+        from . import rolling_prior
+        pre = rolling_prior.Rolling(meta["rolling"])
+    elif not PRIORS[kind].exists(path):
         return None
-    pre = PRIORS[kind](path)
+    else:
+        pre = PRIORS[kind](path)
     shrink_path = os.path.join(d, SHRINK_FILE)
     if PRIOR_SHRINK and os.path.exists(shrink_path):
         with open(shrink_path, encoding="utf-8") as fh:

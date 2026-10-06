@@ -34,7 +34,9 @@ DEFAULTS <- list(
   min_matches = "",         # "" = MIN_PLAYER_MATCHES
   nagq = "",                # "" = GLMER_NAGQ
   optimizer = "",           # "" = GLMER_OPTIMIZER (nloptwrap or bobyqa)
-  cores = ""                # for the per-player fits; "" = all but one
+  cores = "",               # for the per-player fits; "" = all but one
+  start = ""                # an earlier model.rds of the same formula: its variance parameters
+                            # warm-start the global fit (a refit on a day more data; see backtest.R)
 )
 
 .here <- local({
@@ -100,9 +102,15 @@ if (cores > 1 && with_players) {
     NULL
   }, .here, GLMER_NAGQ, GLMER_OPTIMIZER))
 }
+start <- NULL
+if (nzchar(args$start) && file.exists(args$start)) {
+  prev <- readRDS(args$start)
+  if (identical(prev$feature_set, args$feature_set)) start <- lme4::getME(prev$global$fit, "theta")
+  log_line("warm start from %s%s", args$start, if (is.null(start)) " -- another feature set, ignored" else "")
+}
 bundle <- tryCatch(
   fit_bundle(train, fs, wspec, as_of, cluster = cl, fs_name = args$feature_set,
-             w_name = args$weighting, with_players = with_players),
+             w_name = args$weighting, with_players = with_players, start = start),
   finally = if (!is.null(cl)) parallel::stopCluster(cl))
 bundle$default_mode <- args$mode
 bundle$history_path <- history_path

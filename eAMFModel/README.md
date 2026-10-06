@@ -1646,6 +1646,28 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
+## Refitting the prior every day (`prior-daily`, v10–v12)
+
+A build fits its pre-match model (NB2 or glmer) once, at its cut-off. Over a test window of weeks
+its ratings go stale where a live model's would not: glmer's form features follow the results as
+they come in, but its coefficients and player effects do not move, and NB2 does not move at all.
+`prior-daily` refits the pre-match model for every day of a window, each fit on every result
+settled before that day began, as a nightly refit would live. Every match is priced from its own
+day's fit (`rolling_prior.py`); the build's prior shrink is applied on top, as before.
+
+```powershell
+python -m eAMFModel prior-daily --prior glmer --history eAMFCalibrator/out/match_history.csv --since 2026-08-23 --until 2026-09-23 --out glmer_daily --attach v10_0823,v11_0823,v12_0823
+```
+
+- Each build attached must have been built with the same `--prior`, since its shrink was fitted for
+  that model. `--detach` returns builds to their own single fit.
+- The days are fitted in `--workers` runs of consecutive days side by side (default 2). Within a run
+  each glmer fit warm-starts from the day before's (`glmer/fit.R --start`), as `backtest.R
+  --warm-start` does. Days already fitted are kept, so a window can be extended later.
+- One directory of fits serves every version attached to it.
+- Only the prior is refitted. The simulation's tables, the shrink and the form spread stay as the
+  build fitted them.
+
 ## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that

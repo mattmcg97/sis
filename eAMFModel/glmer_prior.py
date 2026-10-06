@@ -51,8 +51,9 @@ def _run(script, args):
         raise SystemExit(f"glmer/{script} failed:\n{done.stdout[-2000:]}\n{done.stderr[-2000:]}")
 
 
-def fit(history, out_dir, before):
-    """Fit the glmer model on the finished matches before a cut-off."""
+def fit(history, out_dir, before, start=None):
+    """Fit the glmer model on the finished matches before a cut-off; `start`, an earlier fit's
+    directory, warm-starts it (a day's refit, rolling_prior)."""
     os.makedirs(out_dir, exist_ok=True)
     rows = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
             and nb2_prior._start(r) is not None and nb2_prior._start(r) < before]
@@ -60,8 +61,10 @@ def fit(history, out_dir, before):
         raise SystemExit("no finished matches to fit the glmer model on")
     path = os.path.abspath(os.path.join(out_dir, HISTORY))
     nb2_prior._write(path, rows, nb2_prior.HISTORY_FIELDS)
+    extra = [f"--start={os.path.abspath(os.path.join(start, MODEL))}"] \
+        if start and os.path.exists(os.path.join(start, MODEL)) else []
     _run(FIT_SCRIPT, [f"--history={path}", f"--before={before:%Y-%m-%d %H:%M:%S}",
-                      f"--out={os.path.abspath(out_dir)}"])
+                      f"--out={os.path.abspath(out_dir)}"] + extra)
     return len(rows)
 
 
@@ -148,10 +151,11 @@ class Prematch:
         return m.get("feature_set") not in CLOCK_SETS
 
     @classmethod
-    def build(cls, history, directory, before):
+    def build(cls, history, directory, before, start=None):
         """Fit the model before a cut-off and save it. Its expected points are not rescaled: the
-        form features follow the league's level (NB2's level scale corrects a lag NB2 has)."""
-        n = fit(history, directory, before)
+        form features follow the league's level (NB2's level scale corrects a lag NB2 has).
+        `start`: an earlier fit's directory to warm-start from."""
+        n = fit(history, directory, before, start=start)
         with open(os.path.join(directory, INFO), encoding="utf-8") as fh:
             info = json.load(fh)
         meta = {"prior": NAME, "fitted_on": n, "before": before.isoformat(), "scale": 1.0,

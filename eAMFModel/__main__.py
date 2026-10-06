@@ -15,6 +15,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          return touchdowns played as real games play them)
   v12-build / v12        the same for v12 (v11 with level sides' late drives run down to
                          the kick as real ones are)
+  prior-daily            refit the pre-match model every day of a window, as live, and point
+                         builds at the daily fits
   trader                 a local page to click through a game and see a version's prices
   remaining SNAPS.csv    a version's points still to come against what really came
 
@@ -160,6 +162,27 @@ def cmd_trader(args):
                  browser=not args.no_browser, version=args.version)
 
 
+def cmd_prior_daily(args):
+    import datetime as dt
+    from . import nb2_prior, rolling_prior
+    if args.detach:
+        for m in args.detach.split(","):
+            rolling_prior.detach(m)
+            print(f"  {m}: prices from its own single fit again")
+        return 0
+    if not (args.history and args.since and args.until and args.out):
+        raise SystemExit("prior-daily needs --history, --since, --until and --out (or --detach)")
+    history = nb2_prior.load_history(args.history)
+    since, until = dt.date.fromisoformat(args.since), dt.date.fromisoformat(args.until)
+    rolling = rolling_prior.fit(history, args.prior, args.out, since, until, workers=args.workers)
+    print(f"  {rolling.describe()}")
+    for m in (args.attach or "").split(","):
+        if m:
+            rolling_prior.attach(m, args.out)
+            print(f"  {m}: now prices each match from its own day's fit")
+    return 0
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="eAMFModel", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -249,6 +272,19 @@ def main(argv=None):
                    help="the points on the rest of the drive under way at each scrimmage PLAY_OVER "
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
+
+    p = sub.add_parser("prior-daily", help="refit the pre-match model every day of a window, as it "
+                                           "would be live, and point builds at it (rolling_prior.py)")
+    p.add_argument("--history", help="eAMFCalibrator history's CSV (every match's players and finals)")
+    p.add_argument("--prior", choices=["nb2", "glmer"], default="glmer")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (its fit sees results before it)")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD")
+    p.add_argument("--out", help="directory for the daily fits (days already fitted are kept)")
+    p.add_argument("--attach", help="builds to price from these fits, comma-separated (each built "
+                                    "with the same --prior)")
+    p.add_argument("--detach", help="builds to return to their own single fit, comma-separated")
+    p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
+    p.set_defaults(func=cmd_prior_daily)
 
     p = sub.add_parser("trader", help="a local web page to test a model by hand: set up a match, click "
                                       "through it play by play, and see its prices after each play")
