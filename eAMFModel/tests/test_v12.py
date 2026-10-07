@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import glmer_prior, nb2_prior, players, sim9, sim12, v12, v12_stream
+from .. import follow, glmer_prior, nb2_prior, players, sim9, sim12, v12, v12_stream
 from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
@@ -1821,9 +1821,12 @@ class TestGlmerPrior(unittest.TestCase):
         out = os.path.join(self.tmp.name, "v12")
         v12.build(_matches(12), out, grid_paths=40, verbose=False, history=self.history(),
                  before=self.BEFORE, prior="glmer")
-        self.assertIsInstance(v12.prematch_model(out), glmer_prior.Prematch)
-        self.assertIsInstance(v12.prematch_model(os.path.join(out, "v12tables.npz")),
-                              glmer_prior.Prematch)
+        for where in (out, os.path.join(out, "v12tables.npz")):
+            pre = v12.prematch_model(where)
+            self.assertIsInstance(pre, follow.Following)        # following the results since its fit
+            while hasattr(pre, "pre"):
+                pre = pre.pre
+            self.assertIsInstance(pre, glmer_prior.Prematch)
         self.assertFalse(os.path.exists(os.path.join(out, "nb2")))
         with open(os.path.join(out, v12.PRIOR_FILE)) as fh:
             self.assertEqual(json.load(fh), {"prior": "glmer"})

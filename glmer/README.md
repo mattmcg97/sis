@@ -362,6 +362,39 @@ What the numbers say:
   fold, out of ~5,000. The per-player rows in the one-fit table predate the
   guards; the global rows don't depend on them.
 
+## Team ratings and in-session form (7 Oct 2026)
+
+**A colleague's Madden team ratings** gave each team an overall, offence, pass and run offence,
+deep threat and defence score, with notes. They were tested against `nb2/AMFELO.csv` and glmer's
+out-of-sample errors (12 fortnights of 14-day refits, 15,418 matches).
+- **The tiers are the league's pools.** Tier 1 (PHI, DET, BAL, KC, SF) and Tier 2 (BUF, DEN, CIN,
+  WAS, MIN) only ever play within their own tier.
+- **Raw results run backwards.** PHI, rated best, wins 43% of its games, and WAS, rated worst in
+  its tier, wins 54%. Weaker gamers are given the stronger teams. A gamer's strength correlates
+  about −0.25 with their team's in every month since January.
+- **Net of the gamer, the ratings are right.** Least squares on margins, with both gamers and both
+  teams, gives team strengths that correlate 0.93 with Overall within the tiers. That is about 0.5
+  points of margin per rating point, and it is steady from December to September.
+- **glmer already has this.** Gamers rotate teams (a median of 9 of the 10 in their last 6,000
+  matches), so its crossed player and team effects separate the two. Its fitted team effects follow
+  the ratings, and a gamer's rating is net of the teams they were given.
+- **Nothing left over in glmer's errors.**
+  - Overall: +0.07 points per rating point (t 2.7), 0.02% of the error variance.
+  - Pass or run offence against the opponent's defence, offensive style, and deep threats: all
+    under t 1.
+  - The 40 team pairings spread exactly as chance would (sd of pair z-scores 0.99).
+  - CIN, Tier 2's only deep threat, scored 1 point under its price against DEN (z −3.7), as the
+    note on DEN's corner says. With 40 pairings tested it is borderline.
+
+So no rating feature was added.
+
+**In-session form.** A gamer's errors against glmer correlate about as much across sessions as
+within one: +0.013 for matches under 2 hours apart, +0.018 for matches 4 to 16 days apart. Losing
+streaks run a little worse than glmer says: 38.4% won against 41.5% priced after losing 6 of 8.
+That is the gamer's level drifting from the fitted ratings over days, not a same-night effect. A
+second layer that follows each gamer's results since the fit catches it, for NB2 as well as glmer.
+See "Following the results since the fit" in `eAMFModel/README.md`.
+
 ## Speed
 
 The global model is the slow part: two very large random effects,

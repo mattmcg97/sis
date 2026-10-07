@@ -1677,6 +1677,61 @@ python -m eAMFCalibrator history
 python -m eAMFModel prior-daily --prior nb2 --history eAMFCalibrator/out/match_history.csv --since 2026-10-06 --until 2026-10-06 --out nb2_live --attach v12_model
 ```
 
+## Following the results since the fit (`follow.py`, v10–v12)
+
+A build's pre-match model (NB2 or glmer) is fitted once. Between fits its ratings stay put while
+gamers' real levels move. NB2 doesn't move at all. glmer's form features follow the results, but its
+player effects don't. `follow.py` adds a second layer on top:
+- Each gamer has an offset: the sum of their errors against the model's own prices over their
+  matches settled since the fit, divided by that many matches plus 80 (`PRIOR`).
+- That offset is added to their later matches: the margin errors to the expected margin, the total
+  errors to the expected total. A gamer 2 points worse than rated over 40 matches is priced
+  40 × 2 / 120 = 0.67 points worse.
+- A match's offset reads only the gamer's matches that started before it. A pre-match quote priced
+  as of an earlier time (`stream.known_states`) reads only what was known then.
+- NB2 now follows the results too, so the calibrator fetches the settled matches for an NB2 build as
+  it does for glmer.
+
+`prematch_model()` puts it on top of the prior shrink, for both priors (`follow.ON`). A rolling
+prior refitted every day (`prior-daily`) is left as it is: the layer gains nothing in the first days
+after a fit.
+
+**What it catches: drift, not a bad night.** The errors are glmer's (floored) and NB2's out of
+sample, 12 fortnights of 14-day refits on AMFELO.
+- Two of a gamer's errors correlate only weakly, and about as much in the same session as across
+  sessions the same number of matches apart: +0.037 against +0.019 three matches apart, +0.015
+  against +0.010 five apart.
+- By time apart the correlation is +0.013 within 2 hours and +0.018 at 4 to 16 days.
+- So a gamer's level drifts away from the fitted ratings over days. There is no same-night tilt on
+  top for the model to catch. The earlier session-form features (`form_session`) found nothing for
+  the same reason.
+
+**What it does.** Out of sample, errors restarting at each fit:
+
+| | moneyline log loss | margin RMSE | total RMSE | fortnights better |
+|---|---|---|---|---|
+| glmer | 0.6682 → 0.6656 | 9.415 → 9.378 | 12.068 → 12.028 | 9 of 12 |
+| NB2 | 0.6692 → 0.6653 | 9.375 → 9.323 | 12.151 → 12.067 | 12 of 12 |
+
+- **The older the fit, the more it gains.** For glmer: nothing in the first 3 days after a fit,
+  then −0.0013 log loss on days 4–7 and −0.0046 from day 12 on.
+- **With the shrink.** On top of the prior shrink (fortnights 4–11), moneyline log loss goes
+  0.6686 → 0.6655 for glmer and 0.6686 → 0.6652 for NB2.
+- **Head to head.** On the 9,808 matches both priced, glmer stays ahead of NB2 (0.6636 against
+  0.6652; totals RMSE 12.106 against 12.171). Its lead shrinks from 0.0042: much of it came from
+  following the results, which the layer now gives NB2.
+- **Bad and good nights.** The layer moves the next match toward what really happened:
+
+  | session so far | matches | real win rate | glmer | glmer + layer |
+  |---|---|---|---|---|
+  | lost 3+ of 4+ | 2,596 | 0.421 | 0.439 | 0.429 |
+  | lost 6+ of 8+ | 581 | 0.384 | 0.415 | 0.404 |
+  | lost 8+ of 10+ | 56 | 0.321 | 0.383 | 0.367 |
+  | won 3+ of 4+ | 2,824 | 0.588 | 0.579 | 0.588 |
+  | won 6+ of 8+ | 688 | 0.610 | 0.593 | 0.606 |
+
+- **The prior.** 40 chased the noise in some fortnights; 160 was steadier but gained less.
+
 ## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that
