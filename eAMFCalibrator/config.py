@@ -23,6 +23,9 @@ MODEL_DIRS = {}
 # A model version prices only the prod rows published before each match's first play, off its
 # kick-off (no in-play simulation): set by `bets prematch`, the pre-match models' own test.
 PREMATCH_ONLY = False
+# `bets --gamer NAME`: only the matches these gamers played, with each match's closing pre-match
+# prices and what its bets returned, prod against each candidate.
+GAMERS = []
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
 FETCH_CACHE = False

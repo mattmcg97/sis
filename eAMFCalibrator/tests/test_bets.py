@@ -434,3 +434,93 @@ class TestHtmlSection(unittest.TestCase):
         self.assertIn("Fanduel +1s (100 bets)", html)
         self.assertIn('class="good">+10.00', html)
         self.assertEqual(bets.html_section({}), "")
+
+
+class TestGamer(unittest.TestCase):
+    """`bets --gamer NAME`: one gamer's matches, their closing prices both ways, and the bets."""
+
+    INFO = {"M1": {"MATCH_CODE": "M1", "SCHEDULED_START_TIME_UTC": "2026-10-06 19:36:00",
+                   "PLAYER_1_HANDLE": "NIGHTMARE", "PLAYER_1_TEAM": "Buffalo Bills",
+                   "PLAYER_2_HANDLE": "FUSE", "PLAYER_2_TEAM": "Denver Broncos"},
+            "M2": {"MATCH_CODE": "M2", "SCHEDULED_START_TIME_UTC": "2026-10-06 18:24:00",
+                   "PLAYER_1_HANDLE": "KILLJOY", "PLAYER_1_TEAM": "Washington Commanders",
+                   "PLAYER_2_HANDLE": "Nightmare", "PLAYER_2_TEAM": "Minnesota Vikings"}}
+
+    def test_closing_prices_are_the_last_before_the_first_play(self):
+        row = lambda market, seconds, prob, msg, desc=None: ("M1", market, at(seconds), 100.0 * prob, None,
+                                                             desc, msg, "open", "true")
+        rows = [row(50, 0, 0.40, None), row(50, 10, 0.45, None),
+                row(50, 20, 0.47, 3),                          # a pre-game message, before play 5
+                row(50, 30, 0.80, 7),                          # in play
+                row(52, 15, 0.52, None, "Line -3.5")]
+        got = bets.closing_prices(bets.timeline(rows), {"M1": 5}, ["M1", "M2"])
+        self.assertEqual(got["M1"][50], (0.47, None))
+        self.assertEqual(got["M1"][52], (0.52, -3.5))
+        self.assertNotIn("M2", got)
+        self.assertEqual(bets.closing_prices(bets.timeline(rows), {}, ["M1"])["M1"][50], (0.45, None))
+
+    def test_the_report_walks_the_gamer_s_matches_both_ways(self):
+        def row(match, stake, rev, rev_c):
+            return dict(match_code=match, stake=stake, revenue=rev, candidate_revenue=rev_c, simulated=True)
+        v10 = [row("M1", 10, 4, 1), row("M1", 10, -10, -5), row("M2", 20, 20, 15)]
+        glmer = [dict(r, candidate_revenue=c) for r, c in zip(v10, (2, -2, 5))]
+        closing = {"prod": {"M1": {50: (0.47, None), 52: (0.51, 1.5), 54: (0.5, 40.5)},
+                            "M2": {51: (0.60, None), 53: (0.5, -2.5)}},
+                   "v10": {"M1": {50: (0.42, None)}}, "v10-glmer": {"M1": {50: (0.38, None)}}}
+        lines = bets.gamer_report(["nightmare"], self.INFO, [("v10", v10), ("v10-glmer", glmer)],
+                                  closing, {"M1": (14, 27), "M2": (30, 10)})
+        text = "\n".join(lines)
+        self.assertIn("NIGHTMARE: 2 matches, won 0, lost 2; his margin -33 points against prod's closing"
+                      " spread lines summing to -1", text)
+        self.assertLess(text.index("v KILLJOY"), text.index("v FUSE"))          # kick-off order
+        self.assertIn("lost 14-27", text)
+        self.assertIn("lost 10-30", text)                                       # his side first
+        self.assertIn("prod      47.0%", text)
+        self.assertIn("v10-glmer      38.0%", text)
+        self.assertIn("prod   +1.5 51%", text)
+        self.assertIn("book revenue prod -6, v10 -4, v10-glmer +0", text)
+        self.assertIn("all 2: 3 bets re-priced, stake 40; book revenue prod +14 (+35.0%), v10 +11 (+27.5%),"
+                      " v10-glmer +5 (+12.5%)", text)
+
+    def test_operator_margins_are_the_median_over_prod(self):
+        rows = [dict(implied_prob=0.55, stream_prob=0.50, on_prod_line=True, market="moneyline", in_play=True,
+                     **{config.BET_GROUP_COLUMN: "FANDUEL"}) for _ in range(30)]
+        rows += [dict(implied_prob=0.9, stream_prob=0.5, on_prod_line=False, market="moneyline", in_play=True,
+                      **{config.BET_GROUP_COLUMN: "FANDUEL"})]
+        text = "\n".join(bets.operator_margins(rows))
+        self.assertIn("FANDUEL", text)
+        self.assertIn("+10.0%", text)
+        self.assertIn("30 bets", text)
+
+    def test_bets_gamer_prices_only_his_matches(self):
+        from .. import snowflake_io
+        cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
+                "ODDS", "STAKE_GBP", "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER",
+                "OPERATOR_NAME", "BET_IN_PLAY", "CUSTOMER_TEMPERATURE"]
+        rows = []
+        for match in ("M1", "M3"):
+            for (c, new), (_, old) in zip(PRICES[1:], PRICES):
+                rows.append((len(rows), match, at(c + 7), 1, 1, odds_for(new), 10, 10, None, 2, "FANDUEL",
+                             "Yes", "Standard"))
+        info = [self.INFO["M1"], dict(self.INFO["M2"], MATCH_CODE="M3", PLAYER_2_HANDLE="ACE")]
+        asked = []
+
+        def quotes(cur, stream, matches):
+            asked.append(list(matches))
+            return MONEYLINE
+        with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
+                mock.patch.object(snowflake_io, "fetch_match_info", return_value=info), \
+                mock.patch.object(snowflake_io, "fetch_quotes", side_effect=quotes), \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text") as text, \
+                mock.patch("builtins.print"), mock.patch("os.makedirs"), \
+                mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
+                mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
+                mock.patch.object(config, "CANDIDATES", ["MODEL:v10"]), mock.patch.object(bets, "check_models"), \
+                mock.patch.object(config, "GAMERS", ["Nightmare"]):
+            out = bets.run(None, "out")
+        self.assertEqual({r["match_code"] for r in out}, {"M1"})
+        self.assertTrue(all(m == ["M1"] for m in asked))
+        written = {c[0][0]: c[0][1] for c in text.call_args_list}
+        report = "\n".join(written[os.path.join("out", "bets_gamers.txt")])
+        self.assertIn("NIGHTMARE: 1 matches, won 1, lost 0", report)

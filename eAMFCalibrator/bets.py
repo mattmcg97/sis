@@ -614,6 +614,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     bets = to_bets(cols, raw)
     if prematch_only:
         bets = [b for b in bets if not b.in_play]
+    gamer_info = None
+    if config.GAMERS:
+        bets, gamer_info = for_gamers(cur, bets, config.GAMERS)
+        print(f"  {', '.join(g.upper() for g in config.GAMERS)}: {len(gamer_info):,} matches in the window")
     matches = sorted({b.match_code for b in bets})
     print(f"  {len(bets):,} bets on {len(matches):,} matches from {bet_table()} "
           f"({sum(b.in_play for b in bets):,} in play)")
@@ -639,6 +643,8 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         print("\n".join(bet_moments.report([("prod", rows)])))
         return rows
     results = []
+    first_plays = {c: getattr(f, "first_play", None) for c, f in (checks.feeds or {}).items()}
+    closing = {"prod": closing_prices(prod_tl, first_plays, matches)} if gamer_info is not None else None
     cached, prematch_was = config.FETCH_CACHE, config.PREMATCH_ONLY
     config.FETCH_CACHE = True             # one simulation per model, whatever lines each reads
     config.PREMATCH_ONLY = prematch_only
@@ -646,10 +652,13 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         for stream in candidate_streams():
             print(f"\n  pricing the bets with {label(stream)}", flush=True)
             cand_rows = candidate_quotes(cur, stream, matches)
+            cand_tl = timeline(cand_rows)
             results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
-                                                 timeline(cand_rows), finals, checks,
+                                                 cand_tl, finals, checks,
                                                  same_state=snowflake_io.is_model(stream))))
-            del cand_rows
+            if closing is not None:
+                closing[label(stream)] = closing_prices(cand_tl, first_plays, matches)
+            del cand_rows, cand_tl
     finally:
         config.FETCH_CACHE, config.PREMATCH_ONLY = cached, prematch_was
         snowflake_io.clear_fetch_cache()
@@ -671,6 +680,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         report_candidate(rows, name)
     if len(results) > 1:
         print("\n".join(compare_report(results)))
+    if gamer_info is not None:
+        lines = gamer_report(config.GAMERS, gamer_info, results, closing, finals)
+        print("\n".join(lines))
+        write_text(os.path.join(out_dir, f"{prefix}_gamers.txt"), lines)
     if prematch_only:
         lines = prematch_report(results)
         print("\n".join(lines))
@@ -688,6 +701,138 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
                        book_comparison=books)
     return results[0][1] if len(results) == 1 else results
+
+
+def for_gamers(cur, bets, gamers):
+    """(the bets on the matches any of `gamers` played, {match: its EVENT row -- players, teams,
+    start}); handles compared in capitals."""
+    want = {g.strip().upper() for g in gamers}
+    codes = sorted({b.match_code for b in bets})
+    info = {}
+    for start in range(0, len(codes), config.MATCH_CHUNK_SIZE):
+        for r in snowflake_io.fetch_match_info(cur, codes[start:start + config.MATCH_CHUNK_SIZE]):
+            if set(_sides(r)) & want:
+                info[r["MATCH_CODE"]] = r
+    return [b for b in bets if b.match_code in info], info
+
+
+def _sides(row):
+    return [str(row.get(k) or "").strip().upper() for k in ("PLAYER_1_HANDLE", "PLAYER_2_HANDLE")]
+
+
+CLOSING_MARKETS = (50, 51, 52, 53, 54, 55)
+
+
+def closing_prices(tl, first_plays, codes):
+    """match -> market -> (probability, line) of the last live quote on timeline `tl` from before
+    the first play: no message, or one below the match's first play."""
+    out = {}
+    for code in codes:
+        first = first_plays.get(code)
+        for market in CLOSING_MARKETS:
+            entry = tl.get((code, market))
+            if not entry:
+                continue
+            pre = [q for q in entry[1] if q[0] is None or (first is not None and q[0] < first)]
+            if pre:
+                out.setdefault(code, {})[market] = (pre[-1][1], pre[-1][2])
+    return out
+
+
+def _price(closing, source, code, market, with_line=False):
+    got = (closing.get(source) or {}).get(code, {}).get(market)
+    if got is None or got[0] is None:
+        return "-"
+    if with_line:
+        return f"{got[1]:+g} {100 * got[0]:.0f}%" if got[1] is not None else f"{100 * got[0]:.0f}%"
+    return f"{100 * got[0]:.1f}%"
+
+
+def gamer_report(gamers, info, results, closing, finals):
+    """Lines of text: each gamer's matches in kick-off order -- the closing pre-match prices on
+    them (prod and each candidate: his moneyline, the margin his spread needs him to beat, the
+    total), the result, and the bets on the match with what they returned the book, as placed and
+    re-priced by each candidate, on the bets every candidate re-priced."""
+    names = [n for n, _ in results]
+    sources = ["prod"] + names
+    base = results[0][1]
+    ii = common(results)
+    by_match = defaultdict(list)
+    for i in ii:
+        by_match[base[i]["match_code"]].append(i)
+    every = Counter(r["match_code"] for r in base)
+    lines = []
+    for gamer in gamers:
+        g = gamer.strip().upper()
+        codes = sorted((c for c, r in info.items() if g in _sides(r)),
+                       key=lambda c: info[c].get("SCHEDULED_START_TIME_UTC", ""))
+        won = lost = 0
+        margin = need = 0.0
+        night = [0, 0.0, 0.0] + [0.0] * len(names)
+        body = []
+        for c in codes:
+            r = info[c]
+            home = _sides(r)[0] == g
+            opp = _sides(r)[1] if home else _sides(r)[0]
+            ml, spread = (50, 52) if home else (51, 53)
+            f = finals.get(c)
+            score = "no final"
+            if f:
+                mine, theirs = (f[0], f[1]) if home else (f[1], f[0])
+                won += mine > theirs
+                lost += mine < theirs
+                margin += mine - theirs
+                line = ((closing.get("prod") or {}).get(c, {}).get(spread) or (None, None))[1]
+                need += line or 0.0
+                score = f"{'won' if mine > theirs else 'lost' if mine < theirs else 'drew'} {mine:g}-{theirs:g}"
+            body.append(f"   {str(r.get('SCHEDULED_START_TIME_UTC', ''))[11:16]}  v {opp:12s} "
+                        f"({r.get('PLAYER_1_TEAM' if home else 'PLAYER_2_TEAM', '')} v "
+                        f"{r.get('PLAYER_2_TEAM' if home else 'PLAYER_1_TEAM', '')})  {score}")
+            for label, market, with_line in (("his moneyline", ml, False), ("his spread", spread, True),
+                                             ("total over", 54, True)):
+                body.append(f"      {label:14s}" + "".join(f"  {s[:12]} {_price(closing, s, c, market, with_line):>10s}"
+                                                         for s in sources))
+            idx = by_match.get(c, [])
+            stake = sum(base[i]["stake"] for i in idx)
+            prod = sum(base[i]["revenue"] for i in idx)
+            cands = [sum(rows[i]["candidate_revenue"] for i in idx) for _, rows in results]
+            night[0] += len(idx); night[1] += stake; night[2] += prod
+            for k, v in enumerate(cands):
+                night[3 + k] += v
+            body.append(f"      bets {every.get(c, 0)} ({len(idx)} re-priced, stake {stake:,.0f}): book revenue "
+                        f"prod {prod:+,.0f}" + "".join(f", {n} {v:+,.0f}" for n, v in zip(names, cands)))
+        lines.append(f"\n  {g}: {len(codes)} matches, won {won}, lost {lost}; his margin {margin:+g} points"
+                     f" against prod's closing spread lines summing to {need:+g}")
+        lines += body
+        n, stake, prod = night[0], night[1], night[2]
+        pct = lambda v: f" ({100 * v / stake:+.1f}%)" if stake else ""
+        lines.append(f"   all {len(codes)}: {n:,} bets re-priced, stake {stake:,.0f}; book revenue prod "
+                     f"{prod:+,.0f}{pct(prod)}" + "".join(f", {nm} {v:+,.0f}{pct(v)}"
+                                                       for nm, v in zip(names, night[3:])))
+    lines.append("  (his spread: the margin he had to beat, and its chance; revenue is the book's, on the"
+                 " bets every candidate re-priced, the operator's margin kept)")
+    return lines
+
+
+def operator_margins(rows):
+    """Lines: each operator's margin over prod's probability on the bets at prod's line -- the
+    median of implied / prod - 1 -- by market, pre-match and in play. A candidate re-prices a bet
+    keeping this margin over its own probability; the model's own quotes carry none."""
+    acc = defaultdict(list)
+    for r in rows:
+        implied, prod = r.get("implied_prob"), r.get("stream_prob")
+        if implied and prod and r.get("on_prod_line"):
+            acc[(str(r.get(config.BET_GROUP_COLUMN)), r.get("market"),
+                 "in play" if r.get("in_play") else "pre-match")].append(implied / prod - 1)
+    lines = ["\n  the operators' margin over prod's probability (median implied / prod - 1, bets at"
+             " prod's line), kept on every re-priced bet:"]
+    for (op, market, when), v in sorted(acc.items()):
+        if len(v) >= 20:
+            v.sort()
+            lines.append(f"  {op[:22]:22s} {str(market):9s} {when:9s} {100 * v[len(v) // 2]:+5.1f}%"
+                         f"  (middle half {100 * v[len(v) // 4]:+.1f}% to {100 * v[3 * len(v) // 4]:+.1f}%,"
+                         f" {len(v):,} bets)")
+    return lines
 
 
 def _iso_week(t):
@@ -846,6 +991,7 @@ def report_prod(rows, lags, signs):
         n, a, b = check
         print(f"  in play, odds against prod (margin taken out): {a:.4f} with the lag, {b:.4f} "
               f"without ({n:,} bets)")
+    print("\n".join(operator_margins(rows)))
     print("\n  spread and total lines against prod's (sign: +1 as prod, -1 from the other side):")
     for (op, market), (sign, n, same, turned) in sorted(signs.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
         print(f"  {str(op)[:22]:22s} {markets.market_group(market):7s} {markets.selection_label(market):5s} "
