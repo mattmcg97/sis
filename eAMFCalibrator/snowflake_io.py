@@ -358,17 +358,47 @@ def fetch_scores(cur, match_codes):
     return rows
 
 
+# A score's points, by SCOUTING_FULL's message for it (the feed's TOUCHDOWN_TEAM_A and so on)
+SCORING_POINTS = {"TOUCHDOWN": 6, "EXTRA_POINT_GOOD": 1, "TWO_POINT_CONVERSION_SUCCESSFUL": 2,
+                  "FIELD_GOAL_GOOD": 3, "SAFETY_AWARDED": 2}
+
+
 def finals_source():
     """Every match's final score, as a table (MATCH_CODE, PLAYER_1_SCORE, PLAYER_2_SCORE, SOURCE):
-    SCORE_ENDGAME's, and -- config.FINALS_FROM_SCORES, for a match EVENT has settled that
-    SCORE_ENDGAME is missing (half of them from 23 Sep 2026) -- the last cumulative score in
-    SCORE_CHANGES, the feed whose score steps the snapshots are already read against."""
+    SCORE_ENDGAME's; with config.FINALS_FROM_SCORES, for a match EVENT has settled that
+    SCORE_ENDGAME is missing (half of them from 23 Sep 2026), the last cumulative score in
+    SCORE_CHANGES; and with config.FINALS_FROM_SCOUTING, for one neither has (SCORE_CHANGES lost
+    the same matches), SCOUTING_FULL's scoring messages added up, if the feed saw it end."""
     endgame = f"""
         SELECT MATCH_CODE, PLAYER_1_SCORE, PLAYER_2_SCORE, 'endgame' AS SOURCE
         FROM {qualified(FINAL_TABLE)}
         WHERE PLAYER_1_SCORE IS NOT NULL AND PLAYER_2_SCORE IS NOT NULL"""
     if not getattr(config, "FINALS_FROM_SCORES", False):
         return f"({endgame})"
+    have = f"""SELECT MATCH_CODE FROM {qualified(FINAL_TABLE)}
+                                   WHERE PLAYER_1_SCORE IS NOT NULL AND PLAYER_2_SCORE IS NOT NULL"""
+    scouting = ""
+    if getattr(config, "FINALS_FROM_SCOUTING", False):
+        # SCORE_CHANGES lost the same matches as SCORE_ENDGAME: add up SCOUTING_FULL's scoring
+        # messages (TEAM_A is PLAYER_1 in this feed) for a settled match the feed saw end
+        msg = "IN_PLAY_MESSAGE"
+        def points(team):
+            return " + ".join(f"{pts} * SUM(IFF({msg} = '{kind}_TEAM_{team}', 1, 0))"
+                              for kind, pts in SCORING_POINTS.items())
+        scouting = f"""
+        UNION ALL
+        SELECT s.MATCH_CODE, {points("A")}, {points("B")}, 'scouting'
+        FROM (SELECT MATCH_CODE, EVENT_MESSAGE_COUNT, {msg}, GAME_STATUS_MESSAGE
+              FROM {qualified(config.SCOUTING_TABLE)}
+              WHERE MATCH_CODE IN (SELECT MATCH_CODE FROM {qualified(EVENT_TABLE)}
+                                   WHERE INPLAY_EVENT_STATUS = 'SETTLED')
+                AND MATCH_CODE NOT IN ({have})
+                AND MATCH_CODE NOT IN (SELECT MATCH_CODE FROM {qualified(SCORE_TABLE)})
+              QUALIFY ROW_NUMBER() OVER (PARTITION BY MATCH_CODE, EVENT_MESSAGE_COUNT
+                                         ORDER BY FILE_LOADED DESC NULLS LAST,
+                                                  FILE_TIME DESC NULLS LAST) = 1) s
+        GROUP BY s.MATCH_CODE
+        HAVING MAX(IFF(s.GAME_STATUS_MESSAGE = 'ENDED', 1, 0)) = 1"""
     return f"""({endgame}
         UNION ALL
         SELECT c.MATCH_CODE,
@@ -378,9 +408,8 @@ def finals_source():
         FROM {qualified(SCORE_TABLE)} c
         WHERE c.MATCH_CODE IN (SELECT MATCH_CODE FROM {qualified(EVENT_TABLE)}
                                WHERE INPLAY_EVENT_STATUS = 'SETTLED')
-          AND c.MATCH_CODE NOT IN (SELECT MATCH_CODE FROM {qualified(FINAL_TABLE)}
-                                   WHERE PLAYER_1_SCORE IS NOT NULL AND PLAYER_2_SCORE IS NOT NULL)
-        GROUP BY c.MATCH_CODE)"""
+          AND c.MATCH_CODE NOT IN ({have})
+        GROUP BY c.MATCH_CODE{scouting})"""
 
 
 def fetch_final_scores(cur, match_codes):

@@ -49,6 +49,9 @@ SCOUTING_TABLE = "SCOUTING_FULL"
 # cumulative score in SCORE_CHANGES (snowflake_io.finals_source): in the history the pre-match models
 # fit on, in the matches a report pairs and in what it grades them against.
 FINALS_FROM_SCORES = True
+# ... and one SCORE_CHANGES lacks too (it lost the same matches) adds up SCOUTING_FULL's scoring
+# messages, TEAM_A as PLAYER_1; scouting-check's Finals section shows how often they agree with SCORE_ENDGAME.
+FINALS_FROM_SCOUTING = True
 # What the HTML reports call the candidate (None: the model version when one
 # stands in, e.g. "v9"; otherwise "candidate"). --candidate-label sets it.
 CANDIDATE_LABEL = None
