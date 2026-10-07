@@ -1,0 +1,128 @@
+SCOUTING_FULL completeness: SIS_PROD_CG_CURATED.SHARED.SCOUTING_FULL
+Matches scheduled (EVENT, sport AF) or in scouting from 2026-09-16 to 2026-10-07 (UTC days); baseline: the days before 2026-09-23
+
+Baseline: 514 matches over 7 days; a match has a median 367 messages and 61 PLAY_OVERs, first message count 1, field position on 100% and down & distance on 100% of PLAY_OVERs, the clock on 100% of messages; scoring messages add up to the final in 100%
+
+day          sched final scout    ok  bad miss   msgs plays field   d&d clock score  problems
+---------------------------------------------------------------------------------------------
+2026-09-16      80    70    72    70    2    8    360    60  100%  100%  100%  100%  NO_START 1, NO_END 2, QUARTERS 1, NO_DOWN 1, FEW_MESSAGES 1, FEW_PLAYS 1, NO_DETAIL 1
+2026-09-17      80    77    77    77    0    3    350    58  100%  100%  100%  100%  
+2026-09-18      80    74    77    74    3    3    376    62  100%  100%  100%  100%  NO_START 1, NO_END 3, QUARTERS 3, NO_DOWN 1, FEW_MESSAGES 3, FEW_PLAYS 3, NO_DETAIL 1
+2026-09-19      80    70    72    70    2    8    397    66  100%  100%  100%  100%  NO_START 2, NO_END 2, QUARTERS 2, NO_DOWN 2, FEW_MESSAGES 2, FEW_PLAYS 2, NO_DETAIL 2
+2026-09-20      80    74    77    74    3    3    368    61  100%  100%  100%  100%  NO_START 2, NO_END 3, QUARTERS 3, NO_DOWN 2, FEW_MESSAGES 2, FEW_PLAYS 2, NO_DETAIL 2
+2026-09-21      80    63    65    63    2   15    372    61  100%  100%  100%  100%  NO_START 1, NO_END 2, QUARTERS 2, NO_DOWN 1, FEW_MESSAGES 1, FEW_PLAYS 1, NO_DETAIL 1
+2026-09-22      80    72    74    72    2    6    356    59  100%  100%  100%  100%  NO_START 2, NO_END 2, QUARTERS 2, NO_DOWN 2, FEW_MESSAGES 2, FEW_PLAYS 2, NO_DETAIL 2
+-- 2026-09-23 (break) -----------------------------------------------------------------------
+2026-09-23      77    37    63    37   26   14    365    61  100%  100%  100%  100%  NO_START 1, NO_END 3, QUARTERS 2, GAPS 23, NO_DOWN 1, FEW_MESSAGES 1, FEW_PLAYS 1, NO_DETAIL 1
+2026-09-24      80    46    76    46   30    4    375    62  100%  100%  100%  100%  NO_START 1, NO_END 4, QUARTERS 3, GAPS 28, NO_DOWN 1, FEW_MESSAGES 2, FEW_PLAYS 2, NO_DETAIL 1
+2026-09-25      80    38    73    38   35    7    357    60  100%  100%  100%  100%  GAPS 35
+2026-09-26      80    42    71    42   29    9    353    59  100%  100%  100%  100%  NO_END 1, QUARTERS 1, GAPS 28, FEW_MESSAGES 1, FEW_PLAYS 1
+2026-09-27      80    38    68    37   31   12    358    60  100%  100%  100%   97%  GAPS 31, SCORE 1
+2026-09-28      78    34    68    34   34   10    372    62  100%  100%  100%  100%  NO_START 1, NO_END 3, QUARTERS 2, GAPS 31, NO_DOWN 2, FEW_MESSAGES 2, FEW_PLAYS 2, NO_DETAIL 2
+2026-09-29      80    42    76    40   36    4    370    62  100%  100%  100%   95%  NO_END 1, GAPS 35, SCORE 2
+2026-09-30      80    34    71    33   38    9    354    59  100%  100%  100%   97%  NO_START 3, NO_END 3, QUARTERS 3, GAPS 35, NO_DOWN 3, FEW_MESSAGES 3, FEW_PLAYS 3, NO_DETAIL 3, SCORE 1
+2026-10-01      80    45    73    45   28    7    375    62  100%  100%  100%  100%  NO_START 1, NO_END 1, QUARTERS 1, GAPS 27, NO_DOWN 1, FEW_MESSAGES 1, FEW_PLAYS 1, NO_DETAIL 1
+2026-10-02      80    46    79    46   33    1    360    61  100%  100%  100%  100%  NO_START 3, NO_END 4, QUARTERS 4, GAPS 30, NO_DOWN 3, FEW_MESSAGES 4, FEW_PLAYS 4, NO_DETAIL 3
+2026-10-03      80    37    64    37   27   16    366    61  100%  100%  100%  100%  NO_START 3, NO_END 3, QUARTERS 3, GAPS 24, NO_DOWN 3, FEW_MESSAGES 3, FEW_PLAYS 3, NO_DETAIL 3
+2026-10-04      80    32    65    31   34   15    390    63  100%  100%  100%   97%  NO_START 1, NO_END 1, QUARTERS 1, GAPS 33, NO_DOWN 1, FEW_MESSAGES 1, FEW_PLAYS 1, NO_DETAIL 1, SCORE 1
+2026-10-05      80    54    65    54   11   15    392    65  100%  100%  100%  100%  NO_END 1, GAPS 10
+2026-10-06      80    65    69    65    4   11    385    64  100%  100%  100%  100%  NO_START 3, NO_END 4, QUARTERS 3, NO_DOWN 3, FEW_MESSAGES 3, FEW_PLAYS 3, NO_DETAIL 3
+2026-10-07      80    13    14    13    1    6    365    61  100%  100%  100%  100%  NO_END 1, QUARTERS 1, FEW_MESSAGES 1, FEW_PLAYS 1  (12 live)
+
+sched: EVENT's matches that day; final: settled; scout: in SCOUTING_FULL; ok / bad: in scouting with no problem / with one; miss: started, none in scouting; msgs, plays: median messages and PLAY_OVERs a match; field, d&d: median share of PLAY_OVERs with a field position, with a down and distance; clock: median share of messages with the clock; score: scoring messages add up to the final
+
+Since 2026-09-23: 1,135 matches started, 598 complete, 537 with a problem: GAPS 370, MISSING 140, NO_END 30, QUARTERS 24, FEW_MESSAGES 22, FEW_PLAYS 22, NO_DETAIL 18, NO_DOWN 18, NO_START 17, SCORE 5
+Days with a missing or incomplete match: 2026-09-23, 2026-09-24, 2026-09-25, 2026-09-26, 2026-09-27, 2026-09-28, 2026-09-29, 2026-09-30, 2026-10-01, 2026-10-02, 2026-10-03, 2026-10-04, 2026-10-05, 2026-10-06, 2026-10-07
+Missing matches by stream: 1 81, 2 59
+
+Columns whose daily fill moved more than 20 points off the baseline (fill = share of rows with a value):
+  IN_PLAY_DETAIL_TYPE                         PLAY_OVER   baseline    0%  first off 2026-09-23  last days 45% 0% 0%  (off on 13 days)
+  IN_PLAY_DETAIL_TYPE                         all rows    baseline    0%  first off 2026-09-23  last days 17% 0% 0%  (off on 12 days)
+
+Message kinds whose daily rate a match fell under 50% or rose over 2x of the baseline, or appeared, on 3+ days (days with 5+ expected or seen):
+  FOUL_COMMITTED_TEAM_B                        baseline    0.24/match  first off 2026-09-23  last days 0.14 0.13 0.43  (off on 12 days)
+  FOUL_COMMITTED_TEAM_A                        baseline    0.22/match  first off 2026-09-23  last days 0.11 0.19 0.14  (off on 13 days)
+
+Finals: SCORE_ENDGAME's, and what SCORE_CHANGES' last score would give a settled match without one (config.FINALS_FROM_SCORES):
+day          sched  settled  endgame  +changes  changes=endgame  +scouting  scouting=endgame
+--------------------------------------------------------------------------------------------
+2026-09-16      80       70       70         0             100%          0              100%
+2026-09-17      80       77       77         0             100%          0              100%
+2026-09-18      80       74       74         0             100%          0              100%
+2026-09-19      80       69       70         0             100%          0              100%
+2026-09-20      80       74       74         0             100%          0              100%
+2026-09-21      80       63       63         0             100%          0              100%
+2026-09-22      80       72       72         0             100%          0              100%
+2026-09-23      77       60       37         0             100%         23              100%
+2026-09-24      80       72       46         0             100%         26              100%
+2026-09-25      80       73       38         0             100%         35              100%
+2026-09-26      80       70       42         0             100%         28              100%
+2026-09-27      80       68       38         0             100%         30               97%
+2026-09-28      78       65       34         0             100%         31              100%
+2026-09-29      80       75       42         0             100%         33               95%
+2026-09-30      80       68       34         0             100%         34               97%
+2026-10-01      80       72       45         0             100%         27              100%
+2026-10-02      80       75       46         0             100%         29              100%
+2026-10-03      80       61       37         0             100%         24              100%
+2026-10-04      80       64       32         0             100%         32               97%
+2026-10-05      80       64       54         0             100%         10              100%
+2026-10-06      80       65       65         0             100%          0              100%
+2026-10-07      80        0       13         0             100%          0              100%
+settled: EVENT says SETTLED; endgame: SCORE_ENDGAME has a final; +changes: settled, no endgame final, but SCORE_CHANGES has its scores (recovered); changes=endgame: where both exist, the share whose SCORE_CHANGES last score is SCORE_ENDGAME's final; +scouting: settled, in neither, but in scouting to ENDED (config.FINALS_FROM_SCOUTING adds up its scoring messages); scouting=endgame: where both exist, the share whose scouting points, TEAM_A as PLAYER_1, are SCORE_ENDGAME's final exactly (the orientation check)
+
+Down & distance (usable: down 1-4 and distance above 0), day by day:
+day             msgs     d&d      PLAY_OVER    d&d      field  team   matches  last d&d         loaded           
+-----------------------------------------------------------------------------------------------------------------
+2026-09-16    26,186  10,330  39%     4,370  4,370 100%  100%  100%   73/74    2026-09-16 23:59 2026-09-16 23:57 
+2026-09-17    27,476  10,890  40%     4,571  4,571 100%  100%  100%   79/79    2026-09-17 23:59 2026-09-17 23:55 
+2026-09-18    28,218  11,145  39%     4,684  4,684 100%  100%  100%   77/79    2026-09-18 23:59 2026-09-18 23:52 
+2026-09-19    27,987  10,966  39%     4,635  4,635 100%  100%  100%   72/75    2026-09-19 23:59 2026-09-19 23:55 
+2026-09-20    28,190  11,127  39%     4,647  4,647 100%  100%  100%   76/78    2026-09-20 23:59 2026-09-20 23:51 
+2026-09-21    24,255   9,497  39%     4,005  4,005 100%  100%  100%   65/66    2026-09-21 23:59 2026-09-21 23:45 
+2026-09-22    26,257  10,338  39%     4,363  4,363 100%  100%  100%   73/76    2026-09-22 23:59 2026-09-22 23:56 
+-- 2026-09-23 (break) -------------------------------------------------------------------------------------------
+2026-09-23    23,449   9,184  39%     3,890  3,890 100%  100%  100%   64/65    2026-09-23 23:59 2026-09-23 23:56 
+2026-09-24    27,534  10,827  39%     4,573  4,573 100%  100%  100%   76/77    2026-09-24 23:59 2026-09-24 23:57 
+2026-09-25    26,737  10,492  39%     4,444  4,444 100%  100%  100%   75/75    2026-09-25 23:59 2026-09-25 23:55 
+2026-09-26    25,709  10,096  39%     4,271  4,271 100%  100%  100%   72/72    2026-09-26 23:59 2026-09-26 23:46 
+2026-09-27    25,165   9,974  40%     4,206  4,206 100%  100%  100%   70/70    2026-09-27 23:59 2026-09-27 23:47 
+2026-09-28    24,970   9,790  39%     4,131  4,131 100%  100%  100%   68/70    2026-09-28 23:59 2026-09-28 23:46 
+2026-09-29    29,155  11,466  39%     4,851  4,851 100%  100%  100%   78/78    2026-09-29 23:59 2026-09-29 23:54 
+2026-09-30    24,751   9,757  39%     4,124  4,124 100%  100%  100%   70/73    2026-09-30 23:59 2026-09-30 23:47 
+2026-10-01    26,872  10,547  39%     4,455  4,455 100%  100%  100%   74/75    2026-10-01 23:59 2026-10-01 23:53 
+2026-10-02    27,744  10,906  39%     4,619  4,619 100%  100%  100%   77/80    2026-10-02 23:59 2026-10-02 23:49 
+2026-10-03    22,562   8,854  39%     3,768  3,768 100%  100%  100%   63/66    2026-10-03 23:59 2026-10-03 23:59 
+2026-10-04    24,467   9,538  39%     4,036  4,036 100%  100%  100%   65/66    2026-10-04 23:59 2026-10-04 23:50 
+2026-10-05    25,466   9,975  39%     4,224  4,224 100%  100%  100%   67/67    2026-10-05 23:59 2026-10-05 23:45 
+2026-10-06    25,827  10,162  39%     4,277  4,277 100%  100%  100%   68/71    2026-10-06 23:48 2026-10-06 23:41 
+2026-10-07     5,082   1,984  39%       830    830 100%  100%  100%   14/14    2026-10-07 05:19 2026-10-07 05:18 
+
+msgs / d&d: messages, and those with a usable down and distance; PLAY_OVER / d&d: the same on the PLAY_OVERs; field, team: PLAY_OVERs with a field position / offensive team; matches: matches with any down and distance / matches; last d&d: the day's last message with them; loaded: the day's latest FILE_LOADED
+Last message with a down and distance: 2026-10-07 05:19; since then 0 PLAY_OVERs in 0 hours
+
+Hours where the PLAY_OVERs' down & distance share moved more than 30 points from the hour before (hours with 20+ PLAY_OVERs):
+  none
+
+Downs on the PLAY_OVERs, day by day (share of the day's PLAY_OVERs):
+  2026-09-16  1 53%  2 28%  3 14%  4 5%
+  2026-09-17  1 52%  2 28%  3 14%  4 6%
+  2026-09-18  1 53%  2 28%  3 14%  4 5%
+  2026-09-19  1 55%  2 27%  3 13%  4 5%
+  2026-09-20  1 53%  2 28%  3 14%  4 5%
+  2026-09-21  1 54%  2 28%  3 14%  4 5%
+  2026-09-22  1 54%  2 27%  3 14%  4 5%
+  2026-09-23  1 54%  2 28%  3 13%  4 5%
+  2026-09-24  1 52%  2 29%  3 14%  4 5%
+  2026-09-25  1 52%  2 29%  3 14%  4 5%
+  2026-09-26  1 54%  2 28%  3 14%  4 5%
+  2026-09-27  1 52%  2 28%  3 15%  4 6%
+  2026-09-28  1 54%  2 28%  3 13%  4 5%
+  2026-09-29  1 53%  2 28%  3 14%  4 5%
+  2026-09-30  1 55%  2 28%  3 13%  4 5%
+  2026-10-01  1 53%  2 29%  3 13%  4 5%
+  2026-10-02  1 52%  2 28%  3 14%  4 5%
+  2026-10-03  1 53%  2 28%  3 14%  4 5%
+  2026-10-04  1 53%  2 28%  3 14%  4 6%
+  2026-10-05  1 55%  2 27%  3 13%  4 5%
+  2026-10-06  1 53%  2 28%  3 14%  4 5%
+  2026-10-07  1 57%  2 28%  3 11%  4 3%
