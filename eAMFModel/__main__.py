@@ -15,6 +15,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          return touchdowns played as real games play them)
   v12-build / v12        the same for v12 (v11 with level sides' late drives run down to
                          the kick as real ones are)
+  v13-build / v13        the same for v13 (v12 with each side's big-play rate: its gamer's,
+                         its team's and what the other side allows)
   prior-daily            refit the pre-match model every day of a window, as live, and point
                          builds at the daily fits
   trader                 a local page to click through a game and see a version's prices
@@ -220,7 +222,9 @@ def main(argv=None):
                        ("v11", "v11: v10 with close endings, timeouts, overtime and return touchdowns "
                                "played as real games play them (see README)"),
                        ("v12", "v12: v11 with level sides' late drives run down to the kick as real "
-                               "ones are (see README)")):
+                               "ones are (see README)"),
+                       ("v13", "v13: v12 with each side's big-play rate -- its gamer's, its team's and "
+                               "what the other side allows (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -268,7 +272,7 @@ def main(argv=None):
                                          "of each game really made, value by value, by quarter and "
                                          "game state (see remaining.py)")
     p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--version", choices=["v8", "v9", "v10", "v11", "v12"], default="v9")
+    p.add_argument("--version", choices=["v8", "v9", "v10", "v11", "v12", "v13"], default="v9")
     p.add_argument("--model", help="the version's build directory (default <version>_model)")
     p.add_argument("--since", help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD")
