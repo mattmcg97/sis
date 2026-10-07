@@ -936,7 +936,7 @@ def apply_overrides(args):
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
 
-    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate"):
+    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate", "halves"):
         return
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
@@ -1180,6 +1180,16 @@ def build_parser():
                            help="a totals_signals.csv (run with --candidate v8,v9) to correct the models too")
     tc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    hv_parser = sub.add_parser(
+        "halves",
+        help="off the `scouting` export (no Snowflake): how scoring splits between the halves, the "
+             "second half from each half-time margin, touchdown lengths -- for the league and each gamer")
+    hv_parser.add_argument("export", nargs="?", default=os.path.join(DEFAULT_OUT, "scouting_playover.csv"),
+                           help="scouting_playover.csv (default <out>/scouting_playover.csv)")
+    hv_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    hv_parser.add_argument("--min-games", type=int, default=30,
+                           help="gamers with at least this many games get a row (default 30)")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -1226,6 +1236,10 @@ def main(argv=None):
         from . import totals_calibrate
         path = totals_calibrate.run(args.export, args.out or DEFAULT_OUT, args.history, args.signals)
         print(f"\n  -> {path} and totals_calibration.txt")
+        return 0
+    if args.command == "halves":
+        from . import halves
+        halves.run(args.export, args.out or DEFAULT_OUT, min_games=args.min_games)
         return 0
     if args.command == "totals-lines":
         from . import totals_lines
