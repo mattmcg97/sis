@@ -1717,6 +1717,36 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### One gamer's night: `bets --gamer`
+
+```bash
+python -m eAMFCalibrator bets --since 2026-10-06 --until 2026-10-08 --gamer NIGHTMARE --candidate v10,v10-glmer=v10_glmer_1006 --v10-model v10_nb2_1006 --out eAMFCalibrator/out_nightmare
+```
+
+`--gamer HANDLE` (repeatable) keeps only the matches that gamer played. Handles are matched in
+capitals, against `EVENT`. Only those matches are priced, so one gamer's night is quick, in play
+included. `bets prematch --gamer` works the same on the pre-match bets.
+
+The usual report is printed for those bets. On top of it, `bets_gamers.txt` takes each of the
+gamer's matches in kick-off order and shows:
+- **The closing pre-match prices**, prod against each candidate: his moneyline, the margin his
+  spread needs him to beat with its chance, and the total. The closing price is the last live quote
+  before the first play.
+- **The result**, his score first.
+- **The bets on the match.** Book revenue as placed (prod), and re-priced by each candidate on the
+  bets every candidate re-priced.
+
+A summary line gives his record for the night, his margin against prod's closing spread lines, and
+the night's book revenue each way.
+
+### The operators' margin
+
+Every `bets` run prints each operator's margin over prod's probability: the median of
+implied / prod − 1 on the bets at prod's line, by market, pre-match and in play. The models' own
+quotes carry no margin. A re-priced bet keeps the operator's margin over the model's probability
+(its odds are odds × prod / candidate), so a candidate is priced with exactly the margin the
+operator charged on that bet.
+
 ### The pre-match models' own test: `bets prematch`
 
 A pre-match model (NB2 or glmer) is judged on the bets placed before

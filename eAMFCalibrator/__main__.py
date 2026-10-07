@@ -316,6 +316,8 @@ def cmd_bets(args):
             setattr(config, key, getattr(args, attribute))
     if args.bet_table:
         config.BET_TABLE = args.bet_table
+    if getattr(args, "gamer", None):
+        config.GAMERS = [g.strip() for g in args.gamer if g.strip()]
     if args.gap is not None:
         config.MAX_SCOUTING_GAP = args.gap
     if args.max_lag is not None:
@@ -1043,6 +1045,11 @@ def build_parser():
                              help=f"book comparison: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
     bets_parser.add_argument("--boot", type=int, metavar="N",
                              help=f"book comparison and `bets prematch`: bootstrap resamples over matches (default {config.SIM_BOOT})")
+    bets_parser.add_argument("--gamer", action="append", metavar="HANDLE",
+                             help="run, prematch: only the matches this gamer played (repeatable), "
+                                  "with each one's closing pre-match prices -- prod against each "
+                                  "candidate -- the result, and what its bets returned the book both "
+                                  "ways (out/bets_gamers.txt); one night of one gamer is quick, in play too")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",
