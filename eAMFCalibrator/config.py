@@ -45,6 +45,10 @@ SPORT_CODE = "AF"
 # PLAY_OVER snapshots off SCOUTING_FULL (the game clock lives only there) in
 # MODEL_WORKERS processes (None: all cores but one).
 SCOUTING_TABLE = "SCOUTING_FULL"
+# A settled match SCORE_ENDGAME has no final for (about half of them from 23 Sep 2026) takes the last
+# cumulative score in SCORE_CHANGES (snowflake_io.finals_source): in the history the pre-match models
+# fit on, in the matches a report pairs and in what it grades them against.
+FINALS_FROM_SCORES = True
 # What the HTML reports call the candidate (None: the model version when one
 # stands in, e.g. "v9"; otherwise "candidate"). --candidate-label sets it.
 CANDIDATE_LABEL = None

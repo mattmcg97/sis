@@ -117,19 +117,30 @@ def fetch_expected(cur, start, end, sport=None):
     """EVENT's matches of the sport scheduled in [start, end), with the final where settled:
     {MATCH_CODE: {start, stream, final}}."""
     _, rows = fetch_all(cur, f"""
+        WITH c AS (
+            SELECT MATCH_CODE,
+                   COALESCE(MAX(PLAYER_1_SCORE_CUMULATIVE), SUM(PLAYER_1_SCORE_CHANGE), 0) AS S1,
+                   COALESCE(MAX(PLAYER_2_SCORE_CUMULATIVE), SUM(PLAYER_2_SCORE_CHANGE), 0) AS S2,
+                   COUNT(*) AS N
+            FROM {snowflake_io.qualified(snowflake_io.SCORE_TABLE)}
+            WHERE MATCH_CODE LIKE %s
+            GROUP BY 1)
         SELECT e.MATCH_CODE, MIN(e.SCHEDULED_START_TIME_UTC), MIN(e.STREAM_NUMBER),
-               MAX(f.PLAYER_1_SCORE), MAX(f.PLAYER_2_SCORE)
+               MAX(f.PLAYER_1_SCORE), MAX(f.PLAYER_2_SCORE), MAX(c.S1), MAX(c.S2), MAX(c.N),
+               MAX(IFF(e.INPLAY_EVENT_STATUS = 'SETTLED', 1, 0))
         FROM {snowflake_io.qualified(snowflake_io.EVENT_TABLE)} e
         LEFT JOIN {snowflake_io.qualified(snowflake_io.FINAL_TABLE)} f ON f.MATCH_CODE = e.MATCH_CODE
+        LEFT JOIN c ON c.MATCH_CODE = e.MATCH_CODE
         WHERE e.SPORT_CODE = %s AND e.SCHEDULED_START_TIME_UTC >= %s
           AND e.SCHEDULED_START_TIME_UTC < %s
         GROUP BY 1
-    """, (sport or config.SPORT_CODE, start, end))
+    """, (scouting.MATCH_PREFIX + "%", sport or config.SPORT_CODE, start, end))
     out = {}
-    for code, when, stream, p1, p2 in rows:
+    for code, when, stream, p1, p2, c1, c2, n, settled in rows:
         final = (int(p1), int(p2)) if p1 is not None and p2 is not None else None
+        changes = (int(c1), int(c2)) if n else None
         out[str(code)] = {"start": _time(when), "stream": "" if stream is None else str(stream),
-                          "final": final}
+                          "final": final, "score_changes": changes, "settled": bool(settled)}
     return out
 
 
@@ -321,7 +332,8 @@ def assess(expected, found, since, until, brk, now):
             continue
         row = {"match_code": code, "day": start.date(), "start": start,
                "stream": (e or {}).get("stream", ""), "scheduled": e is not None,
-               "final": (e or {}).get("final"), "in_scouting": s is not None}
+               "final": (e or {}).get("final"), "in_scouting": s is not None,
+               "score_changes": (e or {}).get("score_changes"), "settled": (e or {}).get("settled")}
         for key in ("messages", "distinct", "first_count", "last_count", "first_time", "last_time",
                     "last_loaded", "raw_rows", "play_overs", "play_starts", "started", "ended",
                     "quarters", "po_field", "po_team", "po_down", "po_dd", "dd", "clock_filled",
@@ -419,6 +431,13 @@ def days(rows, since, until, brk):
             "day": day, "period": "baseline" if day < brk else "after",
             "scheduled": sum(1 for m in ms if m["scheduled"]),
             "settled": sum(1 for m in ms if m["final"] is not None),
+            "event_settled": sum(1 for m in ms if m["settled"]),
+            "with_score_changes": sum(1 for m in ms if m["score_changes"] is not None),
+            "recovered": sum(1 for m in ms if m["final"] is None and m["settled"]
+                             and m["score_changes"] is not None),
+            "sc_agrees": _share(sum(1 for m in ms if m["final"] and m["score_changes"]
+                                    and tuple(m["score_changes"]) == tuple(m["final"])),
+                                sum(1 for m in ms if m["final"] and m["score_changes"])),
             "in_scouting": len(present),
             "complete": sum(1 for m in judged if m["in_scouting"] and not m["problems"]),
             "incomplete": sum(1 for m in judged if m["in_scouting"] and m["problems"]),
@@ -613,13 +632,15 @@ def _write_csv(path, rows, fields):
 MATCH_FIELDS = ["match_code", "day", "start", "stream", "scheduled", "in_scouting", "problems",
                 "flags", "final", "points", "score_agrees", "messages", "raw_rows", "first_count",
                 "last_count", "distinct", "gaps", "play_starts", "play_overs", "started", "ended",
-                "quarters", "po_field", "po_team", "po_down", "po_dd", "dd", "field_fill", "dd_fill",
+                "settled", "score_changes", "quarters", "po_field", "po_team", "po_down", "po_dd", "dd",
+                "field_fill", "dd_fill",
                 "clock_fill",
                 "first_time", "last_time", "last_loaded"]
 DETAIL_FIELDS = ["when", "n", "matches", "n_po", "down_ok", "dist_ok", "dd", "dd_share", "dd_po",
                  "dd_po_share", "field_ok", "field_po", "field_po_share", "team_ok", "team_po",
                  "team_po_share", "matches_dd", "first_dd", "last_dd", "last_loaded"]
-DAY_FIELDS = ["day", "period", "scheduled", "settled", "in_scouting", "complete", "incomplete",
+DAY_FIELDS = ["day", "period", "scheduled", "settled", "event_settled", "with_score_changes",
+              "recovered", "sc_agrees", "in_scouting", "complete", "incomplete",
               "missing", "live", "messages", "play_overs", "field_fill", "dd_fill", "clock_fill",
               "score_agrees", "last_loaded"] + [f.lower() for f in PROBLEMS]
 
@@ -705,6 +726,18 @@ def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind
         say(f"  {str(kind)[:43]:<44} baseline {base:>7.2f}/match  first off "
             f"{off[0].isoformat() if off else '-'}  last days {' '.join(f'{v:.2f}' for v in recent)}"
             f"  (off on {len(off)} days)")
+    say("")
+    say("Finals: SCORE_ENDGAME's, and what SCORE_CHANGES' last score would give a settled match without "
+        "one (config.FINALS_FROM_SCORES):")
+    head = f"{'day':<12}{'sched':>6}{'settled':>9}{'endgame':>9}{'+changes':>10}{'changes=endgame':>17}"
+    say(head)
+    say("-" * len(head))
+    for d in day_rows:
+        say(f"{d['day'].isoformat():<12}{d['scheduled']:>6}{d['event_settled']:>9}{d['settled']:>9}"
+            f"{d['recovered']:>10}{_pct(d['sc_agrees']):>17}")
+    say("settled: EVENT says SETTLED; endgame: SCORE_ENDGAME has a final; +changes: settled, no endgame "
+        "final, but SCORE_CHANGES has its scores (recovered); changes=endgame: where both exist, the share "
+        "whose SCORE_CHANGES last score is SCORE_ENDGAME's final")
     if detail:
         say("")
         lines.extend(detail)
@@ -762,6 +795,7 @@ def run(cur, table, since, until, brk, out_dir, now=None):
         r2["flags"] = " ".join(r["flags"])
         r2["problems"] = " ".join(r["problems"])
         r2["final"] = "" if r["final"] is None else f"{r['final'][0]}-{r['final'][1]}"
+        r2["score_changes"] = "" if not r["score_changes"] else f"{r['score_changes'][0]}-{r['score_changes'][1]}"
         r2["points"] = "" if not r["in_scouting"] else f"{r['points'][0]}-{r['points'][1]}"
         for k in ("field_fill", "dd_fill", "clock_fill"):
             r2[k] = _round(r[k])

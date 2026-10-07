@@ -186,7 +186,7 @@ def match_universe(cur, stream_table):
         SELECT DISTINCT e.MATCH_CODE
         FROM {qualified(EVENT_TABLE)} e
         JOIN {qualified(stream_table)} g ON g.MATCH_CODE = e.MATCH_CODE
-        JOIN {qualified(FINAL_TABLE)} f ON f.MATCH_CODE = e.MATCH_CODE
+        JOIN {finals_source()} f ON f.MATCH_CODE = e.MATCH_CODE
         WHERE e.SPORT_CODE = %s
           AND e.INPLAY_EVENT_STATUS = 'SETTLED'
           AND {predicate}
@@ -358,10 +358,35 @@ def fetch_scores(cur, match_codes):
     return rows
 
 
+def finals_source():
+    """Every match's final score, as a table (MATCH_CODE, PLAYER_1_SCORE, PLAYER_2_SCORE, SOURCE):
+    SCORE_ENDGAME's, and -- config.FINALS_FROM_SCORES, for a match EVENT has settled that
+    SCORE_ENDGAME is missing (half of them from 23 Sep 2026) -- the last cumulative score in
+    SCORE_CHANGES, the feed whose score steps the snapshots are already read against."""
+    endgame = f"""
+        SELECT MATCH_CODE, PLAYER_1_SCORE, PLAYER_2_SCORE, 'endgame' AS SOURCE
+        FROM {qualified(FINAL_TABLE)}
+        WHERE PLAYER_1_SCORE IS NOT NULL AND PLAYER_2_SCORE IS NOT NULL"""
+    if not getattr(config, "FINALS_FROM_SCORES", False):
+        return f"({endgame})"
+    return f"""({endgame}
+        UNION ALL
+        SELECT c.MATCH_CODE,
+               COALESCE(MAX(c.PLAYER_1_SCORE_CUMULATIVE), SUM(c.PLAYER_1_SCORE_CHANGE), 0),
+               COALESCE(MAX(c.PLAYER_2_SCORE_CUMULATIVE), SUM(c.PLAYER_2_SCORE_CHANGE), 0),
+               'score_changes'
+        FROM {qualified(SCORE_TABLE)} c
+        WHERE c.MATCH_CODE IN (SELECT MATCH_CODE FROM {qualified(EVENT_TABLE)}
+                               WHERE INPLAY_EVENT_STATUS = 'SETTLED')
+          AND c.MATCH_CODE NOT IN (SELECT MATCH_CODE FROM {qualified(FINAL_TABLE)}
+                                   WHERE PLAYER_1_SCORE IS NOT NULL AND PLAYER_2_SCORE IS NOT NULL)
+        GROUP BY c.MATCH_CODE)"""
+
+
 def fetch_final_scores(cur, match_codes):
     _, rows = fetch_all(cur, f"""
         SELECT MATCH_CODE, PLAYER_1_SCORE, PLAYER_2_SCORE
-        FROM {qualified(FINAL_TABLE)}
+        FROM {finals_source()} f
         WHERE MATCH_CODE IN ({_in_clause(match_codes)})
     """, tuple(match_codes))
     return {r[0]: (r[1], r[2]) for r in rows}
@@ -485,7 +510,7 @@ def fetch_history(cur, until=None, sport=None):
     _, rows = fetch_all(cur, f"""
         SELECT {cols}, f.PLAYER_1_SCORE, f.PLAYER_2_SCORE
         FROM {qualified(EVENT_TABLE)} e
-        JOIN {qualified(FINAL_TABLE)} f ON f.MATCH_CODE = e.MATCH_CODE
+        JOIN {finals_source()} f ON f.MATCH_CODE = e.MATCH_CODE
         WHERE e.SPORT_CODE = %s {when}
           AND f.PLAYER_1_SCORE IS NOT NULL AND f.PLAYER_2_SCORE IS NOT NULL
         QUALIFY ROW_NUMBER() OVER (PARTITION BY e.MATCH_CODE ORDER BY e.MATCH_CODE) = 1

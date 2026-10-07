@@ -1421,6 +1421,16 @@ was off on 3+ days since the break, each with 5+ of it expected or seen.
 Rerun it after a backfill: a day is fully complete when every scheduled match that started is in
 scouting with no flag.
 
+### Finals when SCORE_ENDGAME is missing them
+
+From 23 Sep 2026 SCORE_ENDGAME has no final for about half the matches. With
+`config.FINALS_FROM_SCORES` (on), a match EVENT has `SETTLED` that SCORE_ENDGAME is missing takes
+the last cumulative score in SCORE_CHANGES (`snowflake_io.finals_source`). That covers the history
+the pre-match models fit on (`history`, `prior-daily`), the matches a report pairs and the finals
+it grades against. `scouting-check`'s **Finals** section shows, a day, how many matches it recovers
+and, where both exist, how often SCORE_CHANGES' last score is SCORE_ENDGAME's final -- check that
+is ~100% before trusting the recovered ones.
+
 ## Every timeout: `timeouts`
 
 ```bash

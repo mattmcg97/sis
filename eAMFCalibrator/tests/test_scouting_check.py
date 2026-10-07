@@ -41,7 +41,11 @@ class FakeCursor:
     """Answers the check's queries from canned rows."""
 
     def __init__(self, expected, matches, fills, kinds, days=(), hours=(), values=()):
-        self.answers = {"expected": (["MATCH_CODE", "S", "STREAM", "P1", "P2"], expected),
+        # SCORE_CHANGES agrees with the final where there is one; every match settled
+        expected = [r + (r[3], r[4], 1 if r[3] is not None else None, 1) if len(r) == 5 else r
+                    for r in expected]
+        self.answers = {"expected": (["MATCH_CODE", "S", "STREAM", "P1", "P2", "C1", "C2", "N", "SET"],
+                                     expected),
                         "matches": (MATCH_COLS, matches), "fills": fills, "kinds": kinds,
                         "days": (DETAIL_COLS, list(days)), "hours": (DETAIL_COLS, list(hours)),
                         "values": (["DAY", "COL", "VAL", "N"], list(values))}
@@ -123,6 +127,19 @@ class TestScoutingCheck(unittest.TestCase):
         text = "\n".join(lines)
         self.assertIn("Days with a missing or incomplete match: 2026-09-23, 2026-09-24", text)
         self.assertIn("Missing matches by stream: 1 1", text)
+
+    def test_finals_section_counts_what_score_changes_would_recover(self):
+        day = lambda d: T(2026, 9, d, 12)
+        expected = [("AF1", day(21), "1", 21, 14, 21, 14, 8, 1),
+                    ("AF2", day(21), "1", 20, 10, 20, 13, 9, 1),        # SCORE_CHANGES disagrees
+                    ("AF3", day(24), "1", None, None, 28, 7, 10, 1),    # no endgame final: recovered
+                    ("AF4", day(24), "1", None, None, None, None, None, 1),
+                    ("AF5", day(24), "1", None, None, 14, 3, 5, 0)]     # not settled: not recovered
+        matches = [match(c, day(d)) for c, d in (("AF1", 21), ("AF2", 21), ("AF3", 24), ("AF4", 24), ("AF5", 24))]
+        _, lines = self._run(expected, matches)
+        text = "\n".join(lines)
+        self.assertRegex(text, r"2026-09-21\s+2\s+2\s+2\s+0\s+50%")
+        self.assertRegex(text, r"2026-09-24\s+3\s+2\s+0\s+1\s+-")
 
     def test_reports_columns_and_message_kinds_that_change_after_the_break(self):
         checked = list(COLUMNS)
