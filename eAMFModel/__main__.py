@@ -18,6 +18,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
   prior-daily            refit the pre-match model every day of a window, as live, and point
                          builds at the daily fits
   trader                 a local page to click through a game and see a version's prices
+  kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
+                         against the real ones
   remaining SNAPS.csv    a version's points still to come against what really came
 
 The calibrator runs a version as a stream in its own right:
@@ -162,6 +164,17 @@ def cmd_trader(args):
                  browser=not args.no_browser, version=args.version)
 
 
+def cmd_kickoff_dist(args):
+    from . import kickoff_check
+    try:
+        means = tuple(float(x) for x in args.means.split(","))
+        assert len(means) == 2
+    except (ValueError, AssertionError):
+        raise SystemExit("--means takes two expected points, home,away (e.g. 15.5,15.5)")
+    kickoff_check.run(args.model, means, args.history, since=args.since or kickoff_check.default_since(),
+                      until=args.until, n_paths=args.paths, seed=args.seed)
+
+
 def cmd_prior_daily(args):
     import datetime as dt
     from . import nb2_prior, rolling_prior
@@ -285,6 +298,17 @@ def main(argv=None):
     p.add_argument("--detach", help="builds to return to their own single fit, comma-separated")
     p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
     p.set_defaults(func=cmd_prior_daily)
+
+    p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
+                                            "final totals against the real ones over a window")
+    p.add_argument("--model", required=True, help="a v12 build directory, e.g. v12_1001")
+    p.add_argument("--means", default="15.5,15.5", help="home,away expected points (default 15.5,15.5)")
+    p.add_argument("--history", required=True, help="the match history CSV (eAMFCalibrator history)")
+    p.add_argument("--since", help="first real match day, YYYY-MM-DD (default: 30 days ago)")
+    p.add_argument("--until", help="day after the last real match day, YYYY-MM-DD")
+    p.add_argument("--paths", type=int, default=20000, help="simulated games (default 20000)")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_kickoff_dist)
 
     p = sub.add_parser("trader", help="a local web page to test a model by hand: set up a match, click "
                                       "through it play by play, and see its prices after each play")
