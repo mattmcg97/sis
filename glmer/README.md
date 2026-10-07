@@ -190,6 +190,7 @@ entry.
 | `form`        | + both sides' recency-weighted points scored and conceded, and experience                 |
 | `form_noexp`  | `form` without the experience terms (tested against newcomers' pricing; worse overall)    |
 | `form_session`| `form` + how both sides are doing this session, and where in it they are                  |
+| `form_pair`   | `form` + gamer-v-gamer matchups, `(1\|Player:OpponentPlayer)` (tested; about level)      |
 | `matchup`     | + each player's own team preference, and team-vs-team matchups                            |
 | `home_offset` | `home`, but the per-player models only learn corrections to the global model's prediction (`offset(GlobalEta)`) |
 
@@ -394,6 +395,27 @@ streaks run a little worse than glmer says: 38.4% won against 41.5% priced after
 That is the gamer's level drifting from the fitted ratings over days, not a same-night effect. A
 second layer that follows each gamer's results since the fit catches it, for NB2 as well as glmer.
 See "Following the results since the fit" in `eAMFModel/README.md`.
+
+## Gamer-v-gamer and team-v-team matchups (7 Oct 2026)
+
+Neither is in the production `form` model. Its player, opponent and team effects price each side's
+own strength, but no pairing.
+- **Team v team: nothing.** A team pairing's errors against glmer don't repeat from one half of the
+  season to the other (20 pairings with enough matches in both). `matchup`'s `(1|TeamPair)` made no
+  difference either.
+- **A gamer with or against a particular team: nothing worth having.**
+- **Gamer v gamer: small, and not steady.**
+  - A pair's errors repeat a little across the season (split-half correlation +0.13 over 252
+    pairs, with each gamer's own offset taken out in each half).
+  - As an add-on on top of glmer and the follow layer, each pair's average leftover error over
+    its earlier meetings, shrunk by 80 meetings, took 0.0013 off moneyline log loss on fortnights
+    6–11, in all 6. But the shrinkage was chosen on those same fortnights.
+  - Fitted inside glmer, `form_pair` adds `(1|Player:OpponentPlayer)` (sd 0.06 on the log scale)
+    and was refitted on the same six fortnights. Log loss went 0.6632 → 0.6630 alone and
+    0.6616 → 0.6612 with the follow layer. Margin RMSE fell 0.006 and total RMSE 0.009. It was
+    better in only 2 of the 6 fortnights alone, and 3 with the follow layer.
+
+So `form` stays the default. `form_pair` is there to try (`fit.R --feature-set=form_pair`).
 
 ## Speed
 
