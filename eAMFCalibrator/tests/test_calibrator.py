@@ -762,12 +762,16 @@ class TestGeneratedQueries(unittest.TestCase):
             ("fetch_history", lambda c: self._event_checked(io.fetch_history, c, "2026-09-20")),
             ("fetch_history_all", lambda c: self._event_checked(io.fetch_history, c)),
         ]
+        from .. import scouting
+        table = scouting.Table("DB.S.SCOUTING_FULL", {"FILE_TIME": "TIMESTAMP_NTZ"})
         for name, call in cases:
             cursor = RecordingCursor()
-            try:
-                call(cursor)
-            except (IndexError, TypeError, ValueError):
-                pass    # unpacking an empty result is not what is under test
+            # fetch_scores rebuilds the score rows it can't find from the scouting feed: its query too
+            with mock.patch.object(io, "scouting_table", lambda cur: table):
+                try:
+                    call(cursor)
+                except (IndexError, TypeError, ValueError):
+                    pass    # unpacking an empty result is not what is under test
             for sql, params in cursor.calls:
                 yield name, sql, params
 

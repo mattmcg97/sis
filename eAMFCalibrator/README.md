@@ -1431,6 +1431,14 @@ it grades against. `scouting-check`'s **Finals** section shows, a day, how many 
 and, where both exist, how often SCORE_CHANGES' last score is SCORE_ENDGAME's final -- check that
 is ~100% before trusting the recovered ones.
 
+SCORE_CHANGES lost the same matches, so they had no score rows either: no board score in their
+snapshots and no TEAM_A side, and a report left them out (`matches_without_score_rows`). With
+`config.FINALS_FROM_SCOUTING` (on) a settled match in neither table takes SCOUTING_FULL's scoring
+messages added up, TEAM_A as PLAYER_1 (the Finals section's `scouting=endgame` checks the
+orientation). With `config.SCORES_FROM_SCOUTING` (on) a match SCORE_CHANGES has no rows for gets
+them rebuilt from the same messages (`snowflake_io.scouting_score_rows`): one row on each scoring
+message, with its period and the running score, so it is priced in play like any other.
+
 ## Every timeout: `timeouts`
 
 ```bash

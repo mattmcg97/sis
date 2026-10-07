@@ -347,15 +347,62 @@ def fetch_plays(cur, match_codes, time_column):
 
 
 def fetch_scores(cur, match_codes):
+    """SCORE_CHANGES' rows for these matches: (MATCH_CODE, EVENT_MESSAGE_COUNT, PERIOD_NUMBER,
+    player 1 and 2 change, player 1 and 2 cumulative), by match and message. With
+    config.SCORES_FROM_SCOUTING, a match SCORE_CHANGES has no rows for (it lost about half of them
+    from 23 Sep 2026) gets them rebuilt from SCOUTING_FULL's scoring messages (scouting_score_rows)."""
+    codes = list(match_codes)
     _, rows = fetch_all(cur, f"""
         SELECT MATCH_CODE, EVENT_MESSAGE_COUNT, PERIOD_NUMBER,
                PLAYER_1_SCORE_CHANGE, PLAYER_2_SCORE_CHANGE,
                PLAYER_1_SCORE_CUMULATIVE, PLAYER_2_SCORE_CUMULATIVE
         FROM {qualified(SCORE_TABLE)}
-        WHERE MATCH_CODE IN ({_in_clause(match_codes)})
+        WHERE MATCH_CODE IN ({_in_clause(codes)})
         ORDER BY MATCH_CODE, EVENT_MESSAGE_COUNT
-    """, tuple(match_codes))
-    return rows
+    """, tuple(codes))
+    if not getattr(config, "SCORES_FROM_SCOUTING", False):
+        return rows
+    have = {r[0] for r in rows}
+    missing = [c for c in codes if c not in have]
+    if not missing:
+        return rows
+    rebuilt = scouting_score_rows(cur, missing)
+    return sorted(list(rows) + rebuilt, key=lambda r: (str(r[0]), -1 if r[1] is None else r[1]))
+
+
+def scouting_score_rows(cur, match_codes):
+    """SCORE_CHANGES-shaped rows rebuilt from SCOUTING_FULL: one on each scoring message (TD 6,
+    extra point 1, two-point conversion 2, field goal 3, safety 2), TEAM_A as PLAYER_1, with the
+    period the feed's quarter starts put it in and the running score. A match the feed has no
+    scoring messages for gets none (a 0-0 game reads as no score rows, as before)."""
+    from . import scouting
+    table = scouting_table(cur)
+    out = []
+    for start in range(0, len(match_codes), config.MATCH_CHUNK_SIZE):
+        batch = list(match_codes[start:start + config.MATCH_CHUNK_SIZE])
+        sql, params = scouting.scouting_rows_sql(
+            table, ["MATCH_CODE", "EVENT_MESSAGE_COUNT", scouting.STATUS, scouting.MESSAGE],
+            extra_where=f"AND MATCH_CODE IN ({_in_clause(batch)})", windowed=False)
+        _, rows = fetch_all(cur, sql, tuple(params + batch))
+        by_match = {}
+        for code, count, status, message in rows:
+            try:
+                by_match.setdefault(code, []).append((int(float(count)), status, message))
+            except (TypeError, ValueError):
+                continue
+        for code, msgs in by_match.items():
+            period, a, b = 1, 0, 0
+            for count, status, message in sorted(msgs, key=lambda m: m[0]):
+                status = scouting._text(status)
+                period = scouting.PERIOD_START.get(status, period)
+                text = scouting._text(message) or ""
+                for kind, pts in SCORING_POINTS.items():
+                    if text in (f"{kind}_TEAM_A", f"{kind}_TEAM_B"):
+                        da, db = (pts, 0) if text.endswith("_TEAM_A") else (0, pts)
+                        a, b = a + da, b + db
+                        out.append((code, count, period, da, db, a, b))
+                        break
+    return out
 
 
 # A score's points, by SCOUTING_FULL's message for it (the feed's TOUCHDOWN_TEAM_A and so on)
