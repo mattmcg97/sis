@@ -52,6 +52,10 @@ FINALS_FROM_SCORES = True
 # ... and one SCORE_CHANGES lacks too (it lost the same matches) adds up SCOUTING_FULL's scoring
 # messages, TEAM_A as PLAYER_1; scouting-check's Finals section shows how often they agree with SCORE_ENDGAME.
 FINALS_FROM_SCOUTING = True
+# A match SCORE_CHANGES has no rows for (it lost the same matches) gets its score changes rebuilt
+# from SCOUTING_FULL's scoring messages (snowflake_io.scouting_score_rows), so it is priced in play
+# and its snapshots carry the board score.
+SCORES_FROM_SCOUTING = True
 # What the HTML reports call the candidate (None: the model version when one
 # stands in, e.g. "v9"; otherwise "candidate"). --candidate-label sets it.
 CANDIDATE_LABEL = None
