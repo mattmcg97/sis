@@ -17,6 +17,9 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          the kick as real ones are)
   prior-daily            refit the pre-match model every day of a window, as live, and point
                          builds at the daily fits
+  form-layer DIR         switch the post-game form layer on or off for builds (form_layer.py)
+  form-trace             one gamer's matches as the pre-match model priced them and as the
+                         post-game form layer moves them
   trader                 a local page to click through a game and see a version's prices
   remaining SNAPS.csv    a version's points still to come against what really came
 
@@ -183,6 +186,83 @@ def cmd_prior_daily(args):
     return 0
 
 
+def _pair(text):
+    """'1.5' -> (1.5, 1.5); '1.5,1' -> (1.5, 1.0): a layer setting for the margin and the total."""
+    parts = [float(x) for x in text.split(",")]
+    if len(parts) not in (1, 2):
+        raise SystemExit(f"{text!r}: give one number, or two (margin,total)")
+    return (parts[0], parts[-1])
+
+
+def _layer_settings(args):
+    own = {}
+    if args.tau_day is not None:
+        own["tau_day"] = _pair(args.tau_day)
+    if args.tau_session is not None:
+        own["tau_session"] = _pair(args.tau_session)
+    if args.rho is not None:
+        own["rho"] = args.rho
+    return own
+
+
+def cmd_form_layer(args):
+    from . import form_layer
+    value = True if args.on else False if args.off else None
+    own = _layer_settings(args)
+    if own and not args.on:
+        raise SystemExit("--tau-day, --tau-session and --rho come with --on")
+    for d in args.builds:
+        meta = form_layer.switch(d, value, **own)
+        on = form_layer.switched_on(meta)
+        kept = form_layer.own_settings(meta)
+        print(f"  {d}: post-game form layer {'on' if on else 'off'}"
+              f"{'' if value is not None else ' (the default, form_layer.ON)'}"
+              + (f", with {', '.join(f'{k} {v}' for k, v in kept.items())}" if kept else ""))
+    return 0
+
+
+def cmd_form_trace(args):
+    import datetime as dt
+    from . import form_layer, nb2_prior
+    if bool(args.model) == bool(args.rolling):
+        raise SystemExit("form-trace needs one of --model (a build) or --rolling (prior-daily's fits)")
+    own = {}
+    if args.rolling:
+        from . import rolling_prior
+        base = rolling_prior.Rolling(args.rolling)
+    else:
+        base = form_layer.base_model(args.model)
+        own = form_layer.base_settings(args.model)
+    since = form_layer.out_of_sample_since(base)
+    if since is None:
+        raise SystemExit("the pre-match model records no cut-off, so its out-of-sample prices are unknown")
+    layer = form_layer.FormLayer(base, since, **dict(own, **_layer_settings(args)))
+    first = dt.date.fromisoformat(args.since)
+    last = dt.date.fromisoformat(args.until) if args.until else first
+    history = nb2_prior.load_history(args.history)
+    rows = []
+    for gamer in args.gamer:
+        got = form_layer.trace(layer, history, gamer, first, last)
+        print("\n".join(form_layer.report(got, gamer, layer)) + "\n")
+        rows += [dict(r, gamer=gamer.upper()) for r in got]
+    if args.csv and rows:
+        import csv
+        keys = ["gamer", "code", "start", "side", "opponent", "scored", "conceded", "base_margin",
+                "day", "session", "opponent_form", "adjust", "margin", "total_adjust"]
+        with open(args.csv, "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, keys, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(rows)
+        print(f"  {len(rows)} rows -> {args.csv}")
+    return 0
+
+
+def _layer_options(p, what):
+    p.add_argument("--tau-day", metavar="M[,T]", help=f"sd of a fresh day form, margin[,total], {what}")
+    p.add_argument("--tau-session", metavar="M[,T]", help=f"sd of a fresh session form, {what}")
+    p.add_argument("--rho", type=float, help=f"share of a day's form carried to the next day, {what}")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="eAMFModel", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -285,6 +365,30 @@ def main(argv=None):
     p.add_argument("--detach", help="builds to return to their own single fit, comma-separated")
     p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
     p.set_defaults(func=cmd_prior_daily)
+
+    p = sub.add_parser("form-layer", help="switch the post-game form layer on or off for builds "
+                                          "(form_layer.py; the follow layer stays as it is)")
+    p.add_argument("builds", nargs="+", metavar="DIR", help="build directories")
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument("--on", action="store_true")
+    which.add_argument("--off", action="store_true")
+    which.add_argument("--default", action="store_true", help="back to form_layer.ON")
+    _layer_options(p, "the build keeps for itself, with --on")
+    p.set_defaults(func=cmd_form_layer)
+
+    p = sub.add_parser("form-trace", help="one gamer's matches as the pre-match model priced them, "
+                                          "and as the post-game form layer moves them")
+    p.add_argument("--gamer", action="append", required=True, help="a gamer's handle (repeat for more)")
+    p.add_argument("--history", required=True, help="eAMFCalibrator history's CSV (every match's "
+                                                    "players and finals)")
+    p.add_argument("--model", help="a build: its pre-match model as it prices (a daily prior if one is "
+                                   "attached, its shrink)")
+    p.add_argument("--rolling", help="or prior-daily's directory of daily fits, as they are")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--csv", help="also write the rows to this CSV")
+    _layer_options(p, "for this trace (default: the build's own, else form_layer's)")
+    p.set_defaults(func=cmd_form_trace)
 
     p = sub.add_parser("trader", help="a local web page to test a model by hand: set up a match, click "
                                       "through it play by play, and see its prices after each play")

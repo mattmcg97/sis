@@ -1732,6 +1732,76 @@ sample, 12 fortnights of 14-day refits on AMFELO.
 
 - **The prior.** 40 chased the noise in some fortnights; 160 was steadier but gained less.
 
+## The post-game form layer (`form_layer.py`, v10–v12; off unless switched on)
+
+A second model on top of the daily glmer (`prior-daily`), for in-session hot and cold streaks.
+The daily glmer gives each side's expected points; the layer adds a ± from how the two gamers have
+done against those prices today and this session. It is built and tested, but **off**: the test so
+far says it doesn't pay on the margin (below).
+
+- Each gamer carries a **day form** and a **session form**, for the margin and for the total. A
+  Kalman filter updates them after every match the gamer plays, from the match's error against the
+  model's price. The opponent's form counts against them.
+- **Day form** starts fresh each day at 00:00 UTC, when the daily prior refits (`--rho` carries a
+  share into the next day). **Session form** starts fresh after a gap of more than 2 hours.
+- A match's margin moves by the home gamer's day + session form less the away gamer's; its total by
+  both gamers' forms added.
+- **The error is shared.** Each match's error is split between the two gamers by how unsure each
+  one's form is, so a gamer whose form has settled moves less than a fresh one.
+- **Only results known at the time count.** A match reads only matches that started before it, as
+  `stream.known_states` needs. A settled match's error is taken against the price the model made
+  out of sample, so the layer reads results from the daily prior's first fit on (a single fit: from
+  its cut-off).
+- **Where it sits.** It goes on top of whatever the build prices with: the prior shrink, and the
+  follow layer on a single fit. A daily prior has no follow layer.
+
+**Switching it on**, for one build, with or without settings of its own (margin[,total]):
+
+```powershell
+python -m eAMFModel form-layer v12_daily_form --on
+python -m eAMFModel form-layer v12_daily_form --on --tau-day 2 --tau-session 2
+python -m eAMFModel form-layer v12_daily_form --off        # or --default: back to form_layer.ON
+```
+
+The defaults are a day-form sd of 1 point, a session-form sd of 1 point, and a fresh start each
+day. They're the design's starting point, not a setting the test chose.
+
+**One gamer's matches, model against layer** (`form-trace`). Each match shows the daily glmer's
+expected margin and win chance, the gamer's day and session form, the opponent's form, the ±, and
+the layer's margin and win chance. `--model` prices as the build does; `--rolling` takes
+`prior-daily`'s fits as they are.
+
+```powershell
+python -m eAMFModel form-trace --model v12_daily --history eAMFCalibrator/out/match_history.csv --gamer NIGHTMARE --since 2026-10-06
+```
+
+**What the test says so far.** The early read covers 27 days of daily glmer fits on AMFELO (16–25
+Jul, 4–13 Aug, 23–29 Aug; 2,523 matches). Each match was priced by its own day's fit, with glmer's
+form following the results. Settings were chosen on the first half of the days and scored on the
+second.
+- **Nothing is left on the margin.** On these daily fits, the next match's error doesn't follow the
+  gamer's errors so far: −0.002 a point this session (t −0.2), −0.0004 earlier today (t 0.0),
+  −0.011 yesterday (t −1.3). On 14-day fits this session's errors did carry on: +0.0135 a point (t 2.8).
+  A daily refit, plus glmer's own form, takes in what was there.
+- **Every margin setting is worse out of sample.** The more the layer reacts, the worse it gets:
+
+  | margin sd: day, session | NIGHTMARE's own form after 8 matches, 22 Jul / 24 Aug | moneyline log loss | margin RMSE |
+  |---|---|---|---|
+  | 1, 1 (the default) | −0.43 / −0.21 | +0.0015 | +0.025 |
+  | 2, 2 | −1.16 / −0.55 | +0.0088 | +0.141 |
+  | 3, 3 | −1.74 / −0.73 | +0.0213 | +0.331 |
+  | 0, 3 (session only) | −1.24 / −0.17 | +0.0123 | +0.177 |
+
+- **The total gains a little.** A day form of sd 1.5 cut the total's RMSE by 0.018 on the second
+  half, and 1 + 1 by 0.020.
+- **NIGHTMARE's 0–9 on 22 Jul and 1–8 on 24 Aug.** The daily glmer already had him as the underdog
+  in every match of both nights (31–49% to win). He fell short of his price by 3.1 points a match on
+  22 Jul and 2.7 on 24 Aug. With the default settings the layer moved his price by at most 1.3
+  points, mostly through his opponents' form; his own form got no lower than −0.4 points. On 25 Aug
+  he went 4–5, 0.2 points a match short of the daily glmer's prices.
+
+The full test (56 days, 16 Jul – 9 Sep) is the one that sets the defaults or keeps the layer off.
+
 ## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that
