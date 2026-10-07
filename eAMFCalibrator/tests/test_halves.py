@@ -75,6 +75,39 @@ class TestHalves(unittest.TestCase):
             g = {r["gamer"]: r for r in csv.DictReader(fh)}
         self.assertEqual((g["ALPHA"]["games"], g["ALPHA"]["tds"], g["ALPHA"]["td_mean_yards"]), ("2", "2", "55.0"))
         self.assertEqual((g["ALPHA"]["won_leading_3_4"], g["BETA"]["won_trailing_3_4"]), ("1.0", "0.0"))
+        self.assertEqual(g["ALPHA"]["td_allowed_mean_yards"], "20.0")
+        self.assertFalse(os.path.exists(os.path.join(self.tmp.name, "halves_teams.csv")))
+
+    def test_teams_and_gamer_team_pairs(self):
+        # AF2's history row has the handles the other way round: the teams follow the handles
+        history = os.path.join(self.tmp.name, "history.csv")
+        with open(history, "w", newline="") as fh:
+            w = csv.writer(fh)
+            w.writerow(["MATCH_CODE", "PLAYER_1_HANDLE", "PLAYER_1_TEAM", "PLAYER_2_HANDLE", "PLAYER_2_TEAM"])
+            w.writerow(["AF1", "ALPHA", "Detroit Lions", "BETA", "Minnesota Vikings"])
+            w.writerow(["AF2", "BETA", "Chicago Bears", "ALPHA", "Detroit Lions"])
+        text = "\n".join(halves.run(self.path, self.tmp.name, min_games=1, history_path=history,
+                                    min_pair_games=1))
+        self.assertIn("TEAMS (2 of 2 matches", text)
+        with open(os.path.join(self.tmp.name, "halves_teams.csv")) as fh:
+            t = {r["team"]: r for r in csv.DictReader(fh)}
+        self.assertEqual((t["Detroit Lions"]["games"], t["Detroit Lions"]["tds"], t["Detroit Lions"]["td_mean_yards"],
+                          t["Detroit Lions"]["td_allowed_mean_yards"]), ("2", "2", "55.0", "20.0"))
+        self.assertEqual((t["Minnesota Vikings"]["td_mean_yards"], t["Chicago Bears"]["games"],
+                          t["Chicago Bears"]["tds"]), ("20.0", "1", "0"))
+        with open(os.path.join(self.tmp.name, "halves_gamer_teams.csv")) as fh:
+            p = {(r["gamer"], r["team"]): r for r in csv.DictReader(fh)}
+        self.assertEqual(set(p), {("ALPHA", "Detroit Lions"), ("BETA", "Minnesota Vikings"), ("BETA", "Chicago Bears")})
+        self.assertEqual((p[("ALPHA", "Detroit Lions")]["games"], p[("ALPHA", "Detroit Lions")]["n_td_fit"]), ("2", "2"))
+
+    def test_td_effects_split_gamer_from_team(self):
+        tds = [{"how": "offence", "length": 20 + g + t, "gamer": gn, "team": tn, "opponent": "X", "opp_team": "Y"}
+               for gn, g in (("G1", 3), ("G2", -3)) for tn, t in (("T1", 2), ("T2", -2))]
+        eff, sd, fitted = halves.td_effects(tds)
+        self.assertAlmostEqual(eff["gamer"]["G1"], 3)
+        self.assertAlmostEqual(eff["team"]["T2"], -2)
+        self.assertAlmostEqual(sd, 0)
+        self.assertEqual([round(f, 6) for _, f in fitted], [25, 21, 19, 15])
 
 
 if __name__ == "__main__":

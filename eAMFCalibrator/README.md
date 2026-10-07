@@ -1439,12 +1439,13 @@ orientation). With `config.SCORES_FROM_SCOUTING` (on) a match SCORE_CHANGES has 
 them rebuilt from the same messages (`snowflake_io.scouting_score_rows`): one row on each scoring
 message, with its period and the running score, so it is priced in play like any other.
 
-## Halves, half-time margins, touchdown lengths, by gamer: `halves`
+## Halves, half-time margins, touchdown lengths, by gamer and team: `halves`
 
 ```powershell
 python -m eAMFCalibrator scouting --since 2026-01-01 --no-probe     # every PLAY_OVER, all history
 python -m eAMFCalibrator halves                                      # off out/scouting_playover.csv
 python -m eAMFCalibrator halves --min-games 50
+python -m eAMFCalibrator halves --history out/match_history.csv --min-pair-games 20
 ```
 
 Off a `scouting` export, no Snowflake. A match's half-time score is the board after its last play
@@ -1464,8 +1465,22 @@ side had the ball for (afresh after a score, kick or punt and at half time).
 then a line for each gamer with `--min-games` or more (default 30): their points a half, their
 games' half correlation and lopsided share against chance, their games 3-4 apart at half time (lead
 changes, won from up and from down), and their touchdowns' lengths, overall and in the second half
-of games 1-4 apart at half time. `halves_matches.csv`, `halves_tds.csv` and `halves_gamers.csv`
-carry every match, touchdown and gamer.
+of games 1-4 apart at half time, and their opponents' touchdowns' length (`allowed`).
+`halves_matches.csv`, `halves_tds.csv` and `halves_gamers.csv` carry every match, touchdown and
+gamer.
+
+With `--history` (default: `match_history.csv` beside the export, when there is one) each side
+gets its NFL team (`PLAYER_1_TEAM` is home; a row with the handles the other way round is turned
+round), and the same lines follow for each team (`halves_teams.csv`) and each gamer / team pair
+with `--min-pair-games` or more (`halves_gamer_teams.csv`). Touchdown length is then fitted as
+gamer + team + opponent + opponent's team (least squares over every offensive touchdown), so:
+- a team's `td_team_effect` is its yards with the gamers who picked it and whom they played held
+  level, `td_allowed_team_effect` the same for the touchdowns scored against it;
+- a gamer's `td_gamer_effect` is theirs with the teams they picked held level;
+- a pair's `td_expected_yards` is what its gamer, its team and their opponents add up to, and
+  `td_vs_expected_z` how far the pair's own mean sits from that. `halves.txt` gives the spread of
+  the pairs beyond their gamer plus their team (a chi-squared against noise alone) and the pairs
+  furthest each way.
 
 ## Every timeout: `timeouts`
 

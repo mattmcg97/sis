@@ -1189,6 +1189,12 @@ def build_parser():
     hv_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     hv_parser.add_argument("--min-games", type=int, default=30,
                            help="gamers with at least this many games get a row (default 30)")
+    hv_parser.add_argument("--history",
+                           help="match_history.csv to take each side's NFL team from (PLAYER_1_TEAM / "
+                                "PLAYER_2_TEAM): adds the team and gamer / team splits (default: "
+                                "match_history.csv beside the export, when there is one)")
+    hv_parser.add_argument("--min-pair-games", type=int, default=20,
+                           help="gamer / team pairs with at least this many games get a row (default 20)")
 
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
@@ -1239,7 +1245,12 @@ def main(argv=None):
         return 0
     if args.command == "halves":
         from . import halves
-        halves.run(args.export, args.out or DEFAULT_OUT, min_games=args.min_games)
+        history = args.history
+        if history is None:
+            beside = os.path.join(os.path.dirname(args.export) or ".", "match_history.csv")
+            history = beside if os.path.exists(beside) else None
+        halves.run(args.export, args.out or DEFAULT_OUT, min_games=args.min_games, history_path=history,
+                   min_pair_games=args.min_pair_games)
         return 0
     if args.command == "totals-lines":
         from . import totals_lines
