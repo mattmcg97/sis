@@ -1439,6 +1439,34 @@ orientation). With `config.SCORES_FROM_SCOUTING` (on) a match SCORE_CHANGES has 
 them rebuilt from the same messages (`snowflake_io.scouting_score_rows`): one row on each scoring
 message, with its period and the running score, so it is priced in play like any other.
 
+## Halves, half-time margins, touchdown lengths, by gamer: `halves`
+
+```powershell
+python -m eAMFCalibrator scouting --since 2026-01-01 --no-probe     # every PLAY_OVER, all history
+python -m eAMFCalibrator halves                                      # off out/scouting_playover.csv
+python -m eAMFCalibrator halves --min-games 50
+```
+
+Off a `scouting` export, no Snowflake. A match's half-time score is the board after its last play
+of the first half. A touchdown's length is the yards to the goal line when its play started; kick
+and punt returns and turnovers run back are counted apart. Its drive runs from the first play its
+side had the ball for (afresh after a score, kick or punt and at half time).
+
+`halves.txt` gives, for the league:
+- how often the bigger half holds 60/70/80/90% of a match's points, against the same matches with
+  their halves paired at random (what independent halves would give), and the correlation of the
+  two halves' points;
+- the second half from each half-time margin: points, lead changes (any, 2+), how often the side
+  behind at half time won;
+- touchdown lengths (mean, 20+ and 40+ yards, the drive's plays and seconds) by half, and in the
+  second half by the half-time margin;
+
+then a line for each gamer with `--min-games` or more (default 30): their points a half, their
+games' half correlation and lopsided share against chance, their games 3-4 apart at half time (lead
+changes, won from up and from down), and their touchdowns' lengths, overall and in the second half
+of games 1-4 apart at half time. `halves_matches.csv`, `halves_tds.csv` and `halves_gamers.csv`
+carry every match, touchdown and gamer.
+
 ## Every timeout: `timeouts`
 
 ```bash
