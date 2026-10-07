@@ -138,8 +138,9 @@ class TestScoutingCheck(unittest.TestCase):
         matches = [match(c, day(d)) for c, d in (("AF1", 21), ("AF2", 21), ("AF3", 24), ("AF4", 24), ("AF5", 24))]
         _, lines = self._run(expected, matches)
         text = "\n".join(lines)
-        self.assertRegex(text, r"2026-09-21\s+2\s+2\s+2\s+0\s+50%")
-        self.assertRegex(text, r"2026-09-24\s+3\s+2\s+0\s+1\s+-")
+        # scouting points: AF1's 21-14 is its final, AF2's 21-14 isn't (20-10); AF4 is in neither feed
+        self.assertRegex(text, r"2026-09-21\s+2\s+2\s+2\s+0\s+50%\s+0\s+50%")
+        self.assertRegex(text, r"2026-09-24\s+3\s+2\s+0\s+1\s+-\s+1\s+-")
 
     def test_reports_columns_and_message_kinds_that_change_after_the_break(self):
         checked = list(COLUMNS)

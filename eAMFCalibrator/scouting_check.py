@@ -435,6 +435,11 @@ def days(rows, since, until, brk):
             "with_score_changes": sum(1 for m in ms if m["score_changes"] is not None),
             "recovered": sum(1 for m in ms if m["final"] is None and m["settled"]
                              and m["score_changes"] is not None),
+            "from_scouting": sum(1 for m in ms if m["final"] is None and m["settled"]
+                                 and m["score_changes"] is None and m["in_scouting"] and m["ended"]),
+            "scouting_agrees": _share(sum(1 for m in present if m["final"] and m["points"][0] is not None
+                                          and tuple(m["points"]) == tuple(m["final"])),
+                                      sum(1 for m in present if m["final"] and m["points"][0] is not None)),
             "sc_agrees": _share(sum(1 for m in ms if m["final"] and m["score_changes"]
                                     and tuple(m["score_changes"]) == tuple(m["final"])),
                                 sum(1 for m in ms if m["final"] and m["score_changes"])),
@@ -640,7 +645,7 @@ DETAIL_FIELDS = ["when", "n", "matches", "n_po", "down_ok", "dist_ok", "dd", "dd
                  "dd_po_share", "field_ok", "field_po", "field_po_share", "team_ok", "team_po",
                  "team_po_share", "matches_dd", "first_dd", "last_dd", "last_loaded"]
 DAY_FIELDS = ["day", "period", "scheduled", "settled", "event_settled", "with_score_changes",
-              "recovered", "sc_agrees", "in_scouting", "complete", "incomplete",
+              "recovered", "sc_agrees", "from_scouting", "scouting_agrees", "in_scouting", "complete", "incomplete",
               "missing", "live", "messages", "play_overs", "field_fill", "dd_fill", "clock_fill",
               "score_agrees", "last_loaded"] + [f.lower() for f in PROBLEMS]
 
@@ -729,15 +734,20 @@ def report(table, since, until, brk, rows, baseline, day_rows, col_changed, kind
     say("")
     say("Finals: SCORE_ENDGAME's, and what SCORE_CHANGES' last score would give a settled match without "
         "one (config.FINALS_FROM_SCORES):")
-    head = f"{'day':<12}{'sched':>6}{'settled':>9}{'endgame':>9}{'+changes':>10}{'changes=endgame':>17}"
+    head = (f"{'day':<12}{'sched':>6}{'settled':>9}{'endgame':>9}{'+changes':>10}{'changes=endgame':>17}"
+            f"{'+scouting':>11}{'scouting=endgame':>18}")
     say(head)
     say("-" * len(head))
     for d in day_rows:
         say(f"{d['day'].isoformat():<12}{d['scheduled']:>6}{d['event_settled']:>9}{d['settled']:>9}"
-            f"{d['recovered']:>10}{_pct(d['sc_agrees']):>17}")
+            f"{d['recovered']:>10}{_pct(d['sc_agrees']):>17}{d['from_scouting']:>11}"
+            f"{_pct(d['scouting_agrees']):>18}")
     say("settled: EVENT says SETTLED; endgame: SCORE_ENDGAME has a final; +changes: settled, no endgame "
         "final, but SCORE_CHANGES has its scores (recovered); changes=endgame: where both exist, the share "
-        "whose SCORE_CHANGES last score is SCORE_ENDGAME's final")
+        "whose SCORE_CHANGES last score is SCORE_ENDGAME's final; +scouting: settled, in neither, but in "
+        "scouting to ENDED (config.FINALS_FROM_SCOUTING adds up its scoring messages); scouting=endgame: "
+        "where both exist, the share whose scouting points, TEAM_A as PLAYER_1, are SCORE_ENDGAME's final "
+        "exactly (the orientation check)")
     if detail:
         say("")
         lines.extend(detail)
