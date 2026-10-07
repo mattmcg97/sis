@@ -202,6 +202,8 @@ def _layer_settings(args):
         own["tau_session"] = _pair(args.tau_session)
     if args.rho is not None:
         own["rho"] = args.rho
+    if args.trigger is not None:
+        own["trigger"] = args.trigger
     return own
 
 
@@ -210,7 +212,7 @@ def cmd_form_layer(args):
     value = True if args.on else False if args.off else None
     own = _layer_settings(args)
     if own and not args.on:
-        raise SystemExit("--tau-day, --tau-session and --rho come with --on")
+        raise SystemExit("--tau-day, --tau-session, --rho and --trigger come with --on")
     for d in args.builds:
         meta = form_layer.switch(d, value, **own)
         on = form_layer.switched_on(meta)
@@ -247,8 +249,8 @@ def cmd_form_trace(args):
         rows += [dict(r, gamer=gamer.upper()) for r in got]
     if args.csv and rows:
         import csv
-        keys = ["gamer", "code", "start", "side", "opponent", "scored", "conceded", "base_margin",
-                "day", "session", "opponent_form", "adjust", "margin", "total_adjust"]
+        keys = ["gamer", "code", "start", "side", "opponent", "scored", "conceded", "run", "opponent_run",
+                "base_margin", "day", "session", "opponent_form", "adjust", "margin", "total_adjust"]
         with open(args.csv, "w", newline="", encoding="utf-8") as fh:
             w = csv.DictWriter(fh, keys, extrasaction="ignore")
             w.writeheader()
@@ -261,6 +263,8 @@ def _layer_options(p, what):
     p.add_argument("--tau-day", metavar="M[,T]", help=f"sd of a fresh day form, margin[,total], {what}")
     p.add_argument("--tau-session", metavar="M[,T]", help=f"sd of a fresh session form, {what}")
     p.add_argument("--rho", type=float, help=f"share of a day's form carried to the next day, {what}")
+    p.add_argument("--trigger", type=int, help="move the margin only once a gamer has lost (won) this "
+                                               f"many in a row this session (0: always), {what}")
 
 
 def main(argv=None):

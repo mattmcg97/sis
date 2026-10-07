@@ -13,6 +13,10 @@ A match's expected margin moves by the home gamer's D + S less the away gamer's,
 by both gamers' D + S. A match's error is shared between its two gamers by how unsure each one's
 form is, so a gamer whose form has already settled moves less than a fresh one.
 
+TRIGGER > 0 moves the margin only once a trend shows, as a punter would see it: a gamer's form
+counts once they have lost (won) at least TRIGGER in a row tonight (kick-offs no more than RUN_GAP
+apart), and only the way the run goes. The total is not gated.
+
 Only matches that started before a match count, as stream.known_states needs: a quote priced as of
 an earlier time reads the results known then. A settled match's error is taken against the price
 the model made out of sample, so the layer reads results from the model's first daily fit (a
@@ -38,11 +42,13 @@ TAU_DAY = (1.0, 1.0)                    # sd of a gamer's fresh day form: margin
 RHO = 0.0                               # the share of a day's form carried to the next day
 TAU_SESSION = (1.0, 1.0)                # sd of a gamer's fresh session form: margin, total
 SESSION_GAP = dt.timedelta(hours=2)     # a longer gap since the gamer's last start: a new session
+TRIGGER = 0                             # the margin moves only after a run this long (0: always)
+RUN_GAP = dt.timedelta(hours=6)         # a run is a night's: kick-offs no more than this apart
 LOOKBACK_DAYS = 14                      # days of results read before the first match, when RHO > 0
 EVENING = dt.timedelta(hours=12)        # and the hours before its day, for a session past midnight
 MARGIN_SD = 9.35                        # for the trace's win chance off the expected margin
 SETTING = "form_layer"                  # the key in a build's prior file: true, false or its own
-OWN = ("tau_day", "rho", "tau_session")  # settings, e.g. {"tau_day": [1.5, 1.5], "rho": 0.5}
+OWN = ("tau_day", "rho", "tau_session", "trigger")  # settings, e.g. {"tau_day": [1.5, 1.5]}
 
 
 def _gamers(row):
@@ -64,12 +70,13 @@ class Filter:
     the gamer's last update."""
 
     def __init__(self, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP):
+                 session_gap=SESSION_GAP, trigger=TRIGGER, run_gap=RUN_GAP):
         self.noise2 = tuple(x * x for x in noise)
         self.day2 = tuple(x * x for x in tau_day)
         self.session2 = tuple(x * x for x in tau_session)
-        self.rho, self.gap = rho, session_gap
+        self.rho, self.gap, self.trigger, self.run_gap = rho, session_gap, trigger, run_gap
         self.gamers = {}                # gamer -> (last start, [margin form, total form])
+        self.runs = {}                  # gamer -> tonight's run: +k won the last k, -k lost them
 
     def _state(self, gamer, t):
         """The gamer's forms as of `t`: a new day's D carried by RHO a day, a new session's S fresh."""
@@ -92,13 +99,32 @@ class Filter:
         """((day, session) margin form, (day, session) total form) of a gamer as of `t`."""
         return tuple((f[0], f[1]) for f in self._state(gamer, t))
 
+    def run(self, gamer, t):
+        """The gamer's run tonight as of `t`: +k won the last k, -k lost the last k."""
+        st = self.gamers.get(gamer)
+        return 0 if st is None or t - st[0] > self.run_gap else self.runs.get(gamer, 0)
+
+    def margin(self, gamer, t):
+        """The gamer's margin form as of `t` that counts: all of it, or with a trigger, only once
+        their run tonight is that long, and only the way it goes."""
+        m = sum(self.form(gamer, t)[0])
+        if not self.trigger:
+            return m
+        run = self.run(gamer, t)
+        return m if abs(run) >= self.trigger and run * m > 0 else 0.0
+
     def adjustment(self, home, away, t):
         """(margin, total) to add to a match's expected points as of `t`."""
-        (hm, ht), (am, at) = self.form(home, t), self.form(away, t)
-        return sum(hm) - sum(am), sum(ht) + sum(at)
+        ht, at = self.form(home, t)[1], self.form(away, t)[1]
+        return self.margin(home, t) - self.margin(away, t), sum(ht) + sum(at)
 
-    def update(self, home, away, t, margin_error, total_error):
-        """Take in a match that started at `t`: its margin and total errors against the price."""
+    def update(self, home, away, t, margin_error, total_error, result=None):
+        """Take in a match that started at `t`: its margin and total errors against the price, and
+        its result (home points less away points) for the runs."""
+        if result is not None:
+            for g, r in ((home, result), (away, -result)):
+                was = self.run(g, t)
+                self.runs[g] = max(was, 0) + 1 if r > 0 else min(was, 0) - 1 if r < 0 else 0
         h, a = self._state(home, t), self._state(away, t)
         for q, (y, sign) in enumerate(((margin_error, -1.0), (total_error, 1.0))):
             (d1, s1, a1, b1, c1), (d2, s2, a2, b2, c2) = h[q], a[q]
@@ -131,10 +157,10 @@ class FormLayer:
     FOLLOWS_RESULTS = True               # means() reads the results known when pricing
 
     def __init__(self, pre, since, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP, lookback_days=LOOKBACK_DAYS):
+                 session_gap=SESSION_GAP, trigger=TRIGGER, lookback_days=LOOKBACK_DAYS):
         self.pre, self.since = pre, since
         self.settings = dict(noise=noise, tau_day=tau_day, rho=rho, tau_session=tau_session,
-                             session_gap=session_gap)
+                             session_gap=session_gap, trigger=trigger)
         self.lookback_days = lookback_days if rho > 0 else 0
 
     def __getattr__(self, name):
@@ -148,13 +174,14 @@ class FormLayer:
         base = self.pre.describe() if hasattr(self.pre, "describe") else type(self.pre).__name__
         s = self.settings
         carry = f"carried x{s['rho']:g} a day" if s["rho"] else "fresh each day"
+        trigger = (f"; the margin moves once a run of {s['trigger']} shows" if s["trigger"] else "")
         return (f"{base}; post-game form layer from {self.since:%Y-%m-%d} (day form sd "
                 f"{s['tau_day'][0]:g} margin, {s['tau_day'][1]:g} total, {carry}; session form sd "
-                f"{s['tau_session'][0]:g} margin, {s['tau_session'][1]:g} total)")
+                f"{s['tau_session'][0]:g} margin, {s['tau_session'][1]:g} total{trigger})")
 
     def run(self, schedule, results=None, **kw):
         """(the model's own expected points for the schedule and the matches the layer read,
-        {match: (margin, total) adjustment}, {match: (home form, away form)} as filter.form)."""
+        {match: (margin, total) adjustment}, {match: (home, away) (form as filter.form, run)})."""
         starts = {r["MATCH_CODE"]: nb2_prior._start(r) for r in schedule}
         known = [t for t in starts.values() if t is not None]
         if not known or not results:
@@ -179,11 +206,12 @@ class FormLayer:
             home, away = _gamers(r)
             if not settles:
                 adjust[r["MATCH_CODE"]] = filt.adjustment(home, away, t)
-                forms[r["MATCH_CODE"]] = (filt.form(home, t), filt.form(away, t))
+                forms[r["MATCH_CODE"]] = tuple((filt.form(g, t), filt.run(g, t)) for g in (home, away))
                 continue
             p, f = got.get(r["MATCH_CODE"]), _finals(r)
             if p is not None:
-                filt.update(home, away, t, (f[0] - f[1]) - (p[0] - p[1]), (f[0] + f[1]) - (p[0] + p[1]))
+                filt.update(home, away, t, (f[0] - f[1]) - (p[0] - p[1]), (f[0] + f[1]) - (p[0] + p[1]),
+                            f[0] - f[1])
         return got, adjust, forms
 
     def means(self, schedule, results=None, **kw):
@@ -255,14 +283,16 @@ def trace(layer, history, gamer, since, until):
         sign = 1.0 if home == gamer else -1.0
         (p1, p2), (s1, s2) = got[code], _finals(r)
         dm, dt_ = adjust.get(code, (0.0, 0.0))
-        mine, theirs = forms.get(code, (((0.0, 0.0), (0.0, 0.0)), ((0.0, 0.0), (0.0, 0.0))))
+        fresh = (((0.0, 0.0), (0.0, 0.0)), 0)
+        (mine, run), (theirs, their_run) = forms.get(code, (fresh, fresh))
         if sign < 0:
-            mine, theirs = theirs, mine
+            (mine, run), (theirs, their_run) = (theirs, their_run), (mine, run)
         base = sign * (p1 - p2)
         out.append(dict(code=code, start=nb2_prior._start(r), opponent=away if sign > 0 else home,
                         side="home" if sign > 0 else "away",
                         scored=s1 if sign > 0 else s2, conceded=s2 if sign > 0 else s1,
                         base_points=(p1, p2) if sign > 0 else (p2, p1), base_margin=base,
+                        run=run, opponent_run=their_run,
                         day=mine[0][0], session=mine[0][1], opponent_form=sum(theirs[0]),
                         adjust=sign * dm, margin=base + sign * dm, total_adjust=dt_))
     return out
@@ -313,6 +343,10 @@ def base_model(model_dir):
     return peel(pre)
 
 
+def _run_label(run):
+    return f"W{run}" if run > 0 else f"L{-run}" if run < 0 else "-"
+
+
 def report(rows, gamer, layer):
     """Lines for trace's rows: each match as the model priced it and as the layer moves it."""
     if not rows:
@@ -320,9 +354,10 @@ def report(rows, gamer, layer):
     lines = [f"  {gamer.upper()}: {len(rows)} matches, {rows[0]['start']:%Y-%m-%d %H:%M} to "
              f"{rows[-1]['start']:%Y-%m-%d %H:%M}", f"  model: {layer.describe()}", "",
              "  margins and win chances from his side; win chance off a normal margin, sd "
-             f"{MARGIN_SD:g}; +/- = his day + session form less the opponent's",
+             f"{MARGIN_SD:g}; runs tonight before the match (L3: lost the last 3), his and the "
+             "opponent's; +/- = his day + session form less the opponent's",
              "",
-             f"  {'kick-off':<16} {'side':<4} {'opponent':<16} {'score':>7}   {'model':>6} {'win':>4}"
+             f"  {'kick-off':<16} {'side':<4} {'opponent':<16} {'score':>7} {'runs':>7}   {'model':>6} {'win':>4}"
              f"   {'day':>5} {'sess':>5} {'opp':>5} {'+/-':>5}   {'layer':>6} {'win':>4}"]
     sums = dict(n=0, e0=0.0, e1=0.0, l0=0.0, l1=0.0, k=0)
     day = None
@@ -331,8 +366,9 @@ def report(rows, gamer, layer):
             lines.append("")
         day = r["start"].date()
         w0, w1 = win_chance(r["base_margin"]), win_chance(r["margin"])
+        runs = f"{_run_label(r['run'])} {_run_label(r['opponent_run'])}"
         lines.append(f"  {r['start']:%Y-%m-%d %H:%M} {r['side']:<4} {r['opponent'][:16]:<16} "
-                     f"{r['scored']:>3.0f}-{r['conceded']:<3.0f}   {r['base_margin']:>+6.1f} {w0:>4.0%}"
+                     f"{r['scored']:>3.0f}-{r['conceded']:<3.0f} {runs:>7}   {r['base_margin']:>+6.1f} {w0:>4.0%}"
                      f"   {r['day']:>+5.2f} {r['session']:>+5.2f} {r['opponent_form']:>+5.2f} "
                      f"{r['adjust']:>+5.2f}   {r['margin']:>+6.1f} {w1:>4.0%}")
         result = r["scored"] - r["conceded"]

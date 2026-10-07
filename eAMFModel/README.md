@@ -1802,6 +1802,47 @@ second.
 
 The full test (56 days, 16 Jul – 9 Sep) is the one that sets the defaults or keeps the layer off.
 
+**Only once a trend shows (`--trigger K`).** Punters pile on once a run shows, two or three games
+in. With a trigger, a gamer's margin form counts only once they have lost (won) at least K in a row
+tonight, and only the way the run goes. A run is the night's: kick-offs no more than 6 hours apart,
+so a break of 2–3 hours doesn't end it. The total is not gated.
+
+```powershell
+python -m eAMFModel form-layer v12_daily_trend --on --trigger 3
+python -m eAMFModel form-trace --model v12_daily --history eAMFCalibrator/out/match_history.csv --gamer NIGHTMARE --since 2026-10-06 --trigger 3 --tau-day 2 --tau-session 2
+```
+
+**What happens after a run, against the daily glmer's price.** These are the matches right after
+a run, from 41 days of daily fits (3,791 matches), with a run counted over the whole night:
+
+| run tonight | next matches | margin vs price (se) | won | priced |
+|---|---|---|---|---|
+| lost the last 5+ | 159 | −0.54 (0.67) | 34.6% | 38.7% |
+| lost 4 | 172 | −0.30 (0.74) | 40.7% | 43.7% |
+| lost 3 | 389 | +0.26 (0.48) | 44.5% | 44.8% |
+| lost 2 | 783 | +0.01 (0.34) | 46.0% | 47.6% |
+| won 2 | 803 | −0.30 (0.33) | 52.2% | 52.1% |
+| won 3 | 367 | +0.36 (0.50) | 57.5% | 54.8% |
+| won 4+ | 366 | −0.53 (0.48) | 57.9% | 58.8% |
+
+- **Two or three games in, when punters pile on, the next match is priced right.** That holds both
+  ways.
+- **Four or more losses** win 3–4 points less often than priced. The 14-day fits, with 15,418
+  matches, show the same (−4.4 points after 4, −1.8 after 5+). But the margin is within its noise
+  every time, and winning runs don't carry on at all.
+- **Nothing tuned on it holds up.** Several kinds of shift were chosen on the first half of the
+  days and scored on the second: a flat or per-game shift after 2–5 straight losses (or wins), the
+  layer gated as above, and a shift once the night's error passes a threshold. On the daily glmer,
+  all 67 settings made the second half worse, by +0.0001 to +0.03 moneyline log loss. On 14-day
+  fits, the best took off 0.0003: shading a gamer 0.5 points after 4 straight losses.
+- **NIGHTMARE.** With `--trigger 3` and form sd 2, the layer would have moved him 0.2–2.1 points
+  from his fifth game on 22 Jul. On 24 Aug its biggest move, −3.7 points, came on his one win of the
+  night (45–38).
+
+The bets say more than the prices here. Every `bets` run now shows the book's margin on the bets
+that pile onto a run, against those that fade it (`bets_trends.txt`, in eAMFCalibrator's README).
+If piling on beats the book, a trigger is worth turning on.
+
 ## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that

@@ -112,6 +112,50 @@ class TestFilter(unittest.TestCase):
         self.assertEqual(f.adjustment("ann", "bob", at(30)), (0.0, 0.0))
 
 
+class TestTrigger(unittest.TestCase):
+
+    def filt(self, trigger):
+        return form_layer.Filter(noise=NOISE, tau_day=TAU_D, tau_session=TAU_S, trigger=trigger)
+
+    def test_the_margin_moves_only_once_a_losing_run_shows(self):
+        gated, free = self.filt(3), self.filt(0)
+        for k in range(3):
+            for f in (gated, free):
+                f.update("ann", f"o{k}", at(36 * k), -8.0, 4.0, -8.0)   # lost, 8 short of the spread
+            if k < 2:
+                self.assertEqual(gated.adjustment("ann", "new", at(36 * k + 30))[0], 0.0)
+                self.assertLess(free.adjustment("ann", "new", at(36 * k + 30))[0], 0.0)
+        self.assertEqual(gated.run("ann", at(110)), -3)
+        self.assertAlmostEqual(gated.adjustment("ann", "new", at(110))[0],
+                               free.adjustment("ann", "new", at(110))[0])
+        self.assertLess(gated.adjustment("ann", "new", at(110))[0], 0.0)
+        # the total is not gated
+        self.assertEqual(gated.adjustment("ann", "new", at(40))[1], free.adjustment("ann", "new", at(40))[1])
+
+    def test_a_win_or_a_new_night_ends_the_run(self):
+        f = self.filt(2)
+        f.update("ann", "x", at(0), -8.0, 0.0, -8.0)
+        f.update("ann", "y", at(36), -8.0, 0.0, -8.0)
+        self.assertEqual(f.run("ann", at(70)), -2)
+        self.assertEqual(f.run("y", at(70)), 1)
+        self.assertEqual(f.run("ann", at(36 + 150)), -2)                 # a night's run, past a session
+        self.assertEqual(f.run("ann", at(36 + 361)), 0)                  # more than 6 hours on
+        self.assertEqual(f.adjustment("ann", "new", at(36 + 361))[0], 0.0)
+        f.update("ann", "z", at(72), 2.0, 0.0, 1.0)                     # won by 1
+        self.assertEqual(f.run("ann", at(100)), 1)
+        self.assertEqual(f.adjustment("ann", "new", at(100))[0], 0.0)
+        f.update("ann", "z", at(108), 0.0, 0.0, 0.0)                    # a draw ends a run
+        self.assertEqual(f.run("ann", at(130)), 0)
+
+    def test_only_the_way_the_run_goes(self):
+        f = self.filt(2)
+        f.update("ann", "x", at(0), 6.0, 0.0, -2.0)                     # lost by 2 when priced to lose by 8
+        f.update("ann", "y", at(36), 6.0, 0.0, -2.0)
+        self.assertEqual(f.run("ann", at(70)), -2)
+        self.assertGreater(sum(f.form("ann", at(70))[0]), 0.0)
+        self.assertEqual(f.margin("ann", at(70)), 0.0)                   # beating the price: no move
+
+
 class TestFormLayer(unittest.TestCase):
 
     def layer(self, since=DAY):
@@ -242,6 +286,10 @@ class TestSwitch(unittest.TestCase):
             with redirect_stdout(out):
                 cli.main(["form-layer", d, "--on", "--tau-session", "1.5,1", "--rho", "0.2"])
             self.assertIn("with tau_session (1.5, 1.0), rho 0.2", out.getvalue())
+            with redirect_stdout(io.StringIO()):
+                cli.main(["form-layer", d, "--on", "--trigger", "3"])
+            self.assertEqual(form_layer.base_settings(d), {"trigger": 3})
+            self.assertIn("once a run of 3 shows", form_layer.wrap(Flat(), {"form_layer": {"trigger": 3}}).describe())
             with self.assertRaises(SystemExit):
                 cli.main(["form-layer", d, "--off", "--rho", "0.2"])
 
@@ -275,6 +323,8 @@ class TestTrace(unittest.TestCase):
         self.assertEqual([r["code"] for r in rows], ["H0", "A1", "H2"])
         self.assertEqual([r["side"] for r in rows], ["home", "away", "home"])
         self.assertEqual([(r["scored"], r["conceded"]) for r in rows], [(10, 30), (14, 35), (21, 20)])
+        self.assertEqual([r["run"] for r in rows], [0, -1, -2])
+        self.assertEqual([r["opponent_run"] for r in rows], [0, 0, 0])
         self.assertEqual(rows[0]["adjust"], 0.0)
         self.assertLess(rows[1]["adjust"], 0.0)                   # after a loss, from ann's side
         self.assertLess(rows[1]["day"], 0.0)
