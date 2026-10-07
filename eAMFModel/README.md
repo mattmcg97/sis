@@ -39,6 +39,7 @@ The code that runs:
 | v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
 | v11 | v10 with close endings, late conversions by the clock, late-half timeouts, overtime and kick-off touchdowns as played (overtime 5.4% → 3.2% of games, real 2.7%; held out RPS level) |
 | v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
+| v13 | v12 with each side's big-play rate: its gamer's, its team's and what the other side allows, boom or bust (held out in-play RPS 3.821 → 3.811; totals' spread follows the big-play sides) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
@@ -1328,12 +1329,32 @@ of the total against the real miss (rms):
 The real misses widen 2.7 points from the first fifth to the last. v12 widens 1.7, all of it from
 the expected totals, which run with the rate. v13 widens 2.65.
 
-IN_PLAY_PLACEHOLDER
+In play: points still to come at 56,890 snapshots (`remaining`, 500 paths), RPS, v13 minus v12 [95%
+over matches]. Both builds were run with today's code (v12's pre-match now follows the results, so its
+numbers are a little better than in the v12 section):
+
+| | v12 | v13 | v13 - v12 | mean error v12 / v13 |
+|---|---|---|---|---|
+| all | 3.821 | 3.811 | -0.010 [-0.020, -0.001] | +0.01 / -0.12 |
+| Q1 | 3.782 | 3.775 | -0.007 [-0.020, +0.007] | -0.10 / -0.34 |
+| Q2 | 4.739 | 4.724 | -0.015 [-0.028, -0.002] | +0.03 / -0.14 |
+| Q3 | 4.392 | 4.378 | -0.014 [-0.028, -0.001] | +0.20 / +0.10 |
+| Q4 | 2.364 | 2.359 | -0.005 [-0.013, +0.001] | -0.07 / -0.12 |
+| Q2 2+ scores, trailer has ball | 5.152 | 5.110 | -0.042 [-0.077, -0.009] | +0.74 / +0.56 |
+| Q3 2+ scores, leader has ball | 4.106 | 4.060 | -0.046 [-0.081, -0.008] | +1.04 / +0.95 |
+| Q4 2+ scores, trailer has ball | 2.595 | 2.580 | -0.015 [-0.028, -0.001] | +0.24 / +0.18 |
+
+v13 is better overall and in Q2 and Q3. It gains most where a side two scores behind needs big plays,
+or a side two scores ahead can hit one. No state is clearly worse. v13 runs 0.13 points a game lower
+in play than v12 (mean error -0.12, v12 +0.01): the points are held at kick-off, not from in-game
+states.
 
 ### Still open
 
 - **The sandbox build rates gamers on 9 days of plays.** A build on the whole history rates them
   far more surely; rebuild before reading the report.
+- **v13 runs 0.13 points a game low in play** (above). Holding the points at the in-game states as
+  well as at kick-off would take it back.
 - **Form on the day is fitted as v12 fits it**, on results against the pre-match model with the
   sim's spread at league rates. A gamer whose big plays the rate now spreads may still carry some of
   that spread in its form (the two correlate +0.26 across gamers). If the most explosive matches
