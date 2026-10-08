@@ -1794,6 +1794,23 @@ gamer's matches in kick-off order and shows:
 A summary line gives his record for the night, his margin against prod's closing spread lines, and
 the night's book revenue each way.
 
+### Punters piling onto a trend: `bets_trends.txt`
+
+Every `bets` run (and `bets prematch`) breaks the moneyline and spread bets down by how each one
+stood to a gamer's run this session when it was placed:
+- **Piles on** backs a gamer who had won the last 2+ (`TREND_RUN`), or opposes one who had lost
+  them. **Fades** goes the other way. **Mixed** does both, and **none** has no run of 2+ on either
+  side.
+- **A session** is a run of kick-offs no more than 2 hours apart. **A result counts** once it's in,
+  36 minutes after kick-off, at the bet's own time. A bet placed before the last match finished
+  doesn't see it.
+- For each group, by run length (2, 3, 4+) and pre-match apart from in play, it shows the bets, the
+  stake, and the book's margin (revenue / stake). The margin is shown as placed with prod and
+  re-priced by each candidate, on the bets every candidate re-priced.
+
+If punters make money by piling onto trends that carry on, the "piles on" rows show a lower margin
+than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) should then raise it.
+
 ### The operators' margin
 
 Every `bets` run prints each operator's margin over prod's probability: the median of

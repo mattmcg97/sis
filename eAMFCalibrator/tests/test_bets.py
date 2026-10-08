@@ -231,6 +231,7 @@ class TestCommand(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=[]), \
                 mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text"), \
                 mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
@@ -242,6 +243,7 @@ class TestCommand(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE) as fq, \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=[]), \
                 mock.patch.object(bets, "write_csv") as written, mock.patch.object(bets, "write_text"), \
                 mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
@@ -392,6 +394,7 @@ class TestPrematch(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", side_effect=quotes), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=[]), \
                 mock.patch.object(bets, "write_csv") as written, \
                 mock.patch.object(bets, "write_text") as text, mock.patch("builtins.print"), \
                 mock.patch("os.makedirs"), mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
@@ -435,6 +438,78 @@ class TestHtmlSection(unittest.TestCase):
         self.assertIn("Fanduel +1s (100 bets)", html)
         self.assertIn('class="good">+10.00', html)
         self.assertEqual(bets.html_section({}), "")
+
+
+def game(code, minutes, p1, p2, s1, s2):
+    t = T0 + dt.timedelta(minutes=minutes)
+    return {"MATCH_CODE": code, "SCHEDULED_START_TIME_UTC": f"{t:%Y-%m-%d %H:%M:%S}", "PLAYER_1_HANDLE": p1,
+            "PLAYER_2_HANDLE": p2, "PLAYER_1_FINAL_SCORE": s1, "PLAYER_2_FINAL_SCORE": s2}
+
+
+class TestTrends(unittest.TestCase):
+    """The bets by a gamer's run tonight when placed: piling on a trend, or fading it."""
+
+    HISTORY = [game("G1", 0, "ann", "x", 10, 20),       # ann lost
+               game("G2", 40, "y", "ann", 30, 14),      # lost
+               game("G3", 80, "ann", "z", 7, 21),       # lost
+               game("N", 120, "ann", "bob", 20, 20),    # the match the bets are on
+               game("B1", 60, "bob", "w", 24, 3),       # bob won
+               game("B2", 100, "v", "bob", 3, 24)]      # won
+
+    def test_a_run_counts_the_results_in_when_the_bet_was_placed(self):
+        games = bets.gamer_games(self.HISTORY)
+        start = T0 + dt.timedelta(minutes=120)
+        self.assertEqual(bets.run_at(games["ANN"], start, None), -3)
+        self.assertEqual(bets.run_at(games["ANN"], start, start), -3)
+        # placed 100 minutes in: G3 (kick-off 80) isn't in yet, G1 and G2 are
+        self.assertEqual(bets.run_at(games["ANN"], start, T0 + dt.timedelta(minutes=100)), -2)
+        self.assertEqual(bets.run_at(games["BOB"], start, None), 2)
+        self.assertEqual(bets.run_at(games.get("NOBODY"), start, None), 0)
+        # a night's run goes on over a 3-hour gap; more than 6 hours starts a new night
+        night = bets.gamer_games([r for r in self.HISTORY if r["MATCH_CODE"] != "N"])
+        self.assertEqual(bets.run_at(night["ANN"], T0 + dt.timedelta(minutes=80 + 180), None), -3)
+        self.assertEqual(bets.run_at(night["ANN"], T0 + dt.timedelta(minutes=80 + 361), None), 0)
+        # a win ends a losing run; a draw ends any run
+        mixed = bets.gamer_games(self.HISTORY + [game("G4", 130, "ann", "q", 30, 0)])
+        self.assertEqual(bets.run_at(mixed["ANN"], T0 + dt.timedelta(minutes=150), None), 1)
+        self.assertEqual(bets.run_at(games["ANN"], T0 + dt.timedelta(minutes=150), None), 0)   # N drawn
+
+    def test_a_bet_piles_on_or_fades(self):
+        info = {r["MATCH_CODE"]: r for r in self.HISTORY}
+        games = bets.gamer_games(self.HISTORY)
+        placed = T0 + dt.timedelta(minutes=118)
+        row = lambda market: dict(match_code="N", feed_market=market, bet_time=placed)
+        self.assertEqual(bets.trend_of(row(51), info, games), ("piles on", 3))   # on bob, against ann (L3)
+        self.assertEqual(bets.trend_of(row(53), info, games), ("piles on", 3))
+        self.assertEqual(bets.trend_of(row(50), info, games), ("fades", 3))      # on ann
+        self.assertIsNone(bets.trend_of(row(54), info, games))                  # a total
+        self.assertIsNone(bets.trend_of(dict(row(50), match_code="NOPE"), info, games))
+        both = {"ANN": games["ANN"], "BOB": bets.gamer_games([game("C1", 30, "bob", "u", 0, 9),
+                                                             game("C2", 60, "bob", "u", 0, 9)])["BOB"]}
+        self.assertEqual(bets.trend_of(row(50), info, both), ("mixed", 3))      # on ann (L3) v bob (L2)
+        calm = {"ANN": bets.gamer_games([game("D1", 100, "ann", "u", 9, 0)])["ANN"]}
+        self.assertEqual(bets.trend_of(row(50), info, calm), ("none", 0))
+
+    def test_the_report_puts_the_book_s_margin_by_trend(self):
+        info = {r["MATCH_CODE"]: r for r in self.HISTORY}
+        games = bets.gamer_games(self.HISTORY)
+        placed = T0 + dt.timedelta(minutes=118)
+
+        def row(market, stake, rev, rev_c, in_play=False):
+            return dict(match_code="N", feed_market=market, bet_time=placed, stake=stake, revenue=rev,
+                        candidate_revenue=rev_c, simulated=True, in_play=in_play)
+        v12 = [row(51, 100, -90, -60), row(51, 50, 50, 50), row(50, 10, 10, 10), row(54, 10, 10, 10),
+               row(51, 20, 20, 10, in_play=True)]
+        form = [dict(r, candidate_revenue=c) for r, c in zip(v12, (-40, 50, 10, 10, 20))]
+        text = "\n".join(bets.trend_report([("v12", v12), ("v12-form", form)], info, games))
+        self.assertIn("piles on a run of 3", text)
+        line = next(x for x in text.splitlines() if "piles on a run of 3" in x and "150" in x)
+        self.assertIn("-26.7%", line)                       # prod: (-90 + 50) / 150
+        self.assertIn("-6.7%", line)                        # v12: (-60 + 50) / 150
+        self.assertIn("+6.7%", line)                        # v12-form: (-40 + 50) / 150
+        self.assertIn("fades a run of 3", text)
+        self.assertLess(text.index("pre-match"), text.index("in play"))
+        self.assertEqual(sum("piles on a run of 3" in x for x in text.splitlines()), 2)
 
 
 class TestGamer(unittest.TestCase):
@@ -513,6 +588,7 @@ class TestGamer(unittest.TestCase):
                 mock.patch.object(snowflake_io, "fetch_match_info", return_value=info), \
                 mock.patch.object(snowflake_io, "fetch_quotes", side_effect=quotes), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=[]), \
                 mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text") as text, \
                 mock.patch("builtins.print"), mock.patch("os.makedirs"), \
                 mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
@@ -525,3 +601,4 @@ class TestGamer(unittest.TestCase):
         written = {c[0][0]: c[0][1] for c in text.call_args_list}
         report = "\n".join(written[os.path.join("out", "bets_gamers.txt")])
         self.assertIn("NIGHTMARE: 1 matches, won 1, lost 0", report)
+        self.assertIn(os.path.join("out", "bets_trends.txt"), written)

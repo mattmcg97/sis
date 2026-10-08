@@ -10,7 +10,7 @@ from dataclasses import dataclass, fields
 
 import numpy as np
 
-from . import follow, glmer_prior, nb2_prior, playover, players, sim12 as sim
+from . import follow, form_layer, glmer_prior, nb2_prior, playover, players, sim12 as sim
 from .state import HOME, GameState
 
 GRID = np.round(np.linspace(-0.8, 0.8, 17), 3)
@@ -1708,7 +1708,9 @@ def prematch_model(model_dir_or_tables):
         with open(shrink_path, encoding="utf-8") as fh:
             pre = ShrunkPrematch(pre, json.load(fh))
     # each gamer's results since the fit, on top (follow.py); a rolling prior refits every day instead
-    return follow.wrap(pre, rolling=bool(meta.get("rolling")))
+    pre = follow.wrap(pre, rolling=bool(meta.get("rolling")))
+    # and the post-game form layer, where the build has it switched on (form_layer.py)
+    return form_layer.wrap(pre, meta)
 
 
 def players_book(model_dir_or_tables):
