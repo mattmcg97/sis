@@ -77,11 +77,12 @@ def stream_name(value):
     return value
 
 
-LINE_MODELS = ("v8", "v9", "v10", "v11", "v12")     # versions that quote their own lines
+LINE_MODELS = ("v8", "v9", "v10", "v11", "v12", "v13")     # versions that quote their own lines
 LINE_RULES = {"v8": ("prod", "even"), "v9": ("prod", "even"),        # their '@' suffixes
               "v10": ("prod", "even", "anchored", "hyst"),
               "v11": ("prod", "even", "anchored", "hyst"),
-              "v12": ("prod", "even", "anchored", "hyst")}
+              "v12": ("prod", "even", "anchored", "hyst"),
+              "v13": ("prod", "even", "anchored", "hyst")}
 
 
 def model_version(stream_table):
@@ -668,7 +669,7 @@ _MODEL_QUOTES = {}
 
 
 def _sim_quotes(cur, match_codes, name, lines=None):
-    """An eAMFModel simulation version (v8 to v12), GAMEPLAI-shaped: PLAY_OVER
+    """An eAMFModel simulation version (v8 to v13), GAMEPLAI-shaped: PLAY_OVER
     snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
     with the players' handles attached for the player profiles.
 

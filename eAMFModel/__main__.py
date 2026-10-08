@@ -15,12 +15,16 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          return touchdowns played as real games play them)
   v12-build / v12        the same for v12 (v11 with level sides' late drives run down to
                          the kick as real ones are)
+  v13-build / v13        the same for v13 (v12 with each side's big-play rate: its gamer's,
+                         its team's and what the other side allows)
   prior-daily            refit the pre-match model every day of a window, as live, and point
                          builds at the daily fits
   form-layer DIR         switch the post-game form layer on or off for builds (form_layer.py)
   form-trace             one gamer's matches as the pre-match model priced them and as the
                          post-game form layer moves them
   trader                 a local page to click through a game and see a version's prices
+  kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
+                         against the real ones
   remaining SNAPS.csv    a version's points still to come against what really came
 
 The calibrator runs a version as a stream in its own right:
@@ -165,6 +169,17 @@ def cmd_trader(args):
                  browser=not args.no_browser, version=args.version)
 
 
+def cmd_kickoff_dist(args):
+    from . import kickoff_check
+    try:
+        means = tuple(float(x) for x in args.means.split(","))
+        assert len(means) == 2
+    except (ValueError, AssertionError):
+        raise SystemExit("--means takes two expected points, home,away (e.g. 15.5,15.5)")
+    kickoff_check.run(args.model, means, args.history, since=args.since or kickoff_check.default_since(),
+                      until=args.until, n_paths=args.paths, seed=args.seed)
+
+
 def cmd_prior_daily(args):
     import datetime as dt
     from . import nb2_prior, rolling_prior
@@ -291,7 +306,9 @@ def main(argv=None):
                        ("v11", "v11: v10 with close endings, timeouts, overtime and return touchdowns "
                                "played as real games play them (see README)"),
                        ("v12", "v12: v11 with level sides' late drives run down to the kick as real "
-                               "ones are (see README)")):
+                               "ones are (see README)"),
+                       ("v13", "v13: v12 with each side's big-play rate -- its gamer's, its team's and "
+                               "what the other side allows (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
@@ -339,7 +356,7 @@ def main(argv=None):
                                          "of each game really made, value by value, by quarter and "
                                          "game state (see remaining.py)")
     p.add_argument("snapshots", help="scouting_playover.csv")
-    p.add_argument("--version", choices=["v8", "v9", "v10", "v11", "v12"], default="v9")
+    p.add_argument("--version", choices=["v8", "v9", "v10", "v11", "v12", "v13"], default="v9")
     p.add_argument("--model", help="the version's build directory (default <version>_model)")
     p.add_argument("--since", help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD")
@@ -393,6 +410,17 @@ def main(argv=None):
     p.add_argument("--csv", help="also write the rows to this CSV")
     _layer_options(p, "for this trace (default: the build's own, else form_layer's)")
     p.set_defaults(func=cmd_form_trace)
+
+    p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
+                                            "final totals against the real ones over a window")
+    p.add_argument("--model", required=True, help="a v12 build directory, e.g. v12_1001")
+    p.add_argument("--means", default="15.5,15.5", help="home,away expected points (default 15.5,15.5)")
+    p.add_argument("--history", required=True, help="the match history CSV (eAMFCalibrator history)")
+    p.add_argument("--since", help="first real match day, YYYY-MM-DD (default: 30 days ago)")
+    p.add_argument("--until", help="day after the last real match day, YYYY-MM-DD")
+    p.add_argument("--paths", type=int, default=20000, help="simulated games (default 20000)")
+    p.add_argument("--seed", type=int, default=0)
+    p.set_defaults(func=cmd_kickoff_dist)
 
     p = sub.add_parser("trader", help="a local web page to test a model by hand: set up a match, click "
                                       "through it play by play, and see its prices after each play")

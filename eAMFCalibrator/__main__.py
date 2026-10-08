@@ -822,7 +822,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v8 to v12 -- see eAMFModel) priced "
+                             "or a model version (v8 to v13 -- see eAMFModel) priced "
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
@@ -877,6 +877,15 @@ def common_options():
     tuning.add_argument("--v12-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v12: as --v10-lines "
                              f"(default {config.V12_LINES})")
+    tuning.add_argument("--v13-model", metavar="DIR",
+                        help="eAMFModel v13-build's output, for --candidate v13 "
+                             "(default $EAMF_V13_MODEL, then ./v13_model)")
+    tuning.add_argument("--v13-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v13 "
+                             f"(default {config.V13_PATHS})")
+    tuning.add_argument("--v13-lines", choices=["own", "even", "prod", "anchored", "hyst"],
+                        help="--candidate v13: as --v10-lines "
+                             f"(default {config.V13_LINES})")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -915,7 +924,10 @@ def apply_overrides(args):
                            ("v11_lines", "V11_LINES"),
                            ("v12_model", "V12_MODEL_DIR"),
                            ("v12_paths", "V12_PATHS"),
-                           ("v12_lines", "V12_LINES")):
+                           ("v12_lines", "V12_LINES"),
+                           ("v13_model", "V13_MODEL_DIR"),
+                           ("v13_paths", "V13_PATHS"),
+                           ("v13_lines", "V13_LINES")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
@@ -936,7 +948,7 @@ def apply_overrides(args):
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
 
-    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate"):
+    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate", "halves"):
         return
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
@@ -1180,6 +1192,22 @@ def build_parser():
                            help="a totals_signals.csv (run with --candidate v8,v9) to correct the models too")
     tc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    hv_parser = sub.add_parser(
+        "halves",
+        help="off the `scouting` export (no Snowflake): how scoring splits between the halves, the "
+             "second half from each half-time margin, touchdown lengths -- for the league and each gamer")
+    hv_parser.add_argument("export", nargs="?", default=os.path.join(DEFAULT_OUT, "scouting_playover.csv"),
+                           help="scouting_playover.csv (default <out>/scouting_playover.csv)")
+    hv_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    hv_parser.add_argument("--min-games", type=int, default=30,
+                           help="gamers with at least this many games get a row (default 30)")
+    hv_parser.add_argument("--history",
+                           help="match_history.csv to take each side's NFL team from (PLAYER_1_TEAM / "
+                                "PLAYER_2_TEAM): adds the team and gamer / team splits (default: "
+                                "match_history.csv beside the export, when there is one)")
+    hv_parser.add_argument("--min-pair-games", type=int, default=20,
+                           help="gamer / team pairs with at least this many games get a row (default 20)")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -1226,6 +1254,15 @@ def main(argv=None):
         from . import totals_calibrate
         path = totals_calibrate.run(args.export, args.out or DEFAULT_OUT, args.history, args.signals)
         print(f"\n  -> {path} and totals_calibration.txt")
+        return 0
+    if args.command == "halves":
+        from . import halves
+        history = args.history
+        if history is None:
+            beside = os.path.join(os.path.dirname(args.export) or ".", "match_history.csv")
+            history = beside if os.path.exists(beside) else None
+        halves.run(args.export, args.out or DEFAULT_OUT, min_games=args.min_games, history_path=history,
+                   min_pair_games=args.min_pair_games)
         return 0
     if args.command == "totals-lines":
         from . import totals_lines
