@@ -2615,3 +2615,35 @@ class TestHoldPoints(unittest.TestCase):
         miss_before = sum(abs(a - b) for a, b in zip(self._points(before, prof), self.means))
         miss_after = sum(abs(a - b) for a, b in zip(self._points(after, prof), self.means))
         self.assertLess(miss_after, miss_before)
+
+
+class TestReconcile(unittest.TestCase):
+    """v14: the build's last step plays the calibration states as pricing plays them."""
+
+    def test_a_held_state_takes_the_sides_profiles(self):
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        prof = (players.Profile(pace=0.9, loss=1.4, loss_size=1.2, kick_tb=0.5, big=1.3, aggression=0.2),
+                players.Profile(kick_nlz=2.0))
+        start = sim14.Start(2)
+        v14._set_side(tables, start, 0, v14.Held((0.1, -0.2), prof))
+        v14._set_side(tables, start, 1, (0.3, 0.4))
+        np.testing.assert_allclose(start.loss[0], (1.4, 1.0))
+        np.testing.assert_allclose(start.loss_size[0], (1.2, 1.0))
+        np.testing.assert_allclose(start.kick_tb[0], (0.5, 1.0))
+        np.testing.assert_allclose(start.kick_nlz[0], (1.0, 2.0))
+        np.testing.assert_allclose(start.big[0], (1.3, 1.0))
+        np.testing.assert_allclose(start.pace[0], (0.9, 1.0))
+        np.testing.assert_allclose(start.aggression[0], (0.2, 0.0))
+        np.testing.assert_allclose(start.theta[1], (0.3, 0.4))
+        np.testing.assert_allclose(start.loss[1], (1.0, 1.0))
+
+    def test_the_state_builders_use_the_held_starts(self):
+        matches = _with_handles(_matches(6))
+        grid = v14.PriorGrid.build(sim14.Tables.build(matches, min_records=20), n_paths=60)
+        priors = {c: (20.0, 18.0) for c in matches}
+        keep = sorted(matches)[:3]
+        held = {c: v14.Held((0.2, 0.1), (players.Profile(), players.Profile())) for c in keep}
+        for fn in (v14.quarter_start_states, v14.late_start_states, v14.rest_of_game_states):
+            items = fn(matches, grid, priors, held=held)
+            self.assertTrue(items)
+            self.assertTrue(all(isinstance(it[2], v14.Held) for it in items))

@@ -404,6 +404,89 @@ def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=None):
     return prior_theta(grid, (means[0] * base[0] / own[0], means[1] * base[1] / own[1]), league, variant.pace)
 
 
+# v14: the build's calibration fits play every state at league rates and the prior's strengths,
+# while pricing plays each match with its sides' own rates at the held strengths. Once the profiles
+# exist, the build's last step (RECONCILE) re-fits each quarter's scoring level and its last two
+# minutes' from real quarter starts (fit_quarter_levels), and with RECONCILE_REST the in-play shift
+# by part of the game and margin (fit_rest_of_game), each state played as pricing plays it: Held.
+RECONCILE = True
+RECONCILE_REST = False
+
+
+@dataclass
+class Held:
+    """A match's held strengths with its two sides' profiles, as a calibration state's theta0."""
+    theta: tuple
+    prof: tuple
+
+
+def _set_side(tables, start, i, theta0):
+    """A calibration start's strengths: theta0 as given, or (Held) as pricing sets them, with the
+    day's strength spread and both sides' profiles."""
+    if not isinstance(theta0, Held):
+        start.theta[i] = theta0
+        return
+    prof = theta0.prof
+    start.theta[i], start.strength[i], start.strength_game[i] = sim.strength_draw(
+        tables, theta0.theta, [tables.strength_league if p.form is None else p.form for p in prof])
+    start.aggression[i] = (prof[0].aggression, prof[1].aggression)
+    start.kick[i] = (prof[0].kick, prof[1].kick)
+    start.pace[i] = (prof[0].pace, prof[1].pace)
+    for name in HOLD_RATES:
+        getattr(start, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
+
+
+def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, variant=None):
+    """{match code: Held} for every match with a prior, its profiles as pricing builds them."""
+    v = variant or Variant("v14")
+    out = {}
+    for code, rows in matches.items():
+        means = (priors or {}).get(code)
+        if means is None:
+            continue
+        pair = (handles or {}).get(code) or handles_of(resolve_sides(rows))
+        prof = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
+                else (players.Profile(), players.Profile()))
+        prof = with_big(prof, ratings, pair, *side_teams(pair, (teams or {}).get(code)))
+        out[code] = Held(tuple(held_theta(tables, grid, means, prof, v, seed=match_seed(code))), prof)
+    return out
+
+
+def reconcile(tables, grid, matches, priors, book, ratings, handles, teams, grid_paths, verbose=True):
+    """The build's last step (RECONCILE): the scoring levels (and with RECONCILE_REST the in-play
+    shift) re-fitted with every match played as pricing plays it, then the grid rebuilt on them
+    (its responses kept). Returns the new grid."""
+    held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
+    before_q, before_l = tables.period_theta.copy(), tables.late_theta.copy()
+    fitted_q, fitted_l = fit_quarter_levels(
+        tables, quarter_start_states(matches, grid, priors, held=held),
+        late_start_states(matches, grid, priors, held=held), rounds=QUARTER_ROUNDS, n_paths=QUARTER_PATHS)
+    if verbose:
+        print(f"  reconcile, {len(held):,} matches at their own rates and held strengths -- points in each"
+              " quarter from real quarter starts, real / simulated: "
+              + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
+              + "; from the two-minute mark: "
+              + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items()))
+              + "; scoring by quarter moved " + " / ".join(
+                  f"{d:+.3f}" for d in (tables.period_theta - before_q)[1:5])
+              + ", last two minutes " + " / ".join(
+                  f"{tables.late_theta[q] - before_l[q]:+.3f}" for q in (2, 4)))
+    if RECONCILE_REST:
+        rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors, held=held))
+        if verbose and rest:
+            print("  reconcile, points still to come from real in-game states, real / simulated before"
+                  " -> after: " + "; ".join(f"{sim.SEGMENTS[g]} {r:.2f} / {b:.2f} -> {a:.2f}"
+                                           for g, (r, b, a) in rest.items()))
+            if bands:
+                print("    by margin: " + "; ".join(
+                    f"{sim.SEGMENTS[g]} {sim.MARGIN_BANDS[m]} {r:.2f} / {b:.2f} -> {a:.2f}"
+                    for (g, m), (r, b, a) in sorted(bands.items())))
+    new = PriorGrid.build(tables, n_paths=grid_paths)
+    for name in ("pace_home", "pace_away", "big_home", "big_away", "loss_home", "loss_away"):
+        setattr(new, name, getattr(grid, name))
+    return new
+
+
 # v10: the pre-match model's expected points spread wider than real games do. Refitted at the
 # start of each of the SHRINK_WINDOWS stretches of SHRINK_DAYS before the build's cut-off and read
 # on them out of sample, as the live model prices (NB2's ratings as fitted, glmer's form following
@@ -850,7 +933,7 @@ QUARTER_ROUNDS = 6
 QUARTER_PATHS = 150
 
 
-def quarter_start_states(matches, grid, priors=None):
+def quarter_start_states(matches, grid, priors=None, held=None):
     """Real states at the start of each quarter, with the points really scored in that quarter."""
     out = []
     for code, rows in matches.items():
@@ -860,7 +943,10 @@ def quarter_start_states(matches, grid, priors=None):
         if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
             continue
         final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        if held is not None and code not in held:
+            continue
+        theta0 = held[code] if held is not None else \
+            prior_theta(grid, None if priors is None else priors[code])
         firsts = {}
         for r in rows:
             p = r["period"]
@@ -880,7 +966,7 @@ def quarter_start_states(matches, grid, priors=None):
     return out
 
 
-def late_start_states(matches, grid, priors=None):
+def late_start_states(matches, grid, priors=None, held=None):
     """Real states at the two-minute mark of each half, with the points really scored after."""
     out = []
     for code, rows in matches.items():
@@ -890,7 +976,10 @@ def late_start_states(matches, grid, priors=None):
         if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
             continue
         final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        if held is not None and code not in held:
+            continue
+        theta0 = held[code] if held is not None else \
+            prior_theta(grid, None if priors is None else priors[code])
         for q in (2, 4):
             late = next((r for r in rows if r["period"] == str(q) and r["clock_seconds"]
                          and float(r["clock_seconds"]) <= sim.LATE and r["score_p1"] and r["score_p2"]),
@@ -922,7 +1011,7 @@ def fit_quarter_levels(tables, quarter_items, late_items, rounds=6, n_paths=150,
             start = sim.Start(len(its))
             for i, (_, state, theta0, _) in enumerate(its):
                 _fill(start, i, start_from(state))
-                start.theta[i] = theta0
+                _set_side(tables, start, i, theta0)
             out[q] = (start, float(np.mean([it[3] for it in its])))
         return out
 
@@ -964,7 +1053,7 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
             start = sim.Start(len(its))
             for i, (_, state, theta0, _) in enumerate(its):
                 _fill(start, i, start_from(state))
-                start.theta[i] = theta0
+                _set_side(tables, start, i, theta0)
             stats = {}
             sim.simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats,
                          common=False, in_play=True)
@@ -1387,7 +1476,7 @@ REST_SEGMENTS = tuple(range(1, sim.N_SEGMENTS))
 REST_ROUNDS = 3
 
 
-def rest_of_game_states(matches, grid, priors=None, every=REST_EVERY):
+def rest_of_game_states(matches, grid, priors=None, every=REST_EVERY, held=None):
     """Real in-game states with the points really still to come."""
     out = []
     for code, rows in matches.items():
@@ -1396,7 +1485,10 @@ def rest_of_game_states(matches, grid, priors=None, every=REST_EVERY):
         rows = resolve_sides(rows)
         if rows[0].get("final_p1") in ("", None) or rows[0].get("final_p2") in ("", None):
             continue
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        if held is not None and code not in held:
+            continue
+        theta0 = held[code] if held is not None else \
+            prior_theta(grid, None if priors is None else priors[code])
         final = int(float(rows[0]["final_p1"])) + int(float(rows[0]["final_p2"]))
         for r in rows[::every]:
             state, _ = state_for(r)
@@ -1423,7 +1515,7 @@ def fit_rest_of_game(tables, items, n_paths=REST_PATHS, rounds=REST_ROUNDS, seed
             start = sim.Start(len(its))
             for i, (_, state, theta0, _) in enumerate(its):
                 _fill(start, i, start_from(state))
-                start.theta[i] = theta0
+                _set_side(tables, start, i, theta0)
             out[key] = (start, float(np.mean(start.home + start.away)),
                         float(np.mean([it[3] for it in its])))
         return out
@@ -1994,6 +2086,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     big_path = os.path.join(out_dir, BIG_FILE)
     if os.path.exists(big_path):
         os.remove(big_path)
+    ratings = None
     if sim.BIG_PLAYS and tables.n_big_stop is not None and handles:
         ratings = fit_big_ratings(big_records(matches, tables, handles, match_teams(history), as_of=as_of))
         grid.big_home, grid.big_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3))
@@ -2076,6 +2169,16 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
     elif verbose:
         print("  player profiles: no handles in the export, none built")
+    if RECONCILE and priors and handles:
+        grid = reconcile(tables, grid, matches, priors, book, ratings, handles, match_teams(history),
+                         grid_paths, verbose=verbose)
+        grid.save(grid_path)
+        tables.save(tables_path)
+        if verbose:
+            sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches, priors=priors)
+            print("  in-game check after the reconcile (league rates): real "
+                  + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
+                  + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
     return tables_path, grid_path
 
 
