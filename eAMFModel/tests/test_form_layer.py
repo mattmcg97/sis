@@ -184,10 +184,13 @@ class TestSameWay(unittest.TestCase):
         self.assertEqual(f.record("ann", at(1440 + 40)), 0)            # tomorrow starts afresh
 
 
+JULY_CURVE = {"off": [0.051, -3.85], "on": [0.162, 1.01], "sd": 8.95}
+
+
 class TestSCurve(unittest.TestCase):
 
     def run_of_losses(self, short, n=8):
-        f = form_layer.Filter(s_curve=form_layer.S_CURVE, same_way=False)
+        f = form_layer.Filter(s_curve=JULY_CURVE, same_way=False)
         out = []
         for k in range(n):
             f.update("ann", f"o{k}", at(40 * k), -short, 0.0, -short)
@@ -201,7 +204,7 @@ class TestSCurve(unittest.TestCase):
         steps = [b - a for a, b in zip([0.0] + out, out)]
         self.assertLess(steps[3], steps[0])                          # steeper by the third or fourth
         _, long_run = self.run_of_losses(12, 20)
-        self.assertGreater(long_run[-1], form_layer.S_CURVE["off"][1])   # never past the cap
+        self.assertGreater(long_run[-1], JULY_CURVE["off"][1])          # never past the cap
         self.assertLess(long_run[-1], -3.5)
         _, small = self.run_of_losses(3)
         self.assertGreater(small[-1], -0.25)                         # close losses barely count

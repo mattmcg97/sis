@@ -45,11 +45,12 @@ SESSION_GAP = dt.timedelta(hours=2)     # a longer gap since the gamer's last st
 TRIGGER = 0                             # the margin moves only after a run this long (0: always)
 SAME_WAY = True                         # never move a gamer against the way his day is going
 # The S-curve: a gamer's day is normal, off or on, which is hidden. Fitted by maximum likelihood (EM)
-# on the daily glmer's out-of-sample margin errors, 16 Jul - 9 Aug 2026: off on 5.1% of gamer-days by
-# -3.85 points, on on 16.2% by +1.01, errors' sd 8.95. Live, his margin moves by the chance he is off
-# or on given his errors so far today, times the shift: small at first, steepening from about his
-# third poor game, levelling at the cap. (Fitted on 10 Aug - 3 Sep it found no off or on days.)
-S_CURVE = {"off": [0.051, -3.85], "on": [0.162, 1.01], "sd": 8.95}
+# on out-of-sample margin errors (14-day glmer fits with the follow layer), Apr-Sep 2026, 4,444
+# gamer-days: off on 1.65% of gamer-days by -5.49 points, on on 7.5% by +1.31, errors' sd 9.32. Live,
+# his margin moves by the chance he is off or on given his errors so far today, times the shift:
+# small at first, steepening from about his third poor game, levelling at the cap. Fitted on Apr-Jul
+# and tested on Aug-Sep it was level (log loss -0.00007 on 14-day fits, +0.00025 on the daily glmer).
+S_CURVE = {"off": [0.0165, -5.49], "on": [0.0752, 1.31], "sd": 9.32}
 RUN_GAP = dt.timedelta(hours=6)         # a run is a night's: kick-offs no more than this apart
 LOOKBACK_DAYS = 14                      # days of results read before the first match, when RHO > 0
 MARGIN_SD = 9.35                        # for the trace's win chance off the expected margin

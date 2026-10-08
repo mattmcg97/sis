@@ -1812,14 +1812,19 @@ second.
 The full test (56 days, 16 Jul – 9 Sep) is the one that sets the defaults or keeps the layer off.
 
 **The S-curve (`--s-curve`).** In place of day and session form, the margin moves by the chance a
-gamer is having an off (or on) day, given his errors against the daily glmer so far today. The fit
-is described in glmer's README ("A gamer's day and session"): off on 5% of gamer-days by −3.9
-points, on on 16% by +1.0. The shift starts small and steepens from about the third poor game. It
-levels off at the cap. For a gamer 12 points short of his price each game it goes −0.2, −0.4, −0.7,
-−1.0, −1.5 and −2.0 over games 1–6. At 7 short it reaches −0.7 by game 6; close losses barely count.
-Only the day's own games count, and the same-way rule applies. The total still follows the day
-form. Its numbers come from 16 Jul – 9 Aug; fitted on 10 Aug – 3 Sep it found no off days, and out
-of sample it was level to slightly worse on log loss and Brier. So judge it in the bet sim.
+gamer is having an off (or on) day, given his errors against the pre-match price so far today. The
+default curve is fitted by EM on Apr–Sep (4,444 gamer-days, 14-day fits with the follow layer):
+off on 1.65% of gamer-days by −5.5 points, on on 7.5% by +1.3. The shift starts small and steepens
+from about the third poor game. It levels off at the cap. Only the day's own games count, and the
+same-way rule applies; the total still follows the day form.
+- **Off days come and go by month.** Fitted month by month: −5.1 points on 2.4% of days in April,
+  −7.7 on 1.5% in June, −4.4 on 3.8% in July, none in May or August. They don't belong to
+  particular gamers: a gamer's share of off days in odd months correlates +0.12 with even months
+  (63 gamers).
+- **Forward test.** Fitted on Apr–Jul (1.25% off by −6.25), it was level on Aug–Sep: log loss
+  −0.00007 and Brier −0.00002 on 14-day fits, +0.00025 and +0.00013 on the daily glmer. It moved
+  only 2% of matches by half a point or more, and on those it lost (+0.010 to +0.018 log loss),
+  because August had no off days. Judge it in the bet sim.
 
 ```powershell
 python -m eAMFModel form-layer v12_daily_s --on --s-curve
