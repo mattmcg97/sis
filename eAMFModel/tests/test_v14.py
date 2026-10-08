@@ -2201,6 +2201,8 @@ class TestV11CloseEndings(unittest.TestCase):
     def test_a_kick_off_at_field_100_is_a_touchdown_for_the_side_with_the_ball(self):
         t = sim14.Tables.build(_matches(), min_records=20)
         t.kick[False] = (np.array([False]), np.array([100], dtype=np.int32), np.array([5.0]))
+        t.kick_pools = {lv: t.kick[False] for lv in (False, True)}
+        t.kick_mix = np.zeros((2, 2))                       # no touchbacks, no landing-zone kicks
         st = sim14.Start(1)
         st.period[:], st.clock[:], st.phase[:], st.team[:] = 1, 200.0, sim14.KICK, 0   # home kicks
         stats = {}
@@ -2572,3 +2574,44 @@ class TestLossPlays(unittest.TestCase):
         prof = v14.with_big((players.Profile(), players.Profile()), ratings, ("A", "B"), "Lions", "Vikings")
         self.assertAlmostEqual(np.log(prof[0].loss), 0.4)
         self.assertEqual((prof[0].loss_size, prof[1].loss_size, prof[1].loss), (1.7, 1.0, 1.0))
+
+
+class TestHoldPoints(unittest.TestCase):
+    """v14: each side's strength stepped until its own profile's kick-off sim gives the prior's points."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tables = sim14.Tables.build(_matches(), min_records=20)
+        cls.grid = v14.PriorGrid.build(cls.tables, n_paths=200)
+        cls.means = (26.0, 22.0)
+
+    def _points(self, theta, prof, n=2000):
+        st = sim14.Start(1)
+        st.team[:], st.kicks_second_half[:] = 0, 1
+        st.theta[:] = theta
+        for name in ("loss", "loss_size"):
+            getattr(st, name)[:] = (getattr(prof[0], name), getattr(prof[1], name))
+        home, away = sim14.simulate(self.tables, st, n, np.random.default_rng(3), seed=3)
+        return float(home.mean()), float(away.mean())
+
+    def test_off_or_without_profiles_it_is_the_prior(self):
+        prof = (players.Profile(loss=2.0), players.Profile(loss=2.0))
+        want = v14.prior_theta(self.grid, self.means, prof, True)
+        self.assertEqual(v14.held_theta(self.tables, self.grid, None, prof, v14.Variant("x")),
+                         v14.prior_theta(self.grid, None, prof, True))
+        saved = v14.HOLD_POINTS
+        try:
+            v14.HOLD_POINTS = False
+            self.assertEqual(v14.held_theta(self.tables, self.grid, self.means, prof, v14.Variant("x")), want)
+        finally:
+            v14.HOLD_POINTS = saved
+
+    def test_more_losses_get_more_strength_and_the_points_come_back(self):
+        prof = (players.Profile(loss=2.5), players.Profile(loss=2.5))
+        before = v14.prior_theta(self.grid, self.means, prof, False)
+        after = v14.held_theta(self.tables, self.grid, self.means, prof, v14.Variant("x", pace=False))
+        self.assertGreater(after[0], before[0])
+        self.assertGreater(after[1], before[1])
+        miss_before = sum(abs(a - b) for a, b in zip(self._points(before, prof), self.means))
+        miss_after = sum(abs(a - b) for a, b in zip(self._points(after, prof), self.means))
+        self.assertLess(miss_after, miss_before)

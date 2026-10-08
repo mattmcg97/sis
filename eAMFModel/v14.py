@@ -363,6 +363,72 @@ def prior_theta(grid, means, prof=None, pace=True):
     return fit_means(grid, *means)
 
 
+# v14: hold the prior's points with every side's own rates at once. The big-play and lost-yardage
+# responses are each read with the other at league, and loss size and kick-off styles have none:
+# with a match's own profiles the sim's kick-off ran 0.59 points a match above the prior (league
+# profiles: 0.12). So after the strengths are fitted, the match's kick-off is simulated with both
+# sides' profiles (HOLD_PATHS games) and each side's strength stepped by the log of its prior points
+# over its simulated ones, over the grid's slope of log points in strength there (HOLD_STEPS times).
+HOLD_POINTS = True
+HOLD_PATHS = 400
+HOLD_STEPS = 3
+HOLD_MAX_STEP = 0.3
+
+
+def _grid_points(grid, th, ta):
+    """Each side's expected points from kick-off at strengths (th, ta), off the prior grid."""
+    x_m = np.arange(grid.margin.shape[-1]) - MARGIN_MAX
+    x_t = np.arange(grid.total.shape[-1])
+    e_m = (grid.margin * x_m).sum(-1)
+    e_t = (grid.total * x_t).sum(-1)
+    m, t = _bilinear((e_m, e_t), grid.grid, th, ta)
+    return (t + m) / 2, (t - m) / 2
+
+
+def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=HOLD_PATHS, steps=HOLD_STEPS):
+    """prior_theta, then each side's strength stepped until the match's own kick-off, with both
+    sides' profiles, averages the prior's expected points (HOLD_POINTS): the first step on the
+    grid's slope, later ones on the slope between the last two sims."""
+    theta = prior_theta(grid, means, prof if variant.profiles else None, variant.pace)
+    if not HOLD_POINTS or means is None or prof is None or not variant.profiles:
+        return theta
+    th, ta = theta
+    last = None
+    for _ in range(steps):
+        st = sim.Start(2)
+        st.team[:], st.kicks_second_half[:] = (0, 1), (1, 0)
+        st.theta[:] = (th, ta)
+        st.aggression[:] = (prof[0].aggression, prof[1].aggression)
+        st.kick[:] = (prof[0].kick, prof[1].kick)
+        if variant.pace:
+            st.pace[:] = (prof[0].pace, prof[1].pace)
+        for name in ("big", "loss", "loss_size", "kick_tb", "kick_nlz"):
+            getattr(st, name)[:] = (getattr(prof[0], name), getattr(prof[1], name))
+        home, away = sim.simulate(tables, st, n_paths, np.random.default_rng(seed), seed=seed)
+        got = (np.log(max(0.5, float(home.mean()))), np.log(max(0.5, float(away.mean()))))
+        cur = (th, ta)
+        new = []
+        for side in (0, 1):
+            slope = _grid_slope(grid, th, ta, side)
+            if last is not None and abs(cur[side] - last[0][side]) > 0.01:
+                seen = (got[side] - last[1][side]) / (cur[side] - last[0][side])
+                if 0.2 <= seen <= 5.0:
+                    slope = seen
+            move = (np.log(max(0.5, means[side])) - got[side]) / slope
+            new.append(float(np.clip(cur[side] + np.clip(move, -HOLD_MAX_STEP, HOLD_MAX_STEP),
+                                     grid.grid[0], grid.grid[-1])))
+        last = (cur, got)
+        th, ta = new
+    return th, ta
+
+
+def _grid_slope(grid, th, ta, side, step=0.05):
+    """The grid's slope of a side's log expected points in its own strength."""
+    up = _grid_points(grid, th + step, ta) if side == 0 else _grid_points(grid, th, ta + step)
+    down = _grid_points(grid, th - step, ta) if side == 0 else _grid_points(grid, th, ta - step)
+    return max(0.2, (np.log(max(0.5, up[side])) - np.log(max(0.5, down[side]))) / (2 * step))
+
+
 # v10: the pre-match model's expected points spread wider than real games do. Refitted at the
 # start of each of the SHRINK_WINDOWS stretches of SHRINK_DAYS before the build's cut-off and read
 # on them out of sample, as the live model prices (NB2's ratings as fitted, glmer's form following
@@ -752,8 +818,8 @@ def _grade_matches(job):
                 else (players.Profile(), players.Profile()))
         prof = with_big(prof, ratings, pair, *side_teams(pair, (teams or {}).get(code)))
         if priors is not None:
-            theta0s = {(v.grid, v.pace, v.profiles): prior_theta(grids[v.grid], means,
-                                                                 prof if v.profiles else None, v.pace)
+            theta0s = {(v.grid, v.pace, v.profiles): held_theta(tables, grids[v.grid], means, prof, v,
+                                                                seed=match_seed(code))
                        for v in variants}
         else:
             theta0s = {(v.grid, v.pace, v.profiles): LEAGUE_THETA for v in variants}
@@ -1566,7 +1632,7 @@ def fit_big_ratings(records):
         e, h = eff[f][known], hess[f][known]
         tau2 = float(np.average((e - np.average(e, weights=h)) ** 2, weights=h) - np.average(1 / h, weights=h))
         spread[f] = max(tau2, 1e-4)
-    eff, _ = _big_fit(y, offset, w, codes, n_levels, {f: 1.0 / spread[f] for f in BIG_FACTORS})
+    eff, _ = _big_fit(y, offset, w, codes, n_levels, {f: 1.0 / max(spread[f], 1e-4) for f in BIG_FACTORS})
     out = {f: {lv: round(float(e), 4) for lv, e in zip(levels[f], eff[f]) if lv != ""} for f in BIG_FACTORS}
     out["spread"] = {f: round(float(np.sqrt(v)), 4) for f, v in spread.items()}
     out["snaps"] = len(records)

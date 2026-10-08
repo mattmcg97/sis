@@ -45,7 +45,7 @@ def match_books(tables, grid, variant, match_rows, n_paths, rng, prof=None, mean
     """v14's margin and total distributions at every priceable snapshot of one match."""
     rows = v14.resolve_sides([_as_text(r) for r in match_rows])
     prof = prof or (players.Profile(), players.Profile())
-    theta0 = v14.prior_theta(grid, means, prof if variant.profiles else None, variant.pace)
+    theta0 = v14.held_theta(tables, grid, means, prof, variant, seed=v14.match_seed(rows[0].get("match_code", "")))
     a_home = rows[0]["team_a_side"] == "home"
     states, messages = [], []
     for r in rows:
@@ -65,7 +65,7 @@ def kickoff_book(tables, grid, variant, match_code, n_paths, rng, prof=None, mea
     """v14's pre-match margin and total distributions: the kick-off priced off the pre-match prior
     (NB2 or glmer)."""
     prof = prof or (players.Profile(), players.Profile())
-    theta0 = v14.prior_theta(grid, means, prof if variant.profiles else None, variant.pace)
+    theta0 = v14.held_theta(tables, grid, means, prof, variant, seed=v14.match_seed(match_code))
     return v14.price_kickoff(tables, theta0, variant, prof, n_paths, rng, seed=v14.match_seed(match_code))
 
 
