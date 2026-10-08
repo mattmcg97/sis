@@ -375,9 +375,11 @@ HOLD_POINTS = True
 HOLD_PATHS = 2000
 HOLD_RATES = ("big", "loss", "loss_size", "kick_tb", "kick_nlz")
 # Held out, holding each side's points to the prior threw away what the rates say about the margin
-# (with no hold the margin's RPS was 0.012 better than v13's, held 0.013 worse) while no hold left
-# the total 0.86 points high. HOLD_TOTAL holds the match's total only: both sides' prior points
-# are scaled alike, and the rates move the margin.
+# (with no hold -- prior_theta's responses alone -- the margin's RPS was 0.012 better than v13's,
+# held 0.013 worse) while no hold left the total 0.86 points high. Scaling both sides' points alike
+# from league-rate strengths let the rates' whole effect onto the margin (0.080 worse). HOLD_TOTAL
+# starts where no hold does and scales both sides' prior points alike until the match's own
+# kick-off sim gives the prior's total.
 HOLD_TOTAL = True
 
 
@@ -401,14 +403,16 @@ def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=None):
     else prior_theta."""
     if not HOLD_POINTS or means is None or prof is None or not variant.profiles:
         return prior_theta(grid, means, prof if variant.profiles else None, variant.pace)
+    n = n_paths or HOLD_PATHS
+    if HOLD_TOTAL:
+        theta = prior_theta(grid, means, prof, variant.pace)
+        own = _hold_sim(tables, theta, prof, variant, 2 * n, seed)
+        k = (means[0] + means[1]) / (own[0] + own[1])
+        return prior_theta(grid, (means[0] * k, means[1] * k), prof, variant.pace)
     league = tuple(_replace(p, **{name: 1.0 for name in HOLD_RATES}) for p in prof)
     theta = prior_theta(grid, means, league, variant.pace)
-    n = n_paths or HOLD_PATHS
     own = _hold_sim(tables, theta, prof, variant, n, seed)
     base = _hold_sim(tables, theta, league, variant, n, seed)
-    if HOLD_TOTAL:
-        k = (base[0] + base[1]) / (own[0] + own[1])
-        return prior_theta(grid, (means[0] * k, means[1] * k), league, variant.pace)
     return prior_theta(grid, (means[0] * base[0] / own[0], means[1] * base[1] / own[1]), league, variant.pace)
 
 
