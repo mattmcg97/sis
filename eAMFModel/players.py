@@ -93,6 +93,8 @@ class Profile:
     big: float = 1.0           # v13: the side's big-play rate in this match (set per match, 1 = league)
     kick_tb: float = 1.0       # v14: their kick-offs' touchback rate, x the league's
     kick_nlz: float = 1.0      # v14: and no-landing-zone rate
+    loss: float = 1.0          # v14: the side's lost-yardage rate in this match (set per match, 1 = league)
+    loss_size: float = 1.0     # v14: how deep their losses go (above 1 deeper than the league's)
 
 
 @dataclass

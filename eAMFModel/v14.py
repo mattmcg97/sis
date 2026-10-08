@@ -151,12 +151,20 @@ class PriorGrid:
     """Simulated games from kickoff on a grid of the two offenses' strengths."""
 
     def __init__(self, margin, total, grid=GRID, pace_home=None, pace_away=None, big_home=None,
-                 big_away=None):
+                 big_away=None, loss_home=None, loss_away=None):
         """Hold the margin and total distributions for each grid point, and the pace and big-play
         responses (each side's points at each pair of paces or big-play rates, against both at 1)."""
         self.margin, self.total, self.grid = margin, total, grid
         self.pace_home, self.pace_away = pace_home, pace_away
         self.big_home, self.big_away = big_home, big_away
+        self.loss_home, self.loss_away = loss_home, loss_away
+
+    def loss_response(self, home_loss, away_loss):
+        """How far the two sides' lost-yardage rates move each side's points from kickoff (v14)."""
+        if self.loss_home is None:
+            return 1.0, 1.0
+        return _bilinear((self.loss_home, self.loss_away), np.log(BIG_POINTS), np.log(home_loss),
+                         np.log(away_loss))
 
     def big_response(self, home_big, away_big):
         """How far the two sides' big-play rates move each side's points from kickoff: (home, away)
@@ -207,6 +215,8 @@ class PriorGrid:
                  dict(pace_home=self.pace_home, pace_away=self.pace_away))
         if self.big_home is not None:
             extra.update(big_home=self.big_home, big_away=self.big_away)
+        if self.loss_home is not None:
+            extra.update(loss_home=self.loss_home, loss_away=self.loss_away)
         np.savez_compressed(path, margin=self.margin, total=self.total, grid=self.grid, **extra)
 
     @classmethod
@@ -215,7 +225,8 @@ class PriorGrid:
         z = np.load(path)
         pace = (z["pace_home"], z["pace_away"]) if "pace_home" in z else (None, None)
         big = (z["big_home"], z["big_away"]) if "big_home" in z else (None, None)
-        return cls(z["margin"], z["total"], z["grid"], *pace, *big)
+        loss = (z["loss_home"], z["loss_away"]) if "loss_home" in z else (None, None)
+        return cls(z["margin"], z["total"], z["grid"], *pace, *big, *loss)
 
 
 def _bilinear(tables, points, a, b):
@@ -265,14 +276,15 @@ BIG_POINTS = np.exp(np.linspace(-1.0, 1.0, 5))
 BIG_PATHS = 4000
 
 
-def fit_big_response(tables, n_paths=BIG_PATHS, seed=0):
+def fit_big_response(tables, n_paths=BIG_PATHS, seed=0, attr="big"):
     """Each side's mean points from kickoff at every pair of big-play rates (home x away), over
-    both at 1: (home, away) tables shaped (len(BIG_POINTS), len(BIG_POINTS))."""
+    both at 1: (home, away) tables shaped (len(BIG_POINTS), len(BIG_POINTS)). With attr "loss",
+    the same for the lost-yardage rates (v14)."""
     n = len(BIG_POINTS)
     start = sim.Start(2 * n * n)
     rows = [(i, j, t) for i in range(n) for j in range(n) for t in (0, 1)]
     for k, (i, j, t) in enumerate(rows):
-        start.big[k] = (BIG_POINTS[i], BIG_POINTS[j])
+        getattr(start, attr)[k] = (BIG_POINTS[i], BIG_POINTS[j])
         start.team[k] = t
         start.kicks_second_half[k] = 1 - t
     home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed)
@@ -282,7 +294,7 @@ def fit_big_response(tables, n_paths=BIG_PATHS, seed=0):
     return h / h[mid, mid], a / a[mid, mid]
 
 
-def fit_big_elasticity(tables, grid, n_paths=BIG_PATHS // 2, seed=0):
+def fit_big_elasticity(tables, grid, n_paths=BIG_PATHS // 2, seed=0, attr="big"):
     """How far the simulated big plays move with the rate once the strengths hold the points: the
     slope of log(big plays a snap) on log(rate), both sides at each of BIG_POINTS from league
     strengths. A rating (log odds of a big play) x is then played at rate exp(x / slope)."""
@@ -291,17 +303,17 @@ def fit_big_elasticity(tables, grid, n_paths=BIG_PATHS // 2, seed=0):
     league = float((grid.total[mid, mid] * x_t).sum()) / 2
     logs = []
     for b in BIG_POINTS:
-        prof = players.Profile(big=float(b))
+        prof = players.Profile(**{attr: float(b)})
         st = sim.Start(2)
         st.team[:], st.kicks_second_half[:] = (0, 1), (1, 0)
-        st.big[:] = b
+        getattr(st, attr)[:] = b
         st.theta[:] = prior_theta(grid, (league, league), (prof, prof), pace=False)
         stats = {}
         sim.simulate(tables, st, n_paths, np.random.default_rng(seed), seed=seed, stats=stats)
-        logs.append(np.log(max(1, stats.get("big", 0)) / max(1, stats.get("snaps", 1))))
+        logs.append(np.log(max(1, stats.get(attr, 0)) / max(1, stats.get("snaps", 1))))
     lb = np.log(BIG_POINTS)
     slope = float(np.polyfit(lb, np.array(logs), 1)[0])
-    return min(1.0, max(0.2, slope))
+    return min(1.5, max(0.2, slope))
 
 
 def _surface_fn(grid, step):
@@ -346,7 +358,8 @@ def prior_theta(grid, means, prof=None, pace=True):
         means = (means[0] / rh, means[1] / ra)
     if prof is not None:
         bh, ba = grid.big_response(prof[0].big, prof[1].big)
-        means = (means[0] / bh, means[1] / ba)
+        lh, la = grid.loss_response(prof[0].loss, prof[1].loss)
+        means = (means[0] / (bh * lh), means[1] / (ba * la))
     return fit_means(grid, *means)
 
 
@@ -666,6 +679,8 @@ def price_states(tables, theta0, variant, snaps, a_home, states, messages, prof,
             start.big[i] = (prof[0].big, prof[1].big)
             start.kick_tb[i] = (prof[0].kick_tb, prof[1].kick_tb)
             start.kick_nlz[i] = (prof[0].kick_nlz, prof[1].kick_nlz)
+            start.loss[i] = (prof[0].loss, prof[1].loss)
+            start.loss_size[i] = (prof[0].loss_size, prof[1].loss_size)
     kw = dict(theta_sd=sds if v.theta_sd else None, seed=seed, **v.sim_kw)
     home, away = sim.simulate(tables, start, n_paths, rng, **kw)
     books = [_distributions(home[i], away[i]) for i in range(len(messages))]
@@ -696,6 +711,8 @@ def price_kickoff(tables, theta0, variant, prof, n_paths, rng, seed=None):
             start.big[i] = (prof[0].big, prof[1].big)
             start.kick_tb[i] = (prof[0].kick_tb, prof[1].kick_tb)
             start.kick_nlz[i] = (prof[0].kick_nlz, prof[1].kick_nlz)
+            start.loss[i] = (prof[0].loss, prof[1].loss)
+            start.loss_size[i] = (prof[0].loss_size, prof[1].loss_size)
     kw = dict(theta_sd=sds if v.theta_sd else None, seed=seed)
     half = max(1, n_paths // 2)
     home, away = sim.simulate(tables, start, half, rng, **kw)
@@ -1478,10 +1495,15 @@ def side_teams(pair, teams):
     return t1, t2
 
 
-def big_records(matches, tables, handles, teams, as_of=None, half_life=BIG_HALF_LIFE):
+def big_records(matches, tables, handles, teams, as_of=None, half_life=BIG_HALF_LIFE, kind="big"):
     """Every scrimmage snap of the matches as (big?, league log odds of its bin, weight, gamer,
-    team, other gamer, other team)."""
-    rate = (tables.n_big_stop + tables.n_big_run) / np.maximum(1, tables.count)
+    team, other gamer, other team). With kind "loss": did it lose yards (v14)."""
+    if kind == "loss":
+        rate = (tables.n_loss_stop + tables.n_loss_run) / np.maximum(1, tables.count)
+        hit = sim._is_loss
+    else:
+        rate = (tables.n_big_stop + tables.n_big_run) / np.maximum(1, tables.count)
+        hit = sim._is_big
     out = []
     for code, rows in matches.items():
         pair = handles.get(code)
@@ -1498,7 +1520,7 @@ def big_records(matches, tables, handles, teams, as_of=None, half_life=BIG_HALF_
             home = (rec["offense"] == "TEAM_A") == a_home
             g, o = (pair[0], pair[1]) if home else (pair[1], pair[0])
             t, ot = (home_team, away_team) if home else (away_team, home_team)
-            out.append((float(sim._is_big(rec)), float(np.log(p / (1 - p))), w, g, t, o, ot))
+            out.append((float(hit(rec)), float(np.log(p / (1 - p))), w, g, t, o, ot))
     return out
 
 
@@ -1568,10 +1590,52 @@ def big_rates(ratings, pair, home_team="", away_team=""):
 
 
 def with_big(prof, ratings, pair, home_team="", away_team=""):
-    """The two profiles with this match's big-play rates on them (copies)."""
+    """The two profiles with this match's big-play rates on them (copies), and (v14) its
+    lost-yardage rates and each gamer's loss size."""
     import dataclasses
     bh, ba = big_rates(ratings, pair, home_team, away_team)
-    return (dataclasses.replace(prof[0], big=bh), dataclasses.replace(prof[1], big=ba))
+    out = [dataclasses.replace(prof[0], big=bh), dataclasses.replace(prof[1], big=ba)]
+    if ratings and ratings.get("loss"):
+        lh, la = big_rates(ratings["loss"], pair, home_team, away_team)
+        sizes = ratings.get("loss_size", {})
+        for k, (rate, handle) in enumerate(((lh, pair[0]), (la, pair[1]))):
+            out[k] = dataclasses.replace(out[k], loss=rate, loss_size=float(sizes.get((handle or "").upper(), 1.0)))
+    return tuple(out)
+
+
+# v14: how deep each gamer's losses go. The league's losses, deepest first, are the draw inside a
+# bin's losses; a side's loss_size s leans it to v ** s (sim14.zone_warp), so the mean loss over
+# the league's losses at s is read off a grid and each gamer's own mean, shrunk toward the league's
+# by LOSS_SIZE_PRIOR losses, picks their s.
+LOSS_SIZE_PRIOR = 30.0
+LOSS_SIZE_GRID = np.exp(np.linspace(-1.5, 1.5, 61))
+
+
+def fit_loss_sizes(matches, handles, prior=LOSS_SIZE_PRIOR):
+    """{handle: loss size}: each gamer's s, from the yards their losses lost."""
+    yards, by = [], defaultdict(list)
+    for code, rows in matches.items():
+        pair = handles.get(code)
+        if not pair or not rows:
+            continue
+        a_home = rows[0].get("team_a_side") == "home"
+        for rec in sim.snap_records(rows):
+            if sim._is_loss(rec):
+                g = pair[0] if (rec["offense"] == "TEAM_A") == a_home else pair[1]
+                yards.append(-rec["gain"])
+                by[g].append(-rec["gain"])
+    if len(yards) < 50:
+        return {}
+    deep = np.sort(np.array(yards, float))[::-1]
+    v = (np.arange(400) + 0.5) / 400
+    means = np.array([deep[np.minimum(len(deep) - 1, (v ** s * len(deep)).astype(int))].mean()
+                      for s in LOSS_SIZE_GRID])
+    league = float(deep.mean())
+    out = {}
+    for g, ys in by.items():
+        target = (sum(ys) + prior * league) / (len(ys) + prior)
+        out[g] = round(float(np.interp(target, means, LOSS_SIZE_GRID)), 4)
+    return out
 
 
 def big_ratings(model_dir_or_tables):
@@ -1893,6 +1957,17 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         ratings = fit_big_ratings(big_records(matches, tables, handles, match_teams(history), as_of=as_of))
         grid.big_home, grid.big_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3))
         ratings["elasticity"] = round(fit_big_elasticity(tables, grid, n_paths=max(400, grid_paths // 3)), 4)
+        if sim.LOSS_PLAYS and tables.n_loss_stop is not None:
+            loss = fit_big_ratings(big_records(matches, tables, handles, match_teams(history), as_of=as_of,
+                                               kind="loss"))
+            grid.loss_home, grid.loss_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3),
+                                                              attr="loss")
+            loss["elasticity"] = round(fit_big_elasticity(tables, grid, n_paths=max(400, grid_paths // 3),
+                                                          attr="loss"), 4)
+            ratings["loss"] = loss
+            ratings["loss_size"] = fit_loss_sizes(matches, handles)
+            if verbose:
+                _print_loss(loss, ratings["loss_size"], grid)
         with open(big_path, "w", encoding="utf-8") as fh:
             json.dump(ratings, fh, indent=1)
         if verbose:
@@ -1961,6 +2036,26 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     elif verbose:
         print("  player profiles: no handles in the export, none built")
     return tables_path, grid_path
+
+
+def _print_loss(loss, sizes, grid):
+    """The build's lines on the lost-yardage rates and loss sizes."""
+    sp = loss["spread"]
+    teams = sorted(loss.get("team", {}).items(), key=lambda kv: -kv[1])
+    print(f"  losses, on {loss['snaps']:,} snaps: effects spread (sd, log odds) gamer {sp.get('gamer', 0):.3f},"
+          f" team {sp.get('team', 0):.3f}, what a gamer allows {sp.get('gamer_allows', 0):.3f}, what a team"
+          f" allows {sp.get('team_allows', 0):.3f}; a rating is played at its odds to the power"
+          f" 1 / {loss.get('elasticity', 1.0):.2f}")
+    if teams:
+        print("    teams with the ball: " + ", ".join(f"{t} {x:+.2f}" for t, x in teams))
+    if sizes:
+        s = sorted(sizes.items(), key=lambda kv: kv[1])
+        print(f"  loss size, {len(sizes)} gamers: shallowest " + ", ".join(f"{g} {v:.2f}" for g, v in s[:3])
+              + "; deepest " + ", ".join(f"{g} {v:.2f}" for g, v in s[-3:]))
+    n = len(BIG_POINTS)
+    print("  lost-yardage response, home points at kickoff against both at 1 (home rate "
+          + " / ".join(f"{p:.2f}" for p in BIG_POINTS) + "): "
+          + " / ".join(f"{grid.loss_home[i, n // 2]:.3f}" for i in range(n)))
 
 
 def _print_big(ratings, grid):

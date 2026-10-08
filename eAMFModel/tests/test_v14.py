@@ -24,7 +24,7 @@ V11_SWITCHES = ("CLOSE_FG", "SETTLE_PLAYS", "KICK_TDS", "OT_FIRST_PERIOD", "CONV
 V12_OWN = ("FOURTH_CLOCK", "KICK_CLOCK")
 V12_SWITCHES = V11_SWITCHES + V12_OWN
 V13_OWN = ("BIG_PLAYS",)
-V14_OWN = ("KICK_STYLES",)
+V14_OWN = ("KICK_STYLES", "LOSS_PLAYS")
 
 
 class v12_off:
@@ -2417,7 +2417,7 @@ class TestBigPlays(unittest.TestCase):
 
 
 class v14_off(v12_off):
-    """sim14 with v14's own change (kick-offs by the clock and the kicker) switched off: v13."""
+    """sim14 with v14's own changes (kick-offs by the clock and the kicker, the lost-yardage plays) off: v13."""
 
     def __init__(self):
         self.keys = V14_OWN
@@ -2508,8 +2508,67 @@ class TestKickStyles(unittest.TestCase):
 
         def spy(tables_, start, *a, **k):
             captured["tb"], captured["nlz"] = start.kick_tb.copy(), start.kick_nlz.copy()
+            captured["loss"] = start.loss.copy()
             return real(tables_, start, *a, **k)
         with mock.patch.object(sim14, "simulate", spy):
             v14.price_kickoff(tables, (0.0, 0.0), v14.Variant("v14"), prof, 20, np.random.default_rng(0))
         self.assertEqual(tuple(captured["tb"][0]), (2.5, 1.0))
         self.assertEqual(tuple(captured["nlz"][0]), (0.5, 1.0))
+        self.assertEqual(tuple(captured["loss"][0]), (1.0, 1.0))
+
+
+class TestLossPlays(unittest.TestCase):
+    """v14: each side's lost-yardage rate and loss size."""
+
+    def _shares(self, rate, size, tilt=1.2, n=400000):
+        u = np.random.default_rng(0).random(n)
+        args = [np.full(n, x) for x in (0.04, 0.08, 0.40, 0.05)]       # turnovers, losses, all fails, big
+        w = sim14.zone_warp(u, np.full(n, tilt), *args, np.ones(n), np.full(n, rate), np.full(n, size))
+        pos = 1.0 - (1.0 - w) ** tilt
+        return pos
+
+    def test_rate_one_leaves_the_draw_alone(self):
+        u = np.linspace(0.001, 0.999, 200)
+        ones = np.ones_like(u)
+        w = sim14.zone_warp(u, 1.3 * ones, 0.04 * ones, 0.08 * ones, 0.4 * ones, 0.05 * ones, ones, ones, ones)
+        np.testing.assert_allclose(w, u, atol=1e-12)
+
+    def test_the_loss_share_scales_and_the_rest_keeps(self):
+        base = self._shares(1.0, 1.0)
+        more = self._shares(1.5, 1.0)
+        in_loss = lambda p: ((p >= 0.04) & (p < 0.12)).mean()
+        self.assertAlmostEqual(in_loss(more) / in_loss(base), 1.5, delta=0.03)
+        self.assertAlmostEqual((more < 0.04).mean(), (base < 0.04).mean(), delta=0.003)    # turnovers as they were
+        self.assertAlmostEqual((more >= 0.95).mean(), (base >= 0.95).mean(), delta=0.003)  # big plays too
+
+    def test_the_size_leans_inside_the_losses(self):
+        deep = self._shares(1.0, 2.0)
+        shallow = self._shares(1.0, 0.5)
+        mid = lambda p: np.median(p[(p >= 0.04) & (p < 0.12)])
+        self.assertLess(mid(deep), mid(shallow))                    # nearer the bottom: bigger losses
+        self.assertAlmostEqual(((deep >= 0.04) & (deep < 0.12)).mean(),
+                               ((shallow >= 0.04) & (shallow < 0.12)).mean(), delta=0.003)
+
+    def test_bins_keep_turnovers_then_losses_biggest_first(self):
+        t = sim14.Tables.build(_matches(), min_records=20)
+        k = int(np.argmax(t.n_loss_run))
+        run0 = t.start[k] + t.n_stop[k]
+        to, loss = t.n_to_run[k], t.n_loss_run[k]
+        kinds, gains = t.kind[run0:run0 + to + loss], t.gain[run0:run0 + to + loss]
+        self.assertTrue((kinds[:to] != sim14.GAIN).all())
+        self.assertTrue((kinds[to:] == sim14.GAIN).all() and (gains[to:] < 0).all())
+        self.assertTrue((np.diff(gains[to:]) >= 0).all())           # the biggest loss first
+
+    def test_a_deep_loser_gets_a_size_over_one(self):
+        matches = _with_handles(_matches(60))
+        handles = {c: v14.handles_of(r) for c, r in matches.items()}
+        sizes = v14.fit_loss_sizes(matches, handles)
+        self.assertEqual(set(sizes), {"ALPHA", "BRAVO", "CHARLIE", "DELTA"})
+        self.assertTrue(all(0.2 < v < 5 for v in sizes.values()))
+
+    def test_ratings_reach_the_profiles(self):
+        ratings = {"gamer": {}, "loss": {"gamer": {"A": 0.3}, "team": {"Lions": 0.1}, "elasticity": 1.0},
+                   "loss_size": {"A": 1.7}}
+        prof = v14.with_big((players.Profile(), players.Profile()), ratings, ("A", "B"), "Lions", "Vikings")
+        self.assertAlmostEqual(np.log(prof[0].loss), 0.4)
+        self.assertEqual((prof[0].loss_size, prof[1].loss_size, prof[1].loss), (1.7, 1.0, 1.0))

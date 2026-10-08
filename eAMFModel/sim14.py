@@ -1650,6 +1650,65 @@ def big_warp(u, tilt, top, bottom, big):
     return np.where(on, out, u)
 
 
+# v14: each side's lost-yardage rate and loss size. A snap that loses yards is 8.2% of snaps; how
+# often a side does it moves with its gamer (sd 0.25 in log odds), its team (0.09: the Lions most,
+# the Chiefs least) and what the other gamer allows (0.16), and each holds from one fortnight to
+# the next (+0.68 gamer, +0.88 team). How far it goes back moves with the gamer: their losses average
+# 2.8 to 7.4 yards, the league 4.8. Each bin now keeps its plays in order: turnovers, then losses
+# (biggest first), then the other failed plays, the rest, and the big plays on top. A side's `loss`
+# multiplies its chance of drawing a loss, out of the plays between; its `loss_size` leans the draw
+# inside the losses toward the deep end (above 1) or the shallow (below). Its points are held where
+# the pre-match model has them by the strength (v14.loss_response), as for the big plays.
+LOSS_PLAYS = True
+
+
+def _is_loss(rec):
+    """A snap that lost yards (not a turnover)."""
+    return rec["kind"] == GAIN and rec["gain"] < 0
+
+
+def _is_turnover(rec):
+    return rec["kind"] != GAIN
+
+
+def zone_warp(u, tilt, to, loss, fail, top, big, loss_rate, loss_size):
+    """Uniform draws `u`, moved so the tilted draw lands on its bin's five parts -- turnovers (the
+    bottom `to` share), losses (`loss`), the other failed plays (to `fail` in all), the rest, and
+    the big plays (the top `top`) -- with the big plays `big` times as often and the failed plays as
+    much more often (as big_warp), the losses `loss_rate` times as often again, out of the rest
+    (never under BIG_MIDDLE), and inside the losses the draw leaned by `loss_size` toward the
+    biggest (above 1). Inside each part the tilted draw keeps its shape; with every rate 1 and no
+    loss in the bin, u comes back unchanged."""
+    inv = 1.0 / np.maximum(tilt, 1e-9)
+    F = lambda x: 1.0 - np.power(np.clip(1.0 - x, 0.0, 1.0), inv)
+    bounds = [np.zeros_like(u), to, to + loss, fail, 1.0 - top, np.ones_like(u)]
+    old = [F(np.asarray(b, float)) for b in bounds]
+    q = [old[i + 1] - old[i] for i in range(5)]
+    c2 = np.where(top > 0, np.minimum(BIG_MAX, q[4] * big), q[4])
+    d = q[0] + q[1] + q[2]
+    grow = np.where(d > 0, np.maximum(0.0, d + (c2 - q[4])) / np.where(d > 0, d, 1.0), 1.0)
+    new = [q[0] * grow, q[1] * grow * loss_rate, q[2] * grow, None, c2]
+    new[3] = 1.0 - new[0] - new[1] - new[2] - new[4]
+    short = np.minimum(new[3] - BIG_MIDDLE, 0.0)          # the middle would run out: scale the rest
+    keep = np.where(short < 0, (1.0 - BIG_MIDDLE) / np.maximum(1e-12, 1.0 - new[3]), 1.0)
+    for i in (0, 1, 2, 4):
+        new[i] = new[i] * keep
+    new[3] = 1.0 - new[0] - new[1] - new[2] - new[4]
+    cum = [np.zeros_like(u)]
+    for i in range(5):
+        cum.append(cum[-1] + new[i])
+    out = u.copy()
+    for i in range(5):
+        m = (u >= cum[i]) & (u < cum[i + 1]) if i < 4 else (u >= cum[4])
+        if not m.any():
+            continue
+        v = (u[m] - cum[i][m]) / np.maximum(new[i][m], 1e-12)
+        if i == 1:
+            v = np.power(np.clip(v, 0.0, 1.0), loss_size[m])
+        out[m] = old[i][m] + np.clip(v, 0.0, 1.0) * q[i][m]
+    return out
+
+
 class Tables:
     """Everything the simulation draws from, built from real plays."""
 
@@ -1668,6 +1727,7 @@ class Tables:
         self.n_fresh = self.n_fresh_stop = None
         self.n_big_stop = self.n_big_run = None
         self.n_fail_stop = self.n_fail_run = None
+        self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
         self.kick_pools, self.kick_mix = {}, None
         self.q4_modes = False
         self.stop_success = self.run_success = None
@@ -1789,13 +1849,20 @@ class Tables:
         order = list(bins)
         start, count, succ, nstop, ssucc, rsucc, nfresh, nfstop = {}, {}, {}, {}, {}, {}, {}, {}
         nbig_stop, nbig_run, nfail_stop, nfail_run = {}, {}, {}, {}
+        nto_stop, nto_run, nloss_stop, nloss_run = {}, {}, {}, {}
         kind, gain, newf, secs, rep, tdf = [], [], [], [], [], []
         for g in order:
             recs = list(bins[g])
             rng.shuffle(recs)
-            recs.sort(key=lambda r: (r["seconds"] > STOP_SECONDS, BIG_PLAYS and _is_big(r),
-                                     -2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
-                                     else r["gain"] - r["distance"]))
+            if LOSS_PLAYS:                # turnovers, losses (biggest first), the rest, big plays on top
+                recs.sort(key=lambda r: (r["seconds"] > STOP_SECONDS, BIG_PLAYS and _is_big(r),
+                                         0 if _is_turnover(r) else 1 if _is_loss(r) else 2,
+                                         -2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
+                                         else r["gain"] if _is_loss(r) else r["gain"] - r["distance"]))
+            else:
+                recs.sort(key=lambda r: (r["seconds"] > STOP_SECONDS, BIG_PLAYS and _is_big(r),
+                                         -2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
+                                         else r["gain"] - r["distance"]))
             start[g] = len(kind)
             count[g] = len(recs)
             succ[g] = sum(r["success"] for r in recs) / len(recs)
@@ -1806,6 +1873,10 @@ class Tables:
             nbig_run[g] = (sum(1 for r in recs if _is_big(r)) - nbig_stop[g]) if BIG_PLAYS else 0
             nfail_stop[g] = sum(1 for r in stops if _is_fail(r)) if BIG_PLAYS else 0
             nfail_run[g] = (sum(1 for r in recs if _is_fail(r)) - nfail_stop[g]) if BIG_PLAYS else 0
+            nto_stop[g] = sum(1 for r in stops if _is_turnover(r)) if LOSS_PLAYS else 0
+            nto_run[g] = (sum(1 for r in recs if _is_turnover(r)) - nto_stop[g]) if LOSS_PLAYS else 0
+            nloss_stop[g] = sum(1 for r in stops if _is_loss(r)) if LOSS_PLAYS else 0
+            nloss_run[g] = (sum(1 for r in recs if _is_loss(r)) - nloss_stop[g]) if LOSS_PLAYS else 0
             nfstop[g] = sum(1 for r in stops if r.get("fresh"))
             ssucc[g] = sum(r["success"] for r in stops) / max(1, len(stops))
             rsucc[g] = (sum(r["success"] for r in recs) - sum(r["success"] for r in stops)) \
@@ -1827,6 +1898,11 @@ class Tables:
         t.n_big_run = np.array([nbig_run[g] for g in chosen], dtype=np.int64)
         t.n_fail_stop = np.array([nfail_stop[g] for g in chosen], dtype=np.int64)
         t.n_fail_run = np.array([nfail_run[g] for g in chosen], dtype=np.int64)
+        if LOSS_PLAYS:
+            t.n_to_stop = np.array([nto_stop[g] for g in chosen], dtype=np.int64)
+            t.n_to_run = np.array([nto_run[g] for g in chosen], dtype=np.int64)
+            t.n_loss_stop = np.array([nloss_stop[g] for g in chosen], dtype=np.int64)
+            t.n_loss_run = np.array([nloss_run[g] for g in chosen], dtype=np.int64)
         t.q4_modes = Q4_MODES
         t.stop_success = np.array([ssucc[g] for g in chosen])
         t.run_success = np.array([rsucc[g] for g in chosen])
@@ -1930,6 +2006,9 @@ class Tables:
         if self.n_big_stop is not None:
             arrays["n_big_stop"], arrays["n_big_run"] = self.n_big_stop, self.n_big_run
             arrays["n_fail_stop"], arrays["n_fail_run"] = self.n_fail_stop, self.n_fail_run
+        if self.n_loss_stop is not None:
+            arrays["n_to_stop"], arrays["n_to_run"] = self.n_to_stop, self.n_to_run
+            arrays["n_loss_stop"], arrays["n_loss_run"] = self.n_loss_stop, self.n_loss_run
         if self.late_fourth is not None:
             arrays["late_fourth"] = self.late_fourth
         if self.close_fg is not None:
@@ -2032,6 +2111,9 @@ class Tables:
         if "n_big_stop" in z:
             t.n_big_stop, t.n_big_run = z["n_big_stop"], z["n_big_run"]
             t.n_fail_stop, t.n_fail_run = z["n_fail_stop"], z["n_fail_run"]
+        if "n_loss_stop" in z:
+            t.n_to_stop, t.n_to_run = z["n_to_stop"], z["n_to_run"]
+            t.n_loss_stop, t.n_loss_run = z["n_loss_stop"], z["n_loss_run"]
         return t
 
 
@@ -2071,6 +2153,8 @@ class Start:
         self.big = np.ones((n, 2))                              # v13: each side's big-play rate
         self.kick_tb = np.ones((n, 2))                          # v14: each kicker's touchback and
         self.kick_nlz = np.ones((n, 2))                         # no-landing-zone rates, x the league's
+        self.loss = np.ones((n, 2))                             # v14: each side's lost-yardage rate
+        self.loss_size = np.ones((n, 2))                        # and how deep its losses go
 
 
 def _sigmoid(z):
@@ -2160,6 +2244,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     kick_tb = rep(getattr(start, "kick_tb", np.ones((S, 2))))
     kick_nlz = rep(getattr(start, "kick_nlz", np.ones((S, 2))))
     styles_on = KICK_STYLES and getattr(tables, "kick_mix", None) is not None
+    loss_r = rep(getattr(start, "loss", np.ones((S, 2))))
+    loss_s = rep(getattr(start, "loss_size", np.ones((S, 2))))
+    loss_on = LOSS_PLAYS and getattr(tables, "n_loss_stop", None) is not None \
+        and bool(np.any(loss_r != 1.0) or np.any(loss_s != 1.0))
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
     tos = rep(getattr(start, "timeouts", np.full((S, 2), -1))).astype(np.int8)
     to_on = TIMEOUTS and tables.call_p.any()
@@ -2642,11 +2730,18 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if inplay_exp is not None:
             tilt = tilt * inplay_exp[_segments_np(period[sx], clock[sx]),
                                      _bands_np(score[sx, 0] - score[sx, 1])]
-        if big_on:
+        if big_on or loss_on:
             share = np.where(stops, tables.n_big_stop[key], tables.n_big_run[key]) / seg_n
             fails = np.where(stops, tables.n_fail_stop[key], tables.n_fail_run[key]) / seg_n
             bs = big[sx, so]
-            uu = big_warp(uu, tilt, share, fails, bs)
+            if loss_on:
+                to_sh = np.where(stops, tables.n_to_stop[key], tables.n_to_run[key]) / seg_n
+                loss_sh = np.where(stops, tables.n_loss_stop[key], tables.n_loss_run[key]) / seg_n
+                lr, ls = loss_r[sx, so], loss_s[sx, so]
+                warp = lambda u_: zone_warp(u_, tilt, to_sh, loss_sh, fails, share, bs, lr, ls)
+            else:
+                warp = lambda u_: big_warp(u_, tilt, share, fails, bs)
+            uu = warp(uu)
         uu = 1.0 - (1.0 - uu) ** tilt
         j = seg0 + np.minimum(seg_n - 1, (uu * seg_n).astype(np.int64))
         if (rz.any() and tables.rz_hold.any()) or tables.td_hold.any():
@@ -2661,8 +2756,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 if not held_td.any():
                     break
                 u2 = rand(sx, 20 + attempt)
-                if big_on:
-                    u2 = big_warp(u2, tilt, share, fails, bs)
+                if big_on or loss_on:
+                    u2 = warp(u2)
                 u2 = 1.0 - (1.0 - u2) ** tilt
                 j = np.where(held_td, seg0 + np.minimum(seg_n - 1, (u2 * seg_n).astype(np.int64)), j)
                 held_td &= scores(j)
@@ -2772,6 +2867,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         td = y2 >= 100
         tally("td", td.sum())
         tally("big", (gain >= BIG_GAIN).sum())
+        tally("loss", (gain < 0).sum())
+        tally("loss_yards", -gain[gain < 0].sum())
         if stats is not None and td.any():
             tally("td_yards", (100 - y[gx][td]).sum())
             tally("td_long", (100 - y[gx][td] >= BIG_GAIN).sum())
