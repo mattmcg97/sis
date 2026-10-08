@@ -13,7 +13,7 @@ at its own line for the line tables (see multi.py).
 import html
 import os
 
-from . import buckets, config, drives, handles, html_style, markets, totals_reach
+from . import buckets, config, drives, handles, html_style, line_moves, markets
 
 MARKET_ORDER = [markets.MONEYLINE, markets.SPREAD, markets.TOTAL]
 MARKET_TITLES = {markets.MONEYLINE: "Moneyline", markets.SPREAD: "Spread",
@@ -620,111 +620,84 @@ def _share_cell(value, real):
             f'<span class="pp">{100 * gap:+.0f}</span></td>')
 
 
-def _over_gap_cell(over, priced, n=None):
-    if over is None or priced is None:
-        return "<td>&mdash;</td>"
-    gap = over - priced
-    count = f' <span class="dim">({n:,})</span>' if n else ""
-    return f'<td class="{_gap(gap, PROB_GAP)}">{100 * gap:+.0f}{count}</td>'
-
-
 def _quarter_order(label):
     """Q1..Q4, then overtime."""
     return {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4, "OT": 5}.get(label, 6)
 
 
-def _totals_reach_block(sides):
-    """The totals line test: how often each stream's line sits within one and
-    two scores of the points already scored, beside how often the rest of
-    the game really produced that little (totals_reach) -- overall, by
-    quarter and game state, and each stream's over rate against its price."""
-    per = [totals_reach.summarise(s["line_pairs"]) for s in sides]
-    if not per or not per[0]["real"]["n"]:
+def _move_cell(cell):
+    """Share over the line (home covered) with its gap to the stream's own priced
+    chance beside it, coloured by the gap, and the count."""
+    n, over, priced = cell
+    if not n:
+        return "<td>&mdash;</td>"
+    gap = over - priced
+    return (f'<td class="{_gap(gap, PROB_GAP)}">{_pct(over, ".0f")}'
+            f'<span class="pp">{100 * gap:+.0f}</span> <span class="dim">({n:,})</span></td>')
+
+
+_MOVE_WORDS = {markets.TOTAL: ("up", "down"), markets.SPREAD: ("toward home", "toward away")}
+
+
+def _line_moves_market(sides, group):
+    """One market's tables: by how the line moved since the last quote, then by
+    quarter and score difference."""
+    per = [line_moves.summarise(s["line_pairs"], group) for s in sides]
+    if not per or not per[0]["prod"]["moves"]["all"][0]:
         return ""
-    names = ["Prod"] + [_name(s) for s in sides]
-    streams = lambda r: [per[0]["prod"]] + [x["candidate"] for x in per]
-    rows = []
-    for label, key in (("Within 1 score", totals_reach.WITHIN_ONE),
-                       ("Within 2 scores", totals_reach.WITHIN_TWO + "_or_less")):
-        real = per[0]["real"][key]
-        cells = "".join(_share_cell(st[key], real) for st in streams(per))
-        rows.append(f"<tr><th>{label}</th><td><b>{_pct(real, '.0f')}</b></td>{cells}</tr>")
-    head = "".join(f"<th>{n}</th>" for n in names)
-    summary = f"""
-      <table class="reach">
-        <thead><tr><th>Line above the score</th><th>Real</th>{head}</tr></thead>
-        <tbody>{''.join(rows)}</tbody>
-      </table>
-      <p class="dim">{per[0]['real']['n']:,} snapshots</p>"""
-    return f"""
-  <section class="panel" id="totals-reach">
-    <h2>Totals line within 1 and 2 scores</h2>
-    {summary}
-    {_totals_reach_breakdown(sides)}
-    {_totals_over_block(sides, per)}
-  </section>"""
-
-
-def _totals_reach_breakdown(sides):
-    """By quarter and game state: real's shares within one and two scores,
-    and each stream's, with its gap to real."""
-    per = [totals_reach.breakdown(s["line_pairs"]) for s in sides]
-    keys = sorted(per[0], key=lambda k: (_quarter_order(k[0]), totals_reach.STATES.index(k[1])))
-    if not keys:
-        return ""
-    names = ["Prod"] + [_name(s) for s in sides]
-    group = (f'<th colspan="{1 + len(names)}" class="grp">Within 1 score</th>'
-             f'<th colspan="{1 + len(names)}" class="grp">Within 2 scores</th>')
-    sub = ('<th class="grp">Real</th>' + "".join(f"<th>{n}</th>" for n in names)) * 2
-    rows = []
-    for key in keys:
-        first = per[0][key]
-        lines = [first["prod"]] + [p.get(key, {}).get("candidate", (None,) * 4) for p in per]
-        cells = ""
-        for k in (0, 1):
-            real = first["real"][k]
-            cells += f'<td class="grp"><b>{_pct(real, ".0f")}</b></td>'
-            cells += "".join(_share_cell(line[k], real) for line in lines)
-        whole = key[1] == totals_reach.ALL
-        label = "all" if whole else html.escape(key[1])
-        tr = '<tr class="subtotal">' if whole else "<tr>"
-        rows.append(f'{tr}<th>{key[0]}</th><td class="state">{label}</td>'
-                    f'<td>{first["n"]:,}</td>{cells}</tr>')
-    return f"""
-    <h3>By quarter and game state</h3>
-    <table class="reach">
-      <thead><tr><th rowspan="2">Quarter</th><th rowspan="2" class="state">State</th><th rowspan="2">N</th>{group}</tr>
-        <tr>{sub}</tr></thead>
-      <tbody>{''.join(rows)}</tbody>
-    </table>"""
-
-
-def _totals_over_block(sides, per):
-    """Each stream's over rate at its own line against its own priced
-    P(over): overall by where the line sits, and by quarter."""
     names = ["Prod"] + [_name(s) for s in sides]
     streams = [per[0]["prod"]] + [x["candidate"] for x in per]
-    rows = []
-    for label, key in (("Within 1 score", totals_reach.WITHIN_ONE),
-                       ("1 to 2 scores", totals_reach.WITHIN_TWO),
-                       ("More than 2 scores", totals_reach.BEYOND)):
-        rows.append(f"<tr><th>{label}</th>" + "".join(
-            _over_gap_cell(st["over"][key][0], st["priced"][key], st["over"][key][1])
-            for st in streams) + "</tr>")
-    by_q = [totals_reach.breakdown(s["line_pairs"]) for s in sides]
-    quarters = sorted((k for k in by_q[0] if k[1] == totals_reach.ALL), key=lambda k: _quarter_order(k[0]))
-    for n, key in enumerate(quarters):
-        lines = [by_q[0][key]["prod"]] + [b.get(key, {}).get("candidate", (None,) * 4) for b in by_q]
-        tr = '<tr class="split">' if n == 0 else "<tr>"
-        rows.append(f'{tr}<th>{key[0]}</th>'
-                    + "".join(_over_gap_cell(l[2], l[3]) for l in lines) + "</tr>")
+    up, down = _MOVE_WORDS[group]
+    labels = {"line up, after a score": f"line {up}, after a score",
+              "line up, no score": f"line {up}, no score",
+              "line down, after a score": f"line {down}, after a score",
+              "line down, no score": f"line {down}, no score",
+              "line held": "line held", "all": "every quote"}
     head = "".join(f"<th>{n}</th>" for n in names)
+    rows = []
+    for key, label in labels.items():
+        tr = '<tr class="subtotal">' if key == "all" else "<tr>"
+        rows.append(f"{tr}<th>{label}</th>" + "".join(_move_cell(st["moves"][key]) for st in streams) + "</tr>")
+    keys = sorted(streams[0]["grid"], key=lambda k: (
+        _quarter_order(k[0]), (("all",) + line_moves.DIFFS).index(k[1])))
+    cols = ((line_moves.UP, f"Line {up}"), (line_moves.DOWN, f"Line {down}"), ("all", "Every quote"))
+    group_head = "".join(f'<th colspan="{len(names)}" class="grp">{t}</th>' for _, t in cols)
+    sub = "".join(f"<th>{n}</th>" for n in names) * len(cols)
+    grid_rows = []
+    for key in keys:
+        whole = key[1] == "all"
+        tr = '<tr class="subtotal">' if whole else "<tr>"
+        cells = "".join(_move_cell(st["grid"].get(key, {}).get(m, (0, None, None)))
+                        for m, _ in cols for st in streams)
+        grid_rows.append(f'{tr}<th>{key[0]}</th><td class="state">{"all" if whole else html.escape(key[1])}</td>'
+                         f"{cells}</tr>")
+    what = "finished over the line" if group == markets.TOTAL else "the home side covered"
     return f"""
-    <h3>Over at the line against priced</h3>
+    <h3>{MARKET_TITLES.get(group, group)}: how often {what}</h3>
     <table class="reach">
-      <thead><tr><th>Line above the score / quarter</th>{head}</tr></thead>
+      <thead><tr><th>Since the stream's last quote</th>{head}</tr></thead>
       <tbody>{''.join(rows)}</tbody>
+    </table>
+    <table class="reach">
+      <thead><tr><th rowspan="2">Quarter</th><th rowspan="2" class="state">Score difference</th>{group_head}</tr>
+        <tr>{sub}</tr></thead>
+      <tbody>{''.join(grid_rows)}</tbody>
     </table>"""
+
+
+def _line_moves_block(sides):
+    """Lines that move and then aren't reached (line_moves): each stream's share
+    of quotes the game finished over (the home side covered), against its own
+    priced chance, by how its line moved since its last quote, by quarter and by
+    score difference."""
+    body = _line_moves_market(sides, markets.TOTAL) + _line_moves_market(sides, markets.SPREAD)
+    if not body:
+        return ""
+    return f"""
+  <section class="panel" id="line-moves">
+    <h2>Lines that move: reached or not</h2>
+    {body}
+  </section>"""
 
 
 def _checks_summary(report, scan=None):
@@ -1074,7 +1047,7 @@ def render_sides(sides, dropped=None, extra=""):
   {axis_sections}
   {_prematch_block(sides)}
   {_indrive_block(sides)}
-  {_totals_reach_block(sides)}
+  {_line_moves_block(sides)}
   <details class="panel" id="checks">
     <summary>Additional checks</summary>
     {_run_block(sides, dropped)}

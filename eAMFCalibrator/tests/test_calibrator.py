@@ -5322,6 +5322,47 @@ class TestTotalsReach(unittest.TestCase):
         self.assertEqual(totals_reach.summarise([spread])["real"]["n"], 0)
 
 
+class TestLineMoves(unittest.TestCase):
+    """Lines that move and then aren't reached: each quote set against the stream's last one."""
+
+    @staticmethod
+    def _q(drive, p1, p2, prod_line, cand_line, final=(24, 21), market_id=54, prob=0.5, period=1):
+        pair = line_pair(prob, prob, prod_line, cand_line, final[0], final[1], market_id=market_id)
+        return dataclasses.replace(pair, score_p1=p1, score_p2=p2, drive_number=drive, period_number=period,
+                                   message_count=drive * 10)
+
+    def test_a_total_that_rises_after_a_score_and_is_not_reached(self):
+        from .. import line_moves, markets
+        pairs = [self._q(1, 0, 0, 40.5, 40.5),
+                 self._q(2, 7, 0, 47.5, 44.5, prob=0.55),        # a score: prod up 7, the candidate 4
+                 self._q(3, 7, 0, 46.5, 44.5),                   # no score: prod down 1, the candidate holds
+                 self._q(3, 7, 0, 46.5, 44.5, market_id=55)]     # the under of the same quote isn't counted
+        r = line_moves.summarise(pairs, markets.TOTAL)
+        prod, cand = r["prod"]["moves"], r["candidate"]["moves"]
+        self.assertEqual(prod["line up, after a score"], (1, 0.0, 0.55))       # 45 under 47.5
+        self.assertEqual(prod["line down, no score"], (1, 0.0, 0.5))
+        self.assertEqual(cand["line up, after a score"], (1, 1.0, 0.55))       # 45 over 44.5
+        self.assertEqual(cand["line held"], (1, 1.0, 0.5))
+        self.assertEqual(prod["all"][0], 3)
+        self.assertEqual(r["prod"]["grid"][("Q1", line_moves.ONE)]["up"], (1, 0.0, 0.55))
+
+    def test_the_spread_reads_as_the_home_margin_from_either_side(self):
+        from .. import line_moves, markets
+        # home margin 3 (24-21). 52 asks home margin > 2.5 at 60%; the next quote is only on 53,
+        # the away side's margin > -6.5 at 30% (literal): home margin < 6.5 -- the line moved 4
+        # toward home, and home covering it was priced 70%
+        pairs = [self._q(1, 0, 0, 2.5, 2.5, market_id=52, prob=0.6),
+                 self._q(2, 7, 0, -6.5, -6.5, market_id=53, prob=0.3)]
+        r = line_moves.summarise(pairs, markets.SPREAD)
+        self.assertEqual(r["prod"]["moves"]["line up, after a score"], (1, 0.0, 0.7))
+        self.assertEqual(r["prod"]["moves"]["all"][:2], (2, 0.5))
+
+    def test_pushes_and_other_markets_are_left_out(self):
+        from .. import line_moves, markets
+        pairs = [self._q(1, 0, 0, 45.0, 45.0), self._q(2, 0, 0, 2.5, 2.5, market_id=50)]
+        self.assertEqual(line_moves.summarise(pairs, markets.TOTAL)["prod"]["moves"]["all"], (0, None, None))
+
+
 class TestSeveralCandidates(unittest.TestCase):
     """--candidate v4,v5: every candidate beside prod in one report, over
     one population, read at prod's line and at its own."""
@@ -5456,33 +5497,28 @@ class TestSeveralCandidates(unittest.TestCase):
         self.assertLess(page.index('id="cross"'), page.index("<h2>Score difference</h2>"))
         self.assertLess(page.index("<h2>Possession</h2>"), page.index('id="checks"'))
 
-    def test_the_totals_line_test_is_a_section_of_its_own(self):
+    def test_the_line_moves_test_is_a_section_of_its_own(self):
         from .. import html_full
         sides, dropped = self._sides()
         page = html_full.render_sides(sides, dropped)
         checks = page[page.index('id="checks"'):page.index("</details>")]
-        self.assertNotIn("Totals line within 1 and 2 scores", checks)
-        self.assertLess(page.index('id="totals-reach"'), page.index('id="checks"'))
-        block = page[page.index('id="totals-reach"'):]
+        self.assertNotIn("Lines that move", checks)
+        self.assertNotIn('id="totals-reach"', page)
+        self.assertLess(page.index('id="line-moves"'), page.index('id="checks"'))
+        block = page[page.index('id="line-moves"'):]
         block = block[:block.index("</section>")]
-        for column in ("<th>Real</th>", "<th>Prod</th>", "<th>v4</th>", "<th>T2</th>"):
+        for column in ("<th>Prod</th>", "<th>v4</th>", "<th>T2</th>"):
             self.assertIn(column, block)
-        # 0-0, lines of 44.5 and 46.5, 45 scored: nothing within two scores,
-        # for real or any line -- each stream's share with its gap to real
-        self.assertIn('<tr><th>Within 1 score</th><td><b>0%</b></td>'
-                      '<td class="g0">0%<span class="pp">+0</span></td>'
-                      '<td class="g0">0%<span class="pp">+0</span></td>'
-                      '<td class="g0">0%<span class="pp">+0</span></td></tr>', block)
-        self.assertIn("<h3>By quarter and game state</h3>", block)
-        self.assertIn('<th colspan="4" class="grp">Within 1 score</th>', block)
+        self.assertIn("<h3>Total: how often finished over the line</h3>", block)
+        # one quote a match, so no moves: every quote only. 45 scored -- prod's 44.5 went over
+        # at 50% (+50), v4's 46.5 under at 52% (-52), T2's 44.5 over at 40% (+60)
+        self.assertIn('<tr class="subtotal"><th>every quote</th>'
+                      '<td class="g4">100%<span class="pp">+50</span> <span class="dim">(2)</span></td>'
+                      '<td class="g4">0%<span class="pp">-52</span> <span class="dim">(2)</span></td>'
+                      '<td class="g4">100%<span class="pp">+60</span> <span class="dim">(2)</span></td></tr>', block)
+        self.assertIn('<th colspan="3" class="grp">Line up</th>', block)
         self.assertIn('<tr class="subtotal"><th>Q1</th><td class="state">all</td>', block)
-        self.assertIn('<tr><th>Q1</th><td class="state">level</td>', block)
-        # over against priced: prod's 44.5 went over at 50% (+50), v4's 46.5
-        # under at 52% (-52), T2's 44.5 over at 40% (+60)
-        self.assertIn("<h3>Over at the line against priced</h3>", block)
-        self.assertIn('<tr><th>More than 2 scores</th><td class="g4">+50 <span class="dim">(2)</span></td>'
-                      '<td class="g4">-52 <span class="dim">(2)</span></td>'
-                      '<td class="g4">+60 <span class="dim">(2)</span></td></tr>', block)
+        self.assertIn('<tr><th>Q1</th><td class="state">level (0-2)</td>', block)
 
     def test_a_shares_gap_to_real_is_coloured_by_its_size(self):
         from .. import html_full
