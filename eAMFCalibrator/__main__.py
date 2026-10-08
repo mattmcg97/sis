@@ -948,7 +948,7 @@ def apply_overrides(args):
     if clock is not None:
         config.CLOCK_SOURCE = None if clock == "self" else clock
 
-    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate", "halves"):
+    if getattr(args, "command", None) in ("compare", "totals-lines", "totals-calibrate", "halves", "kickoffs"):
         return
     end = config.CUTOFF_END or "latest available"
     print(f"\nWindow: {config.CUTOFF_START}  ->  {end}"
@@ -1208,6 +1208,19 @@ def build_parser():
     hv_parser.add_argument("--min-pair-games", type=int, default=20,
                            help="gamer / team pairs with at least this many games get a row (default 20)")
 
+    ko_parser = sub.add_parser(
+        "kickoffs",
+        help="off the `scouting` export (no Snowflake): how kick-offs land (touchback, no landing zone, "
+             "out of bounds, returned) and who kicks which, the half-time double and Q2's pace, and "
+             "how prod's total moves on a kick")
+    ko_parser.add_argument("export", nargs="?", default=os.path.join(DEFAULT_OUT, "scouting_playover.csv"),
+                           help="scouting_playover.csv (default <out>/scouting_playover.csv)")
+    ko_parser.add_argument("--history", help="match_history.csv for the gamers (default: match_history.csv "
+                                             "beside the export, when there is one)")
+    ko_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    ko_parser.add_argument("--min-games", type=int, default=20,
+                           help="gamers with at least this many kicks / games get a row (default 20)")
+
     cmp_parser = sub.add_parser("compare", parents=[shared], help="diff two cell-summary CSVs")
     cmp_parser.add_argument("file_a")
     cmp_parser.add_argument("file_b")
@@ -1263,6 +1276,14 @@ def main(argv=None):
             history = beside if os.path.exists(beside) else None
         halves.run(args.export, args.out or DEFAULT_OUT, min_games=args.min_games, history_path=history,
                    min_pair_games=args.min_pair_games)
+        return 0
+    if args.command == "kickoffs":
+        from . import kickoffs
+        history = args.history
+        if history is None:
+            beside = os.path.join(os.path.dirname(args.export) or ".", "match_history.csv")
+            history = beside if os.path.exists(beside) else None
+        kickoffs.run(args.export, args.out or DEFAULT_OUT, history_path=history, min_games=args.min_games)
         return 0
     if args.command == "totals-lines":
         from . import totals_lines

@@ -1482,6 +1482,68 @@ gamer + team + opponent + opponent's team (least squares over every offensive to
   the pairs beyond their gamer plus their team (a chi-squared against noise alone) and the pairs
   furthest each way.
 
+## Kick-offs, the half-time double and prod's line on a kick: `kickoffs`
+
+```powershell
+python -m eAMFCalibrator kickoffs                                   # off out/scouting_playover.csv
+python -m eAMFCalibrator kickoffs eAMFCalibrator\out_all\scouting_playover.csv --history eAMFCalibrator\out_oct\match_history.csv --out eAMFCalibrator\out_all
+```
+
+Off a `scouting` export, no Snowflake. The gamers come from `--history` (default:
+`match_history.csv` beside the export), PLAYER_1 as home. It writes `kickoffs.txt` and three CSVs
+to `--out`: `kickoffs_kicks.csv` (one row a kick), `kickoffs_matches.csv` (one row a match) and
+`kickoffs_gamers.csv` (one row a gamer).
+
+- **How kicks land.** Each kick-off is classed as one of:
+  - a touchback: the 20, no clock;
+  - no landing zone: the 35, no clock;
+  - out of bounds: the 40, no clock;
+  - returned, onside, or run back for a touchdown.
+
+  For each class: its share by quarter, the start and seconds, and the receiver's points on the
+  drive it starts (to the change of possession or half time). Kicks in Q2's and Q4's last two
+  minutes are compared with the rest.
+- **Kickers.** Each gamer with `--min-games` kicks gets their kinds, and a chi-squared on them
+  against the league's (3 df: about 3 by chance, 11.3 at 1%).
+- **The half-time double.** R is the side receiving the second half's kick, the one that kicked
+  off the game; K is the other. Per match it counts:
+  - R's and K's points in Q2's last two minutes;
+  - R's points on its first Q3 drive, and whether R scored both (the double);
+  - both sides' Q2 scrimmage snaps (pace) and points.
+
+  It also reads prod's total and spread at Q2's two-minute mark and at the second half's kick
+  against the result. Each gamer gets their double rate as R against the league, with a z score.
+- **Prod's total on a kick.** Where nothing was scored on the kick, prod's line on the kick is set
+  against its quote just before: the conversion, Q2's last quote for the second half, or the
+  pre-match quote for the opening kick. The move is shown by who receives (favourite or underdog,
+  home or away) and by where the receiver starts. Each line is then checked against the result:
+  over at the line before against its price, and over at the kick's line against its price.
+
+On September (2,320 matches, 16,880 kicks):
+- **Late in a half, kickers kick touchbacks.** In Q2's and Q4's last two minutes, 13.7% of kicks
+  are touchbacks and 5.8% land in no landing zone; elsewhere the figures are 2.8% and 2.4%. A late
+  touchback's drive makes 1.28 points against 2.10 after a return. The sim draws every kick from
+  one pool, whatever the clock, so it gives late-half receivers too good a start.
+- **A few kickers do it far more:** SHROUD into no landing zone 32% of the time; FUSE, MERLIN and
+  FENRIR touchbacks 16-17%. The league is 6% and 3.5%.
+- **No double effect to speak of.**
+  - R scores in Q2's last two minutes 66.7% of the time and on its first Q3 drive 63.6%. It does
+    both 43.5% of the time, a little above independence: correlation +0.05.
+  - Across gamers the double rate spreads only a little beyond chance (z variance 1.27); LUNA,
+    68% over 56 games, stands out.
+  - R runs 0.32 more Q2 snaps than K (se 0.13) and scores 0.22 more Q2 points (se 0.14).
+- **Prod's total is high at Q2's two-minute mark:** over 46.0% against 49.8% priced.
+- **Prod's total moves on a kick by where the receiver starts, not by who receives.**
+  - The line moves on 38% of kicks. Favourite or underdog receiving, home or away, the shares are
+    the same.
+  - A return to the 46 or beyond lifts it 1.0 point on average, up 51% of the time; a start inside
+    the 20 lowers it.
+  - The moves are right. Where it went up, the game went over the old line 55.5% of the time
+    against 50.2% priced.
+  - At the opening kick prod's first in-play total sits about 0.3 points under its pre-match line,
+    a point down in 34% of matches, whoever receives. The pre-match line runs a little high: over
+    47.7% against 50.1% priced.
+
 ## Every timeout: `timeouts`
 
 ```bash
