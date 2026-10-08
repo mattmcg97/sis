@@ -1612,7 +1612,7 @@ version, change the names on the command line.
     calibration at prod's line and each side's line error.
   - Pre-match.
   - In-drive.
-  - **Lines that move: reached or not** (below).
+  - **Line moves** (below).
   - Additional checks.
   - Every pair.
 - **Every pair** carries prod's line, probability, result and error, and
@@ -1638,13 +1638,13 @@ python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshot
 - Use this to compare two builds that differ only in what they were built
   with, e.g. `--prior nb2` against `--prior glmer`.
 
-### Lines that move: reached or not
+### Line moves
 
 This replaced "Totals line within 1 and 2 scores". It asks whether a stream reacts too far to a
-score. At each drive's first quote (`line_moves.py`), it sets each stream's total and spread
-against that stream's previous quote in the match. The line went up, went down, or held. Then it
-counts how often the game finished over the line: for the spread, how often the home side beat
-the home margin the line asked for.
+score. At each snapshot (`line_moves.py`), it sets each stream's total and spread against that
+stream's previous quote in the match. The line went up, went down, or held. Then it counts how
+often the game finished over the line: for the spread, how often the home side beat the home
+margin the line asked for. The page shows the numbers only; this is what they mean.
 
 - **Each cell** shows three things:
   - that share;
@@ -1655,12 +1655,25 @@ the home margin the line asked for.
   less evenly late on, when the points still to come are lumpy (0, 3 or 7).
 - **What over-reacting looks like.** A minus after the line goes up means games fall short of a
   line lifted too far. A plus after it goes down means a total dropped too fast as the clock ran.
-- **The first table** splits the moves by whether anyone scored since the last quote. For the
-  spread, up means toward the home side.
-- **The second table** gives quarter by score difference (level 0-2, one score 3-8, two or more
-  9+), with columns for line up, line down and every quote. Each quarter's all-states row is
-  shaded above its states.
+- **Totals and Spread** each have two tables:
+  - one row per stream, with columns for the move: up (after a score, no score), down (the same),
+    held, all. For the spread, up is toward the home side.
+  - quarter by score difference (level 0-2, one score 3-8, two or more 9+), with columns for line
+    up, line down and all. Each quarter's all row is shaded above its states.
+- **First touchdown** takes every quote from each match's first touchdown until the next score
+  (its conversion stays in). Two splits:
+  - when it came: the game's first minute, 1:00-2:00, the rest of Q1, Q2, the second half;
+  - who scored it: the favourite or the underdog by prod's first moneyline quote, or pick'em
+    within 5 points of 50%.
+  Over is the total; Scorer covers is the spread read from the scoring side. A minus under Over
+  after an early touchdown means the total went up too far. The clock comes from the PLAY_OVER
+  snapshots (`--snapshots play_over`); other runs show "clock unknown" for Q1.
 - Pushes are left out. A spread quote on the away side is read as the home margin it implies.
+
+On August-September v12 against prod, after a favourite's touchdown in the game's first minute
+(60 matches), totals finished 13 points under prod's price and 12 under v12's. The favourite then
+covered 9 points over prod's price and 13 over v12's. Each cell holds a few hundred quotes from a
+few dozen matches, so read a month or more.
 
 On the month of v12 against prod (23 Aug - 23 Sep), prod's spread went toward the side that had
 just scored 9,723 times. The home side then covered 39% of the time, priced 50%. After a score
@@ -1910,6 +1923,8 @@ does, so every reading is a like-for-like comparison with prod.
 - **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
   (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
   side of zero.
+- **On the page** (headed Acceptance and Two books): each margin is green where the book is ahead,
+  red behind; its interval sits underneath.
 
 ```bash
 python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
@@ -1969,6 +1984,10 @@ section. The same tags are added as columns to `bets_sim.csv`.
 | `price_age` | seconds from the price's message to the bet |
 | `next_score` | seconds from the bet to the board's next move |
 | `clock_band`, `score_margin`, `down` | quarter and clock, the score, the down |
+
+On the page (headed In play), each margin is red where it sits more than two standard errors below
+what prod's own probability says the book keeps, green more than two above. Revenue is green or red
+by its sign. The candidate columns are the change in margin on the bets every candidate re-priced.
 
 Bet time is read on the feed's own clock. Prod only publishes on some
 messages; the feed carries every message's `FILE_TIME`. Each match's feed

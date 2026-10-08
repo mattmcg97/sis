@@ -89,7 +89,8 @@ def quotes(pairs, group):
                 move = UP if delta > STEP else DOWN if delta < -STEP else FLAT
                 scored = board != prev[1]
             last[p.match_code] = (line, board)
-            out[stream].append({"line": line, "prob": prob, "real": real, "move": move,
+            out[stream].append({"match": p.match_code, "drive": p.drive_number,
+                                "line": line, "prob": prob, "real": real, "move": move,
                                 "scored": scored, "quarter": buckets.period_bucket(p.period_number),
                                 "diff": score_diff(p), "board": board})
     return out
@@ -129,4 +130,92 @@ def summarise(pairs, group):
                     grid[key][q["move"]].append(q)
         out[stream] = {"moves": moves,
                        "grid": {k: {m: _cell(v) for m, v in g.items()} for k, g in grid.items()}}
+    return out
+
+
+# The first touchdown: does a stream lift the total (and the scorer's spread) too far when a side
+# scores early -- a quick opening drive -- and more so when the scorer was the favourite?
+TD_WHEN = ("first minute", "1:00-2:00", "rest of Q1", "Q2", "second half", "clock unknown")
+FAVOURITE, UNDERDOG, EVEN = "favourite", "underdog", "pick'em"
+SCORERS = (FAVOURITE, UNDERDOG, EVEN)
+EVEN_BAND = 0.05             # prod's first moneyline within this of 50%: neither side is favourite
+QUARTER_SECONDS = 240
+
+
+def td_when(period, clock):
+    """When in the game a touchdown came: its quarter, and in Q1 the minute."""
+    if period is None:
+        return "clock unknown"
+    if period >= 3:
+        return "second half"
+    if period == 2:
+        return "Q2"
+    if clock is None:
+        return "clock unknown"
+    gone = QUARTER_SECONDS - clock
+    return "first minute" if gone <= 60 else "1:00-2:00" if gone <= 120 else "rest of Q1"
+
+
+def favourites(pairs):
+    """{match: "home" / "away" / None}: the side prod's first moneyline quote had above 50%,
+    None within EVEN_BAND of it."""
+    first = {}
+    for p in sorted(pairs, key=lambda p: (p.match_code, p.drive_number, p.message_count)):
+        if p.market_id not in (50, 51) or p.match_code in first or p.prod_probability is None:
+            continue
+        home = p.prod_probability if p.market_id == 50 else 1 - p.prod_probability
+        first[p.match_code] = (None if abs(home - 0.5) < EVEN_BAND else "home" if home > 0.5 else "away")
+    return first
+
+
+def touchdowns(pairs):
+    """{match: (first drive of the window, last, scoring side, when)}: each match's first
+    touchdown -- the first snapshot where one side's score is 6 or more above the snapshot
+    before -- and its window, every snapshot until the next score beyond the conversion."""
+    boards = defaultdict(dict)
+    for p in pairs:
+        boards[p.match_code].setdefault(p.drive_number, (p.score_p1, p.score_p2, p.period_number,
+                                                         p.clock_seconds))
+    out = {}
+    for m, by_drive in boards.items():
+        drives = sorted(by_drive)
+        for a, b in zip(drives, drives[1:]):
+            (h0, a0, _, _), (h1, a1, period, clock) = by_drive[a], by_drive[b]
+            if h1 - h0 >= 6 or a1 - a0 >= 6:
+                side = "home" if h1 - h0 >= 6 else "away"
+                cap = h1 + a1 + 2                          # the conversion stays in the window
+                last = b
+                for d in drives[drives.index(b) + 1:]:
+                    if sum(by_drive[d][:2]) > cap:
+                        break
+                    last = d
+                out[m] = (b, last, side, td_when(period, clock))
+                break
+    return out
+
+
+def first_touchdowns(pairs):
+    """{stream: {(when, scorer): {"total": cell, "spread": cell, "matches": n}}}: every quote in
+    each match's first-touchdown window (touchdowns) -- the total's over, and the spread read from
+    the scoring side (did it beat the margin its line asked for) -- against the stream's own
+    price there; the scorer is the favourite or the underdog by prod's first moneyline."""
+    fav, tds = favourites(pairs), touchdowns(pairs)
+    by_market = {"total": quotes(pairs, markets.TOTAL), "spread": quotes(pairs, markets.SPREAD)}
+    out = {}
+    for stream in STREAMS:
+        cells = defaultdict(lambda: {"total": [], "spread": [], "matches": set()})
+        for market, qs in by_market.items():
+            for q in qs[stream]:
+                td = tds.get(q["match"])
+                if td is None or not td[0] <= q["drive"] <= td[1]:
+                    continue
+                first, _, side, when = td
+                f = fav.get(q["match"])
+                scorer = EVEN if f is None else FAVOURITE if f == side else UNDERDOG
+                if market == "spread" and side == "away":
+                    q = dict(q, line=-q["line"], real=-q["real"], prob=1 - q["prob"])
+                cells[(when, scorer)][market].append(q)
+                cells[(when, scorer)]["matches"].add(q["match"])
+        out[stream] = {k: {"total": _cell(v["total"]), "spread": _cell(v["spread"]),
+                           "matches": len(v["matches"])} for k, v in cells.items()}
     return out

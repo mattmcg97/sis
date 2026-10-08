@@ -1123,6 +1123,12 @@ def _esc(text):
     return html.escape(str(text))
 
 
+def _signed(value, text):
+    """A number coloured by its sign: green where the book is ahead, red where it is behind."""
+    cls = "good" if value > 0 else "bad" if value < 0 else ""
+    return f'<td class="{cls}">{text}</td>'
+
+
 def _change_cell(change):
     if change is None:
         return "<td>&mdash;</td>"
@@ -1147,9 +1153,9 @@ def html_section(summary):
             own.append(f"<tr><th>{_esc(name)}</th><td colspan=\"7\">no bet re-priced</td></tr>")
             continue
         n, stake, rev, m, rev_c, m_c = s_
-        own.append(f"<tr><th>{_esc(name)}</th><td>{n:,}</td><td>{stake:,.0f}</td><td>{m:.2f}%</td>"
-                   f"<td>{m_c:.2f}%</td>{_change_cell(m_c - m)}<td>{price:+,.0f}</td>"
-                   f"<td>{result:+,.0f}</td></tr>")
+        own.append(f"<tr><th>{_esc(name)}</th><td>{n:,}</td><td>{stake:,.0f}</td>{_signed(m, f'{m:.2f}%')}"
+                   f"{_signed(m_c, f'{m_c:.2f}%')}{_change_cell(m_c - m)}{_signed(price, f'{price:+,.0f}')}"
+                   f"{_signed(result, f'{result:+,.0f}')}</tr>")
     vip = config.BET_VIP_VALUE.lower()
     not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
     cuts = [(None, None, "All"), (None, not_vip, f"All but {config.BET_VIP_VALUE}"),
@@ -1168,13 +1174,14 @@ def html_section(summary):
             else:
                 label = f"{by.replace('_', ' ')} {g}"
             side.append(f"<tr><th>{_esc(label)}</th><td>{n:,}</td><td>{stake:,.0f}</td>"
-                        f"<td>{m:.2f}%</td>" + "".join(_change_cell(c - m) for c in margins) + "</tr>")
+                        + _signed(m, f"{m:.2f}%") + "".join(_change_cell(c - m) for c in margins) + "</tr>")
     split = compare(results).get("all")
     effect_rows = []
     if split:
         for name, (price, result) in zip(names, split[4]):
-            effect_rows.append(f"<tr><th>{_esc(name)}</th><td>{price:+,.0f}</td><td>{result:+,.0f}</td>"
-                               f"<td>{price + result:+,.0f}</td></tr>")
+            effect_rows.append(f"<tr><th>{_esc(name)}</th>{_signed(price, f'{price:+,.0f}')}"
+                               f"{_signed(result, f'{result:+,.0f}')}"
+                               f"{_signed(price + result, f'{price + result:+,.0f}')}</tr>")
     why = []
     for name, rows in results:
         c = Counter(why_not(r) for r in rows)
@@ -1192,30 +1199,26 @@ def html_section(summary):
     return f"""
   <section class="panel" id="bets">
     <h2>Betting simulation</h2>
-    <p class="dim">{summary.get('bets', 0):,} single bets on {summary.get('matches', 0):,} matches. Each bet
-      is re-priced with the candidate at the prod message it saw, the operator's margin kept, settled at
-      the candidate's own line. Models only where their state carries the same information as prod's.
-      Change is the candidate's margin minus prod's, in points.</p>
-    <h3>Each candidate on the bets it re-priced</h3>
+    <p class="dim">{summary.get('bets', 0):,} bets &middot; {summary.get('matches', 0):,} matches</p>
+    <h3>Re-priced</h3>
     <table class="reach">
       <thead><tr><th>Candidate</th><th>Bets</th><th>Stake</th><th>Prod</th><th>Candidate</th><th>Change</th>
         <th>From odds</th><th>From line</th></tr></thead>
       <tbody>{''.join(own)}</tbody>
     </table>
-    <h3>Side by side, on the {common_n:,} bets every candidate re-priced</h3>
+    <h3>Side by side <span class="dim">{common_n:,} bets</span></h3>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod margin</th>{head}</tr></thead>
       <tbody>{''.join(side)}</tbody>
     </table>
-    <h3>Change in revenue on those bets</h3>
+    <h3>Revenue change</h3>
     <table class="reach">
-      <thead><tr><th>Candidate</th><th>From odds (settled the same)</th><th>From line (settled
-        differently)</th><th>Total</th></tr></thead>
+      <thead><tr><th>Candidate</th><th>From odds</th><th>From line</th><th>Total</th></tr></thead>
       <tbody>{''.join(effect_rows)}</tbody>
     </table>
     {moments}
     {books}
-    <h3>Why bets were not re-priced</h3>
+    <h3>Not re-priced</h3>
     <table class="reach"><tbody>{''.join(why)}</tbody></table>
-    <p class="dim">Lag by operator: {lag_line or 'none fitted'}</p>
+    <p class="dim">Lag: {lag_line or 'none fitted'}</p>
   </section>"""

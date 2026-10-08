@@ -429,7 +429,8 @@ class TestHtmlSection(unittest.TestCase):
                                   "lags": {"FANDUEL_BET_BY_BET": bets.Lag(1, 100)}, "bets": 2,
                                   "matches": 1})
         self.assertIn('id="bets"', html)
-        self.assertIn("Side by side, on the 1 bets every candidate re-priced", html)
+        self.assertIn("<h3>Side by side <span class=\"dim\">1 bets</span></h3>", html)
+        self.assertNotIn("is re-priced with the candidate", html)
         self.assertIn("<th>v6</th>", html)
         self.assertIn("Fanduel +1s (100 bets)", html)
         self.assertIn('class="good">+10.00', html)
