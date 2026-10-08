@@ -156,6 +156,34 @@ class TestTrigger(unittest.TestCase):
         self.assertEqual(f.margin("ann", at(70)), 0.0)                   # beating the price: no move
 
 
+class TestSameWay(unittest.TestCase):
+
+    def test_a_gamer_on_a_losing_day_is_never_moved_up(self):
+        f = form_layer.Filter(noise=NOISE, tau_day=TAU_D, tau_session=TAU_S)
+        f.update("ann", "x", at(0), 20.0, 0.0, 20.0)       # ann wins big against the price
+        f.update("ann", "y", at(36), -2.0, 0.0, -1.0)      # then loses twice, near the price
+        f.update("ann", "z", at(72), -2.0, 0.0, -1.0)
+        self.assertGreater(sum(f.form("ann", at(110))[0]), 0.0)   # her form is still up
+        self.assertEqual(f.record("ann", at(110)), -1)
+        self.assertEqual(f.adjustment("ann", "new", at(110))[0], 0.0)
+        free = form_layer.Filter(noise=NOISE, tau_day=TAU_D, tau_session=TAU_S, same_way=False)
+        for args in (("ann", "x", at(0), 20.0, 0.0, 20.0), ("ann", "y", at(36), -2.0, 0.0, -1.0),
+                     ("ann", "z", at(72), -2.0, 0.0, -1.0)):
+            free.update(*args)
+        self.assertGreater(free.adjustment("ann", "new", at(110))[0], 0.0)
+
+    def test_an_opponent_s_bad_day_does_not_lift_a_gamer_on_a_bad_day(self):
+        f = form_layer.Filter(noise=NOISE, tau_day=TAU_D, tau_session=TAU_S)
+        f.update("ann", "x", at(0), -3.0, 0.0, -3.0)       # ann lost by a little more than priced
+        f.update("bob", "y", at(0), -20.0, 0.0, -20.0)     # bob was hammered
+        self.assertLess(f.margin("bob", at(40)), f.margin("ann", at(40)))
+        self.assertEqual(f.adjustment("ann", "bob", at(40))[0], 0.0)
+        self.assertEqual(f.adjustment("bob", "ann", at(40))[0], 0.0)
+        f.update("cat", "w", at(0), 5.0, 0.0, 5.0)         # cat had a good day: she can go down to
+        self.assertLess(f.adjustment("ann", "cat", at(40))[0], 0.0)   # ann's level, ann can't go up
+        self.assertEqual(f.record("ann", at(1440 + 40)), 0)            # tomorrow starts afresh
+
+
 class TestFormLayer(unittest.TestCase):
 
     def layer(self, since=DAY):
@@ -184,12 +212,17 @@ class TestFormLayer(unittest.TestCase):
         self.assertEqual(got["N"], (20.0, 20.0))
 
     def test_results_before_the_model_s_out_of_sample_start_are_not_read(self):
-        results = [match("OLD", -30, "ann", "x", (40, 0))]                 # before the fit's cut-off
-        got = self.layer().means([match("N", 60, "ann", "bob")], results=results)
-        self.assertEqual(got["N"], (20.0, 20.0))
-        got = self.layer(since=DAY - dt.timedelta(hours=1)).means([match("N", 60, "ann", "bob")],
-                                                                  results=results)
+        results = [match("OLD", 30, "ann", "x", (40, 0))]
+        late = self.layer(since=DAY + dt.timedelta(hours=1))               # cut off after OLD
+        self.assertEqual(late.means([match("N", 90, "ann", "bob")], results=results)["N"], (20.0, 20.0))
+        got = self.layer().means([match("N", 90, "ann", "bob")], results=results)
         self.assertGreater(got["N"][0], got["N"][1])
+
+    def test_only_the_day_s_own_games_count(self):
+        results = [match("LATE", -30, "ann", "x", (40, 0))]                # last night, 23:30
+        got = self.layer(since=DAY - dt.timedelta(days=1)).means([match("N", 30, "ann", "bob")],
+                                                                 results=results)
+        self.assertEqual(got["N"], (20.0, 20.0))                            # same session, new day
 
     def test_no_results_is_the_model_as_it_was(self):
         pre = self.layer()

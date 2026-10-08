@@ -43,12 +43,12 @@ RHO = 0.0                               # the share of a day's form carried to t
 TAU_SESSION = (1.0, 1.0)                # sd of a gamer's fresh session form: margin, total
 SESSION_GAP = dt.timedelta(hours=2)     # a longer gap since the gamer's last start: a new session
 TRIGGER = 0                             # the margin moves only after a run this long (0: always)
+SAME_WAY = True                         # never move a gamer against the way his day is going
 RUN_GAP = dt.timedelta(hours=6)         # a run is a night's: kick-offs no more than this apart
 LOOKBACK_DAYS = 14                      # days of results read before the first match, when RHO > 0
-EVENING = dt.timedelta(hours=12)        # and the hours before its day, for a session past midnight
 MARGIN_SD = 9.35                        # for the trace's win chance off the expected margin
 SETTING = "form_layer"                  # the key in a build's prior file: true, false or its own
-OWN = ("tau_day", "rho", "tau_session", "trigger")  # settings, e.g. {"tau_day": [1.5, 1.5]}
+OWN = ("tau_day", "rho", "tau_session", "trigger", "same_way")  # settings, e.g. {"tau_day": [1.5, 1.5]}
 
 
 def _gamers(row):
@@ -70,16 +70,19 @@ class Filter:
     the gamer's last update."""
 
     def __init__(self, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP, trigger=TRIGGER, run_gap=RUN_GAP):
+                 session_gap=SESSION_GAP, trigger=TRIGGER, run_gap=RUN_GAP, same_way=SAME_WAY):
         self.noise2 = tuple(x * x for x in noise)
         self.day2 = tuple(x * x for x in tau_day)
         self.session2 = tuple(x * x for x in tau_session)
         self.rho, self.gap, self.trigger, self.run_gap = rho, session_gap, trigger, run_gap
         self.gamers = {}                # gamer -> (last start, [margin form, total form])
         self.runs = {}                  # gamer -> tonight's run: +k won the last k, -k lost them
+        self.same_way = same_way
+        self.records = {}               # gamer -> (day, wins less losses that day)
 
     def _state(self, gamer, t):
-        """The gamer's forms as of `t`: a new day's D carried by RHO a day, a new session's S fresh."""
+        """The gamer's forms as of `t`: a new day's D carried by RHO a day; S fresh at a new session
+        or a new day, so with RHO 0 only the day's own games count."""
         st = self.gamers.get(gamer)
         if st is None:
             return [(0.0, 0.0, d2, 0.0, s2) for d2, s2 in zip(self.day2, self.session2)]
@@ -90,7 +93,7 @@ class Filter:
             if days > 0:
                 r = self.rho ** days
                 d, pdd, pds = r * d, r * r * pdd + (1 - r * r) * self.day2[q], r * pds
-            if t - last > self.gap:
+            if days > 0 or t - last > self.gap:
                 s, pds, pss = 0.0, 0.0, self.session2[q]
             out.append((d, s, pdd, pds, pss))
         return out
@@ -113,10 +116,23 @@ class Filter:
         run = self.run(gamer, t)
         return m if abs(run) >= self.trigger and run * m > 0 else 0.0
 
+    def record(self, gamer, t):
+        """The gamer's wins less losses on `t`'s day so far."""
+        day, net = self.records.get(gamer, (None, 0))
+        return net if day == t.date() else 0
+
     def adjustment(self, home, away, t):
-        """(margin, total) to add to a match's expected points as of `t`."""
+        """(margin, total) to add to a match's expected points as of `t`. With same_way, the margin
+        never moves a gamer against the way his day is going: not up for one with more losses than
+        wins today, not down for one with more wins. Two gamers both down (or both up) on the day
+        leave the price as it is."""
         ht, at = self.form(home, t)[1], self.form(away, t)[1]
-        return self.margin(home, t) - self.margin(away, t), sum(ht) + sum(at)
+        dm = self.margin(home, t) - self.margin(away, t)
+        if self.same_way and dm:
+            rh, ra = self.record(home, t), self.record(away, t)
+            if (dm > 0 and (rh < 0 or ra > 0)) or (dm < 0 and (rh > 0 or ra < 0)):
+                dm = 0.0
+        return dm, sum(ht) + sum(at)
 
     def update(self, home, away, t, margin_error, total_error, result=None):
         """Take in a match that started at `t`: its margin and total errors against the price, and
@@ -125,6 +141,7 @@ class Filter:
             for g, r in ((home, result), (away, -result)):
                 was = self.run(g, t)
                 self.runs[g] = max(was, 0) + 1 if r > 0 else min(was, 0) - 1 if r < 0 else 0
+                self.records[g] = (t.date(), self.record(g, t) + (r > 0) - (r < 0))
         h, a = self._state(home, t), self._state(away, t)
         for q, (y, sign) in enumerate(((margin_error, -1.0), (total_error, 1.0))):
             (d1, s1, a1, b1, c1), (d2, s2, a2, b2, c2) = h[q], a[q]
@@ -157,10 +174,11 @@ class FormLayer:
     FOLLOWS_RESULTS = True               # means() reads the results known when pricing
 
     def __init__(self, pre, since, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP, trigger=TRIGGER, lookback_days=LOOKBACK_DAYS):
+                 session_gap=SESSION_GAP, trigger=TRIGGER, same_way=SAME_WAY,
+                 lookback_days=LOOKBACK_DAYS):
         self.pre, self.since = pre, since
         self.settings = dict(noise=noise, tau_day=tau_day, rho=rho, tau_session=tau_session,
-                             session_gap=session_gap, trigger=trigger)
+                             session_gap=session_gap, trigger=trigger, same_way=same_way)
         self.lookback_days = lookback_days if rho > 0 else 0
 
     def __getattr__(self, name):
@@ -174,7 +192,8 @@ class FormLayer:
         base = self.pre.describe() if hasattr(self.pre, "describe") else type(self.pre).__name__
         s = self.settings
         carry = f"carried x{s['rho']:g} a day" if s["rho"] else "fresh each day"
-        trigger = (f"; the margin moves once a run of {s['trigger']} shows" if s["trigger"] else "")
+        trigger = (f"; the margin moves once a run of {s['trigger']} shows" if s["trigger"] else "") \
+            + ("; never against the way a gamer's day is going" if s["same_way"] else "")
         return (f"{base}; post-game form layer from {self.since:%Y-%m-%d} (day form sd "
                 f"{s['tau_day'][0]:g} margin, {s['tau_day'][1]:g} total, {carry}; session form sd "
                 f"{s['tau_session'][0]:g} margin, {s['tau_session'][1]:g} total{trigger})")
@@ -186,10 +205,9 @@ class FormLayer:
         known = [t for t in starts.values() if t is not None]
         if not known or not results:
             return self.pre.means(schedule, results=results, **kw), {}, {}
-        # from the first match's day (less the lookback), and the evening before for a session
-        # that runs past midnight
+        # from the first match's day (less the lookback when the day form carries over)
         first = max(self.since, dt.datetime.combine(min(known).date(), dt.time())
-                    - dt.timedelta(days=self.lookback_days) - EVENING)
+                    - dt.timedelta(days=self.lookback_days))
         last = max(known)
         settled = [r for r in results if _finals(r) is not None and nb2_prior._start(r) is not None
                    and first <= nb2_prior._start(r) < last]

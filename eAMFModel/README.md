@@ -1743,7 +1743,16 @@ far says it doesn't pay on the margin (below).
   Kalman filter updates them after every match the gamer plays, from the match's error against the
   model's price. The opponent's form counts against them.
 - **Day form** starts fresh each day at 00:00 UTC, when the daily prior refits (`--rho` carries a
-  share into the next day). **Session form** starts fresh after a gap of more than 2 hours.
+  share into the next day). **Session form** starts fresh after a gap of more than 2 hours, and at
+  midnight. So only the day's own games count.
+- **Never against the way a gamer's day is going** (on by default; `--either-way` turns it off). A
+  gamer with more losses than wins today is never priced above the daily glmer, and one with more
+  wins never below it. When both gamers are down on the day, or both up, the match stays at the
+  glmer's price. Without this rule, a gamer who lost by about what the price expected could be
+  lifted by an opponent having a worse day. That happened to NIGHTMARE on 6 Oct: four straight
+  losses and still priced above the glmer. On 41 days of daily fits the rule cut the default
+  layer's cost from +0.0005 to +0.0004 log loss, and the trend layer's (trigger 3, sd 2) from
+  +0.0018 to +0.0012. Neither beats the daily glmer alone.
 - A match's margin moves by the home gamer's day + session form less the away gamer's; its total by
   both gamers' forms added.
 - **The error is shared.** Each match's error is split between the two gamers by how unsure each

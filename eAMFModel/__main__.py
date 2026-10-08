@@ -204,6 +204,8 @@ def _layer_settings(args):
         own["rho"] = args.rho
     if args.trigger is not None:
         own["trigger"] = args.trigger
+    if args.either_way:
+        own["same_way"] = False
     return own
 
 
@@ -265,6 +267,8 @@ def _layer_options(p, what):
     p.add_argument("--rho", type=float, help=f"share of a day's form carried to the next day, {what}")
     p.add_argument("--trigger", type=int, help="move the margin only once a gamer has lost (won) this "
                                                f"many in a row this session (0: always), {what}")
+    p.add_argument("--either-way", action="store_true", help="let the margin move a gamer against the way "
+                                                             f"his day is going (default: never), {what}")
 
 
 def main(argv=None):
