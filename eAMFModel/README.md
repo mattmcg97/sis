@@ -1811,6 +1811,20 @@ second.
 
 The full test (56 days, 16 Jul – 9 Sep) is the one that sets the defaults or keeps the layer off.
 
+**The S-curve (`--s-curve`).** In place of day and session form, the margin moves by the chance a
+gamer is having an off (or on) day, given his errors against the daily glmer so far today. The fit
+is described in glmer's README ("A gamer's day and session"): off on 5% of gamer-days by −3.9
+points, on on 16% by +1.0. The shift starts small and steepens from about the third poor game. It
+levels off at the cap. For a gamer 12 points short of his price each game it goes −0.2, −0.4, −0.7,
+−1.0, −1.5 and −2.0 over games 1–6. At 7 short it reaches −0.7 by game 6; close losses barely count.
+Only the day's own games count, and the same-way rule applies. The total still follows the day
+form. Its numbers come from 16 Jul – 9 Aug; fitted on 10 Aug – 3 Sep it found no off days, and out
+of sample it was level to slightly worse on log loss and Brier. So judge it in the bet sim.
+
+```powershell
+python -m eAMFModel form-layer v12_daily_s --on --s-curve
+```
+
 **Only once a trend shows (`--trigger K`).** Punters pile on once a run shows, two or three games
 in. With a trigger, a gamer's margin form counts only once they have lost (won) at least K in a row
 tonight, and only the way the run goes. A run is the night's: kick-offs no more than 6 hours apart,

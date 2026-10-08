@@ -184,6 +184,37 @@ class TestSameWay(unittest.TestCase):
         self.assertEqual(f.record("ann", at(1440 + 40)), 0)            # tomorrow starts afresh
 
 
+class TestSCurve(unittest.TestCase):
+
+    def run_of_losses(self, short, n=8):
+        f = form_layer.Filter(s_curve=form_layer.S_CURVE, same_way=False)
+        out = []
+        for k in range(n):
+            f.update("ann", f"o{k}", at(40 * k), -short, 0.0, -short)
+            out.append(f.margin("ann", at(40 * k + 30)))
+        return f, out
+
+    def test_the_shift_builds_like_an_s_and_levels_off_at_the_cap(self):
+        _, out = self.run_of_losses(12)
+        self.assertAlmostEqual(out[0], -0.18, places=2)
+        self.assertAlmostEqual(out[5], -1.98, places=2)
+        steps = [b - a for a, b in zip([0.0] + out, out)]
+        self.assertLess(steps[3], steps[0])                          # steeper by the third or fourth
+        _, long_run = self.run_of_losses(12, 20)
+        self.assertGreater(long_run[-1], form_layer.S_CURVE["off"][1])   # never past the cap
+        self.assertLess(long_run[-1], -3.5)
+        _, small = self.run_of_losses(3)
+        self.assertGreater(small[-1], -0.25)                         # close losses barely count
+
+    def test_only_today_and_both_sides(self):
+        f, _ = self.run_of_losses(12, 4)
+        self.assertEqual(f.margin("ann", at(1440 + 30)), 0.0)        # tomorrow afresh
+        self.assertGreater(f.margin("o0", at(30)), 0.0)              # her opponent had a good game
+        layer = form_layer.wrap(Flat(), {"form_layer": {"s_curve": True}})
+        self.assertEqual(layer.settings["s_curve"], form_layer.S_CURVE)
+        self.assertIn("S-curve", layer.describe())
+
+
 class TestFormLayer(unittest.TestCase):
 
     def layer(self, since=DAY):

@@ -44,11 +44,17 @@ TAU_SESSION = (1.0, 1.0)                # sd of a gamer's fresh session form: ma
 SESSION_GAP = dt.timedelta(hours=2)     # a longer gap since the gamer's last start: a new session
 TRIGGER = 0                             # the margin moves only after a run this long (0: always)
 SAME_WAY = True                         # never move a gamer against the way his day is going
+# The S-curve: a gamer's day is normal, off or on, which is hidden. Fitted by maximum likelihood (EM)
+# on the daily glmer's out-of-sample margin errors, 16 Jul - 9 Aug 2026: off on 5.1% of gamer-days by
+# -3.85 points, on on 16.2% by +1.01, errors' sd 8.95. Live, his margin moves by the chance he is off
+# or on given his errors so far today, times the shift: small at first, steepening from about his
+# third poor game, levelling at the cap. (Fitted on 10 Aug - 3 Sep it found no off or on days.)
+S_CURVE = {"off": [0.051, -3.85], "on": [0.162, 1.01], "sd": 8.95}
 RUN_GAP = dt.timedelta(hours=6)         # a run is a night's: kick-offs no more than this apart
 LOOKBACK_DAYS = 14                      # days of results read before the first match, when RHO > 0
 MARGIN_SD = 9.35                        # for the trace's win chance off the expected margin
 SETTING = "form_layer"                  # the key in a build's prior file: true, false or its own
-OWN = ("tau_day", "rho", "tau_session", "trigger", "same_way")  # settings, e.g. {"tau_day": [1.5, 1.5]}
+OWN = ("tau_day", "rho", "tau_session", "trigger", "same_way", "s_curve")  # settings, e.g. {"tau_day": [1.5, 1.5]}
 
 
 def _gamers(row):
@@ -70,7 +76,8 @@ class Filter:
     the gamer's last update."""
 
     def __init__(self, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP, trigger=TRIGGER, run_gap=RUN_GAP, same_way=SAME_WAY):
+                 session_gap=SESSION_GAP, trigger=TRIGGER, run_gap=RUN_GAP, same_way=SAME_WAY,
+                 s_curve=None):
         self.noise2 = tuple(x * x for x in noise)
         self.day2 = tuple(x * x for x in tau_day)
         self.session2 = tuple(x * x for x in tau_session)
@@ -79,6 +86,8 @@ class Filter:
         self.runs = {}                  # gamer -> tonight's run: +k won the last k, -k lost them
         self.same_way = same_way
         self.records = {}               # gamer -> (day, wins less losses that day)
+        self.s_curve = s_curve          # the margin from the S-curve (S_CURVE's shape) in place of D + S
+        self.errors = {}                # gamer -> (day, his margin errors that day)
 
     def _state(self, gamer, t):
         """The gamer's forms as of `t`: a new day's D carried by RHO a day; S fresh at a new session
@@ -107,10 +116,23 @@ class Filter:
         st = self.gamers.get(gamer)
         return 0 if st is None or t - st[0] > self.run_gap else self.runs.get(gamer, 0)
 
+    def s_shift(self, gamer, t):
+        """The S-curve's shift for a gamer as of `t`: off and on's shifts weighted by how likely each
+        is given his margin errors today (normal: no shift)."""
+        day, errs = self.errors.get(gamer, (None, ()))
+        if day != t.date() or not errs:
+            return 0.0
+        c = self.s_curve
+        states = [(c["off"][0], c["off"][1]), (1.0 - c["off"][0] - c["on"][0], 0.0), (c["on"][0], c["on"][1])]
+        logs = [math.log(p) - sum((e - mu) ** 2 for e in errs) / (2 * c["sd"] ** 2) for p, mu in states]
+        top = max(logs)
+        w = [math.exp(x - top) for x in logs]
+        return sum(wi * mu for wi, (_, mu) in zip(w, states)) / sum(w)
+
     def margin(self, gamer, t):
         """The gamer's margin form as of `t` that counts: all of it, or with a trigger, only once
         their run tonight is that long, and only the way it goes."""
-        m = sum(self.form(gamer, t)[0])
+        m = self.s_shift(gamer, t) if self.s_curve else sum(self.form(gamer, t)[0])
         if not self.trigger:
             return m
         run = self.run(gamer, t)
@@ -142,6 +164,9 @@ class Filter:
                 was = self.run(g, t)
                 self.runs[g] = max(was, 0) + 1 if r > 0 else min(was, 0) - 1 if r < 0 else 0
                 self.records[g] = (t.date(), self.record(g, t) + (r > 0) - (r < 0))
+        for g, e in ((home, margin_error), (away, -margin_error)):
+            day, errs = self.errors.get(g, (None, ()))
+            self.errors[g] = (t.date(), (errs if day == t.date() else ()) + (e,))
         h, a = self._state(home, t), self._state(away, t)
         for q, (y, sign) in enumerate(((margin_error, -1.0), (total_error, 1.0))):
             (d1, s1, a1, b1, c1), (d2, s2, a2, b2, c2) = h[q], a[q]
@@ -174,11 +199,13 @@ class FormLayer:
     FOLLOWS_RESULTS = True               # means() reads the results known when pricing
 
     def __init__(self, pre, since, noise=NOISE, tau_day=TAU_DAY, rho=RHO, tau_session=TAU_SESSION,
-                 session_gap=SESSION_GAP, trigger=TRIGGER, same_way=SAME_WAY,
+                 session_gap=SESSION_GAP, trigger=TRIGGER, same_way=SAME_WAY, s_curve=None,
                  lookback_days=LOOKBACK_DAYS):
         self.pre, self.since = pre, since
+        if s_curve is True:
+            s_curve = S_CURVE
         self.settings = dict(noise=noise, tau_day=tau_day, rho=rho, tau_session=tau_session,
-                             session_gap=session_gap, trigger=trigger, same_way=same_way)
+                             session_gap=session_gap, trigger=trigger, same_way=same_way, s_curve=s_curve)
         self.lookback_days = lookback_days if rho > 0 else 0
 
     def __getattr__(self, name):
@@ -192,6 +219,13 @@ class FormLayer:
         base = self.pre.describe() if hasattr(self.pre, "describe") else type(self.pre).__name__
         s = self.settings
         carry = f"carried x{s['rho']:g} a day" if s["rho"] else "fresh each day"
+        if s["s_curve"]:
+            c = s["s_curve"]
+            return (f"{base}; post-game S-curve from {self.since:%Y-%m-%d} (the margin moves by the chance a "
+                    f"gamer is off today, {c['off'][1]:+g} pts, or on, {c['on'][1]:+g} pts, given his errors"
+                    f" so far today; total by the day form, sd {s['tau_day'][1]:g})"
+                    + (f"; once a run of {s['trigger']} shows" if s["trigger"] else "")
+                    + ("; never against the way a gamer's day is going" if s["same_way"] else ""))
         trigger = (f"; the margin moves once a run of {s['trigger']} shows" if s["trigger"] else "") \
             + ("; never against the way a gamer's day is going" if s["same_way"] else "")
         return (f"{base}; post-game form layer from {self.since:%Y-%m-%d} (day form sd "

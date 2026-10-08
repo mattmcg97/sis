@@ -206,6 +206,8 @@ def _layer_settings(args):
         own["trigger"] = args.trigger
     if args.either_way:
         own["same_way"] = False
+    if args.s_curve:
+        own["s_curve"] = True
     return own
 
 
@@ -214,7 +216,7 @@ def cmd_form_layer(args):
     value = True if args.on else False if args.off else None
     own = _layer_settings(args)
     if own and not args.on:
-        raise SystemExit("--tau-day, --tau-session, --rho and --trigger come with --on")
+        raise SystemExit("--tau-day, --tau-session, --rho, --trigger, --s-curve and --either-way come with --on")
     for d in args.builds:
         meta = form_layer.switch(d, value, **own)
         on = form_layer.switched_on(meta)
@@ -267,6 +269,8 @@ def _layer_options(p, what):
     p.add_argument("--rho", type=float, help=f"share of a day's form carried to the next day, {what}")
     p.add_argument("--trigger", type=int, help="move the margin only once a gamer has lost (won) this "
                                                f"many in a row this session (0: always), {what}")
+    p.add_argument("--s-curve", action="store_true", help="move the margin by the S-curve (a gamer's "
+                   f"chance of being off or on today, form_layer.S_CURVE) in place of day and session form, {what}")
     p.add_argument("--either-way", action="store_true", help="let the margin move a gamer against the way "
                                                              f"his day is going (default: never), {what}")
 
