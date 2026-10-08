@@ -5357,6 +5357,27 @@ class TestLineMoves(unittest.TestCase):
         self.assertEqual(r["prod"]["moves"]["line up, after a score"], (1, 0.0, 0.7))
         self.assertEqual(r["prod"]["moves"]["all"][:2], (2, 0.5))
 
+    def test_the_first_touchdown_by_when_and_who(self):
+        from .. import line_moves
+        # home is the favourite (prod's first moneyline 70%); its touchdown in the first minute
+        # (3:30 left), the line lifted 7 to 47.5, the game ends 24-21 (45): under. Its spread
+        # quote then asks home to win by more than 6.5 at 50%: it won by 3
+        ml = dataclasses.replace(self._q(1, 0, 0, None, None, market_id=50, prob=0.7), prod_line=None,
+                                 candidate_line=None)
+        pairs = [ml, self._q(1, 0, 0, 40.5, 40.5),
+                 dataclasses.replace(self._q(2, 6, 0, 47.5, 47.5), clock_seconds=210),
+                 dataclasses.replace(self._q(2, 6, 0, 6.5, 6.5, market_id=52), clock_seconds=210),
+                 dataclasses.replace(self._q(3, 7, 0, 47.5, 47.5), clock_seconds=200),   # the kick: same window
+                 dataclasses.replace(self._q(4, 10, 0, 49.5, 49.5), clock_seconds=150)]  # a field goal ends it
+        self.assertEqual(line_moves.td_when(1, 210), "first minute")
+        self.assertEqual(line_moves.td_when(1, 100), "rest of Q1")
+        self.assertEqual(line_moves.td_when(2, None), "Q2")
+        r = line_moves.first_touchdowns(pairs)["prod"]
+        cell = r[("first minute", line_moves.FAVOURITE)]
+        self.assertEqual(cell["matches"], 1)
+        self.assertEqual(cell["total"], (2, 0.0, 0.5))           # two quotes, both under
+        self.assertEqual(cell["spread"], (1, 0.0, 0.5))
+
     def test_pushes_and_other_markets_are_left_out(self):
         from .. import line_moves, markets
         pairs = [self._q(1, 0, 0, 45.0, 45.0), self._q(2, 0, 0, 2.5, 2.5, market_id=50)]
@@ -5502,23 +5523,27 @@ class TestSeveralCandidates(unittest.TestCase):
         sides, dropped = self._sides()
         page = html_full.render_sides(sides, dropped)
         checks = page[page.index('id="checks"'):page.index("</details>")]
-        self.assertNotIn("Lines that move", checks)
+        self.assertNotIn("Line moves", checks)
         self.assertNotIn('id="totals-reach"', page)
         self.assertLess(page.index('id="line-moves"'), page.index('id="checks"'))
         block = page[page.index('id="line-moves"'):]
         block = block[:block.index("</section>")]
-        for column in ("<th>Prod</th>", "<th>v4</th>", "<th>T2</th>"):
-            self.assertIn(column, block)
-        self.assertIn("<h3>Total: how often finished over the line</h3>", block)
-        # one quote a match, so no moves: every quote only. 45 scored -- prod's 44.5 went over
-        # at 50% (+50), v4's 46.5 under at 52% (-52), T2's 44.5 over at 40% (+60)
-        self.assertIn('<tr class="subtotal"><th>every quote</th>'
-                      '<td class="g4">100%<span class="pp">+50</span> <span class="dim">(2)</span></td>'
-                      '<td class="g4">0%<span class="pp">-52</span> <span class="dim">(2)</span></td>'
-                      '<td class="g4">100%<span class="pp">+60</span> <span class="dim">(2)</span></td></tr>', block)
-        self.assertIn('<th colspan="3" class="grp">Line up</th>', block)
+        self.assertIn("<h2>Line moves</h2>", block)
+        self.assertIn("<h3>Totals</h3>", block)
+        # the moves are columns, the streams rows
+        self.assertIn('<th rowspan="2">Over</th><th colspan="2" class="grp">Up</th>'
+                      '<th colspan="2" class="grp">Down</th><th rowspan="2">Held</th><th rowspan="2">All</th>',
+                      block)
+        # one quote a match, so no moves: all only. 45 scored -- prod's 44.5 went over at 50% (+50),
+        # v4's 46.5 under at 52% (-52), T2's 44.5 over at 40% (+60)
+        dashes = "<td>&mdash;</td>" * 5
+        self.assertIn(f'<tr><th>Prod</th>{dashes}<td class="g4">100%<span class="pp">+50</span> '
+                      '<span class="dim">(2)</span></td></tr>', block)
+        self.assertIn(f'<tr><th>v4</th>{dashes}<td class="g4">0%<span class="pp">-52</span> '
+                      '<span class="dim">(2)</span></td></tr>', block)
         self.assertIn('<tr class="subtotal"><th>Q1</th><td class="state">all</td>', block)
         self.assertIn('<tr><th>Q1</th><td class="state">level (0-2)</td>', block)
+        self.assertNotIn("<h3>First touchdown</h3>", block)          # no touchdown in these games
 
     def test_a_shares_gap_to_real_is_coloured_by_its_size(self):
         from .. import html_full

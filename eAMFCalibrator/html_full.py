@@ -636,66 +636,94 @@ def _move_cell(cell):
             f'<span class="pp">{100 * gap:+.0f}</span> <span class="dim">({n:,})</span></td>')
 
 
-_MOVE_WORDS = {markets.TOTAL: ("up", "down"), markets.SPREAD: ("toward home", "toward away")}
+_MOVES = {markets.TOTAL: ("Totals", "Over", "Up", "Down"),
+          markets.SPREAD: ("Spread", "Home covers", "Toward home", "Toward away")}
 
 
 def _line_moves_market(sides, group):
-    """One market's tables: by how the line moved since the last quote, then by
-    quarter and score difference."""
+    """One market: each stream by how its line moved since its last quote, then by quarter and
+    score difference."""
     per = [line_moves.summarise(s["line_pairs"], group) for s in sides]
     if not per or not per[0]["prod"]["moves"]["all"][0]:
         return ""
     names = ["Prod"] + [_name(s) for s in sides]
     streams = [per[0]["prod"]] + [x["candidate"] for x in per]
-    up, down = _MOVE_WORDS[group]
-    labels = {"line up, after a score": f"line {up}, after a score",
-              "line up, no score": f"line {up}, no score",
-              "line down, after a score": f"line {down}, after a score",
-              "line down, no score": f"line {down}, no score",
-              "line held": "line held", "all": "every quote"}
-    head = "".join(f"<th>{n}</th>" for n in names)
-    rows = []
-    for key, label in labels.items():
-        tr = '<tr class="subtotal">' if key == "all" else "<tr>"
-        rows.append(f"{tr}<th>{label}</th>" + "".join(_move_cell(st["moves"][key]) for st in streams) + "</tr>")
+    title, corner, up, down = _MOVES[group]
+    cols = (("line up, after a score", "line up, no score"),
+            ("line down, after a score", "line down, no score"), ("line held",), ("all",))
+    tops = (up, down, "Held", "All")
+    head1 = "".join(f'<th colspan="{len(c)}" class="grp">{t}</th>' if len(c) > 1 else f'<th rowspan="2">{t}</th>'
+                    for c, t in zip(cols, tops))
+    head2 = "<th>Score</th><th>No score</th>" * 2
+    rows = "".join(f"<tr><th>{n}</th>" + "".join(_move_cell(st["moves"][k]) for c in cols for k in c) + "</tr>"
+                   for n, st in zip(names, streams))
     keys = sorted(streams[0]["grid"], key=lambda k: (
         _quarter_order(k[0]), (("all",) + line_moves.DIFFS).index(k[1])))
-    cols = ((line_moves.UP, f"Line {up}"), (line_moves.DOWN, f"Line {down}"), ("all", "Every quote"))
-    group_head = "".join(f'<th colspan="{len(names)}" class="grp">{t}</th>' for _, t in cols)
-    sub = "".join(f"<th>{n}</th>" for n in names) * len(cols)
+    gcols = ((line_moves.UP, up), (line_moves.DOWN, down), ("all", "All"))
+    group_head = "".join(f'<th colspan="{len(names)}" class="grp">{t}</th>' for _, t in gcols)
+    sub = "".join(f"<th>{n}</th>" for n in names) * len(gcols)
     grid_rows = []
     for key in keys:
         whole = key[1] == "all"
         tr = '<tr class="subtotal">' if whole else "<tr>"
         cells = "".join(_move_cell(st["grid"].get(key, {}).get(m, (0, None, None)))
-                        for m, _ in cols for st in streams)
+                        for m, _ in gcols for st in streams)
         grid_rows.append(f'{tr}<th>{key[0]}</th><td class="state">{"all" if whole else html.escape(key[1])}</td>'
                          f"{cells}</tr>")
-    what = "finished over the line" if group == markets.TOTAL else "the home side covered"
     return f"""
-    <h3>{MARKET_TITLES.get(group, group)}: how often {what}</h3>
+    <h3>{title}</h3>
     <table class="reach">
-      <thead><tr><th>Since the stream's last quote</th>{head}</tr></thead>
-      <tbody>{''.join(rows)}</tbody>
+      <thead><tr><th rowspan="2">{corner}</th>{head1}</tr><tr>{head2}</tr></thead>
+      <tbody>{rows}</tbody>
     </table>
-    <table class="reach">
-      <thead><tr><th rowspan="2">Quarter</th><th rowspan="2" class="state">Score difference</th>{group_head}</tr>
+    <div class="scroll"><table class="reach">
+      <thead><tr><th rowspan="2">Quarter</th><th rowspan="2" class="state">Score</th>{group_head}</tr>
         <tr>{sub}</tr></thead>
       <tbody>{''.join(grid_rows)}</tbody>
-    </table>"""
+    </table></div>"""
+
+
+def _first_td_block(sides):
+    """The first touchdown: each stream's quotes from it to the next score, by when it came and
+    whether the favourite scored it."""
+    per = [line_moves.first_touchdowns(s["line_pairs"]) for s in sides]
+    if not per or not per[0]["prod"]:
+        return ""
+    names = ["Prod"] + [_name(s) for s in sides]
+    streams = [per[0]["prod"]] + [x["candidate"] for x in per]
+    group_head = "".join(f'<th colspan="{len(names)}" class="grp">{t}</th>' for t in ("Over", "Scorer covers"))
+    sub = "".join(f"<th>{n}</th>" for n in names) * 2
+    rows, last = [], None
+    for when in line_moves.TD_WHEN:
+        for scorer in line_moves.SCORERS:
+            first = streams[0].get((when, scorer))
+            if not first:
+                continue
+            tr = '<tr class="split">' if last is not None and when != last else "<tr>"
+            last = when
+            cells = "".join(_move_cell(st.get((when, scorer), {}).get(m, (0, None, None)))
+                            for m in ("total", "spread") for st in streams)
+            rows.append(f'{tr}<th>{when}</th><td class="state">{scorer}</td><td>{first["matches"]:,}</td>{cells}</tr>')
+    return f"""
+    <h3>First touchdown</h3>
+    <div class="scroll"><table class="reach">
+      <thead><tr><th rowspan="2">When</th><th rowspan="2" class="state">Scorer</th><th rowspan="2">Matches</th>
+        {group_head}</tr><tr>{sub}</tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table></div>"""
 
 
 def _line_moves_block(sides):
-    """Lines that move and then aren't reached (line_moves): each stream's share
-    of quotes the game finished over (the home side covered), against its own
-    priced chance, by how its line moved since its last quote, by quarter and by
-    score difference."""
-    body = _line_moves_market(sides, markets.TOTAL) + _line_moves_market(sides, markets.SPREAD)
+    """Lines that move and then aren't reached (line_moves): each stream's share of quotes the
+    game finished over (the home side covered), against its own priced chance, by how its line
+    moved since its last quote, by quarter and score difference, and after the first touchdown."""
+    body = (_line_moves_market(sides, markets.TOTAL) + _line_moves_market(sides, markets.SPREAD)
+            + _first_td_block(sides))
     if not body:
         return ""
     return f"""
   <section class="panel" id="line-moves">
-    <h2>Lines that move: reached or not</h2>
+    <h2>Line moves</h2>
     {body}
   </section>"""
 

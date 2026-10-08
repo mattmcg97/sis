@@ -86,6 +86,8 @@ class Snapshot:
     # How the snapshot's play was chosen. FIRST_DOWN means the drive's
     # opening 1st-and-10, which is what a drive start actually is.
     anchor: str = FIRST_DOWN
+    # Seconds left in the quarter, where the snapshot is a SCOUTING_FULL PLAY_OVER.
+    clock_seconds: Optional[float] = None
 
     @property
     def score_diff(self):

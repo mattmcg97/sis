@@ -325,6 +325,13 @@ DIMENSIONS = (("moment", "the feed at bet time"), ("feed_suspended", "the feed's
               ("market", "market"), ("selection", "selection"))
 
 
+# The HTML headings: the feed at bet time, its suspension, its move since the price, the price's
+# age, the next score, the clock, the score.
+SHORT_TITLES = {"moment": "feed at bet", "feed_suspended": "suspension", "moved": "feed since price",
+                "price_age": "price age", "next_score": "next score", "clock_band": "quarter and clock",
+                "score_margin": "score"}
+
+
 def _order(dim, g):
     if dim == "moment" and g in MOMENTS:
         return (0, MOMENTS.index(g))
@@ -402,18 +409,17 @@ def html_tables(results, esc, change_cell, min_bets=MIN_BETS):
             if n < min_bets:
                 continue
             c = cmp_.get(g)
-            cls = "bad" if exp is not None and m < exp - se2 else ""
+            cls = ("bad" if exp is not None and m < exp - se2 else
+                   "good" if exp is not None and m > exp + se2 else "")
+            rcls = "good" if rev > 0 else "bad" if rev < 0 else ""
             body.append(f"<tr><th>{esc(g)}</th><td>{n:,}</td><td>{100 * stake / total:.1f}%</td>"
-                        f"<td>{rev:+,.0f}</td><td class=\"{cls}\">{m:.2f}%</td><td>{se2:.2f}</td>"
+                        f"<td class=\"{rcls}\">{rev:+,.0f}</td><td class=\"{cls}\">{m:.2f}%</td><td>{se2:.2f}</td>"
                         f"<td>{'' if exp is None else f'{exp:.2f}%'}</td>"
                         + ("".join(change_cell(x - c[2]) for x in c[3]) if c else
                            "<td>&mdash;</td>" * len(names)) + "</tr>")
-        parts.append(f"<h4>By {esc(title)}</h4><table class=\"reach\"><thead>{head}</thead>"
+        parts.append(f"<h4>{esc(SHORT_TITLES.get(dim, title).capitalize())}</h4><table class=\"reach\"><thead>{head}</thead>"
                      f"<tbody>{''.join(body)}</tbody></table>")
-    return (f"<h3>Where in the game the book loses</h3><p class=\"dim\">{len(scope):,} in-play bets. "
-            "Margin in red: more than two standard errors below what prod's own probability says the "
-            "book keeps. Candidate columns: change in margin on the bets every candidate re-priced."
-            "</p>" + "".join(parts))
+    return (f"<h3>In play <span class=\"dim\">{len(scope):,} bets</span></h3>" + "".join(parts))
 
 
 NUMBERS = ("stake", "revenue", "odds", "stream_prob", "price_age_seconds", "next_score_seconds",

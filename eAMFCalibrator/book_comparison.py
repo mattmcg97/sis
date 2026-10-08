@@ -245,10 +245,12 @@ def report(results):
 
 
 def _pct_cell(x, esc):
-    """A margin with its interval underneath."""
+    """A margin with its interval underneath, green where the book is ahead, red behind."""
     if not x:
         return "<td>&mdash;</td>"
-    return f"<td>{x[0]:.2f}%<br><span class=\"pp dim\">{x[1]:+.2f} to {x[2]:+.2f}</span></td>"
+    cls = "good" if x[0] > 0 else "bad" if x[0] < 0 else ""
+    return (f"<td class=\"{cls}\">{x[0]:.2f}%<br><span class=\"pp dim\">{x[1]:+.2f} to {x[2]:+.2f}</span>"
+            "</td>")
 
 
 def _change(x):
@@ -270,8 +272,7 @@ def html(data, esc):
     for entry in data:
         edge = ", ".join(f"{esc(k)} {100 * v:+.1f}%" for k, v in sorted(entry["edges"].items()))
         acc_rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"8\">{esc(entry['name'])}"
-                        f"<span class=\"pp dim\"> &middot; sharp accounts' edge over prod's price: "
-                        f"{edge or 'none'}</span></th></tr>")
+                        f"<span class=\"pp dim\"> &middot; sharp edge {edge or 'none'}</span></th></tr>")
         for r in entry["accept"]:
             acc_rows.append(f"<tr><th>{esc(r['label'])}</th><td>{r['bets']:,}</td><td>{r['stake']:,.0f}</td>"
                             + _pct_cell(r["prod"], esc) + _pct_cell(r["same"], esc) + _pct_cell(r["acc"], esc)
@@ -283,24 +284,17 @@ def html(data, esc):
                             + _pct_cell(r["cand"], esc) + _change(r["head"]) + _pct_cell(r["both"], esc)
                             + _pct_cell(r["alone"], esc) + _change(r["change"]) + "</tr>")
     return f"""
-    <h3>Book comparison</h3>
-    <p class="dim">Each candidate set against prod as a book, keeping the operator's margin over each
-      book's own price bet by bet. Sharp accounts ({esc(sharp)}) bet for an edge and shop on price;
-      everyone else bets as placed. Margins are the book's, with a 95% interval over matches
-      underneath; a change is coloured only where its whole interval is one side of zero.</p>
-    <h4>Would they still bet? Prod as bet, the same bets at the candidate's price, and the bets
-      sharp accounts would still place</h4>
+    <h3>Book comparison <span class="dim">sharp: {esc(sharp)}</span></h3>
+    <h4>Acceptance</h4>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod (as bet)</th><th>Same bets</th>
         <th>Acceptance</th><th>Kept</th><th>Change</th></tr></thead>
       <tbody>{''.join(acc_rows)}</tbody>
     </table>
-    <p class="dim">{esc(ACCEPT_NOTE)}.</p>
-    <h4>Two books: each bet goes to whichever book pays more</h4>
+    <h4>Two books</h4>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>To candidate</th><th>Prod keeps</th>
         <th>Candidate takes</th><th>Candidate &minus; prod</th><th>Both books</th><th>Prod alone</th>
         <th>Both &minus; alone</th></tr></thead>
       <tbody>{''.join(two_rows)}</tbody>
-    </table>
-    <p class="dim">{esc(TWO_NOTE)}.</p>"""
+    </table>"""
