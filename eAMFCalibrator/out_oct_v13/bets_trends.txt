@@ -1,0 +1,20 @@
+
+  the bets by a gamer's run tonight when placed (moneyline and spread): 'piles on' backs a gamer who won the last 2+ or opposes one who lost them, 'fades' the other way; the book's margin (revenue / stake), as placed and re-priced, on the bets every candidate re-priced:
+  pre-match                   bets      stake     prod          v12          v13
+    piles on a run of 2      1,017     40,139    -6.4%        -6.1%        -7.3%
+    piles on a run of 3        586     22,900   +11.1%       +13.7%       +13.6%
+    piles on a run of 4+       326     18,739   +30.8%       +31.6%       +31.7%
+    fades a run of 2           768     33,092    -4.6%        -3.7%        -2.0%
+    fades a run of 3           391     16,187   +19.5%       +16.4%       +16.1%
+    fades a run of 4+          172      5,831   -30.3%       -32.7%       -31.5%
+    mixed                      315     13,722    -1.3%        +2.7%        +2.2%
+    none                     2,263    114,738    -4.0%        -3.5%        -1.6%
+  in play                     bets      stake     prod          v12          v13
+    piles on a run of 2      4,918    350,001   -11.5%        -5.3%        -3.9%
+    piles on a run of 3      2,834    219,569    -2.2%        -1.1%        -2.2%
+    piles on a run of 4+     1,733    123,201   +14.7%       +20.5%       +17.1%
+    fades a run of 2         4,320    298,110   +11.8%       +10.5%       +10.9%
+    fades a run of 3         1,906    102,261   +19.5%       +21.7%       +21.5%
+    fades a run of 4+        1,019     68,846   +13.1%       +16.4%       +16.0%
+    mixed                    2,463    161,180    +5.4%        +7.1%        +5.4%
+    none                    12,289    872,630    +4.0%        +5.5%        +5.3%
