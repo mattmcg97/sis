@@ -1,9 +1,10 @@
 """How a match's scoring splits between its halves, how the second half plays out from each
-half-time margin, and how long the touchdowns are -- for the league and for each gamer. Read off
-a `scouting` export (no Snowflake):
+half-time margin, and how long the touchdowns are -- for the league, each gamer, each NFL team and
+each gamer / team pair. Read off a `scouting` export (no Snowflake), the teams off a match history:
 
     python -m eAMFCalibrator scouting --since 2026-01-01 --no-probe     # every PLAY_OVER, all history
     python -m eAMFCalibrator halves                                      # out/scouting_playover.csv
+    python -m eAMFCalibrator halves --history out/match_history.csv     # and the teams
 
 A match's half-time score is the board after its last play of the first half; its second half is
 every play after. A touchdown's length is the yards to the goal line when its play started (the
@@ -19,6 +20,12 @@ Writes to --out:
     halves_tds.csv       one row a touchdown: scorer, half, length, drive plays and seconds, the
                          half-time margin of its match
     halves_gamers.csv    one row a gamer
+    halves_teams.csv     one row a team (with --history)
+    halves_gamer_teams.csv  one row a gamer / team pair with --min-pair-games or more (with --history)
+
+With the teams, touchdown length is also fitted as gamer + team + opponent + opponent's team, so a
+team's effect is its own with the gamers who pick it held level, and a pair is measured against what
+its gamer and its team add up to.
 """
 
 import csv
@@ -205,14 +212,42 @@ def td_table(tds):
     return lines
 
 
-def gamer_rows(matches, tds, rng, min_games):
-    """One dict a gamer with min_games or more."""
-    games, scored = defaultdict(list), defaultdict(list)
+def _side_key(by, m, own):
+    """The row a match side counts towards: its gamer, its team, or both."""
+    if by == "gamer":
+        return m[own]
+    team = m.get(f"{own}_team")
+    if not team:
+        return None
+    return team if by == "team" else (m[own], team)
+
+
+def _td_keys(by, t):
+    """(the scorer's row, the conceder's row) for a touchdown."""
+    if by == "gamer":
+        return t["gamer"], t["opponent"]
+    if not t.get("team"):
+        return None, None
+    if by == "team":
+        return t["team"], t["opp_team"]
+    return (t["gamer"], t["team"]), (t["opponent"], t["opp_team"])
+
+
+def side_rows(matches, tds, rng, min_games, by="gamer"):
+    """One dict a gamer, team or gamer-and-team (`by`) with min_games or more."""
+    games, scored, allowed = defaultdict(list), defaultdict(list), defaultdict(list)
     for m in matches:
-        for g, own in ((m["home"], "home"), (m["away"], "away")):
-            games[g].append((m, own))
+        for own in ("home", "away"):
+            k = _side_key(by, m, own)
+            if k is not None:
+                games[k].append((m, own))
     for t in tds:
-        scored[t["gamer"]].append(t)
+        k, opp = _td_keys(by, t)
+        if k is None:
+            continue
+        scored[k].append(t)
+        if t["how"] == "offence" and t["length"] is not None:
+            allowed[opp].append(t["length"])
     out = []
     for g, ms in games.items():
         if len(ms) < min_games:
@@ -225,7 +260,7 @@ def gamer_rows(matches, tds, rng, min_games):
         h1, h2 = own_h1 + opp_h1, own_h2 + opp_h2
         lop = _lopsided(h1, h2)
         null = np.mean([np.nanmean(_lopsided(h1, rng.permutation(h2)) >= LOPSIDED) for _ in range(50)])
-        # half-time margin 3-4, from the gamer's side: + they led
+        # half-time margin 3-4, from this side: + it led
         close = [(m, o) for m, o in ms if 3 <= abs(m["ht_margin"]) <= 4]
         led = [(m, o) for m, o in close if (m["ht_margin"] > 0) == (o == "home")]
         trailed = [(m, o) for m, o in close if (m["ht_margin"] > 0) != (o == "home")]
@@ -238,8 +273,11 @@ def gamer_rows(matches, tds, rng, min_games):
         off = [t for t in ts if t["how"] == "offence" and t["length"] is not None]
         ln = np.array([t["length"] for t in off], float) if off else np.array([], float)
         late_close = [t["length"] for t in off if t["half"] == 2 and t["ht_band"] in ("1-2", "3-4")]
+        against = allowed.get(g, [])
+        key = {"gamer": g} if by == "gamer" else {"team": g} if by == "team" else {"gamer": g[0], "team": g[1]}
         out.append({
-            "gamer": g, "games": len(ms),
+            **key, "games": len(ms),
+            "won": round(float(np.mean(own_h1 + own_h2 > opp_h1 + opp_h2)), 3),
             "own_h1": round(own_h1.mean(), 2), "own_h2": round(own_h2.mean(), 2),
             "opp_h1": round(opp_h1.mean(), 2), "opp_h2": round(opp_h2.mean(), 2),
             "corr_halves": round(float(np.corrcoef(h1, h2)[0, 1]), 3) if h1.std() and h2.std() else None,
@@ -257,42 +295,200 @@ def gamer_rows(matches, tds, rng, min_games):
             "td_drive_plays_median": float(np.median([t["drive_plays"] for t in off if t["drive_plays"] is not None]))
             if off else None,
             "returns_and_defence": sum(1 for t in ts if t["how"] != "offence"),
+            "td_allowed_mean_yards": round(float(np.mean(against)), 1) if against else None,
+            "n_td_allowed": len(against),
         })
     return sorted(out, key=lambda r: -r["games"])
 
 
-GAMER_FIELDS = ["gamer", "games", "own_h1", "own_h2", "opp_h1", "opp_h2", "corr_halves", "lopsided",
-                "lopsided_if_independent", "ht_close_games", "ht_close_lead_changes", "won_leading_3_4",
-                "n_leading_3_4", "won_trailing_3_4", "n_trailing_3_4", "tds", "td_mean_yards",
-                f"td_{LONG[0]}_plus", f"td_{LONG[1]}_plus", "td_close_2h_mean_yards", "n_td_close_2h",
-                "td_drive_plays_median", "returns_and_defence"]
+def gamer_rows(matches, tds, rng, min_games):
+    """One dict a gamer with min_games or more."""
+    return side_rows(matches, tds, rng, min_games, "gamer")
 
 
-def gamer_table(gamers):
-    """Lines: each gamer, the columns that answer the questions."""
+def read_teams(history_path):
+    """{match code: (home team, away team)} off a match history (PLAYER_1 is home), with the handles
+    to check them against."""
+    teams = {}
+    with open(history_path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            t1, t2 = (r.get("PLAYER_1_TEAM") or "").strip(), (r.get("PLAYER_2_TEAM") or "").strip()
+            if t1 and t2:
+                teams[r["MATCH_CODE"]] = (t1, t2, (r.get("PLAYER_1_HANDLE") or "").strip().upper(),
+                                          (r.get("PLAYER_2_HANDLE") or "").strip().upper())
+    return teams
+
+
+def attach_teams(matches, tds, teams):
+    """Give each match its two teams and each touchdown its side's and the other's; returns how many
+    matches got them. A match the history lacks, or whose handles it has the other way round, gets ''."""
+    found = {}
+    for m in matches:
+        t = teams.get(m["match_code"])
+        if t and (t[2], t[3]) == (m["home"], m["away"]):
+            home_team, away_team = t[0], t[1]
+        elif t and (t[3], t[2]) == (m["home"], m["away"]):
+            home_team, away_team = t[1], t[0]
+        else:
+            home_team = away_team = ""
+        m["home_team"], m["away_team"] = home_team, away_team
+        found[m["match_code"]] = (home_team, away_team)
+    for t in tds:
+        home_team, away_team = found.get(t["match_code"], ("", ""))
+        t["team"], t["opp_team"] = (home_team, away_team) if t["side"] == "home" else (away_team, home_team)
+    return sum(1 for v in found.values() if v[0])
+
+
+def td_effects(tds, iterations=200):
+    """Offensive touchdown length as league mean + gamer + team + opponent gamer + opponent team,
+    fitted by least squares (backfitting). Returns ({factor: {level: yards}}, residual sd, fitted
+    length a touchdown); each factor's effects average 0 over the touchdowns."""
+    off = [t for t in tds if t["how"] == "offence" and t["length"] is not None and t.get("team")]
+    if not off:
+        return {}, None, []
+    y = np.array([t["length"] for t in off], float)
+    factors = {"gamer": "gamer", "team": "team", "opponent": "opponent", "opp_team": "opp_team"}
+    codes = {}
+    for f, col in factors.items():
+        levels = sorted({t[col] for t in off})
+        idx = {v: i for i, v in enumerate(levels)}
+        codes[f] = (levels, np.array([idx[t[col]] for t in off]))
+    eff = {f: np.zeros(len(lv)) for f, (lv, _) in codes.items()}
+    mu = y.mean()
+    for _ in range(iterations):
+        biggest = 0.0
+        for f, (lv, ix) in codes.items():
+            part = mu + sum(eff[g][codes[g][1]] for g in codes if g != f)
+            new = np.bincount(ix, y - part, len(lv)) / np.bincount(ix, minlength=len(lv))
+            new -= np.average(new[ix])
+            biggest = max(biggest, float(np.abs(new - eff[f]).max()))
+            eff[f] = new
+        if biggest < 1e-6:
+            break
+    fitted = mu + sum(eff[f][codes[f][1]] for f in codes)
+    k = 1 + sum(len(lv) - 1 for lv, _ in codes.values())
+    sd = float(np.sqrt(((y - fitted) ** 2).sum() / max(len(y) - k, 1)))
+    out = {f: dict(zip(codes[f][0], eff[f])) for f in codes}
+    return out, sd, list(zip(off, fitted))
+
+
+def team_effect_lines(effects, sd, fitted, cell_rows):
+    """Lines: how far a team's touchdowns run with who played it and against whom held level, and how
+    much gamer-and-team pairs differ beyond their gamer and their team."""
+    if not effects or not sd:
+        return []
+    t, a, g = effects["team"], effects["opp_team"], effects["gamer"]
+    lines = ["touchdown yards against the average, with the gamer, the opponent and the opponent's team "
+             "held level (an additive fit over every offensive touchdown):", "",
+             f"{'team':<24}{'scoring':>9}{'allowing':>10}"]
+    for name in sorted(t, key=lambda x: -t[x]):
+        lines.append(f"{name[:23]:<24}{t[name]:>+9.1f}{a.get(name, np.nan):>+10.1f}")
+    gv = np.array(list(g.values()))
+    lines += ["", f"spread of the effects (sd): team {np.std(list(t.values())):.1f} yds, gamer {gv.std():.1f}, "
+              f"a touchdown about its fit {sd:.1f}"]
+    # what gamer-and-team cells add: their residuals' spread against what noise alone gives
+    cells = defaultdict(list)
+    for td, fit in fitted:
+        cells[(td["gamer"], td["team"])].append(td["length"] - fit)
+    n = np.array([len(v) for v in cells.values()], float)
+    ss = sum(len(v) * np.mean(v) ** 2 for v in cells.values())
+    df = len(cells) - len(g) - len(t) + 1
+    tau2 = max(0.0, (ss - df * sd ** 2) / n.sum())
+    lines.append(f"gamer-and-team pairs beyond their gamer plus their team: {len(cells)} pairs, sd {np.sqrt(tau2):.1f} "
+                 f"yds (chi2 {ss / sd ** 2:.0f} on {df} df, where noise alone gives about {df})")
+    picked = [r for r in cell_rows if r.get("td_vs_expected_z") is not None]
+    by_z = sorted(picked, key=lambda r: -r["td_vs_expected_z"])
+    for title, rows in (("pairs running longest against their fit", by_z),
+                        ("pairs running shortest against their fit", by_z[::-1])):
+        lines += ["", f"{title} ({len(picked)} pairs with the games):",
+                  f"  {'gamer':<16}{'team':<24}{'TDs':>5}{'TD yds':>8}{'fit':>7}{'z':>7}"]
+        for r in rows[:10]:
+            lines.append(f"  {r['gamer'][:15]:<16}{r['team'][:23]:<24}{r['n_td_fit']:>5}{r['td_mean_yards']:>8.1f}"
+                         f"{r['td_expected_yards']:>7.1f}{r['td_vs_expected_z']:>+7.1f}")
+    lines.append(f"  (with {len(picked)} pairs, |z| of 2.5 or more by chance alone: about {0.0124 * len(picked):.0f})")
+    return lines
+
+
+def add_fit_columns(rows, by, effects, sd, fitted):
+    """Each row's effect off the additive fit; a gamer-and-team row also its touchdowns' fitted mean."""
+    if not effects:
+        return
+    if by == "gamer":
+        for r in rows:
+            r["td_gamer_effect"] = _round(effects["gamer"].get(r["gamer"]), 2)
+            r["td_allowed_gamer_effect"] = _round(effects["opponent"].get(r["gamer"]), 2)
+    elif by == "team":
+        for r in rows:
+            r["td_team_effect"] = _round(effects["team"].get(r["team"]), 2)
+            r["td_allowed_team_effect"] = _round(effects["opp_team"].get(r["team"]), 2)
+    else:
+        cells = defaultdict(list)
+        for td, fit in fitted:
+            cells[(td["gamer"], td["team"])].append((td["length"], fit))
+        for r in rows:
+            c = cells.get((r["gamer"], r["team"]), [])
+            r["n_td_fit"] = len(c)
+            if c:
+                y, f = np.array(c, float).T
+                r["td_expected_yards"] = round(float(f.mean()), 1)
+                r["td_vs_expected"] = round(float((y - f).mean()), 1)
+                r["td_vs_expected_z"] = (round(float((y - f).mean() / (sd / np.sqrt(len(c)))), 2)
+                                         if sd > 0 else None)
+
+
+def _round(v, n):
+    return None if v is None else round(float(v), n)
+
+
+SIDE_FIELDS = ["games", "won", "own_h1", "own_h2", "opp_h1", "opp_h2", "corr_halves", "lopsided",
+               "lopsided_if_independent", "ht_close_games", "ht_close_lead_changes", "won_leading_3_4",
+               "n_leading_3_4", "won_trailing_3_4", "n_trailing_3_4", "tds", "td_mean_yards",
+               f"td_{LONG[0]}_plus", f"td_{LONG[1]}_plus", "td_close_2h_mean_yards", "n_td_close_2h",
+               "td_drive_plays_median", "returns_and_defence", "td_allowed_mean_yards", "n_td_allowed"]
+GAMER_FIELDS = ["gamer"] + SIDE_FIELDS + ["td_gamer_effect", "td_allowed_gamer_effect"]
+TEAM_FIELDS = ["team"] + SIDE_FIELDS + ["td_team_effect", "td_allowed_team_effect"]
+GAMER_TEAM_FIELDS = ["gamer", "team"] + SIDE_FIELDS + ["n_td_fit", "td_expected_yards", "td_vs_expected",
+                                                       "td_vs_expected_z"]
+
+
+def side_table(rows, label="gamer"):
+    """Lines: each row, the columns that answer the questions. `label`: gamer, team or both."""
     def f(v, fmt, pct=False):
         if v is None or (isinstance(v, float) and np.isnan(v)):
             return "-"
         return format(100 * v, fmt) + "%" if pct else format(v, fmt)
-    head = (f"{'gamer':<18}{'games':>6}{'own 1H':>7}{'own 2H':>7}{'corr':>6}{'lopsided':>9}{'(chance)':>9}"
-            f"{'HT 3-4':>7}{'swaps':>6}{'win up':>7}{'win dn':>7}{'TDs':>5}{'TD yds':>7}{'20+':>6}{'40+':>6}"
-            f"{'close 2H yds':>13}")
+    width = {"gamer": 18, "team": 24, "gamer_team": 38}[label]
+
+    def name(r):
+        return r["gamer"] if label == "gamer" else r["team"] if label == "team" else f"{r['gamer']} / {r['team']}"
+    head = (f"{label.replace('_', ' / '):<{width}}{'games':>6}{'won':>5}{'own 1H':>7}{'own 2H':>7}{'corr':>6}"
+            f"{'lopsided':>9}{'(chance)':>9}{'HT 3-4':>7}{'swaps':>6}{'win up':>7}{'win dn':>7}{'TDs':>5}"
+            f"{'TD yds':>7}{'20+':>6}{'40+':>6}{'close 2H yds':>13}{'allowed':>8}")
     lines = [head, "-" * len(head)]
-    for r in gamers:
-        lines.append(f"{r['gamer'][:17]:<18}{r['games']:>6}{f(r['own_h1'], '.1f'):>7}{f(r['own_h2'], '.1f'):>7}"
+    for r in rows:
+        lines.append(f"{name(r)[:width - 1]:<{width}}{r['games']:>6}{f(r['won'], '.0f', True):>5}"
+                     f"{f(r['own_h1'], '.1f'):>7}{f(r['own_h2'], '.1f'):>7}"
                      f"{f(r['corr_halves'], '+.2f'):>6}{f(r['lopsided'], '.0f', True):>9}"
                      f"{f(r['lopsided_if_independent'], '.0f', True):>9}{r['ht_close_games']:>7}"
                      f"{f(r['ht_close_lead_changes'], '.2f'):>6}{f(r['won_leading_3_4'], '.0f', True):>7}"
                      f"{f(r['won_trailing_3_4'], '.0f', True):>7}{r['tds']:>5}{f(r['td_mean_yards'], '.1f'):>7}"
                      f"{f(r[f'td_{LONG[0]}_plus'], '.0f', True):>6}{f(r[f'td_{LONG[1]}_plus'], '.0f', True):>6}"
-                     f"{f(r['td_close_2h_mean_yards'], '.1f'):>13}")
-    lines += ["", "own 1H / 2H: the gamer's points a half; corr: their games' first-half against second-half "
-              "points; lopsided: games whose bigger half held 70%+ of the points, and (chance) what independent "
-              "halves would give their games; HT 3-4: games 3-4 apart at half time, swaps: their second halves' "
-              "average lead changes, win up / dn: how often they won from 3-4 up / down; TD yds: their "
-              "offensive touchdowns' average length, 20+ / 40+: the share that long; close 2H yds: their "
-              "second-half touchdowns' average length when it was 1-4 at half time"]
+                     f"{f(r['td_close_2h_mean_yards'], '.1f'):>13}{f(r['td_allowed_mean_yards'], '.1f'):>8}")
     return lines
+
+
+SIDE_KEY = ("won: share of games won; own 1H / 2H: points a half; corr: the games' first-half against "
+            "second-half points; lopsided: games whose bigger half held 70%+ of the points, and (chance) what "
+            "independent halves would give the same games; HT 3-4: games 3-4 apart at half time, swaps: their "
+            "second halves' average lead changes, win up / dn: how often won from 3-4 up / down; TD yds: "
+            "offensive touchdowns' average length, 20+ / 40+: the share that long; close 2H yds: second-half "
+            "touchdowns' average length when it was 1-4 at half time; allowed: the opponents' touchdowns' "
+            "average length")
+
+
+def gamer_table(gamers):
+    """Lines: each gamer, the columns that answer the questions."""
+    return side_table(gamers, "gamer") + ["", SIDE_KEY]
 
 
 def _write(path, rows, fields):
@@ -302,8 +498,9 @@ def _write(path, rows, fields):
         w.writerows(rows)
 
 
-def run(export_path, out_dir, min_games=30, seed=0):
-    """Read the export, write the files, print the summary; return its lines."""
+def run(export_path, out_dir, min_games=30, seed=0, history_path=None, min_pair_games=20):
+    """Read the export (and the match history's teams, when given), write the files, print the
+    summary; return its lines."""
     rng = np.random.default_rng(seed)
     matches, tds = [], []
     for code, rows in _matches(export_path):
@@ -314,11 +511,33 @@ def run(export_path, out_dir, min_games=30, seed=0):
     if not matches:
         raise SystemExit(f"{export_path}: no match could be read (it needs team_a_side, the finals and "
                          "both handles: a `scouting` export)")
+    with_teams = attach_teams(matches, tds, read_teams(history_path)) if history_path else 0
+    effects, sd, fitted = td_effects(tds) if with_teams else ({}, None, [])
     gamers = gamer_rows(matches, tds, rng, min_games)
+    add_fit_columns(gamers, "gamer", effects, sd, fitted)
     lines = (["HALVES", ""] + halves_table(matches, rng)
              + ["", "THE SECOND HALF BY HALF-TIME MARGIN", ""] + margin_table(matches)
              + ["", "TOUCHDOWNS (yards: the length of the scoring play)", ""] + td_table(tds)
              + ["", f"GAMERS with {min_games}+ games", ""] + gamer_table(gamers))
+    files = ["halves.txt", "halves_matches.csv", "halves_tds.csv", "halves_gamers.csv"]
+    teams = pairs = []
+    if with_teams:
+        teams = side_rows(matches, tds, rng, 1, "team")
+        add_fit_columns(teams, "team", effects, sd, fitted)
+        pairs = side_rows(matches, tds, rng, min_pair_games, "gamer_team")
+        add_fit_columns(pairs, "gamer_team", effects, sd, fitted)
+        pairs.sort(key=lambda r: (r["gamer"], -r["games"]))
+        lines += (["", f"TEAMS ({with_teams:,} of {len(matches):,} matches have them in {history_path})", ""]
+                  + side_table(teams, "team")
+                  + ["", "TOUCHDOWN LENGTH: GAMER, TEAM, OR THE PAIR", ""]
+                  + team_effect_lines(effects, sd, fitted, pairs)
+                  + ["", f"GAMER / TEAM pairs with {min_pair_games}+ games", ""] + side_table(pairs, "gamer_team")
+                  + ["", SIDE_KEY + "; fit: the touchdowns' length from the gamer + team + opponent + opponent's "
+                     "team fit, z: how far the pair's mean sits from it in standard errors"])
+        files += ["halves_teams.csv", "halves_gamer_teams.csv"]
+    elif history_path:
+        lines += ["", f"TEAMS: no match in {history_path} lined up with the export (MATCH_CODE, PLAYER_1/2_TEAM "
+                  "and the handles)"]
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "halves.txt"), "w", encoding="utf-8") as fh:
         fh.write("\n".join(lines) + "\n")
@@ -326,6 +545,9 @@ def run(export_path, out_dir, min_games=30, seed=0):
     if tds:
         _write(os.path.join(out_dir, "halves_tds.csv"), tds, list(tds[0]))
     _write(os.path.join(out_dir, "halves_gamers.csv"), gamers, GAMER_FIELDS)
+    if with_teams:
+        _write(os.path.join(out_dir, "halves_teams.csv"), teams, TEAM_FIELDS)
+        _write(os.path.join(out_dir, "halves_gamer_teams.csv"), pairs, GAMER_TEAM_FIELDS)
     print("\n".join(lines))
-    print(f"\n  -> {out_dir}: halves.txt, halves_matches.csv, halves_tds.csv, halves_gamers.csv")
+    print(f"\n  -> {out_dir}: {', '.join(files)}")
     return lines

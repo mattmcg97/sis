@@ -39,16 +39,17 @@ The code that runs:
 | v10 | v9 with the pre-match prior's pace counted once, and its totals' spread fitted out of sample (held out RPS 3.837 → 3.825) |
 | v11 | v10 with close endings, late conversions by the clock, late-half timeouts, overtime and kick-off touchdowns as played (overtime 5.4% → 3.2% of games, real 2.7%; held out RPS level) |
 | v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
+| v13 | v12 with each side's big-play rate: its gamer's, its team's and what the other side allows, boom or bust (held out in-play RPS 3.821 → 3.811; totals' spread follows the big-play sides) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
-onward still carries everything they introduced. Their own commands no longer run, so use v8–v12
+onward still carries everything they introduced. Their own commands no longer run, so use v8–v13
 in their place.
 
 ## v3: a play-by-play simulation
 
 > v3's code has been removed (as have v4–v7's). This section and the next four describe what
-> they introduced, which v8–v12 still run.
+> they introduced, which v8–v13 still run.
 
 v3 was the first simulation (`sim.py`, `v3.py`). From the
 snapshot's state it plays the rest of the game snap by snap on the real
@@ -1249,6 +1250,116 @@ The two-score states come down; level states rise a little. A half-life can only
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
 
+## v13: v12 with each side's big-play rate
+
+v13 (`sim13.py`, `v13.py`, `v13_stream.py`) started as v12 copied exactly. With its own switch off
+(`sim13.BIG_PLAYS`) it plays as v12 (`TestV13IsV12`).
+
+### What v12 got wrong
+
+Each side has one strength. It moves every play toward the top of its bin at once, so a strong side
+gets more first downs and more long plays together, in a fixed proportion. Real sides don't play that
+way (the calibrator's `halves`, all history):
+
+- Touchdown length depends on the gamer and on the NFL team, each with the other held level (gamers
+  spread their games across many teams). Lions and Eagles touchdowns run 7-8 yards longer than
+  Vikings and Ravens ones, yet those teams score no more points and win less often.
+- The teams differ on the long plays, not the medium ones. 40+ yard plays are 4.5% of the Lions'
+  snaps and 2.9% of the Vikings'. 20+ yard plays are 13-14% for every team.
+- Rated only on earlier matches, a side's share of long touchdowns carries over (predicted 30-58%
+  across fifths, real 31-56%). Matches between big-play sides spread their totals wider at the same
+  expected total: sd about expectation 10.6 in the lowest fifth, 13.5 in the highest. This held in
+  every month from June to October.
+
+### What v13 changes
+
+- **Each side carries a big-play rate** (`Start.big`, `Profile.big`). A snap's chance of drawing one
+  of its bin's 40+ yard plays (`BIG_GAIN`) is multiplied by it. The same chance moves onto the bin's
+  failed plays (no first down) and out of the plays between (`big_warp`). Inside each of the three
+  parts, the strength's tilt toward the top still applies. Each bin's plays are ordered with the big
+  ones on top, and the tables count both parts (`n_big_*`, `n_fail_*`).
+  A first try took the extra big plays evenly from the whole bin. The strength that then held the
+  side's points took most of them back: a rate of 1.8 kept a quarter of its big plays, and the totals
+  barely moved. Boom or bust keeps them.
+- **The rate comes from four effects** (`fit_big_ratings`). These are the log odds of a big play on
+  every scrimmage snap built on, against its bin's league rate: the gamer with the ball, its team,
+  what the other gamer allows and what the other team allows. Each is shrunk by how far its kind
+  really spreads beyond noise, and recent weeks weigh more (`BIG_HALF_LIFE`). The teams come from
+  `--history` (`PLAYER_1_TEAM` is home). On the held-out build (47,723 snaps) the spreads are: gamer
+  0.31, team 0.11, what a gamer allows 0.23, what a team allows 0.07. The team effects run from Lions
+  +0.15 and Eagles +0.08 to 49ers -0.11.
+- **The prior's points are held** (`big_response`, `fit_big_elasticity`). As with pace, each side's
+  points from kick-off are simulated at pairs of rates, and a match's expected points are divided by
+  its response before the strengths are fitted. The build also measures how far the simulated big
+  plays move with the rate once the points are held (0.52 on the held-out build). A rating is then
+  played at its odds to the power 1 / 0.52, so the sim's big plays move as the rating says. Rates
+  are kept within 0.37-2.72 (`BIG_POINTS`).
+- **Where the rate is applied:** the build writes the ratings to `v13big.json`, and every pricing
+  path applies them: `v13`, the stream (`--candidate v13`; teams from the match info), `remaining`
+  and the trader.
+
+At league strengths with the points held, moving both sides' rate from 0.55 to 1.82 takes the
+touchdowns from 18.6 to 26.7 yards and the 40+ yard touchdowns from 14% to 29%. The totals' sd goes
+from 11.3 to 12.4.
+
+### Held out
+
+Built before Sep 10, played on Sep 10-22. Pre-match, from kick-off: 906 matches, both versions
+priced off the same NB2 expected points, v13 minus v12 [95% over matches]:
+
+| | v12 | v13 | v13 - v12 |
+|---|---|---|---|
+| total, log loss | 3.6569 | 3.6453 | -0.0116 [-0.0254, +0.0030] |
+| total, RPS | 6.8855 | 6.8803 | -0.0052 [-0.0239, +0.0131] |
+| margin, log loss | 3.3676 | 3.3691 | +0.0016 [-0.0101, +0.0132] |
+| margin, RPS | 5.1424 | 5.1309 | -0.0115 [-0.0239, +0.0004] |
+| moneyline, Brier | 0.2459 | 0.2457 | -0.0002 |
+
+By fifths of the match's big-play rate (the two sides' geometric mean), each version's predicted sd
+of the total against the real miss (rms):
+
+| fifth | rate | v12 sd | v13 sd | real |
+|---|---|---|---|---|
+| 1 | 0.51 | 11.66 | 11.28 | 10.98 |
+| 2 | 0.67 | 12.03 | 11.81 | 11.07 |
+| 3 | 0.87 | 12.45 | 12.42 | 12.88 |
+| 4 | 1.10 | 12.97 | 13.15 | 13.84 |
+| 5 | 1.60 | 13.37 | 13.93 | 13.71 |
+
+The real misses widen 2.7 points from the first fifth to the last. v12 widens 1.7, all of it from
+the expected totals, which run with the rate. v13 widens 2.65.
+
+In play: points still to come at 56,890 snapshots (`remaining`, 500 paths), RPS, v13 minus v12 [95%
+over matches]. Both builds were run with today's code (v12's pre-match now follows the results, so its
+numbers are a little better than in the v12 section):
+
+| | v12 | v13 | v13 - v12 | mean error v12 / v13 |
+|---|---|---|---|---|
+| all | 3.821 | 3.811 | -0.010 [-0.020, -0.001] | +0.01 / -0.12 |
+| Q1 | 3.782 | 3.775 | -0.007 [-0.020, +0.007] | -0.10 / -0.34 |
+| Q2 | 4.739 | 4.724 | -0.015 [-0.028, -0.002] | +0.03 / -0.14 |
+| Q3 | 4.392 | 4.378 | -0.014 [-0.028, -0.001] | +0.20 / +0.10 |
+| Q4 | 2.364 | 2.359 | -0.005 [-0.013, +0.001] | -0.07 / -0.12 |
+| Q2 2+ scores, trailer has ball | 5.152 | 5.110 | -0.042 [-0.077, -0.009] | +0.74 / +0.56 |
+| Q3 2+ scores, leader has ball | 4.106 | 4.060 | -0.046 [-0.081, -0.008] | +1.04 / +0.95 |
+| Q4 2+ scores, trailer has ball | 2.595 | 2.580 | -0.015 [-0.028, -0.001] | +0.24 / +0.18 |
+
+v13 is better overall and in Q2 and Q3. It gains most where a side two scores behind needs big plays,
+or a side two scores ahead can hit one. No state is clearly worse. v13 runs 0.13 points a game lower
+in play than v12 (mean error -0.12, v12 +0.01): the points are held at kick-off, not from in-game
+states.
+
+### Still open
+
+- **The sandbox build rates gamers on 9 days of plays.** A build on the whole history rates them
+  far more surely; rebuild before reading the report.
+- **v13 runs 0.13 points a game low in play** (above). Holding the points at the in-game states as
+  well as at kick-off would take it back.
+- **Form on the day is fitted as v12 fits it**, on results against the pre-match model with the
+  sim's spread at league rates. A gamer whose big plays the rate now spreads may still carry some of
+  that spread in its form (the two correlate +0.26 across gamers). If the most explosive matches
+  price too wide, form should be refitted with each side's rate.
+
 ## v12: v11 with level sides' late drives run down to the kick
 
 v12 (`sim12.py`, `v12.py`, `v12_stream.py`) started as v11 copied exactly. With its own switches off
@@ -1591,7 +1702,7 @@ Q3 is still +0.27 overall. It sits in the two-score states (+1.08 with the leade
 
 ### Line rules (own, `@even`, `@prod`, `v10@anchored`, `v10@hyst`)
 
-v8 to v12 quote their own lines in the gap between the key numbers (below). `@even` reads
+v8 to v13 quote their own lines in the gap between the key numbers (below). `@even` reads
 them at the half-point line nearest 50% instead, the old own line, and `@prod` at prod's. v10 has
 two more rules. All of them come off one simulation:
 
@@ -1629,7 +1740,7 @@ A line next to a spike prices far from the lines either side of it. A small erro
 moves its price a lot, and the even line flips across the spike as the game moves. A line in a gap
 between spikes prices about the same as its neighbours, so it can stay put.
 
-The own line (`key_line`, in v8 to v12) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
+The own line (`key_line`, in v8 to v13) takes the line in the gap. On the held-out build's full distributions (Sep 10–22, 57,795
 rows including kick-offs, 905 matches), each rule against a bettor who learns where it misprices
 (by phase, score, price, side of prod's line and the line's key-number position) on half the
 matches and bets the other half, five splits shared by every rule. The figures are book per 100
@@ -1646,7 +1757,7 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
-## Refitting the prior every day (`prior-daily`, v10–v12)
+## Refitting the prior every day (`prior-daily`, v10–v13)
 
 A build fits its pre-match model (NB2 or glmer) once, at its cut-off. Over a test window of weeks
 its ratings go stale where a live model's would not: glmer's form features follow the results as
@@ -1677,7 +1788,7 @@ python -m eAMFCalibrator history
 python -m eAMFModel prior-daily --prior nb2 --history eAMFCalibrator/out/match_history.csv --since 2026-10-06 --until 2026-10-06 --out nb2_live --attach v12_model
 ```
 
-## Following the results since the fit (`follow.py`, v10–v12)
+## Following the results since the fit (`follow.py`, v10–v13)
 
 A build's pre-match model (NB2 or glmer) is fitted once. Between fits its ratings stay put while
 gamers' real levels move. NB2 doesn't move at all. glmer's form features follow the results, but its
@@ -1732,7 +1843,7 @@ sample, 12 fortnights of 14-day refits on AMFELO.
 
 - **The prior.** 40 chased the noise in some fortnights; 160 was steadier but gained less.
 
-## Pricing only what the model is sure of (v8–v12 streams)
+## Pricing only what the model is sure of (v8–v13 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:

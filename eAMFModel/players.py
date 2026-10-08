@@ -90,6 +90,7 @@ class Profile:
     milk: float = 1.0
     milk_plays: int = 0
     form: float = None
+    big: float = 1.0           # v13: the side's big-play rate in this match (set per match, 1 = league)
 
 
 @dataclass

@@ -93,6 +93,7 @@ class Trader:
         self.tables = stream.sim.Tables.load(tables_path)
         self.grid = self.m.PriorGrid.load(grid_path)
         self.book = self.m.players_book(tables_path)
+        self.big = self.m.big_ratings(tables_path) if hasattr(self.m, "big_ratings") else None   # v13
         self.pre = self.m.prematch_model(tables_path)
         self.variant = self.m.Variant(self.version)
         # v10 on: the prior's points are taken net of the players' pace
@@ -177,6 +178,9 @@ class Trader:
         home, away = setup.get("home_player"), setup.get("away_player")
         prof = ((self.book.profile(home), self.book.profile(away)) if self.book
                 else (players.Profile(), players.Profile()))
+        if self.big and home and away:
+            prof = self.m.with_big(prof, self.big, (home.upper(), away.upper()),
+                                   setup.get("home_team") or "", setup.get("away_team") or "")
         means = tuple(float(x) for x in setup["means"])
         if self.prior_takes_pace:
             theta0 = self.m.prior_theta(self.grid, means,

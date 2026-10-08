@@ -1,6 +1,6 @@
 """A version's points still to come against what the rest of each game really made.
 
-At every PLAY_OVER snapshot a version (v8 to v12) simulates the rest of the game. Its distribution
+At every PLAY_OVER snapshot a version (v8 to v13) simulates the rest of the game. Its distribution
 of the final total, less the points on the board, is its distribution of the points still to come.
 The export's final score gives what really came. Set side by side, value by value (0, 3, 6, 7, 8,
 10, 14 ...) and by quarter and game state, this is the comparison against reality -- not against
@@ -96,16 +96,19 @@ def _job(job):
     tables = stream.sim.Tables.load(tables_path)
     grid = model.PriorGrid.load(grid_path)
     book = model.players_book(tables_path) if hasattr(model, "players_book") else None
+    ratings = model.big_ratings(tables_path) if hasattr(model, "big_ratings") else None     # v13
     rng = np.random.default_rng(seed)
     variant = model.Variant(name, sim_kw={"one_drive": True}) if drive else model.Variant(name)
     out = []
-    for code, snaps, means, pair in items:
+    for code, snaps, means, pair, teams in items:
         rows = model.resolve_sides([stream._as_text(r) for r in snaps])
         rows.sort(key=lambda r: int(r["message"]))
         if drive:
             rows_all = rows
             rows = [r for r in rows if r.get("play_kind") == "SCRIMMAGE"]
         prof = (book.profile(pair[0]), book.profile(pair[1])) if (book and pair) else None
+        if ratings and pair:
+            prof = model.with_big(prof or (players.Profile(), players.Profile()), ratings, pair, *teams)
         books = stream.match_books(tables, grid, variant, rows, n_paths, rng, prof, means)
         by_msg = {int(r["message"]): r for r in rows}
         index = {int(r["message"]): k for k, r in enumerate(rows_all)} if drive else {}
@@ -161,10 +164,12 @@ def price(snapshots_path, name, model_dir, since=None, until=None, n_paths=500, 
             raise SystemExit(f"this {name} model prices pre-match with its own model: pass --history")
         means = pre.means([r for r in history if r["MATCH_CODE"] in set(codes)], results=history)
     items = []
+    team_of = model.match_teams(history) if hasattr(model, "match_teams") else {}
     for c in codes:
         pair = (handles or {}).get(c) or (model.handles_of(by_match[c]) if hasattr(model, "handles_of")
                                           else None)
-        items.append((c, by_match[c], means.get(c, pre.league) if pre is not None else None, pair))
+        teams = (model.side_teams(pair, team_of.get(c)) if hasattr(model, "side_teams") else ("", ""))
+        items.append((c, by_match[c], means.get(c, pre.league) if pre is not None else None, pair, teams))
     workers = max(1, min(workers, len(items)))
     jobs = [(items[i::workers], name, model_dir, n_paths, i, drive) for i in range(workers)]
     if workers == 1:
