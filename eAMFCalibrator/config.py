@@ -96,6 +96,11 @@ V12_LINES = "own"
 V13_MODEL_DIR = None
 V13_PATHS = 2000
 V13_LINES = "own"
+# The same for --candidate v14 (`python -m eAMFModel v14-build`; None:
+# $EAMF_V14_MODEL, then ./v14_model).
+V14_MODEL_DIR = None
+V14_PATHS = 2000
+V14_LINES = "own"
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

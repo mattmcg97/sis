@@ -91,6 +91,8 @@ class Profile:
     milk_plays: int = 0
     form: float = None
     big: float = 1.0           # v13: the side's big-play rate in this match (set per match, 1 = league)
+    kick_tb: float = 1.0       # v14: their kick-offs' touchback rate, x the league's
+    kick_nlz: float = 1.0      # v14: and no-landing-zone rate
 
 
 @dataclass
