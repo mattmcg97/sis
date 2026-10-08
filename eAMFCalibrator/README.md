@@ -1612,7 +1612,7 @@ version, change the names on the command line.
     calibration at prod's line and each side's line error.
   - Pre-match.
   - In-drive.
-  - **Totals line within 1 and 2 scores** (below).
+  - **Lines that move: reached or not** (below).
   - Additional checks.
   - Every pair.
 - **Every pair** carries prod's line, probability, result and error, and
@@ -1638,35 +1638,34 @@ python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshot
 - Use this to compare two builds that differ only in what they were built
   with, e.g. `--prior nb2` against `--prior glmer`.
 
-### Totals line within 1 and 2 scores
+### Lines that move: reached or not
 
-The totals line test is now a section of its own, after In-drive, rather
-than inside Additional checks. At each drive snapshot a total line needs
-(line − points already scored) more points. The test counts how often
-that is within 1 score, where a single touchdown takes the game over, and
-within 2 scores. It does this for prod's line and each candidate's own
-line. Real is the same count for the points the rest of the game really
-produced.
+This replaced "Totals line within 1 and 2 scores". It asks whether a stream reacts too far to a
+score. At each drive's first quote (`line_moves.py`), it sets each stream's total and spread
+against that stream's previous quote in the match. The line went up, went down, or held. Then it
+counts how often the game finished over the line: for the spread, how often the home side beat
+the home margin the line asked for.
 
-A score counts as 7, except at a scoreline where the trailing player goes
-for two after a touchdown. There it counts as 8. Those scorelines are the
-margins where most players in SCOUTING_FULL went for two: behind by 1, 5,
-8, 11 or 16. It counts one row per snapshot: the over and the under
-share a line.
+- **Each cell** shows three things:
+  - that share;
+  - the share less the stream's own priced chance at its line, in points, coloured on the
+    probability-gap ramp;
+  - the count.
+- **What a fair line looks like.** It sits at its price: about 50-50 in the middle of a game, and
+  less evenly late on, when the points still to come are lumpy (0, 3 or 7).
+- **What over-reacting looks like.** A minus after the line goes up means games fall short of a
+  line lifted too far. A plus after it goes down means a total dropped too fast as the clock ran.
+- **The first table** splits the moves by whether anyone scored since the last quote. For the
+  spread, up means toward the home side.
+- **The second table** gives quarter by score difference (level 0-2, one score 3-8, two or more
+  9+), with columns for line up, line down and every quote. Each quarter's all-states row is
+  shaded above its states.
+- Pushes are left out. A spread quote on the away side is read as the home margin it implies.
 
-- **The overall table** gives Real's share, then each stream's share with
-  its gap to Real in points beside it. The cell is coloured by the gap's
-  size on the report's green-to-red ramp: under 3 points, 3–6, 6–10,
-  10–15, over 15.
-- **By quarter and game state** gives the same within 1 score and within
-  2 scores, with each quarter's all-states row shaded above its states:
-  - level;
-  - one score or two+ apart, with the leader or the trailer on the ball;
-  - no ball.
-- **Over at the line against priced** gives each stream's over rate at
-  its own line minus its own priced P(over), in points. It's shown by
-  where the line sits and by quarter, coloured on the probability-gap
-  ramp.
+On the month of v12 against prod (23 Aug - 23 Sep), prod's spread went toward the side that had
+just scored 9,723 times. The home side then covered 39% of the time, priced 50%. After a score
+moved prod's line the other way, they covered 62%, priced 50%. Prod's total, held or lifted with
+no score, finished over 44%, priced 49%. v12 sat within about 2 points of its price in every row.
 
 ## The totals lines, value by value: `totals-lines`
 
