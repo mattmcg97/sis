@@ -190,6 +190,7 @@ entry.
 | `form`        | + both sides' recency-weighted points scored and conceded, and experience                 |
 | `form_noexp`  | `form` without the experience terms (tested against newcomers' pricing; worse overall)    |
 | `form_session`| `form` + how both sides are doing this session, and where in it they are                  |
+| `form_pair`   | `form` + gamer-v-gamer matchups, `(1\|Player:OpponentPlayer)` (tested; about level)      |
 | `matchup`     | + each player's own team preference, and team-vs-team matchups                            |
 | `home_offset` | `home`, but the per-player models only learn corrections to the global model's prediction (`offset(GlobalEta)`) |
 
@@ -394,6 +395,47 @@ streaks run a little worse than glmer says: 38.4% won against 41.5% priced after
 That is the gamer's level drifting from the fitted ratings over days, not a same-night effect. A
 second layer that follows each gamer's results since the fit catches it, for NB2 as well as glmer.
 See "Following the results since the fit" in `eAMFModel/README.md`.
+
+## Gamer-v-gamer and team-v-team matchups (7 Oct 2026)
+
+Neither is in the production `form` model. Its player, opponent and team effects price each side's
+own strength, but no pairing.
+- **Team v team: nothing.** A team pairing's errors against glmer don't repeat from one half of the
+  season to the other (20 pairings with enough matches in both). `matchup`'s `(1|TeamPair)` made no
+  difference either.
+- **A gamer with or against a particular team: nothing worth having.**
+- **Gamer v gamer: small, and not steady.**
+  - A pair's errors repeat a little across the season (split-half correlation +0.13 over 252
+    pairs, with each gamer's own offset taken out in each half).
+  - As an add-on on top of glmer and the follow layer, each pair's average leftover error over
+    its earlier meetings, shrunk by 80 meetings, took 0.0013 off moneyline log loss on fortnights
+    6–11, in all 6. But the shrinkage was chosen on those same fortnights.
+  - Fitted inside glmer, `form_pair` adds `(1|Player:OpponentPlayer)` (sd 0.06 on the log scale)
+    and was refitted on the same six fortnights. Log loss went 0.6632 → 0.6630 alone and
+    0.6616 → 0.6612 with the follow layer. Margin RMSE fell 0.006 and total RMSE 0.009. It was
+    better in only 2 of the 6 fortnights alone, and 3 with the follow layer.
+
+So `form` stays the default. `form_pair` is there to try (`fit.R --feature-set=form_pair`).
+
+## A gamer's day and session (8 Oct 2026)
+
+Does a gamer have good and bad days on top of their level and form? Measured instead of guessed:
+- **As variance components.** `form` plus `(1|DayP) + (1|DayO) + (1|SessP) + (1|SessO)`, each a
+  gamer's scoring or conceding deviation that day or session. It was fitted by ML on Jun–Aug 2026
+  (8,920 matches, hl60). Points scored vary a little by day: sd 0.043 on the log scale, about 0.9
+  points. Conceding, and both session terms, come out at or near zero. The log likelihood gains
+  1.55 for 4 more parameters, which is not significant. After six games each 7 points short, the
+  implied update moves a gamer about half a point.
+- **As an S-curve.** A day is normal, off or on, with the state hidden and fitted by EM on the daily
+  glmer's out-of-sample errors. The chance a gamer is off rises as their errors pile up, so the
+  shift starts small and climbs toward a cap.
+  - Fitted on 16 Jul – 9 Aug: off on 5% of gamer-days, at −3.9 points. Twelve points short each
+    game moves a gamer −0.2, −0.4, −0.7, −1.0, −1.5, −2.0 over games 1–6.
+  - Fitted on 10 Aug – 3 Sep: no off or on days at all.
+  - Scored on the other half: moneyline log loss +0.0003 and Brier +0.0002 against the daily glmer
+    alone.
+
+So the daily refit plus `form` already holds what there is. No day or session term was added.
 
 ## Speed
 

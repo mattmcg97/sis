@@ -31,7 +31,7 @@ import datetime as dt
 import math
 import os
 import statistics
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
@@ -684,6 +684,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         lines = gamer_report(config.GAMERS, gamer_info, results, closing, finals)
         print("\n".join(lines))
         write_text(os.path.join(out_dir, f"{prefix}_gamers.txt"), lines)
+    history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+    lines = trend_report(results, {r["MATCH_CODE"]: r for r in history}, gamer_games(history))
+    print("\n".join(lines))
+    write_text(os.path.join(out_dir, f"{prefix}_trends.txt"), lines)
     if prematch_only:
         lines = prematch_report(results)
         print("\n".join(lines))
@@ -832,6 +836,117 @@ def operator_margins(rows):
             lines.append(f"  {op[:22]:22s} {str(market):9s} {when:9s} {100 * v[len(v) // 2]:+5.1f}%"
                          f"  (middle half {100 * v[len(v) // 4]:+.1f}% to {100 * v[3 * len(v) // 4]:+.1f}%,"
                          f" {len(v):,} bets)")
+    return lines
+
+
+RUN_GAP = dt.timedelta(hours=6)        # a run is a night's: kick-offs no more than this apart
+RESULT_IN = dt.timedelta(minutes=36)   # a result is in this long after kick-off (eAMFModel stream)
+BACKS = {50: 0, 52: 0, 51: 1, 53: 1}   # the side (player 1 or 2) a moneyline or spread selection backs
+TREND_RUN = 2                          # a run this long is a trend a punter can see
+TREND_LABELS = [f"{kind} a run of {n}" for kind in ("piles on", "fades") for n in ("2", "3", "4+")] \
+    + ["mixed", "none"]
+
+
+def _when(text):
+    try:
+        return dt.datetime.fromisoformat(str(text)[:19].replace("T", " "))
+    except ValueError:
+        return None
+
+
+def gamer_games(history):
+    """gamer -> ([kick-offs], [(margin from their side, match)]) over their settled matches, in
+    kick-off order."""
+    acc = defaultdict(list)
+    for r in history or ():
+        start = _when(r.get("SCHEDULED_START_TIME_UTC"))
+        try:
+            f = float(r["PLAYER_1_FINAL_SCORE"]), float(r["PLAYER_2_FINAL_SCORE"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if start is None:
+            continue
+        g1, g2 = _sides(r)
+        acc[g1].append((start, f[0] - f[1], r["MATCH_CODE"]))
+        acc[g2].append((start, f[1] - f[0], r["MATCH_CODE"]))
+    out = {}
+    for g, v in acc.items():
+        v.sort(key=lambda x: x[0])
+        out[g] = ([x[0] for x in v], [(x[1], x[2]) for x in v])
+    return out
+
+
+def run_at(games, start, seen):
+    """A gamer's run tonight before the match kicking off at `start`, from the results in by `seen`
+    (RESULT_IN after their kick-offs): +k won the last k, -k lost the last k, 0 none."""
+    if not games:
+        return 0
+    starts, results = games
+    run, prev = 0, start
+    for k in range(bisect_left(starts, start) - 1, -1, -1):
+        if prev - starts[k] > RUN_GAP:
+            break                                   # the night began after it
+        prev = starts[k]
+        if seen is not None and starts[k] + RESULT_IN > seen:
+            continue                                # not in yet when the bet was placed
+        m = results[k][0]
+        if m == 0 or (run and (m > 0) != (run > 0)):
+            break
+        run += 1 if m > 0 else -1
+    return run
+
+
+def trend_of(row, info, games, k=TREND_RUN):
+    """How a moneyline or spread bet stood to the gamers' runs when it was placed: ('piles on', n)
+    backing a gamer who had won the last n >= k or opposing one who had lost them, ('fades', n)
+    the other way, ('mixed', n) both, ('none', 0) neither; None for a total or an unknown match."""
+    side, m = BACKS.get(row.get("feed_market")), info.get(row.get("match_code"))
+    start = _when(m.get("SCHEDULED_START_TIME_UTC")) if m else None
+    if side is None or start is None:
+        return None
+    players, seen = _sides(m), _naive(row.get("bet_time"))
+    backed = run_at(games.get(players[side]), start, seen)
+    opposed = run_at(games.get(players[1 - side]), start, seen)
+    pile = max(backed if backed >= k else 0, -opposed if opposed <= -k else 0)
+    fade = max(-backed if backed <= -k else 0, opposed if opposed >= k else 0)
+    if pile and fade:
+        return "mixed", max(pile, fade)
+    return ("piles on", pile) if pile else ("fades", fade) if fade else ("none", 0)
+
+
+def trend_report(results, info, games):
+    """Lines: the book's margin on the moneyline and spread bets by how each stood to a gamer's run
+    tonight when it was placed, as placed with prod and re-priced by each candidate, on the
+    bets every candidate re-priced; pre-match and in play apart. Punters piling onto a trend that
+    carries on would show as a low margin on 'piles on'."""
+    names = [n for n, _ in results]
+    base = results[0][1]
+    groups = defaultdict(list)
+    for i in common(results):
+        got = trend_of(base[i], info, games)
+        if got is None:
+            continue
+        kind, n = got
+        label = kind if kind in ("mixed", "none") else f"{kind} a run of {n if n < 4 else '4+'}"
+        groups[("in play" if base[i]["in_play"] else "pre-match", label)].append(i)
+    lines = [f"\n  the bets by a gamer's run tonight when placed (moneyline and spread): 'piles on' backs a "
+             f"gamer who won the last {TREND_RUN}+ or opposes one who lost them, 'fades' the other way; the "
+             "book's margin (revenue / stake), as placed and re-priced, on the bets every candidate re-priced:"]
+    for when in ("pre-match", "in play"):
+        if not any(w == when for w, _ in groups):
+            continue
+        lines.append(f"  {when:<24s} {'bets':>7s} {'stake':>10s} {'prod':>8s}"
+                     + "".join(f" {n[:12]:>12s}" for n in names))
+        for label in TREND_LABELS:
+            idx = groups.get((when, label))
+            if not idx:
+                continue
+            stake = sum(base[i]["stake"] for i in idx)
+            pct = lambda v: f"{100 * v / stake:+.1f}%" if stake else "-"
+            lines.append(f"    {label:<22s} {len(idx):>7,} {stake:>10,.0f} "
+                         f"{pct(sum(base[i]['revenue'] for i in idx)):>8s}"
+                         + "".join(f" {pct(sum(rows[i]['candidate_revenue'] for i in idx)):>12s}"
+                                   for _, rows in results))
     return lines
 
 

@@ -1844,6 +1844,146 @@ sample, 12 fortnights of 14-day refits on AMFELO.
 - **The prior.** 40 chased the noise in some fortnights; 160 was steadier but gained less.
 
 ## Pricing only what the model is sure of (v8–v13 streams)
+## The post-game form layer (`form_layer.py`, v10–v13; off unless switched on)
+
+A second model on top of the daily glmer (`prior-daily`), for in-session hot and cold streaks.
+The daily glmer gives each side's expected points; the layer adds a ± from how the two gamers have
+done against those prices today and this session. It is built and tested, but **off**: the test so
+far says it doesn't pay on the margin (below).
+
+- Each gamer carries a **day form** and a **session form**, for the margin and for the total. A
+  Kalman filter updates them after every match the gamer plays, from the match's error against the
+  model's price. The opponent's form counts against them.
+- **Day form** starts fresh each day at 00:00 UTC, when the daily prior refits (`--rho` carries a
+  share into the next day). **Session form** starts fresh after a gap of more than 2 hours, and at
+  midnight. So only the day's own games count.
+- **Never against the way a gamer's day is going** (on by default; `--either-way` turns it off). A
+  gamer with more losses than wins today is never priced above the daily glmer, and one with more
+  wins never below it. When both gamers are down on the day, or both up, the match stays at the
+  glmer's price. Without this rule, a gamer who lost by about what the price expected could be
+  lifted by an opponent having a worse day. That happened to NIGHTMARE on 6 Oct: four straight
+  losses and still priced above the glmer. On 41 days of daily fits the rule cut the default
+  layer's cost from +0.0005 to +0.0004 log loss, and the trend layer's (trigger 3, sd 2) from
+  +0.0018 to +0.0012. Neither beats the daily glmer alone.
+- A match's margin moves by the home gamer's day + session form less the away gamer's; its total by
+  both gamers' forms added.
+- **The error is shared.** Each match's error is split between the two gamers by how unsure each
+  one's form is, so a gamer whose form has settled moves less than a fresh one.
+- **Only results known at the time count.** A match reads only matches that started before it, as
+  `stream.known_states` needs. A settled match's error is taken against the price the model made
+  out of sample, so the layer reads results from the daily prior's first fit on (a single fit: from
+  its cut-off).
+- **Where it sits.** It goes on top of whatever the build prices with: the prior shrink, and the
+  follow layer on a single fit. A daily prior has no follow layer.
+
+**Switching it on**, for one build, with or without settings of its own (margin[,total]):
+
+```powershell
+python -m eAMFModel form-layer v12_daily_form --on
+python -m eAMFModel form-layer v12_daily_form --on --tau-day 2 --tau-session 2
+python -m eAMFModel form-layer v12_daily_form --off        # or --default: back to form_layer.ON
+```
+
+The defaults are a day-form sd of 1 point, a session-form sd of 1 point, and a fresh start each
+day. They're the design's starting point, not a setting the test chose.
+
+**One gamer's matches, model against layer** (`form-trace`). Each match shows the daily glmer's
+expected margin and win chance, the gamer's day and session form, the opponent's form, the ±, and
+the layer's margin and win chance. `--model` prices as the build does; `--rolling` takes
+`prior-daily`'s fits as they are.
+
+```powershell
+python -m eAMFModel form-trace --model v12_daily --history eAMFCalibrator/out/match_history.csv --gamer NIGHTMARE --since 2026-10-06
+```
+
+**What the test says so far.** The early read covers 27 days of daily glmer fits on AMFELO (16–25
+Jul, 4–13 Aug, 23–29 Aug; 2,523 matches). Each match was priced by its own day's fit, with glmer's
+form following the results. Settings were chosen on the first half of the days and scored on the
+second.
+- **Nothing is left on the margin.** On these daily fits, the next match's error doesn't follow the
+  gamer's errors so far: −0.002 a point this session (t −0.2), −0.0004 earlier today (t 0.0),
+  −0.011 yesterday (t −1.3). On 14-day fits this session's errors did carry on: +0.0135 a point (t 2.8).
+  A daily refit, plus glmer's own form, takes in what was there.
+- **Every margin setting is worse out of sample.** The more the layer reacts, the worse it gets:
+
+  | margin sd: day, session | NIGHTMARE's own form after 8 matches, 22 Jul / 24 Aug | moneyline log loss | margin RMSE |
+  |---|---|---|---|
+  | 1, 1 (the default) | −0.43 / −0.21 | +0.0015 | +0.025 |
+  | 2, 2 | −1.16 / −0.55 | +0.0088 | +0.141 |
+  | 3, 3 | −1.74 / −0.73 | +0.0213 | +0.331 |
+  | 0, 3 (session only) | −1.24 / −0.17 | +0.0123 | +0.177 |
+
+- **The total gains a little.** A day form of sd 1.5 cut the total's RMSE by 0.018 on the second
+  half, and 1 + 1 by 0.020.
+- **NIGHTMARE's 0–9 on 22 Jul and 1–8 on 24 Aug.** The daily glmer already had him as the underdog
+  in every match of both nights (31–49% to win). He fell short of his price by 3.1 points a match on
+  22 Jul and 2.7 on 24 Aug. With the default settings the layer moved his price by at most 1.3
+  points, mostly through his opponents' form; his own form got no lower than −0.4 points. On 25 Aug
+  he went 4–5, 0.2 points a match short of the daily glmer's prices.
+
+The full test (56 days, 16 Jul – 9 Sep) is the one that sets the defaults or keeps the layer off.
+
+**The S-curve (`--s-curve`).** In place of day and session form, the margin moves by the chance a
+gamer is having an off (or on) day, given his errors against the pre-match price so far today. The
+default curve is fitted by EM on Apr–Sep (4,444 gamer-days, 14-day fits with the follow layer):
+off on 1.65% of gamer-days by −5.5 points, on on 7.5% by +1.3. The shift starts small and steepens
+from about the third poor game. It levels off at the cap. Only the day's own games count, and the
+same-way rule applies; the total still follows the day form.
+- **Off days come and go by month.** Fitted month by month: −5.1 points on 2.4% of days in April,
+  −7.7 on 1.5% in June, −4.4 on 3.8% in July, none in May or August. They don't belong to
+  particular gamers: a gamer's share of off days in odd months correlates +0.12 with even months
+  (63 gamers).
+- **Forward test.** Fitted on Apr–Jul (1.25% off by −6.25), it was level on Aug–Sep: log loss
+  −0.00007 and Brier −0.00002 on 14-day fits, +0.00025 and +0.00013 on the daily glmer. It moved
+  only 2% of matches by half a point or more, and on those it lost (+0.010 to +0.018 log loss),
+  because August had no off days. Judge it in the bet sim.
+
+```powershell
+python -m eAMFModel form-layer v12_daily_s --on --s-curve
+```
+
+**Only once a trend shows (`--trigger K`).** Punters pile on once a run shows, two or three games
+in. With a trigger, a gamer's margin form counts only once they have lost (won) at least K in a row
+tonight, and only the way the run goes. A run is the night's: kick-offs no more than 6 hours apart,
+so a break of 2–3 hours doesn't end it. The total is not gated.
+
+```powershell
+python -m eAMFModel form-layer v12_daily_trend --on --trigger 3
+python -m eAMFModel form-trace --model v12_daily --history eAMFCalibrator/out/match_history.csv --gamer NIGHTMARE --since 2026-10-06 --trigger 3 --tau-day 2 --tau-session 2
+```
+
+**What happens after a run, against the daily glmer's price.** These are the matches right after
+a run, from 41 days of daily fits (3,791 matches), with a run counted over the whole night:
+
+| run tonight | next matches | margin vs price (se) | won | priced |
+|---|---|---|---|---|
+| lost the last 5+ | 159 | −0.54 (0.67) | 34.6% | 38.7% |
+| lost 4 | 172 | −0.30 (0.74) | 40.7% | 43.7% |
+| lost 3 | 389 | +0.26 (0.48) | 44.5% | 44.8% |
+| lost 2 | 783 | +0.01 (0.34) | 46.0% | 47.6% |
+| won 2 | 803 | −0.30 (0.33) | 52.2% | 52.1% |
+| won 3 | 367 | +0.36 (0.50) | 57.5% | 54.8% |
+| won 4+ | 366 | −0.53 (0.48) | 57.9% | 58.8% |
+
+- **Two or three games in, when punters pile on, the next match is priced right.** That holds both
+  ways.
+- **Four or more losses** win 3–4 points less often than priced. The 14-day fits, with 15,418
+  matches, show the same (−4.4 points after 4, −1.8 after 5+). But the margin is within its noise
+  every time, and winning runs don't carry on at all.
+- **Nothing tuned on it holds up.** Several kinds of shift were chosen on the first half of the
+  days and scored on the second: a flat or per-game shift after 2–5 straight losses (or wins), the
+  layer gated as above, and a shift once the night's error passes a threshold. On the daily glmer,
+  all 67 settings made the second half worse, by +0.0001 to +0.03 moneyline log loss. On 14-day
+  fits, the best took off 0.0003: shading a gamer 0.5 points after 4 straight losses.
+- **NIGHTMARE.** With `--trigger 3` and form sd 2, the layer would have moved him 0.2–2.1 points
+  from his fifth game on 22 Jul. On 24 Aug its biggest move, −3.7 points, came on his one win of the
+  night (45–38).
+
+The bets say more than the prices here. Every `bets` run now shows the book's margin on the bets
+that pile onto a run, against those that fade it (`bets_trends.txt`, in eAMFCalibrator's README).
+If piling on beats the book, a trigger is worth turning on.
+
+## Pricing only what the model is sure of (v8–v12 streams)
 
 A version quotes a prod message only where its state is the game's at that
 message:
