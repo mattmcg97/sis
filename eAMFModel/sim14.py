@@ -835,6 +835,29 @@ KICK_STYLE_MAX = 0.9
 KICK_STYLE_MIN = 30          # kicks a part of the game needs before it gets its own pool
 
 
+# v14: a drive carried from Q1 into Q2 (or Q3 into Q4) does not snap at 4:00 on a stopped clock.
+# In every one of the feed's 4,092 carries the clock had run 3-8 seconds (median 6) before the new
+# quarter's first snap, and that snap then took a running clock's time (27 seconds on average,
+# 22% within 8). Played at 4:00 on a stopped clock the sim gained some 25 seconds at the start of
+# each, a snap a game in Q2 (sim_audit: Q2 15.7 snaps a game, real 14.7). QUARTER_CARRY plays the
+# real run-off (Tables.runoff, from quarter_runoffs) and a running clock.
+QUARTER_CARRY = True
+DEFAULT_RUNOFF = (6.0,)
+
+
+def quarter_runoffs(rows):
+    """Seconds gone from the clock before each new quarter's first snap, where a drive carries from
+    Q1 into Q2 or from Q3 into Q4."""
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["period"] in ("1", "3") and b["period"] == str(int(a["period"]) + 1) \
+                and b["play_kind"] in SNAP_KINDS and b["clock_seconds"]:
+            gone = QUARTER - _f(b["clock_seconds"])
+            if 0 <= gone <= 30:
+                out.append(gone)
+    return out
+
+
 def kick_kinds(rows):
     """Every kick-off that isn't a desperate one (an onside try, behind late): (late, touchback,
     no landing zone, onside, the receiver's start, the clock used, the kicking side TEAM_A / TEAM_B)."""
@@ -1729,6 +1752,7 @@ class Tables:
         self.n_fail_stop = self.n_fail_run = None
         self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
         self.kick_pools, self.kick_mix = {}, None
+        self.runoff = np.array(DEFAULT_RUNOFF)
         self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
@@ -1778,8 +1802,9 @@ class Tables:
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
         backed, late4, fourth_recs, ot_first, ends = [], [], [], [], []
         close, close4, kick_times = [], [], []
-        kinds = []
+        kinds, runoff = [], []
         for code, rows in matches.items():
+            runoff += quarter_runoffs(rows)
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             snaps_before = len(snaps)
             ot_first += ot_first_fourths(rows)
@@ -1920,6 +1945,8 @@ class Tables:
                                  np.array([k[3] for k in ks]))
         if KICK_STYLES and kinds:
             t.kick_pools, t.kick_mix = fit_kick_styles(kinds)
+        if runoff:
+            t.runoff = np.array(runoff)
         t.safety_kick = (np.array(free, dtype=np.int32) if len(free) >= SAFETY_KICK_MIN
                          else _shifted_kick(t.kick[False][1]))
         punts = [d for d in decisions if d[0] == "punt"]
@@ -1998,6 +2025,7 @@ class Tables:
                       call_p=self.call_p, ot_stop=self.ot_stop,
                       ot_call_scale=np.array([self.ot_call_scale]), to_secs=self.to_secs,
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
+        arrays["runoff"] = self.runoff
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2104,6 +2132,8 @@ class Tables:
             t.to_secs = z["to_secs"]
         if "kneel_p" in z:
             t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
+        if "runoff" in z:
+            t.runoff = z["runoff"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2333,8 +2363,12 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         carry = (p == 1) | (p == 3)
         c = ix[carry]
         period[c] += 1
-        clock[c] = QUARTER
-        fresh[c] = True
+        if QUARTER_CARRY:
+            clock[c] = QUARTER - tables.runoff[pick(c, 55, len(tables.runoff))]
+            fresh[c] = False
+        else:
+            clock[c] = QUARTER
+            fresh[c] = True
         h = ix[p == 2]
         period[h] = 3
         tos[h] = -1
@@ -2794,6 +2828,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                             tally(f"timeouts_q{q}", (period[sx[ci]] == q).sum())
         clock[sx] -= used
         fresh[sx] = False
+        if stats is not None and "_snaps" in stats:      # an audit's per-snap log (sim_audit)
+            stats["_snaps"].append((sx.copy(), period[sx].copy(), clock[sx] + used, lead.copy(),
+                                    down[sx].copy(), dist[sx].copy(), y[sx].copy(), tables.kind[j].copy(),
+                                    tables.gain[j].copy(), used.copy(), stops.copy()))
         tally("clock_used", used.sum())
         tally("fresh_snaps", fr.sum())
         kd = tables.kind[j]
