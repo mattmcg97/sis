@@ -147,6 +147,50 @@ def market_prob(market, line, margin_pmf, total_pmf):
     raise ValueError(market)
 
 
+# Builds run the long simulations (the prior grid, the points responses, the reconcile's holds) on
+# BUILD_WORKERS processes, splitting the starts by row. Each row's paths draw the same random
+# numbers wherever it runs, so the split changes nothing but the time.
+BUILD_WORKERS = 4
+_PAR = {}
+
+
+def _slice_start(start, lo, hi):
+    """Rows lo..hi of a Start."""
+    n = len(start.period)
+    sub = sim.Start(hi - lo)
+    for k, v in vars(start).items():
+        if isinstance(v, np.ndarray) and v.shape[:1] == (n,):
+            setattr(sub, k, v[lo:hi].copy())
+    return sub
+
+
+def _par_rows(bounds):
+    """Worker: simulate one block of rows."""
+    tables, start, n_paths, seed, kw = _PAR["job"]
+    lo, hi = bounds
+    n = len(start.period)
+    kw = {k: (v[lo:hi] if isinstance(v, np.ndarray) and v.shape[:1] == (n,) else v) for k, v in kw.items()}
+    if kw.get("distinct"):
+        seed = seed + int(lo)              # each block its own paths, not the first block's again
+    return sim.simulate(tables, _slice_start(start, lo, hi), n_paths, np.random.default_rng(seed), seed=seed, **kw)
+
+
+def par_simulate(tables, start, n_paths, seed=0, workers=None, **kw):
+    """sim.simulate (seeded) split across processes by row; the same results."""
+    workers = BUILD_WORKERS if workers is None else workers
+    n = len(start.period)
+    if workers <= 1 or n < 2 * workers:
+        return sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed, **kw)
+    _PAR["job"] = (tables, start, n_paths, seed, kw)
+    edges = np.linspace(0, n, workers + 1).astype(int)
+    try:
+        with pool_context().Pool(workers) as pool:
+            parts = pool.map(_par_rows, list(zip(edges[:-1], edges[1:])))
+    finally:
+        _PAR.clear()
+    return np.concatenate([h for h, _ in parts]), np.concatenate([a for _, a in parts])
+
+
 class PriorGrid:
     """Simulated games from kickoff on a grid of the two offenses' strengths."""
 
@@ -201,7 +245,7 @@ class PriorGrid:
         start.team = rng.integers(0, 2, g * g).astype(np.int8)
         start.kicks_second_half = 1 - start.team
         sds = np.full((g * g, 2), theta_sd) if theta_sd else None
-        home, away = sim.simulate(tables, start, n_paths, rng, theta_sd=sds, **sim_kw)
+        home, away = par_simulate(tables, start, n_paths, seed=int(rng.integers(0, 2 ** 62)), theta_sd=sds, **sim_kw)
         margin = np.zeros((g, g, 2 * MARGIN_MAX + 1))
         total = np.zeros((g, g, TOTAL_MAX + 1))
         for i in range(g * g):
@@ -259,7 +303,7 @@ def fit_pace_response(tables, n_paths=PACE_PATHS, seed=0):
         start.pace[k] = (PACE_POINTS[i], PACE_POINTS[j])
         start.team[k] = t
         start.kicks_second_half[k] = 1 - t
-    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed)
+    home, away = par_simulate(tables, start, n_paths, seed=seed)
     h = home.mean(axis=1).reshape(n, n, 2).mean(-1)
     a = away.mean(axis=1).reshape(n, n, 2).mean(-1)
     mid = n // 2
@@ -287,7 +331,7 @@ def fit_big_response(tables, n_paths=BIG_PATHS, seed=0, attr="big"):
         getattr(start, attr)[k] = (BIG_POINTS[i], BIG_POINTS[j])
         start.team[k] = t
         start.kicks_second_half[k] = 1 - t
-    home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed)
+    home, away = par_simulate(tables, start, n_paths, seed=seed)
     h = home.mean(axis=1).reshape(n, n, 2).mean(-1)
     a = away.mean(axis=1).reshape(n, n, 2).mean(-1)
     mid = n // 2
@@ -448,10 +492,16 @@ def _set_side(tables, start, i, theta0):
         getattr(start, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
 
 
-def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, variant=None):
-    """{match code: Held} for every match with a prior, its profiles as pricing builds them."""
+RECONCILE_HOLD_PATHS = 200
+
+
+def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, variant=None,
+                n_paths=RECONCILE_HOLD_PATHS):
+    """{match code: Held} for every match with a prior, its profiles as pricing builds them. With
+    HOLD_TOTAL every match's kick-off is simulated in one run (n_paths games each, on paths of its
+    own; the reconcile only needs the matches together right, so far fewer than pricing's)."""
     v = variant or Variant("v14")
-    out = {}
+    found = []
     for code, rows in matches.items():
         means = (priors or {}).get(code)
         if means is None:
@@ -459,8 +509,27 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
         pair = (handles or {}).get(code) or handles_of(resolve_sides(rows))
         prof = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
                 else (players.Profile(), players.Profile()))
-        prof = with_big(prof, ratings, pair, *side_teams(pair, (teams or {}).get(code)))
-        out[code] = Held(tuple(held_theta(tables, grid, means, prof, v, seed=match_seed(code))), prof)
+        found.append((code, means, with_big(prof, ratings, pair, *side_teams(pair, (teams or {}).get(code)))))
+    if not (HOLD_POINTS and HOLD_TOTAL and v.profiles) or not found:
+        return {c: Held(tuple(held_theta(tables, grid, m, p, v, seed=match_seed(c))), p) for c, m, p in found}
+    theta0 = [prior_theta(grid, m, p, v.pace) for _, m, p in found]
+    st = sim.Start(2 * len(found))
+    for k, ((_, _, prof), th) in enumerate(zip(found, theta0)):
+        for i, first in ((2 * k, 0), (2 * k + 1, 1)):
+            st.team[i], st.kicks_second_half[i] = first, 1 - first
+            st.theta[i] = th
+            st.aggression[i] = (prof[0].aggression, prof[1].aggression)
+            st.kick[i] = (prof[0].kick, prof[1].kick)
+            if v.pace:
+                st.pace[i] = (prof[0].pace, prof[1].pace)
+            for name in HOLD_RATES:
+                getattr(st, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
+    home, away = par_simulate(tables, st, n_paths, seed=0, distinct=True)
+    own = (home + away).mean(axis=1).reshape(-1, 2).mean(axis=1)
+    out = {}
+    for (code, means, prof), got in zip(found, own):
+        k_ = (means[0] + means[1]) / max(1.0, float(got))
+        out[code] = Held(tuple(prior_theta(grid, (means[0] * k_, means[1] * k_), prof, v.pace)), prof)
     return out
 
 
@@ -1184,8 +1253,8 @@ def call_states(matches):
     return out
 
 
-PACE_ROUNDS = 5
-PACE_PATHS = 12
+LATE_PACE_ROUNDS = 5
+LATE_PACE_PATHS = 12
 
 
 def pace_states(matches):
@@ -1219,7 +1288,7 @@ def pace_states(matches):
     return out
 
 
-def fit_late_pace(tables, items, rounds=PACE_ROUNDS, n_paths=PACE_PATHS, seed=0):
+def fit_late_pace(tables, items, rounds=LATE_PACE_ROUNDS, n_paths=LATE_PACE_PATHS, seed=0):
     """Tables.late_pace: Q2's snap times from 3:00 scaled, slice by slice, until the snaps played
     from every real state at 3:00 take the real seconds there on average (snaps the half's end cut
     short apart). Returns (real snaps, before, after) a half by slice."""
@@ -2008,6 +2077,15 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     "glmer", fitted on `history`) and player profiles."""
     import copy
     import os
+    import time
+    clock0 = [time.time()]
+
+    def lap(label):
+        """The build's time on a stage (verbose)."""
+        if verbose:
+            print(f"    [{label}: {time.time() - clock0[0]:.0f}s]", flush=True)
+        clock0[0] = time.time()
+
     if prior not in PRIORS:
         raise ValueError(f"prior must be one of {', '.join(PRIORS)}")
     os.makedirs(out_dir, exist_ok=True)
@@ -2051,6 +2129,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             elif verbose:
                 print(f"  prior shrink: fewer than {SHRINK_MIN_MATCHES} finished matches in the"
                       f" {SHRINK_WINDOWS * SHRINK_DAYS} days before the cut-off, none applied")
+    lap("pre-match model")
     handles = dict(handles or {})
     for code, rows in matches.items():
         handles.setdefault(code, handles_of(rows))
@@ -2059,6 +2138,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     as_of = (before.date() if before is not None else
              max(days) + dt.timedelta(days=1) if days else None)
     tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
+    lap("tables")
     if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
         scaled = fit_call_scale(tables, call_states(matches))
         if verbose and scaled:
@@ -2072,6 +2152,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print("  Q2 from 3:00, snaps a half by 20-second slice, real / simulated before -> after: "
                   + "; ".join(f"{a:.2f}/{b:.2f}->{c:.2f}" for a, b, c in zip(real_p, before_p, after_p))
                   + "; snap times x " + " ".join(f"{x:.2f}" for x in tables.late_pace))
+    lap("timeouts and Q2 pace")
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
@@ -2104,6 +2185,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print(f"  close endings: from {n:,} real level snaps in Q4's last two minutes, real"
                   f" {pct(drives)}; simulated {pct(sim_before)} -> {pct(sim_after)} (level kick odds in"
                   f" the last {CLOSE_LEVEL_LATE:.0f}s {kick:+.1f}, 4th down {k4:+.1f}, efficiency {eff:+.2f})")
+    lap("scoring levels, rubber band, settle, close endings")
     if verbose and sim.TIMEOUTS:
         if tables.call_p.any():
             source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
@@ -2152,6 +2234,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
               + "; ".join(f"{name.replace('_', ' ')} "
                           + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
                           for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
+    lap("quarter levels")
     form = {}
     if pre is not None:
         var_fn, cov_fn, slope = fixed_strength_spread(tables)
@@ -2169,9 +2252,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f" (both sides together), each player's own {sds[0]:.3f} to {sds[-1]:.3f}"
                       f" ({len(form)} players; {np.sqrt(tables.strength_league):.3f} for one"
                       f" with no history)")
+    lap("form")
     tables_path = os.path.join(out_dir, "v14tables.npz")
     grid_path = os.path.join(out_dir, "v14grid.npz")
     grid = PriorGrid.build(tables, n_paths=grid_paths)
+    lap("prior grid")
     big_path = os.path.join(out_dir, BIG_FILE)
     if os.path.exists(big_path):
         os.remove(big_path)
@@ -2195,6 +2280,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             json.dump(ratings, fh, indent=1)
         if verbose:
             _print_big(ratings, grid)
+    lap("big-play and loss ratings and responses")
     if PACE_NEUTRAL:
         grid.pace_home, grid.pace_away = fit_pace_response(tables, n_paths=max(500, grid_paths * 2 // 3))
         if verbose:
@@ -2203,6 +2289,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                   + " / ".join(f"{p:.3f}" for p in PACE_POINTS) + ", away at 1): "
                   + " / ".join(f"{grid.pace_home[i, n // 2]:.3f}" for i in range(n))
                   + "; at the away pace: " + " / ".join(f"{grid.pace_home[n // 2, j]:.3f}" for j in range(n)))
+    lap("pace response")
     grid.save(grid_path)
     if IN_PLAY_FIT:
         rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors))
@@ -2221,6 +2308,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         print("  in-game check, points in each quarter from real quarter-start states: real "
               + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
               + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
+    lap("in-play fit and in-game check")
     if pre is not None:
         if verbose and prior == "glmer":
             print(f"  pre-match: {pre.describe()}")
@@ -2258,6 +2346,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
     elif verbose:
         print("  player profiles: no handles in the export, none built")
+    lap("player profiles and kick-offs")
     if RECONCILE and priors and handles:
         grid = reconcile(tables, grid, matches, priors, book, ratings, handles, match_teams(history),
                          grid_paths, verbose=verbose)
@@ -2268,6 +2357,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print("  in-game check after the reconcile (league rates): real "
                   + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
                   + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
+    lap("reconcile")
     return tables_path, grid_path
 
 
