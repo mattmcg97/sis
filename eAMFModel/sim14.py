@@ -193,12 +193,34 @@ LATE_CLOCK = True
 STOP_GRID = np.linspace(-4.0, 4.0, 401)
 
 
-def _fit_stop_censored(tables, on, ends):
+def _fit_prev_stop(tables, on, prev, stop_shift):
+    """Each previous-play class's shift to the stopped-clock chance (log odds), by maximum likelihood
+    on the snaps after it that the quarter's end did not cut short, the cells' shifts held."""
+    key = np.array([r["key"] for r in on], dtype=np.int64)
+    cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in on], dtype=np.int64)
+    stop = np.array([r["seconds"] <= STOP_SECONDS for r in on])
+    uncut = np.array([r["clock"] >= UNCUT_SECONDS for r in on])
+    wt = np.array([r.get("w", 1.0) for r in on])
+    base = _running_logit(tables, key)[0] + stop_shift[cell]
+    out = np.zeros(N_PREV)
+    for c in range(N_PREV):
+        ix = np.flatnonzero((prev == c) & uncut)
+        if len(ix) < 50:
+            continue
+        p = np.clip(_sigmoid(base[ix, None] + STOP_GRID[None, :]), 1e-9, 1 - 1e-9)
+        ll = (np.where(stop[ix, None], np.log(p), np.log(1 - p)) * wt[ix, None]).sum(0)
+        out[c] = STOP_GRID[np.argmax(ll - 0.5 * STOP_PRIOR * 0.25 * STOP_GRID ** 2)]
+    return out
+
+
+def _fit_stop_censored(tables, on, ends, offset=None):
     """The clock-stopped share's shift by cell, by maximum likelihood on every snap that follows a
     scrimmage play: a stopped play, a running play, or -- for a snap that ran the quarter out with c
     seconds left -- either one that would have taken c or more."""
     base = _running_logit(tables, np.array([r["key"] for r in on] + [r["key"] for r in ends],
                                            dtype=np.int64))[0]
+    if offset is not None:
+        base = base + np.concatenate([offset, np.zeros(len(ends))])
     cell = np.array([cell_index(r["period"], r["clock"], r["margin"]) for r in on + ends], dtype=np.int64)
     kind = np.array([0 if r["seconds"] <= STOP_SECONDS else 1 for r in on] + [2] * len(ends))
     wt = np.array([r.get("w", 1.0) for r in on] + [r.get("w", 1.0) for r in ends])
@@ -560,6 +582,15 @@ def fit_play_calling(tables, snaps, ends=(), kneels=()):
     if LATE_CLOCK:
         ends_on = [r for r in ends if not r.get("fresh")]
         stop_shift = _fit_stop_censored(tables, on, ends_on)
+        if STOP_LINK:
+            prev = np.array([r.get("prev", -1) for r in on])
+            known = prev >= 0
+            tables.prev_mix = np.bincount(prev[known], minlength=N_PREV) / max(1, known.sum())
+            gam = np.zeros(N_PREV)
+            for _ in range(3):
+                gam = _fit_prev_stop(tables, on, prev, stop_shift)
+                stop_shift = _fit_stop_censored(tables, on, ends_on, offset=np.where(known, gam[np.maximum(prev, 0)], 0.0))
+            tables.prev_stop = gam
         if TIMEOUTS:
             tables.ot_stop = fit_ot_stop(tables, on, stop_shift * _quarter_mask("stop"))
 
@@ -772,7 +803,7 @@ def snap_records(rows):
                    margin=_margin(a, a["offense"]),
                    down=down, distance=t, field=y, seconds=seconds, message=_i(b["message"]),
                    kind=GAIN, gain=0, new_field=0, replay=False,
-                   fresh=is_fresh(a))
+                   fresh=is_fresh(a), start=_i(a["message"]))
         if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
             continue
         bk = b["play_kind"]
@@ -876,8 +907,38 @@ LONG_TAIL = True
 # Tables.quarter_pace for its quarter and 20-second slice, fitted in the build (v14.fit_quarter_pace)
 # so snaps played from every real quarter start take the real seconds in each slice.
 QUARTER_PACE = True
+# v14: whether the clock is stopped before a snap hangs on the play before it. In the feed, after a
+# play that gained nothing (mostly an incomplete pass) the next snap of the drive came on a stopped
+# clock 84% of the time, after any gain 29% (outside the halves' last two minutes 79% and 14%). The
+# sim drew each snap's stopped clock at its state's average rate, so a failing drive used as much
+# clock as a moving one. With STOP_LINK the chance also carries a shift for the drive's previous
+# play (Tables.prev_stop: nothing gained, a gain short of the line, a first down, a loss), fitted
+# with the cells' shifts; where the previous play is not known it is drawn from the real mix.
+STOP_LINK = True
+N_PREV = 4
 PACE_SLICE = 20.0
 PACE_SLICES = 12
+
+
+def play_class(gain, dist):
+    """A drive's play as the next snap's clock sees it: 0 nothing gained, 1 a gain short of the
+    line, 2 a first down, 3 a loss."""
+    gain = np.asarray(gain)
+    return np.where(gain == 0, 0, np.where(gain < 0, 3, np.where(gain >= np.asarray(dist), 2, 1))).astype(np.int8)
+
+
+def link_prev(recs):
+    """Each snap's previous play in its drive (play_class), or -1: none before it in the drive, or
+    not in the records."""
+    by_end = {}
+    for r in recs:
+        by_end[r["message"]] = r
+    for r in recs:
+        p = by_end.get(r.get("start"))
+        ok = (p is not None and not r.get("fresh") and p["offense"] == r["offense"] and p["period"] == r["period"]
+              and p["kind"] == GAIN and p["gain"] < 100 - p["field"])
+        r["prev"] = int(play_class(p["gain"], p["distance"])) if ok else -1
+    return recs
 
 
 def pace_slice(clock):
@@ -1796,6 +1857,8 @@ class Tables:
         self.kick_pools, self.kick_mix = {}, None
         self.gain_surv = None
         self.quarter_pace = np.ones((4, PACE_SLICES))
+        self.prev_stop = np.zeros(N_PREV)
+        self.prev_mix = np.full(N_PREV, 1.0 / N_PREV)
         self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
@@ -1852,6 +1915,7 @@ class Tables:
             ot_first += ot_first_fourths(rows)
             late4 += late_fourth_choices(rows)
             snaps += snap_records(rows)
+            link_prev(snaps[snaps_before:])
             for rec in snaps[snaps_before:]:
                 rec["match"] = code
                 rec["kneel"] = KNEELS and is_kneel(rec)
@@ -2069,6 +2133,7 @@ class Tables:
         if self.gain_surv is not None:
             arrays["gain_surv"] = self.gain_surv
         arrays["quarter_pace"] = self.quarter_pace
+        arrays["prev_stop"], arrays["prev_mix"] = self.prev_stop, self.prev_mix
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2179,6 +2244,8 @@ class Tables:
             t.gain_surv = z["gain_surv"]
         if "quarter_pace" in z:
             t.quarter_pace = z["quarter_pace"]
+        if "prev_stop" in z:
+            t.prev_stop, t.prev_mix = z["prev_stop"], z["prev_mix"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2324,6 +2391,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     loss_on = LOSS_PLAYS and getattr(tables, "n_loss_stop", None) is not None \
         and bool(np.any(loss_r != 1.0) or np.any(loss_s != 1.0))
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
+    prev_cls = np.full(P, -1, dtype=np.int8)            # STOP_LINK: the drive's previous play, -1 not known
     tos = rep(getattr(start, "timeouts", np.full((S, 2), -1))).astype(np.int8)
     to_on = TIMEOUTS and tables.call_p.any()
     dp = tables.drive
@@ -2461,6 +2529,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         down[ix] = 1
         dist[ix] = np.minimum(10, 100 - y[ix])
         fresh[ix] = True
+        prev_cls[ix] = -1
 
     def score_td(ix, side):
         """Six points to this side, then the conversion."""
@@ -2769,6 +2838,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     dist[kx] += 1
                     fresh[kx] = False
                     tally("kneel_plays", len(kx))
+                    prev_cls[kx] = 1                     # a kneel keeps the clock running
                     sx = np.delete(sx, kn)
             if not len(sx):
                 continue
@@ -2785,6 +2855,12 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         ns = tables.n_stop[key]
         fr = fresh[sx] & tables.n_fresh.any()
         run_logit, ns0, n0 = _running_logit(tables, key)
+        if STOP_LINK and np.any(tables.prev_stop):
+            pc = prev_cls[sx].astype(np.int64)
+            unknown = pc < 0
+            if unknown.any():
+                pc[unknown] = np.minimum(N_PREV - 1, np.searchsorted(np.cumsum(tables.prev_mix), rand(sx[unknown], 57)))
+            run_logit = run_logit + tables.prev_stop[pc]
         p_run = np.where(ns0 <= 0, 0.0, np.where(ns0 >= n0, 1.0,
                                                  _sigmoid(run_logit + tables.stop_shift[cell]
                                                           + np.where(period[sx] >= 5,
@@ -3010,6 +3086,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         clock[gx[keep]] = MANAGED_SECONDS
         tally("managed", keep.sum())
         first = gain >= dist[gx]
+        prev_cls[gx] = play_class(gain, dist[gx])
         nd = np.where(first, 1, np.where(rp, down[gx], down[gx] + 1))
         nt = np.where(first, np.minimum(10, 100 - y2), dist[gx] - gain)
         reset = nt <= 0
