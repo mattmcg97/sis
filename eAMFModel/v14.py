@@ -551,6 +551,20 @@ def reconcile(tables, grid, matches, priors, book, ratings, handles, teams, grid
     shift) re-fitted with every match played as pricing plays it, then the grid rebuilt on them
     (its responses kept). Returns the new grid."""
     held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
+    if sim.QUARTER_PACE:
+        # the pace was fitted at league strengths before the levels; with the clock stopping after
+        # failed plays (sim.STOP_LINK) it hangs on the play, so it is fitted again as pricing plays
+        paced = fit_quarter_pace(tables, *pace_states(matches), held=held)
+        if verbose and paced:
+            real_n, before_n, after_n = paced[3:]
+            print("  reconcile, snaps a quarter from the real quarter starts at the matches' own strengths, real / "
+                  "simulated before -> after: " + "; ".join(f"Q{q + 1} {real_n[q]:.2f} / {before_n[q]:.2f} -> {after_n[q]:.2f}"
+                                                         for q in range(4)))
+        if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
+            scaled = fit_call_scale(tables, call_states(matches))
+            if verbose and scaled:
+                print("  reconcile, timeouts: " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
+                                                         for q, (n, r, b, a, s) in sorted(scaled.items())))
     before_q, before_l = tables.period_theta.copy(), tables.late_theta.copy()
     fitted_q, fitted_l = fit_quarter_levels(
         tables, quarter_start_states(matches, grid, priors, held=held),
@@ -1277,7 +1291,7 @@ def pace_states(matches):
     snap by quarter and 20-second slice (sim.pace_slice): (starts, quarters, snaps played, seconds
     summed (4, slices), snaps timed (4, slices)). The timed snaps leave out kneels, which the sim
     plays apart, and a quarter's last snap, which its end cuts short."""
-    starts, quarters, played = [], [], []
+    starts, quarters, played, codes = [], [], [], []
     secs, snaps = np.zeros((4, sim.PACE_SLICES)), np.zeros((4, sim.PACE_SLICES))
     for code, rows in matches.items():
         rows = resolve_sides(rows)
@@ -1298,22 +1312,25 @@ def pace_states(matches):
             starts.append(start_from(state))
             quarters.append(q)
             played.append(n)
+            codes.append(code)
         for r in sim.snap_records(rows):
             if not 1 <= r["period"] <= 4 or (sim.KNEELS and sim.is_kneel(r)):
                 continue
             q, k = r["period"] - 1, int(sim.pace_slice(r["clock"]))
             secs[q, k] += r["seconds"]
             snaps[q, k] += 1
-    return starts, np.array(quarters), np.array(played, dtype=float), secs, snaps
+    return starts, np.array(quarters), np.array(played, dtype=float), secs, snaps, codes
 
 
-def fit_quarter_pace(tables, starts, quarters, played, real_secs, real_snaps, rounds=PACE_FIT_ROUNDS,
-                     n_paths=PACE_FIT_PATHS, seed=0):
+def fit_quarter_pace(tables, starts, quarters, played, real_secs, real_snaps, codes=None, held=None,
+                     rounds=PACE_FIT_ROUNDS, n_paths=PACE_FIT_PATHS, seed=0):
     """Tables.quarter_pace, in two steps. Each quarter's snap times are scaled 20-second slice by
     slice until the snaps played from every real quarter start take the real seconds there on
     average (kneels and snaps a quarter's end cut short apart); then each quarter's whole row is
     scaled until as many snaps are played from its real starts to its end as really were (kneels in),
     so the time the quarter spends elsewhere -- kicks, kneels, a clock run out -- comes out as real.
+    With held ({match code: Held}, the reconcile's), each start is played as pricing plays its match;
+    otherwise at league strengths.
     Returns (real, before, after) seconds a snap (4, slices) and (real, before, after) snaps a
     quarter (4,)."""
     if len(starts) < 200:
@@ -1321,7 +1338,8 @@ def fit_quarter_pace(tables, starts, quarters, played, real_secs, real_snaps, ro
     start = sim.Start(len(starts))
     for i, f in enumerate(starts):
         _fill(start, i, f)
-        start.theta[i] = LEAGUE_THETA
+        theta0 = held.get(codes[i]) if (held is not None and codes is not None) else None
+        _set_side(tables, start, i, LEAGUE_THETA if theta0 is None else theta0)
     real = real_secs / np.maximum(1, real_snaps)
     real_n = np.array([played[quarters == q].mean() for q in (1, 2, 3, 4)])
     first_q = np.repeat(quarters, n_paths)
