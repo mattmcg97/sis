@@ -867,6 +867,21 @@ TWO_MINUTE = True
 # gain of d + extra given d (Tables.gain_surv, gain_survival: every gain, touchdowns counted as at
 # least as long as the field allowed) and otherwise stops where that survival curve puts it.
 LONG_TAIL = True
+# v14: Q2's clock from 3:00. The build fits snap times in 40-second cells, and the one from 2:40
+# to 2:00 holds both the clock-running snaps before the two-minute warning and the quick ones after
+# it; at a 15.5 / 15.5 kick-off the sim played 16.1 snaps a game in Q2 to the real 15.0. With
+# LATE_PACE each snap from 3:00 (bar a fresh possession's first and a timeout's) takes its time
+# times Tables.late_pace for its 20-second slice, fitted in the build (v14.fit_late_pace) so the
+# snaps played from every real Q2 state at 3:00 fall in each slice as the real ones did.
+LATE_PACE = True
+PACE_FROM = 180.0
+PACE_SLICE = 20.0
+PACE_SLICES = 9
+
+
+def pace_slice(clock):
+    """The 20-second slice of Q2 from 3:00 a clock is in."""
+    return np.clip(((PACE_FROM - np.asarray(clock, dtype=float)) // PACE_SLICE).astype(np.int64), 0, PACE_SLICES - 1)
 
 
 def gain_survival(snaps):
@@ -1779,6 +1794,7 @@ class Tables:
         self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
         self.kick_pools, self.kick_mix = {}, None
         self.gain_surv = None
+        self.late_pace = np.ones(PACE_SLICES)
         self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
@@ -2051,6 +2067,7 @@ class Tables:
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
         if self.gain_surv is not None:
             arrays["gain_surv"] = self.gain_surv
+        arrays["late_pace"] = self.late_pace
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2159,6 +2176,8 @@ class Tables:
             t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
         if "gain_surv" in z:
             t.gain_surv = z["gain_surv"]
+        if "late_pace" in z:
+            t.late_pace = z["late_pace"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2849,6 +2868,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                     if stats is not None:
                         for q in (2, 4):
                             tally(f"timeouts_q{q}", (period[sx[ci]] == q).sum())
+        if LATE_PACE:
+            lp = (period[sx] == 2) & (clock[sx] <= PACE_FROM) & ~fr & ~to_stop
+            if lp.any():
+                used[lp] = np.maximum(1.0, used[lp] * tables.late_pace[pace_slice(clock[sx[lp]])])
         if TWO_MINUTE:
             warn = ~stops & ~fr & ~to_stop & ((period[sx] == 2) | (period[sx] == 4)) & (clock[sx] > LATE) \
                 & (clock[sx] - (used - PLAY_SECONDS) <= LATE)

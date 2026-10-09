@@ -1184,6 +1184,76 @@ def call_states(matches):
     return out
 
 
+PACE_ROUNDS = 5
+PACE_PATHS = 12
+
+
+def pace_states(matches):
+    """Every match's real Q2 state at 3:00 (its first snap from there) as simulation start fields,
+    with the snaps really played from it: per 20-second slice (sim.pace_slice), how many and the
+    seconds they took (the half's last snap, cut short by its end, left out)."""
+    out = []
+    for code, rows in matches.items():
+        rows = resolve_sides(rows)
+        first = next((i for i, r in enumerate(rows) if r["period"] == "2" and r["clock_seconds"]
+                      and float(r["clock_seconds"]) <= sim.PACE_FROM and r["play_kind"] in sim.SNAP_KINDS
+                      and r["down"] and r["score_p1"] and r["score_p2"]), None)
+        if first is None:
+            continue
+        state, _ = state_for(rows[first])
+        if state is None:
+            continue
+        counts, secs, timed = np.zeros(sim.PACE_SLICES), np.zeros(sim.PACE_SLICES), np.zeros(sim.PACE_SLICES)
+        for a, b in zip(rows[first:], rows[first + 1:] + [None]):
+            if a["period"] != "2" or b is None or b["period"] != "2":
+                break                       # the half's last live state is never snapped
+            if a["play_kind"] not in sim.SNAP_KINDS or not a["down"] or not a["clock_seconds"]:
+                continue
+            if b["play_kind"] in ("PUNT", "FIELD_GOAL") or not b["clock_seconds"]:
+                continue
+            k = int(sim.pace_slice(float(a["clock_seconds"])))
+            counts[k] += 1
+            secs[k] += float(a["clock_seconds"]) - float(b["clock_seconds"])
+            timed[k] += 1
+        out.append((start_from(state), counts, secs, timed))
+    return out
+
+
+def fit_late_pace(tables, items, rounds=PACE_ROUNDS, n_paths=PACE_PATHS, seed=0):
+    """Tables.late_pace: Q2's snap times from 3:00 scaled, slice by slice, until the snaps played
+    from every real state at 3:00 take the real seconds there on average (snaps the half's end cut
+    short apart). Returns (real snaps, before, after) a half by slice."""
+    if len(items) < 100:
+        return None
+    start = sim.Start(len(items))
+    for i, it in enumerate(items):
+        _fill(start, i, it[0])
+        start.theta[i] = LEAGUE_THETA
+    real_n = np.mean([it[1] for it in items], axis=0)
+    real_s = np.sum([it[2] for it in items], axis=0) / np.maximum(1, np.sum([it[3] for it in items], axis=0))
+
+    def played():
+        stats = {"_snaps": []}
+        sim.simulate(tables, start, n_paths, np.random.default_rng(seed), stats=stats, seed=seed)
+        cols = [np.concatenate([x[k] for x in stats["_snaps"]]) for k in (1, 2, 9, 10)]
+        per, clk, used, stopped = cols
+        on = (per == 2) & (clk <= sim.PACE_FROM)
+        sl = sim.pace_slice(clk[on])
+        n = np.bincount(sl, minlength=sim.PACE_SLICES) / (len(items) * n_paths)
+        whole = on.copy()
+        whole[on] = clk[on] - used[on] > 0              # the half's end cut it short: no time to read
+        s_ = np.bincount(sim.pace_slice(clk[whole]), used[whole], sim.PACE_SLICES) / np.maximum(
+            1, np.bincount(sim.pace_slice(clk[whole]), minlength=sim.PACE_SLICES))
+        return n, s_
+
+    before, secs = played()
+    got = before
+    for _ in range(rounds):
+        tables.late_pace = np.clip(tables.late_pace * np.clip(real_s / np.maximum(secs, 1.0), 0.8, 1.25), 0.5, 2.0)
+        got, secs = played()
+    return real_n, before, got
+
+
 def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0):
     """Scale each half's call rates (Q2, Q4) so the simulated timeouts from the two-minute mark
     match the real ones. Returns {quarter: (halves, real, before, after, scale)}."""
@@ -1995,6 +2065,13 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print("  timeouts from the two-minute mark, real / simulated before -> after: "
                   + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f}, {n:,} halves)"
                               for q, (n, r, b, a, s) in sorted(scaled.items())))
+    if sim.LATE_PACE:
+        paced = fit_late_pace(tables, pace_states(matches))
+        if verbose and paced:
+            real_p, before_p, after_p = paced
+            print("  Q2 from 3:00, snaps a half by 20-second slice, real / simulated before -> after: "
+                  + "; ".join(f"{a:.2f}/{b:.2f}->{c:.2f}" for a, b, c in zip(real_p, before_p, after_p))
+                  + "; snap times x " + " ".join(f"{x:.2f}" for x in tables.late_pace))
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
     quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
