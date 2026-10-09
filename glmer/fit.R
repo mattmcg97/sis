@@ -23,7 +23,7 @@
 DEFAULTS <- list(
   history = "",             # "" = first of HISTORY_CANDIDATES in config.R
   out = "",                 # "" = glmer/out/model
-  feature_set = "form",     # best out of sample so far -- see README.md's findings
+  feature_set = "form_clock",  # form + late-in-session and time of day: best so far (README.md's findings)
   weighting = "hl60",
   scalar = "",              # weight scalar in place of the weighting's own; "" = its own
   mode = "global",          # predict.R's default mode for this model

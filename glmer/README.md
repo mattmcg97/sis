@@ -5,13 +5,15 @@ versions use for each match's prior. It is written in R with `lme4::glmer`.
 v8 to v10 can price off it with `v9-build --prior glmer` (see
 [In eAMFModel's versions](#in-eamfmodels-versions)).
 
-**The chosen model is the global one** with the `form` features and a
+**The chosen model is the global one** with the `form_clock` features and a
 60-day row half-life: `fit.R`'s defaults. It is a single Poisson GLMM over
 every side of every match, with:
 - random effects for the gamer's attack, the opponent's defence, both NFL
   teams and the stream;
 - home/away;
-- both sides' recent form.
+- both sides' recent form;
+- since 9 Oct 2026, whether a side is 8+ matches into its session, and the
+  time of day (see "Shifts, time of day and weekdays").
 
 Every player's rating is shrunk toward the league by how much data they
 have, so a new player starts as an average one. The per-player models
@@ -460,8 +462,11 @@ each with the follow layer:
 scoring late in a session falls by about 1% (0.25 points), and time of day varies by sd 0.02 (0.4
 points a side). `form_shift`'s per-gamer start (sd 0.027 on the log scale, 0.5 points) helps a
 little in games 1–2 and hurts a little from the 8th on; it was better in only 3 of 6 fortnights.
-Both read the clock, so a build with either prices pre-match quotes off the kick-off
-(`glmer_prior.CLOCK_TERMS`). `form` stays the default.
+**`form_clock` is the default from 9 Oct 2026** (`fit.R`'s `feature_set`). Its terms read the
+clock, but a pre-match quote priced as of an earlier time reads them at most a 4-hour block or a
+match or two out. That is worth a fraction of a point, so its builds still price each pre-match
+quote off the results in when it was published (`glmer_prior.ROUGH_CLOCK_TERMS`). `form_shift`
+stays an option.
 
 ## Speed
 
