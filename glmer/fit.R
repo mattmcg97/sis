@@ -133,7 +133,7 @@ write_json(list(feature_set = args$feature_set, weighting = args$weighting,
 # ---------------------------------------------------------------------------
 
 gfit <- bundle$global$fit
-re <- ranef(gfit)
+re <- ranef(gfit, condVar = FALSE)   # the conditional variances run out of memory with random slopes
 effects <- do.call(rbind, lapply(names(re), function(g) {
   x <- re[[g]]
   if (!"(Intercept)" %in% names(x) || g %in% c("ObsID", "MatchId")) return(NULL)
