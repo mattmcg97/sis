@@ -321,7 +321,7 @@ PAIR_FIELDS = [
     "prod_outcome", "candidate_outcome", "realized",
     "prod_error", "candidate_error", "prod_line_error", "candidate_line_error",
     "disagreement", "probability_winner", "line_winner",
-    "prod_live", "candidate_live", "prod_state", "candidate_state",
+    "prod_live", "candidate_live", "prod_state", "candidate_state", "clock_seconds",
 ]
 
 
@@ -750,6 +750,7 @@ def pair_row(p):
         "candidate_live": int(p.candidate_live),
         "prod_state": p.prod_state,
         "candidate_state": p.candidate_state,
+        "clock_seconds": "" if p.clock_seconds is None else p.clock_seconds,
     }
 
 

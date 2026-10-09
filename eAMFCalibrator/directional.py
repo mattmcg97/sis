@@ -106,6 +106,8 @@ class PairedObservation:
     # NO_SNAP anchor means the drive's real start was never found, so the
     # game state on the row describes a different moment than intended.
     anchor: str = drives.FIRST_DOWN
+    # Seconds left in the quarter at the snapshot (PLAY_OVER snapshots only).
+    clock_seconds: Optional[float] = None
 
     @property
     def score_diff(self):
@@ -354,7 +356,8 @@ def play_over_snapshots(match_code, snaps):
             field_position=_int_or_none(r.get("field_position")),
             down_number=_int_or_none(r.get("down")), distance=_int_or_none(r.get("distance")),
             play_time=r.get("file_time"), score_p1=_int_or_none(r.get("score_p1")) or 0,
-            score_p2=_int_or_none(r.get("score_p2")) or 0, n_plays=1, anchor=drives.PLAY_OVER),
+            score_p2=_int_or_none(r.get("score_p2")) or 0, n_plays=1, anchor=drives.PLAY_OVER,
+            clock_seconds=_int_or_none(r.get("clock_seconds"))),
             min(ends) if ends else float("inf")))
     return out
 
@@ -581,6 +584,7 @@ def build_pairs(cur, match_codes, time_column, stats, scan=None, sink=None,
                     prod_state=prod_quote.state,
                     candidate_state=candidate_quote.state,
                     anchor=snap.anchor,
+                    clock_seconds=getattr(snap, "clock_seconds", None),
                 )
                 stats["same_line" if observation.same_line else "different_line"] += 1
                 paired_any = True

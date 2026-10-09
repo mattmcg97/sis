@@ -148,7 +148,8 @@ class TestBuckets(unittest.TestCase):
         costly = text.split("the costliest moments")[1].splitlines()
         self.assertTrue(costly[2].strip().startswith(bm.LIVE))
         html = bm.html_tables([("prod", rows)], str, lambda c: f"<td>{c:+.2f}</td>")
-        self.assertIn("Where in the game the book loses", html)
+        self.assertIn("<h3>In play <span class=\"dim\">400 bets</span></h3>", html)
+        self.assertIn("<td class=\"bad\">-1,000</td><td class=\"bad\">-50.00%</td>", html)
 
     def test_a_written_csv_buckets_again_without_candidates(self):
         import os

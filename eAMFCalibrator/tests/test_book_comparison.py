@@ -82,7 +82,8 @@ class TestIntervals(unittest.TestCase):
         self.assertIn("sharp", text)
         with mock.patch.object(config, "SIM_BOOT", 50):
             page = br.html(br.compute([("v10", rows)]), lambda x: str(x))
-        self.assertIn("<h3>Book comparison</h3>", page)
+        self.assertIn("<h3>Book comparison <span class=\"dim\">sharp: ", page)
+        self.assertIn("<td class=\"good\">100.00%<br>", page)
         self.assertEqual(page.count("<table"), 2)
         self.assertIn("<th>Candidate takes</th>", page)
         self.assertEqual(br.html([], str), "")

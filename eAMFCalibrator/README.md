@@ -79,7 +79,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
-| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11` and `--candidate v12` |
+| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12` and `--candidate v13` |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -1368,7 +1368,7 @@ Each `scouting_playover.csv` row carries:
 play against the one before it, so dropping one would join two plays into
 a single wrong one. Everything that scores prices skips them.
 
-It is the input to `python -m eAMFModel v8-build` to `v12-build`, `remaining` and `profiles`.
+It is the input to `python -m eAMFModel v8-build` to `v13-build`, `remaining` and `profiles`.
 
 Each row also carries `timeouts_used_a` / `timeouts_used_b`: how many timeouts
 each side had called in the half at that `PLAY_OVER`, off the feed's
@@ -1438,6 +1438,111 @@ messages added up, TEAM_A as PLAYER_1 (the Finals section's `scouting=endgame` c
 orientation). With `config.SCORES_FROM_SCOUTING` (on) a match SCORE_CHANGES has no rows for gets
 them rebuilt from the same messages (`snowflake_io.scouting_score_rows`): one row on each scoring
 message, with its period and the running score, so it is priced in play like any other.
+
+## Halves, half-time margins, touchdown lengths, by gamer and team: `halves`
+
+```powershell
+python -m eAMFCalibrator scouting --since 2026-01-01 --no-probe     # every PLAY_OVER, all history
+python -m eAMFCalibrator halves                                      # off out/scouting_playover.csv
+python -m eAMFCalibrator halves --min-games 50
+python -m eAMFCalibrator halves --history out/match_history.csv --min-pair-games 20
+```
+
+Off a `scouting` export, no Snowflake. A match's half-time score is the board after its last play
+of the first half. A touchdown's length is the yards to the goal line when its play started; kick
+and punt returns and turnovers run back are counted apart. Its drive runs from the first play its
+side had the ball for (afresh after a score, kick or punt and at half time).
+
+`halves.txt` gives, for the league:
+- how often the bigger half holds 60/70/80/90% of a match's points, against the same matches with
+  their halves paired at random (what independent halves would give), and the correlation of the
+  two halves' points;
+- the second half from each half-time margin: points, lead changes (any, 2+), how often the side
+  behind at half time won;
+- touchdown lengths (mean, 20+ and 40+ yards, the drive's plays and seconds) by half, and in the
+  second half by the half-time margin;
+
+then a line for each gamer with `--min-games` or more (default 30): their points a half, their
+games' half correlation and lopsided share against chance, their games 3-4 apart at half time (lead
+changes, won from up and from down), and their touchdowns' lengths, overall and in the second half
+of games 1-4 apart at half time, and their opponents' touchdowns' length (`allowed`).
+`halves_matches.csv`, `halves_tds.csv` and `halves_gamers.csv` carry every match, touchdown and
+gamer.
+
+With `--history` (default: `match_history.csv` beside the export, when there is one) each side
+gets its NFL team (`PLAYER_1_TEAM` is home; a row with the handles the other way round is turned
+round), and the same lines follow for each team (`halves_teams.csv`) and each gamer / team pair
+with `--min-pair-games` or more (`halves_gamer_teams.csv`). Touchdown length is then fitted as
+gamer + team + opponent + opponent's team (least squares over every offensive touchdown), so:
+- a team's `td_team_effect` is its yards with the gamers who picked it and whom they played held
+  level, `td_allowed_team_effect` the same for the touchdowns scored against it;
+- a gamer's `td_gamer_effect` is theirs with the teams they picked held level;
+- a pair's `td_expected_yards` is what its gamer, its team and their opponents add up to, and
+  `td_vs_expected_z` how far the pair's own mean sits from that. `halves.txt` gives the spread of
+  the pairs beyond their gamer plus their team (a chi-squared against noise alone) and the pairs
+  furthest each way.
+
+## Kick-offs, the half-time double and prod's line on a kick: `kickoffs`
+
+```powershell
+python -m eAMFCalibrator kickoffs                                   # off out/scouting_playover.csv
+python -m eAMFCalibrator kickoffs eAMFCalibrator\out_all\scouting_playover.csv --history eAMFCalibrator\out_oct\match_history.csv --out eAMFCalibrator\out_all
+```
+
+Off a `scouting` export, no Snowflake. The gamers come from `--history` (default:
+`match_history.csv` beside the export), PLAYER_1 as home. It writes `kickoffs.txt` and three CSVs
+to `--out`: `kickoffs_kicks.csv` (one row a kick), `kickoffs_matches.csv` (one row a match) and
+`kickoffs_gamers.csv` (one row a gamer).
+
+- **How kicks land.** Each kick-off is classed as one of:
+  - a touchback: the 20, no clock;
+  - no landing zone: the 35, no clock;
+  - out of bounds: the 40, no clock;
+  - returned, onside, or run back for a touchdown.
+
+  For each class: its share by quarter, the start and seconds, and the receiver's points on the
+  drive it starts (to the change of possession or half time). Kicks in Q2's and Q4's last two
+  minutes are compared with the rest.
+- **Kickers.** Each gamer with `--min-games` kicks gets their kinds, and a chi-squared on them
+  against the league's (3 df: about 3 by chance, 11.3 at 1%).
+- **The half-time double.** R is the side receiving the second half's kick, the one that kicked
+  off the game; K is the other. Per match it counts:
+  - R's and K's points in Q2's last two minutes;
+  - R's points on its first Q3 drive, and whether R scored both (the double);
+  - both sides' Q2 scrimmage snaps (pace) and points.
+
+  It also reads prod's total and spread at Q2's two-minute mark and at the second half's kick
+  against the result. Each gamer gets their double rate as R against the league, with a z score.
+- **Prod's total on a kick.** Where nothing was scored on the kick, prod's line on the kick is set
+  against its quote just before: the conversion, Q2's last quote for the second half, or the
+  pre-match quote for the opening kick. The move is shown by who receives (favourite or underdog,
+  home or away) and by where the receiver starts. Each line is then checked against the result:
+  over at the line before against its price, and over at the kick's line against its price.
+
+On September (2,320 matches, 16,880 kicks):
+- **Late in a half, kickers kick touchbacks.** In Q2's and Q4's last two minutes, 13.7% of kicks
+  are touchbacks and 5.8% land in no landing zone; elsewhere the figures are 2.8% and 2.4%. A late
+  touchback's drive makes 1.28 points against 2.10 after a return. The sim draws every kick from
+  one pool, whatever the clock, so it gives late-half receivers too good a start.
+- **A few kickers do it far more:** SHROUD into no landing zone 32% of the time; FUSE, MERLIN and
+  FENRIR touchbacks 16-17%. The league is 6% and 3.5%.
+- **No double effect to speak of.**
+  - R scores in Q2's last two minutes 66.7% of the time and on its first Q3 drive 63.6%. It does
+    both 43.5% of the time, a little above independence: correlation +0.05.
+  - Across gamers the double rate spreads only a little beyond chance (z variance 1.27); LUNA,
+    68% over 56 games, stands out.
+  - R runs 0.32 more Q2 snaps than K (se 0.13) and scores 0.22 more Q2 points (se 0.14).
+- **Prod's total is high at Q2's two-minute mark:** over 46.0% against 49.8% priced.
+- **Prod's total moves on a kick by where the receiver starts, not by who receives.**
+  - The line moves on 38% of kicks. Favourite or underdog receiving, home or away, the shares are
+    the same.
+  - A return to the 46 or beyond lifts it 1.0 point on average, up 51% of the time; a start inside
+    the 20 lowers it.
+  - The moves are right. Where it went up, the game went over the old line 55.5% of the time
+    against 50.2% priced.
+  - At the opening kick prod's first in-play total sits about 0.3 points under its pre-match line,
+    a point down in 34% of matches, whoever receives. The pre-match line runs a little high: over
+    47.7% against 50.1% priced.
 
 ## Every timeout: `timeouts`
 
@@ -1536,7 +1641,7 @@ Cost: about a second of simulation per match on each core at 2,000 paths
 (`--v9-paths`). The work is spread over all cores but one
 (`config.MODEL_WORKERS`).
 
-`--candidate v8`, `--candidate v10`, `--candidate v11` and `--candidate v12` work the same way off their own builds
+`--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12` and `--candidate v13` work the same way off their own builds
 (`--v8-model`, `--v10-model`). What each version changes is in the eAMFModel README.
 
 ## Several candidates in one report: `--candidate v8,v9`
@@ -1569,7 +1674,7 @@ version, change the names on the command line.
     calibration at prod's line and each side's line error.
   - Pre-match.
   - In-drive.
-  - **Totals line within 1 and 2 scores** (below).
+  - **Line moves** (below).
   - Additional checks.
   - Every pair.
 - **Every pair** carries prod's line, probability, result and error, and
@@ -1595,35 +1700,47 @@ python -m eAMFCalibrator report --since 2026-09-17 --until 2026-09-23 --snapshot
 - Use this to compare two builds that differ only in what they were built
   with, e.g. `--prior nb2` against `--prior glmer`.
 
-### Totals line within 1 and 2 scores
+### Line moves
 
-The totals line test is now a section of its own, after In-drive, rather
-than inside Additional checks. At each drive snapshot a total line needs
-(line − points already scored) more points. The test counts how often
-that is within 1 score, where a single touchdown takes the game over, and
-within 2 scores. It does this for prod's line and each candidate's own
-line. Real is the same count for the points the rest of the game really
-produced.
+This replaced "Totals line within 1 and 2 scores". It asks whether a stream reacts too far to a
+score. At each snapshot (`line_moves.py`), it sets each stream's total and spread against that
+stream's previous quote in the match. The line went up, went down, or held. Then it counts how
+often the game finished over the line: for the spread, how often the home side beat the home
+margin the line asked for. The page shows the numbers only; this is what they mean.
 
-A score counts as 7, except at a scoreline where the trailing player goes
-for two after a touchdown. There it counts as 8. Those scorelines are the
-margins where most players in SCOUTING_FULL went for two: behind by 1, 5,
-8, 11 or 16. It counts one row per snapshot: the over and the under
-share a line.
+- **Each cell** shows three things:
+  - that share;
+  - the share less the stream's own priced chance at its line, in points, coloured on the
+    probability-gap ramp;
+  - the count.
+- **What a fair line looks like.** It sits at its price: about 50-50 in the middle of a game, and
+  less evenly late on, when the points still to come are lumpy (0, 3 or 7).
+- **What over-reacting looks like.** A minus after the line goes up means games fall short of a
+  line lifted too far. A plus after it goes down means a total dropped too fast as the clock ran.
+- **Totals and Spread** each have two tables:
+  - one row per stream, with columns for the move: up (after a score, no score), down (the same),
+    held, all. For the spread, up is toward the home side.
+  - quarter by score difference (level 0-2, one score 3-8, two or more 9+), with columns for line
+    up, line down and all. Each quarter's all row is shaded above its states.
+- **First touchdown** takes every quote from each match's first touchdown until the next score
+  (its conversion stays in). Two splits:
+  - when it came: the game's first minute, 1:00-2:00, the rest of Q1, Q2, the second half;
+  - who scored it: the favourite or the underdog by prod's first moneyline quote, or pick'em
+    within 5 points of 50%.
+  Over is the total; Scorer covers is the spread read from the scoring side. A minus under Over
+  after an early touchdown means the total went up too far. The clock comes from the PLAY_OVER
+  snapshots (`--snapshots play_over`); other runs show "clock unknown" for Q1.
+- Pushes are left out. A spread quote on the away side is read as the home margin it implies.
 
-- **The overall table** gives Real's share, then each stream's share with
-  its gap to Real in points beside it. The cell is coloured by the gap's
-  size on the report's green-to-red ramp: under 3 points, 3–6, 6–10,
-  10–15, over 15.
-- **By quarter and game state** gives the same within 1 score and within
-  2 scores, with each quarter's all-states row shaded above its states:
-  - level;
-  - one score or two+ apart, with the leader or the trailer on the ball;
-  - no ball.
-- **Over at the line against priced** gives each stream's over rate at
-  its own line minus its own priced P(over), in points. It's shown by
-  where the line sits and by quarter, coloured on the probability-gap
-  ramp.
+On August-September v12 against prod, after a favourite's touchdown in the game's first minute
+(60 matches), totals finished 13 points under prod's price and 12 under v12's. The favourite then
+covered 9 points over prod's price and 13 over v12's. Each cell holds a few hundred quotes from a
+few dozen matches, so read a month or more.
+
+On the month of v12 against prod (23 Aug - 23 Sep), prod's spread went toward the side that had
+just scored 9,723 times. The home side then covered 39% of the time, priced 50%. After a score
+moved prod's line the other way, they covered 62%, priced 50%. Prod's total, held or lifted with
+no score, finished over 44%, priced 49%. v12 sat within about 2 points of its price in every row.
 
 ## The totals lines, value by value: `totals-lines`
 
@@ -1885,6 +2002,8 @@ does, so every reading is a like-for-like comparison with prod.
 - **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
   (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
   side of zero.
+- **On the page** (headed Acceptance and Two books): each margin is green where the book is ahead,
+  red behind; its interval sits underneath.
 
 ```bash
 python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
@@ -1944,6 +2063,10 @@ section. The same tags are added as columns to `bets_sim.csv`.
 | `price_age` | seconds from the price's message to the bet |
 | `next_score` | seconds from the bet to the board's next move |
 | `clock_band`, `score_margin`, `down` | quarter and clock, the score, the down |
+
+On the page (headed In play), each margin is red where it sits more than two standard errors below
+what prod's own probability says the book keeps, green more than two above. Revenue is green or red
+by its sign. The candidate columns are the change in margin on the bets every candidate re-priced.
 
 Bet time is read on the feed's own clock. Prod only publishes on some
 messages; the feed carries every message's `FILE_TIME`. Each match's feed
