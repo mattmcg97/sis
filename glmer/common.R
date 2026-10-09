@@ -284,6 +284,10 @@ to_long <- function(m, form_half_life = FORM_HALF_LIFE_MATCHES,
   d$OppSessBand <- d$SessBand[opp]
   d$OppSessFormFor <- d$SessFormFor[opp]
   d$OppSessFormAgainst <- d$SessFormAgainst[opp]
+  d$SessEarly <- as.numeric(sess_pos <= 2)      # the first two matches of a session
+  d$SessLate <- as.numeric(sess_pos >= 8)       # the eighth on
+  d$OppSessEarly <- d$SessEarly[opp]
+  d$OppSessLate <- d$SessLate[opp]
 
   hour <- as.integer(format(d$Time, "%H", tz = "UTC"))
   d$HourBlock <- sprintf("h%02d", 4L * (hour %/% 4L))

@@ -5,13 +5,15 @@ versions use for each match's prior. It is written in R with `lme4::glmer`.
 v8 to v10 can price off it with `v9-build --prior glmer` (see
 [In eAMFModel's versions](#in-eamfmodels-versions)).
 
-**The chosen model is the global one** with the `form` features and a
+**The chosen model is the global one** with the `form_clock` features and a
 60-day row half-life: `fit.R`'s defaults. It is a single Poisson GLMM over
 every side of every match, with:
 - random effects for the gamer's attack, the opponent's defence, both NFL
   teams and the stream;
 - home/away;
-- both sides' recent form.
+- both sides' recent form;
+- since 9 Oct 2026, whether a side is 8+ matches into its session, and the
+  time of day (see "Shifts, time of day and weekdays").
 
 Every player's rating is shrunk toward the league by how much data they
 have, so a new player starts as an average one. The per-player models
@@ -190,6 +192,8 @@ entry.
 | `form`        | + both sides' recency-weighted points scored and conceded, and experience                 |
 | `form_noexp`  | `form` without the experience terms (tested against newcomers' pricing; worse overall)    |
 | `form_session`| `form` + how both sides are doing this session, and where in it they are                  |
+| `form_clock`  | `form` + late in a session and time of day (helps totals a little)                       |
+| `form_shift`  | `form_clock` + each gamer's own start to a session                                       |
 | `form_pair`   | `form` + gamer-v-gamer matchups, `(1\|Player:OpponentPlayer)` (tested; about level)      |
 | `matchup`     | + each player's own team preference, and team-vs-team matchups                            |
 | `home_offset` | `home`, but the per-player models only learn corrections to the global model's prediction (`offset(GlobalEta)`) |
@@ -436,6 +440,33 @@ Does a gamer have good and bad days on top of their level and form? Measured ins
     alone.
 
 So the daily refit plus `form` already holds what there is. No day or session term was added.
+
+## Shifts, time of day and weekdays (9 Oct 2026)
+
+Out-of-sample errors (Mar–Sep, 15,418 matches) show no day-of-week effect for anyone, and late
+fades don't repeat from odd weeks to even weeks. Two patterns do:
+- **Totals by time of day, and late in a session.** Totals run lower than priced at 04–08h and
+  16–20h UTC, and from a side's 8th game of a session on.
+- **Slow and fast starters.** A gamer's first two games of a session repeat from odd weeks to even
+  weeks (r +0.37 on points scored). About a third of a gamer's measured slow start carries forward.
+
+Two feature sets test them, refitted on fortnights 6–11 (7,409 matches) and compared with `form`,
+each with the follow layer:
+
+| set | ML log loss | Brier | margin RMSE | total RMSE | games 1–2: ML | 8th+: total RMSE |
+|---|---|---|---|---|---|---|
+| `form_clock`: + `SessLate`, `(1\|HourBlock)` | −0.00006 | −0.00002 | +0.001 | −0.010 | −0.00009 | −0.029 |
+| `form_shift`: + each gamer's own start, `(0 + SessEarly\|Player)` | −0.00009 | −0.00003 | +0.002 | −0.009 | −0.00041 | −0.027 |
+
+`form_clock` improves totals in 5 of 6 fortnights. Its fitted effects are small: a gamer's own
+scoring late in a session falls by about 1% (0.25 points), and time of day varies by sd 0.02 (0.4
+points a side). `form_shift`'s per-gamer start (sd 0.027 on the log scale, 0.5 points) helps a
+little in games 1–2 and hurts a little from the 8th on; it was better in only 3 of 6 fortnights.
+**`form_clock` is the default from 9 Oct 2026** (`fit.R`'s `feature_set`). Its terms read the
+clock, but a pre-match quote priced as of an earlier time reads them at most a 4-hour block or a
+match or two out. That is worth a fraction of a point, so its builds still price each pre-match
+quote off the results in when it was published (`glmer_prior.ROUGH_CLOCK_TERMS`). `form_shift`
+stays an option.
 
 ## Speed
 

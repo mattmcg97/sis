@@ -133,6 +133,10 @@ def predict(model_dir, schedule, results=None):
 # prices every pre-match quote off the kick-off instead.
 CLOCK_TERMS = ("RestLog", "Session", "Sess", "HourBlock", "Weekday")
 CLOCK_SETS = ("context", "form_session")       # the sets with them, for builds that saved no formula
+# ...except these. Read at an earlier time they move by at most a 4-hour block or a match or two
+# down the session, worth a fraction of a point (form_clock's are 0.25 points late in a session, sd
+# 0.4 points across the day), where pricing off the kick-off would read results not yet in.
+ROUGH_CLOCK_TERMS = ("SessLate", "OppSessLate", "SessEarly", "OppSessEarly", "HourBlock")
 
 
 class Prematch:
@@ -155,6 +159,8 @@ class Prematch:
         m = self.meta.get("model", {})
         formula = m.get("formula")
         if formula:
+            for t in sorted(ROUGH_CLOCK_TERMS, key=len, reverse=True):
+                formula = re.sub(rf"\b{t}\b", "", formula)
             return not any(t in formula for t in CLOCK_TERMS)
         return m.get("feature_set") not in CLOCK_SETS
 
