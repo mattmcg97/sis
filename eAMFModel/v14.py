@@ -2152,6 +2152,13 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             print("  Q2 from 3:00, snaps a half by 20-second slice, real / simulated before -> after: "
                   + "; ".join(f"{a:.2f}/{b:.2f}->{c:.2f}" for a, b, c in zip(real_p, before_p, after_p))
                   + "; snap times x " + " ".join(f"{x:.2f}" for x in tables.late_pace))
+        if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
+            # the Q2 pace moves how often the clock runs before a snap, and so the timeouts: refit them
+            scaled = fit_call_scale(tables, call_states(matches))
+            if verbose and scaled:
+                print("  timeouts again, after the Q2 pace: "
+                      + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
+                                  for q, (n, r, b, a, s) in sorted(scaled.items())))
     lap("timeouts and Q2 pace")
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
