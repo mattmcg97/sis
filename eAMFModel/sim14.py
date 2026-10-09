@@ -545,6 +545,11 @@ def fit_play_calling(tables, snaps, ends=(), kneels=()):
     stop = np.array([r["seconds"] <= STOP_SECONDS for r in on])
     secs = np.array([r["seconds"] for r in on])
     uncut = np.array([r["clock"] >= UNCUT_SECONDS for r in on])
+    if TWO_MINUTE:
+        # a snap whose time ran into the two-minute warning was cut short by it, as a quarter's
+        # last snap is by the quarter's end: the sim stops the clock there itself
+        uncut &= ~np.array([r["period"] in (2, 4) and r["clock"] > LATE and r["clock"] - r["seconds"] < LATE
+                            for r in on])
     base = _running_logit(tables, key)[0]
     stop_shift = np.zeros(N_CELLS)
     for _ in range(10):
@@ -571,6 +576,9 @@ def fit_play_calling(tables, snaps, ends=(), kneels=()):
         # a stopped play (12 seconds or less) is never cut short with more than 12 left
         sel = (kind == c_) & (uncut if c_ == RUNNING or not LATE_CLOCK
                               else np.array([r["clock"] > STOP_SECONDS for r in on]))
+        if TWO_MINUTE and c_ == STOP:
+            sel &= ~np.array([r["period"] in (2, 4) and r["clock"] > LATE and r["clock"] - r["seconds"] < LATE
+                              for r in on])
         if NATURAL_SHIFT:
             sel &= np.array([r.get("timeout_role") is None for r in on])
         wt = np.array([r.get("w", 1.0) for r in on])
@@ -835,27 +843,21 @@ KICK_STYLE_MAX = 0.9
 KICK_STYLE_MIN = 30          # kicks a part of the game needs before it gets its own pool
 
 
-# v14: a drive carried from Q1 into Q2 (or Q3 into Q4) does not snap at 4:00 on a stopped clock.
-# In every one of the feed's 4,092 carries the clock had run 3-8 seconds (median 6) before the new
-# quarter's first snap, and that snap then took a running clock's time (27 seconds on average,
-# 22% within 8). Played at 4:00 on a stopped clock the sim gained some 25 seconds at the start of
-# each, a snap a game in Q2 (sim_audit: Q2 15.7 snaps a game, real 14.7). QUARTER_CARRY plays the
-# real run-off (Tables.runoff, from quarter_runoffs) and a running clock.
-QUARTER_CARRY = True
-DEFAULT_RUNOFF = (6.0,)
-
-
-def quarter_runoffs(rows):
-    """Seconds gone from the clock before each new quarter's first snap, where a drive carries from
-    Q1 into Q2 or from Q3 into Q4."""
-    out = []
-    for a, b in zip(rows, rows[1:]):
-        if a["period"] in ("1", "3") and b["period"] == str(int(a["period"]) + 1) \
-                and b["play_kind"] in SNAP_KINDS and b["clock_seconds"]:
-            gone = QUARTER - _f(b["clock_seconds"])
-            if 0 <= gone <= 30:
-                out.append(gone)
-    return out
+# v14: a running clock can run out before the snap. A snap on a running clock takes the wait to
+# the snap and the play itself, which takes PLAY_SECONDS to develop (median of the feed's snaps
+# from a stopped clock: 7, quartiles 6-8). The sim snapped whenever any time was left, then again at
+# the next quarter's 4:00, while two thirds of the feed's Q1 and Q3 ended with the ball live and time
+# on the clock but no snap (the last state's clock: 0 in 35% of Q1, 9.3 seconds left on average).
+# With CLOCK_EXPIRES a running-clock snap whose wait is at least the time left is not played: the
+# quarter ends and the state carries over (into the next quarter's 4:00 snap, or to the half's end).
+CLOCK_EXPIRES = True
+PLAY_SECONDS = 7.0
+# v14: the two-minute warning. A running clock stops at 2:00 of Q2 and Q4; the next snap is played
+# from 2:00 on a stopped clock. The feed's states pile up just after it (1:52-1:56: 0.63 snaps a
+# game in Q2, the sim 0.21) and thin out before it (2:00-2:30: 0.99, the sim 1.41). With
+# TWO_MINUTE a running-clock wait that would pass 2:00 ends there, and the snap takes the time of
+# a stopped-clock play from the same bin.
+TWO_MINUTE = True
 
 
 def kick_kinds(rows):
@@ -1752,7 +1754,6 @@ class Tables:
         self.n_fail_stop = self.n_fail_run = None
         self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
         self.kick_pools, self.kick_mix = {}, None
-        self.runoff = np.array(DEFAULT_RUNOFF)
         self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
@@ -1802,9 +1803,8 @@ class Tables:
         snaps, kicks, decisions, conv, fourths, early, free = [], [], [], [], [], [], []
         backed, late4, fourth_recs, ot_first, ends = [], [], [], [], []
         close, close4, kick_times = [], [], []
-        kinds, runoff = [], []
+        kinds = []
         for code, rows in matches.items():
-            runoff += quarter_runoffs(rows)
             fourth_recs += fourth_down_records(rows, (handles or {}).get(code))
             snaps_before = len(snaps)
             ot_first += ot_first_fourths(rows)
@@ -1945,8 +1945,6 @@ class Tables:
                                  np.array([k[3] for k in ks]))
         if KICK_STYLES and kinds:
             t.kick_pools, t.kick_mix = fit_kick_styles(kinds)
-        if runoff:
-            t.runoff = np.array(runoff)
         t.safety_kick = (np.array(free, dtype=np.int32) if len(free) >= SAFETY_KICK_MIN
                          else _shifted_kick(t.kick[False][1]))
         punts = [d for d in decisions if d[0] == "punt"]
@@ -2025,7 +2023,6 @@ class Tables:
                       call_p=self.call_p, ot_stop=self.ot_stop,
                       ot_call_scale=np.array([self.ot_call_scale]), to_secs=self.to_secs,
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
-        arrays["runoff"] = self.runoff
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2132,8 +2129,6 @@ class Tables:
             t.to_secs = z["to_secs"]
         if "kneel_p" in z:
             t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
-        if "runoff" in z:
-            t.runoff = z["runoff"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2363,12 +2358,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         carry = (p == 1) | (p == 3)
         c = ix[carry]
         period[c] += 1
-        if QUARTER_CARRY:
-            clock[c] = QUARTER - tables.runoff[pick(c, 55, len(tables.runoff))]
-            fresh[c] = False
-        else:
-            clock[c] = QUARTER
-            fresh[c] = True
+        clock[c] = QUARTER
+        fresh[c] = True
         h = ix[p == 2]
         period[h] = 3
         tos[h] = -1
@@ -2797,6 +2788,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 held_td &= scores(j)
         shift = np.where(fr, 0.0, tables.sec_shift[np.where(stops, STOP, RUNNING), cell])
         used = np.maximum(1.0, tables.seconds[j] + shift) * pace[sx, so]
+        to_stop = np.zeros(len(sx), dtype=bool)
         if to_on:
             # the clock is running before this snap: a side may stop it with a timeout, as often
             # as real sides do there; the snap then takes only its own play's time
@@ -2822,10 +2814,32 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                         got = np.array([np.interp(ui, TO_QUANTILES, qq) for ui, qq in zip(u, q)])
                         used[ci] = np.where(np.isfinite(got), np.maximum(1.0, got), used[ci])
                     tos[sx[ci], dc] -= 1
+                    to_stop[ci] = True
                     tally("timeouts", call.sum())
                     if stats is not None:
                         for q in (2, 4):
                             tally(f"timeouts_q{q}", (period[sx[ci]] == q).sum())
+        if TWO_MINUTE:
+            warn = ~stops & ~fr & ~to_stop & ((period[sx] == 2) | (period[sx] == 4)) & (clock[sx] > LATE) \
+                & (clock[sx] - (used - PLAY_SECONDS) <= LATE)
+            if warn.any():
+                wi = np.flatnonzero(warn)
+                ns_ = tables.n_stop[key[wi]]
+                js = tables.start[key[wi]] + np.minimum(
+                    np.maximum(ns_, 1) - 1, (rand(sx[wi], 56) * np.maximum(ns_, 1)).astype(np.int64))
+                play_t = np.where(ns_ > 0, np.maximum(1.0, tables.seconds[js]) * pace[sx[wi], so[wi]],
+                                  np.minimum(used[wi], PLAY_SECONDS))
+                used[wi] = clock[sx[wi]] - LATE + play_t
+                tally("two_minute", len(wi))
+        if CLOCK_EXPIRES:
+            gone = ~stops & ~fr & ~to_stop & (period[sx] <= 4) & (used - PLAY_SECONDS >= clock[sx])
+            if gone.any():
+                clock[sx[gone]] = 0.0
+                tally("clock_expired", gone.sum())
+                keep = ~gone
+                sx, j, used, stops, fr, lead, so = sx[keep], j[keep], used[keep], stops[keep], fr[keep], lead[keep], so[keep]
+                if not len(sx):
+                    continue
         clock[sx] -= used
         fresh[sx] = False
         if stats is not None and "_snaps" in stats:      # an audit's per-snap log (sim_audit)
