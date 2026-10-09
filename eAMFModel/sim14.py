@@ -858,6 +858,30 @@ PLAY_SECONDS = 7.0
 # TWO_MINUTE a running-clock wait that would pass 2:00 ends there, and the snap takes the time of
 # a stopped-clock play from the same bin.
 TWO_MINUTE = True
+# v14: a real touchdown play drawn from further back. v13 ran it on to the end zone with chance
+# exp(-extra / TD_TAIL) for the extra yards (TD_TAIL 12) and otherwise stopped it at a uniform point
+# short of the goal: from own 1-39 a 61-yard touchdown from the 39 drawn at the 5 scored 6% of the
+# time. Real long plays keep going far more often (past 30 yards the tail's scale is 33 yards, past
+# 40 about 55, and it flattens), so the sim made 0.72 long gains a game that stopped short (real
+# 0.45), 0.31 of them from these plays. With LONG_TAIL the play runs on with the real chance of a
+# gain of d + extra given d (Tables.gain_surv, gain_survival: every gain, touchdowns counted as at
+# least as long as the field allowed) and otherwise stops where that survival curve puts it.
+LONG_TAIL = True
+
+
+def gain_survival(snaps):
+    """P(gain >= k) for k = 0..100 over the snaps' gains (Kaplan-Meier: a touchdown is a gain of at
+    least the yards to the goal)."""
+    g = np.array([min(100, max(0, r["gain"])) for r in snaps if r["kind"] == GAIN], dtype=np.int64)
+    cen = np.array([r["gain"] >= 100 - r["field"] for r in snaps if r["kind"] == GAIN], dtype=bool)
+    if not len(g):
+        return None
+    events = np.bincount(g[~cen], minlength=102)
+    at_risk = len(g) - np.concatenate([[0], np.cumsum(np.bincount(g, minlength=102))])[:102]
+    surv = np.ones(101)
+    for k in range(100):
+        surv[k + 1] = surv[k] * (1.0 - events[k] / at_risk[k]) if at_risk[k] > 0 else surv[k]
+    return surv
 
 
 def kick_kinds(rows):
@@ -1754,6 +1778,7 @@ class Tables:
         self.n_fail_stop = self.n_fail_run = None
         self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
         self.kick_pools, self.kick_mix = {}, None
+        self.gain_surv = None
         self.q4_modes = False
         self.stop_success = self.run_success = None
         self.stop_shift = np.zeros(N_CELLS)
@@ -1937,6 +1962,7 @@ class Tables:
         t.seconds = np.array(secs)
         t.replay = np.array(rep, dtype=bool)
         t.td_from = np.array(tdf, dtype=np.int32)
+        t.gain_surv = gain_survival(snaps) if LONG_TAIL else None
         t.bins_used = Counter(g[0] for g in chosen)
         for desperate in (False, True):
             ks = [k for k in kicks if k[0] == desperate] or kicks
@@ -2023,6 +2049,8 @@ class Tables:
                       call_p=self.call_p, ot_stop=self.ot_stop,
                       ot_call_scale=np.array([self.ot_call_scale]), to_secs=self.to_secs,
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
+        if self.gain_surv is not None:
+            arrays["gain_surv"] = self.gain_surv
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2129,6 +2157,8 @@ class Tables:
             t.to_secs = z["to_secs"]
         if "kneel_p" in z:
             t.kneel_p, t.kneel_secs = z["kneel_p"], z["kneel_secs"]
+        if "gain_surv" in z:
+            t.gain_surv = z["gain_surv"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2845,7 +2875,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if stats is not None and "_snaps" in stats:      # an audit's per-snap log (sim_audit)
             stats["_snaps"].append((sx.copy(), period[sx].copy(), clock[sx] + used, lead.copy(),
                                     down[sx].copy(), dist[sx].copy(), y[sx].copy(), tables.kind[j].copy(),
-                                    tables.gain[j].copy(), used.copy(), stops.copy()))
+                                    tables.gain[j].copy(), used.copy(), stops.copy(), j.copy()))
         tally("clock_used", used.sum())
         tally("fresh_snaps", fr.sum())
         kd = tables.kind[j]
@@ -2912,8 +2942,17 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if short.any():
             extra = tdf[short] - y[gx][short]
             gs = gx[short]
-            runs_on = rand(gs, 12) < np.exp(-extra / TD_TAIL)
-            y2[short] = np.where(runs_on, 100, y2[short] + (rand(gs, 13) * extra).astype(np.int32))
+            if LONG_TAIL and tables.gain_surv is not None:
+                sv = tables.gain_surv
+                d = 100 - tdf[short]
+                s_d, s_e = sv[np.clip(d, 0, 100)], sv[np.clip(d + extra, 0, 100)]
+                runs_on = rand(gs, 12) < s_e / np.maximum(s_d, 1e-9)
+                target = s_d - rand(gs, 13) * (s_d - s_e)
+                stop = np.searchsorted(-sv, -target)            # the first gain the curve falls to it
+                y2[short] = np.where(runs_on, 100, y[gx][short] + np.clip(stop, d, d + extra - 1))
+            else:
+                runs_on = rand(gs, 12) < np.exp(-extra / TD_TAIL)
+                y2[short] = np.where(runs_on, 100, y2[short] + (rand(gs, 13) * extra).astype(np.int32))
         y2 = np.where(hg, np.clip(y2, 1, 99), y2)
         gain = y2 - y[gx]
         td = y2 >= 100
