@@ -1489,7 +1489,12 @@ def _go_logit(dp, y, t):
     lt = math.log(max(1, t))
     red = 1.0 if y >= 80 else 0.0
     c = dp.go_coef
-    return c[0] + c[1] * lt + c[2] * u + c[3] * u * u + c[4] * lt * u + c[5] * red + c[6] * lt * red
+    z = c[0] + c[1] * lt + c[2] * u + c[3] * u * u + c[4] * lt * u + c[5] * red + c[6] * lt * red
+    if len(c) > 7:                                  # GO_ZONES
+        mid = 1.0 if GO_MIDFIELD[0] <= y < GO_MIDFIELD[1] else 0.0
+        gl = 1.0 if y >= GO_GOAL_LINE else 0.0
+        z += c[7] * mid + c[8] * mid * lt + c[9] * gl + c[10] * gl * lt
+    return z
 
 
 def _fg_logit(dp, y):
@@ -1588,12 +1593,27 @@ def fourth_down_records(rows, pair=None):
     return out
 
 
+# v14: the go curve's field shape. Real sides go for it far more around midfield (own 40-54: 65% on
+# 4th and 4-6, where the smooth curve gave 51%) and at the goal line, where a punt gains little and
+# a kick is short; the curve now has a term and a distance slope for each zone. In-sample, over the
+# 29 field x distance cells, the misfit fell from chi-square 88 to 33.
+GO_ZONES = True
+GO_MIDFIELD = (40, 55)
+GO_GOAL_LINE = 90
+
+
 def _go_basis(y, t):
-    """The league go curve's terms: log distance, field position and the red zone."""
+    """The league go curve's terms: log distance, field position and the red zone (and with
+    GO_ZONES midfield and the goal line, each with its own distance slope)."""
     u = np.asarray(y, dtype=float) / 100.0
     lt = np.log(np.maximum(1, np.asarray(t, dtype=float)))
     red = (np.asarray(y) >= 80).astype(float)
-    return np.stack([np.ones_like(u), lt, u, u * u, lt * u, red, lt * red], axis=1)
+    cols = [np.ones_like(u), lt, u, u * u, lt * u, red, lt * red]
+    if GO_ZONES:
+        mid = ((np.asarray(y) >= GO_MIDFIELD[0]) & (np.asarray(y) < GO_MIDFIELD[1])).astype(float)
+        gl = (np.asarray(y) >= GO_GOAL_LINE).astype(float)
+        cols += [mid, mid * lt, gl, gl * lt]
+    return np.stack(cols, axis=1)
 
 
 def _ridge_logistic(basis, cells, players, outcome, cell_prior, player_prior, iterations=25):
@@ -1846,6 +1866,23 @@ def zone_warp(u, tilt, to, loss, fail, top, big, loss_rate, loss_size):
             v = np.power(np.clip(v, 0.0, 1.0), loss_size[m])
         out[m] = old[i][m] + np.clip(v, 0.0, 1.0) * q[i][m]
     return out
+
+
+# v14: strength as boom or bust. In real matches about level on paper, the share of snaps that make
+# the line hardly moves with the pre-match expected total (43% at 26 points a match, 45% at 47),
+# nor much the share that gain nothing (16% to 21%), while the 40+ yard plays run from 1.6% of snaps
+# to 5.6%: a high-scoring match is a riskier one more than a more successful one. The sim moved a
+# side's whole draw with its strength, so a match expected at 26 points made the line on 36% of
+# snaps and gained nothing on 22%, and one at 47 made it on 49%; across 1,178 matches at 15.5 a side
+# it reached 4th and 7+ a quarter more often than real sides and kicked more. A side's strength now
+# also acts as its big-play rate does (big_warp), exp(BOOM * theta) times its bin's big plays and
+# the same chance more of its failed plays, and only TILT_SCALE of it tilts the whole draw; the
+# prior grid fits the strengths to the points. Even-strength sims read at real matches' points
+# (weighted by how many matches play there): first downs 0.8 points of share off (2.0 before), plays
+# that gain nothing 1.3 (2.2), 40+ yard plays 0.8 (0.4).
+STRENGTH_BOOM = True
+BOOM = 3.0
+TILT_SCALE = 0.5
 
 
 class Tables:
@@ -2407,6 +2444,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     loss_s = rep(getattr(start, "loss_size", np.ones((S, 2))))
     loss_on = LOSS_PLAYS and getattr(tables, "n_loss_stop", None) is not None \
         and bool(np.any(loss_r != 1.0) or np.any(loss_s != 1.0))
+    boom_on = STRENGTH_BOOM and BOOM != 0 and getattr(tables, "n_loss_stop", None) is not None \
+        and tables.n_big_stop is not None
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
     prev_cls = np.full(P, -1, dtype=np.int8)            # STOP_LINK: the drive's previous play, -1 not known
     tos = rep(getattr(start, "timeouts", np.full((S, 2), -1))).astype(np.int8)
@@ -2734,6 +2773,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         lt = np.log(np.maximum(1, tt))
         red = (yy >= 80).astype(float)
         z = gc[0] + gc[1] * lt + gc[2] * u + gc[3] * u * u + gc[4] * lt * u + gc[5] * red + gc[6] * lt * red
+        if len(gc) > 7:                             # GO_ZONES
+            mid = ((yy >= GO_MIDFIELD[0]) & (yy < GO_MIDFIELD[1])).astype(float)
+            gl = (yy >= GO_GOAL_LINE).astype(float)
+            z = z + gc[7] * mid + gc[8] * mid * lt + gc[9] * gl + gc[10] * gl * lt
         dph = np.where(p <= 2, 0, np.where(p == 3, 1, np.where((p >= 5) | (c <= 180), 3, 2)))
         mbk = _margin_bucket_np(margin)
         pgo = _sigmoid(z + agg[ix, o] + tables.go_shift[dph, mbk])
@@ -2792,6 +2835,11 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         tally("punt", do_punt.sum())
         tally("fourth_go", (fourth & play).sum())
         tally("fourth", fourth.sum())
+        if stats is not None and "_fourth" in stats and fourth.any():   # an audit's 4th-down log
+            f4 = np.flatnonzero(fourth)
+            choice = np.where(do_fg[f4], 1, np.where(do_punt[f4], 2, 0))       # 0 went for it, 1 kicked, 2 punted
+            stats["_fourth"].append((ix[f4].copy(), p[f4].copy(), c[f4].copy(), yy[f4].copy(), dist[ix[f4]].copy(),
+                                     margin[f4].copy(), choice))
 
         fx = ix[do_fg]
         if len(fx):
@@ -2893,7 +2941,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         seg0 = tables.start[key] + np.where(stops, 0, ns)
         seg_n = np.maximum(1, np.where(stops, ns, n - ns))
         uu = rand(sx, 11)
-        tilt = exp_theta[sx, so] * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
+        tilt = (np.exp(TILT_SCALE * theta[sx, so]) if STRENGTH_BOOM else exp_theta[sx, so]) \
+            * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
         rz = y[sx] >= RED_ZONE
         if rz.any():
             tilt = tilt * np.where(rz, np.exp(tables.rz_shift[rz_index(period[sx], lead, y[sx])]), 1.0)
@@ -2903,11 +2952,11 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if inplay_exp is not None:
             tilt = tilt * inplay_exp[_segments_np(period[sx], clock[sx]),
                                      _bands_np(score[sx, 0] - score[sx, 1])]
-        if big_on or loss_on:
+        if big_on or loss_on or boom_on:
             share = np.where(stops, tables.n_big_stop[key], tables.n_big_run[key]) / seg_n
             fails = np.where(stops, tables.n_fail_stop[key], tables.n_fail_run[key]) / seg_n
-            bs = big[sx, so]
-            if loss_on:
+            bs = big[sx, so] * np.exp(BOOM * theta[sx, so]) if boom_on else big[sx, so]
+            if loss_on or boom_on:
                 to_sh = np.where(stops, tables.n_to_stop[key], tables.n_to_run[key]) / seg_n
                 loss_sh = np.where(stops, tables.n_loss_stop[key], tables.n_loss_run[key]) / seg_n
                 lr, ls = loss_r[sx, so], loss_s[sx, so]
