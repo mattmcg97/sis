@@ -916,6 +916,13 @@ QUARTER_PACE = True
 # with the cells' shifts; where the previous play is not known it is drawn from the real mix.
 STOP_LINK = True
 N_PREV = 4
+# v14: a play in field-goal range that would run the half out had its clock held at MANAGED_SECONDS
+# (a spike or a timeout), so the kick always came. Real sides do not always get it off: at the audit's
+# kick-offs the sim kicked 0.35 field goals a game on downs 1-3 in Q2's last ten seconds (0.23 of
+# them at exactly 0:03), the real games 0.22, spread over 2-6 seconds, and 26% of real games had no
+# field goal at all to the sim's 18%. Tables.manage_p (Q2, Q4) is the chance the clock is held,
+# fitted in the build (v14.fit_manage) so the end-of-half kicks on downs 1-3 come as often as real.
+MANAGE_FIT = True
 PACE_SLICE = 20.0
 PACE_SLICES = 12
 
@@ -1256,6 +1263,11 @@ def _margin_bucket_np(m):
         m == 0, 3, np.where(m <= 3, 4, np.where(m <= 8, 5, 6))))))
 
 
+# v14: the early-kick table read only snaps whose next row was in the same quarter, so a side in range
+# whose half ran out before it could kick never counted as one that did not: the kick rates came out
+# as if every such side got its kick away. With EARLY_FG_HALF_END a snap in Q2 or Q4 whose half
+# ended before the next row counts as one that did not kick.
+EARLY_FG_HALF_END = True
 EARLY_FG_RANGES = (45, 55, 65)
 EARLY_FG_RANGE = EARLY_FG_RANGES[-1]
 EARLY_FG_CLOCK = (5, 10, 20, 30, 45)
@@ -1275,8 +1287,9 @@ def early_kicks(rows):
     for a, b in zip(rows, rows[1:]):
         if a["play_kind"] not in SNAP_KINDS or a["down"] not in ("1", "2", "3"):
             continue
-        if not a["period"] or a["period"] != b["period"] or not a["field_position"] \
-                or not a["clock_seconds"]:
+        if not a["period"] or not a["field_position"] or not a["clock_seconds"]:
+            continue
+        if a["period"] != b["period"] and not (EARLY_FG_HALF_END and a["period"] in ("2", "4")):
             continue
         kick = 100 - _i(a["field_position"]) + 17
         if kick > EARLY_FG_RANGE:
@@ -1294,7 +1307,7 @@ def early_kicks(rows):
             sit = 1
         else:
             continue
-        out.append((sit, cb, rb, b["play_kind"] == "FIELD_GOAL"))
+        out.append((sit, cb, rb, b["play_kind"] == "FIELD_GOAL" and b["period"] == a["period"]))
     return out
 
 
@@ -1858,6 +1871,7 @@ class Tables:
         self.gain_surv = None
         self.quarter_pace = np.ones((4, PACE_SLICES))
         self.prev_stop = np.zeros(N_PREV)
+        self.manage_p = np.ones(2)
         self.prev_mix = np.full(N_PREV, 1.0 / N_PREV)
         self.q4_modes = False
         self.stop_success = self.run_success = None
@@ -2134,6 +2148,7 @@ class Tables:
             arrays["gain_surv"] = self.gain_surv
         arrays["quarter_pace"] = self.quarter_pace
         arrays["prev_stop"], arrays["prev_mix"] = self.prev_stop, self.prev_mix
+        arrays["manage_p"] = self.manage_p
         if self.kick_mix is not None:
             arrays["kick_mix"] = self.kick_mix
             for late, (a, b, c) in self.kick_pools.items():
@@ -2246,6 +2261,8 @@ class Tables:
             t.quarter_pace = z["quarter_pace"]
         if "prev_stop" in z:
             t.prev_stop, t.prev_mix = z["prev_stop"], z["prev_mix"]
+        if "manage_p" in z:
+            t.manage_p = z["manage_p"]
         if "kick_mix" in z:
             t.kick_mix = z["kick_mix"]
             t.kick_pools = {bool(late): (z[f"kick_pool{late}_onside"], z[f"kick_pool{late}_field"],
@@ -2769,6 +2786,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if stats is not None:
             for q in (1, 2, 3, 4, 5):
                 tally(f"fg_q{q}", (do_fg & (np.minimum(p, 5) == q)).sum())
+                tally(f"fg_early_q{q}", (fg_now & (np.minimum(p, 5) == q)).sum())
                 tally(f"punt_q{q}", (do_punt & (np.minimum(p, 5) == q)).sum())
                 tally(f"go_q{q}", (fourth & play & (np.minimum(p, 5) == q)).sum())
         tally("punt", do_punt.sum())
@@ -2793,6 +2811,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 tally("kick_clock_zero", (near & (secs >= fc)).sum())
             clock[fx] -= secs
             good = rand(fx, 9) < make[do_fg]
+            if stats is not None and "_fgs" in stats:        # an audit's field-goal log
+                ko = team[fx]
+                stats["_fgs"].append((fx.copy(), period[fx].copy(), clock[fx] + secs, y[fx].copy(), down[fx].copy(),
+                                      score[fx, ko] - score[fx, 1 - ko], good.copy(), fg_now[do_fg].copy()))
             tally("fg_good", good.sum())
             g = fx[good]
             score[g, team[g]] += 3
@@ -3083,6 +3105,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         wants = ((pg == 2) | ((pg >= 4) & (mg <= 0) & (mg >= -3))) & (100 - y2 + 17 <= EARLY_FG_RANGE)
         before = clock[gx] + used[gsel][rest]
         keep = wants & (clock[gx] < MANAGED_SECONDS) & (before > MANAGED_SECONDS + 1)
+        if MANAGE_FIT:
+            keep &= rand(gx, 58) < tables.manage_p[np.where(pg == 2, 0, 1)]
         clock[gx[keep]] = MANAGED_SECONDS
         tally("managed", keep.sum())
         first = gain >= dist[gx]

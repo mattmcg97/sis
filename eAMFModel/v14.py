@@ -565,6 +565,16 @@ def reconcile(tables, grid, matches, priors, book, ratings, handles, teams, grid
             if verbose and scaled:
                 print("  reconcile, timeouts: " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
                                                          for q, (n, r, b, a, s) in sorted(scaled.items())))
+        if sim.MANAGE_FIT:
+            two_minute = manage_states(matches)
+            counted = fit_late_count(tables, two_minute)
+            if verbose and counted:
+                print("  reconcile, snaps from the two-minute mark: " + "; ".join(
+                    f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (x{k:.2f})" for q, (n, r, b, a, k) in sorted(counted.items())))
+            managed = fit_manage(tables, two_minute)
+            if verbose and managed:
+                print("  reconcile, end-of-half field goals on downs 1-3: " + "; ".join(
+                    f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f} (clock held {p:.2f})" for q, (n, r, b, a, p) in sorted(managed.items())))
     before_q, before_l = tables.period_theta.copy(), tables.late_theta.copy()
     fitted_q, fitted_l = fit_quarter_levels(
         tables, quarter_start_states(matches, grid, priors, held=held),
@@ -1277,6 +1287,104 @@ def call_states(matches):
             r, state = start
             used = lambda x: int(x.get("timeouts_used_a") or 0) + int(x.get("timeouts_used_b") or 0)
             out.append((int(q), start_from(state), max(0, used(in_q[-1]) - used(r))))
+    return out
+
+
+MANAGE_PATHS = 40
+MANAGE_STEPS = 8
+
+
+def manage_states(matches):
+    """For each real half, its first snap at or inside 2:00 of Q2 or Q4: (quarter, start fields,
+    field goals tried on downs 1-3 from there to the quarter's end, snaps played from there (kneels
+    in; not the half's last live state, never snapped))."""
+    out = []
+    for code, rows in matches.items():
+        rows = resolve_sides(rows)
+        for q in ("2", "4"):
+            in_q = [r for r in rows if r["period"] == q]
+            first = next((i for i, r in enumerate(in_q) if r["play_kind"] == "SCRIMMAGE" and r["clock_seconds"]
+                          and float(r["clock_seconds"]) <= sim.LATE and r["down"]), None)
+            if first is None:
+                continue
+            state, _ = state_for(in_q[first])
+            if state is None or not state.has_snap:
+                continue
+            kicks = sum(1 for a, b in zip(in_q[first:], in_q[first + 1:])
+                        if b["play_kind"] == "FIELD_GOAL" and a["down"] and int(float(a["down"])) < 4)
+            snaps = sum(1 for a, b in zip(in_q[first:], in_q[first + 1:])
+                        if a["play_kind"] in sim.SNAP_KINDS and a["down"] and b["play_kind"] not in ("PUNT", "FIELD_GOAL"))
+            out.append((int(q), start_from(state), kicks, snaps))
+    return out
+
+
+LATE_COUNT_ROUNDS = 5
+
+
+def fit_late_count(tables, items, rounds=LATE_COUNT_ROUNDS, n_paths=MANAGE_PATHS, seed=0):
+    """Q2's and Q4's last two minutes of Tables.quarter_pace scaled together until as many snaps
+    are played from every real two-minute state (manage_states) to the half's end as really were
+    (kneels in). The quarter's own fit (fit_quarter_pace) matches the whole quarter and leaves the
+    last two minutes with too many snaps and the rest too few (Q2: 10.0 snaps from the real 2:00
+    states to the half's end, real 9.3). Returns {quarter: (halves, real, before, after, scale)}."""
+    out = {}
+    late = np.arange(sim.PACE_SLICES) >= int((sim.QUARTER - sim.LATE) // sim.PACE_SLICE)
+    for q in (2, 4):
+        its = [it for it in items if it[0] == q]
+        if len(its) < 100:
+            continue
+        start = sim.Start(len(its))
+        for i, it in enumerate(its):
+            _fill(start, i, it[1])
+            start.theta[i] = LEAGUE_THETA
+        real = float(np.mean([it[3] for it in its]))
+
+        def snaps():
+            stats = {"_snaps": []}
+            par_simulate(tables, start, n_paths, seed=seed + q, stats=stats)
+            per = np.concatenate([x[1] for x in stats["_snaps"]])
+            return ((per == q).sum() + (stats.get("kneel_plays", 0) if q == 4 else 0)) / (len(its) * n_paths)
+
+        before = got = snaps()
+        total = 1.0
+        for _ in range(rounds):
+            scale = float(np.clip(got / max(real, 1e-3), 0.85, 1.15))
+            tables.quarter_pace[q - 1, late] = np.clip(tables.quarter_pace[q - 1, late] * scale, 0.4, 2.5)
+            total *= scale
+            got = snaps()
+        out[q] = (len(its), real, before, got, total)
+    return out
+
+
+def fit_manage(tables, items, n_paths=MANAGE_PATHS, steps=MANAGE_STEPS, seed=0):
+    """Tables.manage_p: for Q2 and Q4, the chance a play in range that would run the half out has
+    its clock held for the kick, bisected so the field goals tried on downs 1-3 from every real
+    two-minute state come as often as real. Returns {quarter: (halves, real, before, after, p)}."""
+    out = {}
+    for q in (2, 4):
+        its = [it for it in items if it[0] == q]
+        if len(its) < 100:
+            continue
+        start = sim.Start(len(its))
+        for i, it in enumerate(its):
+            _fill(start, i, it[1])
+            start.theta[i] = LEAGUE_THETA
+        real = float(np.mean([it[2] for it in its]))
+        qi = q // 2 - 1
+
+        def kicks(p):
+            tables.manage_p[qi] = p
+            stats = {}
+            par_simulate(tables, start, n_paths, seed=seed + q, stats=stats)
+            return stats.get(f"fg_early_q{q}", 0) / (len(its) * n_paths)
+
+        before = kicks(float(tables.manage_p[qi]))
+        lo, hi = 0.0, 1.0
+        for _ in range(steps):
+            mid = 0.5 * (lo + hi)
+            lo, hi = (mid, hi) if kicks(mid) < real else (lo, mid)
+        p = 0.5 * (lo + hi)
+        out[q] = (len(its), real, before, kicks(p), p)
     return out
 
 
@@ -2211,6 +2319,18 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                 print("  timeouts again, after the pace: "
                       + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
                                   for q, (n, r, b, a, s) in sorted(scaled.items())))
+    if sim.MANAGE_FIT:
+        two_minute = manage_states(matches)
+        if sim.QUARTER_PACE:
+            counted = fit_late_count(tables, two_minute)
+            if verbose and counted:
+                print("  snaps from the two-minute mark to the half's end, real / simulated before -> after: "
+                      + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (x{k:.2f})" for q, (n, r, b, a, k) in sorted(counted.items())))
+        managed = fit_manage(tables, two_minute)
+        if verbose and managed:
+            print("  end-of-half field goals on downs 1-3 from the two-minute mark, real / simulated before -> "
+                  "after: " + "; ".join(f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f} (clock held {p:.2f})"
+                                        for q, (n, r, b, a, p) in sorted(managed.items())))
     lap("timeouts and pace")
     real = sim.quarter_points(matches)
     offsets, got = sim.fit_period_theta(tables, real)
