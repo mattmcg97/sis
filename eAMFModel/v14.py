@@ -373,7 +373,15 @@ def fit_big_elasticity(tables, grid, n_paths=BIG_PATHS // 2, seed=0, attr="big")
         logs.append(np.log(max(1, stats.get(attr, 0)) / max(1, stats.get("snaps", 1))))
     lb = np.log(BIG_POINTS)
     slope = float(np.polyfit(lb, np.array(logs), 1)[0])
-    return min(1.5, max(0.2, slope))
+    return min(1.5, max(BIG_ELASTICITY_MIN, slope))
+
+
+# With sim.STRENGTH_BOOM a side's strength works on the same big and failed plays as its big-play
+# rate, so the strengths that hold its points take most of the rate back (the slope fell from 0.52
+# to the old floor, 0.2): every rating was played at its odds to the fifth power, and a match of
+# two big-play gamers (both at BIG_POINTS' top, e) was priced 4 points over its prior. The slope is
+# held at 0.5 or more, about what it was: the ratings move the big plays about as far as before.
+BIG_ELASTICITY_MIN = 0.5 if sim.STRENGTH_BOOM else 0.2
 
 
 def _surface_fn(grid, step):
@@ -447,6 +455,21 @@ HOLD_TOTAL = True
 # plays the match -- with the day's spread and, where the in-play shift is fitted, on the total's
 # in-play run.
 HOLD_AS_PRICED = True
+# The hold's one step (scale the prior's points by prior over simulated, refit the strengths) assumes
+# the match's points move with the strengths as the grid's do; where its sides' own rates make them
+# move faster it overshoots. Up to HOLD_STEPS sims: after the first step the held kick-off is
+# simulated again and, until it lands within HOLD_TOL points of the prior's total, the scale is
+# moved along the line through the last two (log scale, log points).
+HOLD_STEPS = 3
+HOLD_TOL = 0.25
+
+
+def _hold_step(lk, lg, target):
+    """The next log scale: along the line through the last two (log scale, log points) to the
+    target's log points, or a plain ratio step where the two give no slope."""
+    slope = (lg[-1] - lg[-2]) / (lk[-1] - lk[-2]) if abs(lk[-1] - lk[-2]) > 1e-6 else 0.0
+    slope = slope if slope > 0.2 else 1.0
+    return lk[-1] + (target - lg[-1]) / slope
 
 
 def _hold_sim(tables, theta, prof, variant, n_paths, seed):
@@ -484,10 +507,20 @@ def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=None):
         return prior_theta(grid, means, prof if variant.profiles else None, variant.pace)
     n = n_paths or HOLD_PATHS
     if HOLD_TOTAL:
+        target = means[0] + means[1]
         theta = prior_theta(grid, means, prof, variant.pace)
-        own = _hold_sim(tables, theta, prof, variant, 2 * n, seed)
-        k = (means[0] + means[1]) / (own[0] + own[1])
-        return prior_theta(grid, (means[0] * k, means[1] * k), prof, variant.pace)
+        got = sum(_hold_sim(tables, theta, prof, variant, 2 * n, seed))
+        k = target / got
+        theta = prior_theta(grid, (means[0] * k, means[1] * k), prof, variant.pace)
+        lk, lg = [0.0], [math.log(got)]
+        for _ in range(HOLD_STEPS - 1):
+            got = sum(_hold_sim(tables, theta, prof, variant, 2 * n, seed))
+            if abs(got - target) <= HOLD_TOL:
+                break
+            lk.append(math.log(k)); lg.append(math.log(got))
+            k = math.exp(_hold_step(lk, lg, math.log(target)))
+            theta = prior_theta(grid, (means[0] * k, means[1] * k), prof, variant.pace)
+        return theta
     league = tuple(_replace(p, **{name: 1.0 for name in HOLD_RATES}) for p in prof)
     theta = prior_theta(grid, means, league, variant.pace)
     own = _hold_sim(tables, theta, prof, variant, n, seed)
@@ -561,13 +594,24 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
                 st.pace[i] = (prof[0].pace, prof[1].pace)
             for name in HOLD_RATES:
                 getattr(st, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
-    home, away = par_simulate(tables, st, n_paths, seed=0, distinct=True, in_play=_priced_in_play(tables))
-    own = (home + away).mean(axis=1).reshape(-1, 2).mean(axis=1)
-    out = {}
-    for (code, means, prof), got in zip(found, own):
-        k_ = (means[0] + means[1]) / max(1.0, float(got))
-        out[code] = Held(tuple(prior_theta(grid, (means[0] * k_, means[1] * k_), prof, v.pace)), prof)
-    return out
+    target = np.array([m[0] + m[1] for _, m, _ in found])
+    lk, lg = [np.zeros(len(found))], []
+    for step in range(HOLD_STEPS if HOLD_AS_PRICED else 1):
+        home, away = par_simulate(tables, st, n_paths, seed=0, distinct=True, in_play=_priced_in_play(tables))
+        lg.append(np.log(np.maximum(1.0, (home + away).mean(axis=1).reshape(-1, 2).mean(axis=1))))
+        if step == 0:
+            nk = np.log(target) - lg[0]
+        else:
+            nk = np.array([_hold_step([a, b], [c, d], t) for a, b, c, d, t in
+                           zip(lk[-2], lk[-1], lg[-2], lg[-1], np.log(target))])
+        lk.append(nk)
+        theta0 = [prior_theta(grid, (m[0] * math.exp(x), m[1] * math.exp(x)), p, v.pace)
+                  for (_, m, p), x in zip(found, nk)]
+        if step + 1 < (HOLD_STEPS if HOLD_AS_PRICED else 1):
+            for k, ((_, _, prof), th) in enumerate(zip(found, theta0)):
+                for i in (2 * k, 2 * k + 1):
+                    st.theta[i], st.strength[i], st.strength_game[i] = sim.strength_draw(tables, th, _forms(tables, prof))
+    return {code: Held(tuple(th), prof) for (code, _, prof), th in zip(found, theta0)}
 
 
 def reconcile(tables, grid, matches, priors, book, ratings, handles, teams, grid_paths, verbose=True):
