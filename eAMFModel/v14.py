@@ -14,9 +14,8 @@ from . import follow, form_layer, glmer_prior, nb2_prior, playover, players, sim
 from .state import HOME, GameState
 
 # v14: with STRENGTH_BOOM the strengths move the points less through the draw's tilt, so a side at
-# 10 points a match (the weakest prior) sits near -0.8 and one at 27 (the strongest) near +0.3:
-# the grid is moved down to reach both.
-GRID = np.round(np.linspace(-1.1, 0.5, 17) if sim.STRENGTH_BOOM else np.linspace(-0.8, 0.8, 17), 3)
+# 10 points a match (the weakest prior) sits near -0.8: the grid reaches down to -1.1.
+GRID = np.round(np.linspace(-1.1, 0.8, 20) if sim.STRENGTH_BOOM else np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
 TOTAL_MAX = 160
 KAPPA = 40.0

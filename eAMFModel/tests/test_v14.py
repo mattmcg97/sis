@@ -1018,7 +1018,7 @@ class TestFourthDownFit(unittest.TestCase):
         for i in range(6000):
             y, t = int(rng.integers(20, 95)), int(rng.integers(1, 12))
             who = ["BOLD", "CALM", "MID"][i % 3]
-            z = sim14._go_basis([y], [t])[0] @ np.array(dp.go_coef) + {"BOLD": 1.0, "CALM": -1.0, "MID": 0.0}[who]
+            z = sim14._go_logit(dp, y, t) + {"BOLD": 1.0, "CALM": -1.0, "MID": 0.0}[who]
             went = rng.random() < 1 / (1 + np.exp(-z))
             fg_range = 100 - y + 17 <= 55
             choice = "go" if went else ("fg" if fg_range and rng.random() < 0.9 else "punt")
@@ -1089,6 +1089,10 @@ def sim12_profile():
 class TestBuild(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        # the test matches have no 40+ yard play for sim14.STRENGTH_BOOM to work on, so their
+        # strengths could not reach the priors these tests set
+        cls.boom = sim14.STRENGTH_BOOM
+        sim14.STRENGTH_BOOM = False
         cls.tmp = tempfile.TemporaryDirectory()
         cls.matches = _with_handles(_matches(40))
         # the in-play shift and the quarter-start fit are off by default; the
@@ -1105,6 +1109,7 @@ class TestBuild(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
+        sim14.STRENGTH_BOOM = cls.boom
 
     def test_writes_the_model_and_the_profiles(self):
         for name in ("v14tables.npz", "v14grid.npz", "v14players.json"):
@@ -2581,9 +2586,15 @@ class TestHoldPoints(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        cls.boom = sim14.STRENGTH_BOOM               # no 40+ yard play in the test matches (TestBuild)
+        sim14.STRENGTH_BOOM = False
         cls.tables = sim14.Tables.build(_matches(), min_records=20)
         cls.grid = v14.PriorGrid.build(cls.tables, n_paths=200)
         cls.means = (26.0, 22.0)
+
+    @classmethod
+    def tearDownClass(cls):
+        sim14.STRENGTH_BOOM = cls.boom
 
     def _points(self, theta, prof, n=2000):
         st = sim14.Start(1)
