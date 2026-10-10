@@ -441,6 +441,12 @@ HOLD_RATES = ("big", "loss", "loss_size", "kick_tb", "kick_nlz")
 # starts where no hold does and scales both sides' prior points alike until the match's own
 # kick-off sim gives the prior's total.
 HOLD_TOTAL = True
+# With sim.STRENGTH_BOOM a side's points climb faster than exponentially in its strength, and the
+# day's strength spread (strength_draw) lifts the mean more than its lognormal allowance: the held
+# kick-off ran 0.80 points a match above the prior. HOLD_AS_PRICED plays the hold sim as pricing
+# plays the match -- with the day's spread and, where the in-play shift is fitted, on the total's
+# in-play run.
+HOLD_AS_PRICED = True
 
 
 def _hold_sim(tables, theta, prof, variant, n_paths, seed):
@@ -448,14 +454,27 @@ def _hold_sim(tables, theta, prof, variant, n_paths, seed):
     st = sim.Start(2)
     st.team[:], st.kicks_second_half[:] = (0, 1), (1, 0)
     st.theta[:] = theta
+    if HOLD_AS_PRICED:
+        for i in range(2):
+            st.theta[i], st.strength[i], st.strength_game[i] = sim.strength_draw(tables, theta, _forms(tables, prof))
     st.aggression[:] = (prof[0].aggression, prof[1].aggression)
     st.kick[:] = (prof[0].kick, prof[1].kick)
     if variant.pace:
         st.pace[:] = (prof[0].pace, prof[1].pace)
     for name in HOLD_RATES:
         getattr(st, name)[:] = (getattr(prof[0], name), getattr(prof[1], name))
-    home, away = sim.simulate(tables, st, n_paths, np.random.default_rng(seed), seed=seed)
+    home, away = sim.simulate(tables, st, n_paths, np.random.default_rng(seed), seed=seed, in_play=_priced_in_play(tables))
     return max(0.5, float(home.mean())), max(0.5, float(away.mean()))
+
+
+def _forms(tables, prof):
+    """Each side's form on the day as pricing reads it."""
+    return [tables.strength_league if p.form is None else p.form for p in prof]
+
+
+def _priced_in_play(tables):
+    """Whether a hold sim plays the in-play shift, as pricing's total does (HOLD_AS_PRICED)."""
+    return HOLD_AS_PRICED and bool(np.any(tables.inplay_theta))
 
 
 def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=None):
@@ -534,13 +553,15 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
         for i, first in ((2 * k, 0), (2 * k + 1, 1)):
             st.team[i], st.kicks_second_half[i] = first, 1 - first
             st.theta[i] = th
+            if HOLD_AS_PRICED:
+                st.theta[i], st.strength[i], st.strength_game[i] = sim.strength_draw(tables, th, _forms(tables, prof))
             st.aggression[i] = (prof[0].aggression, prof[1].aggression)
             st.kick[i] = (prof[0].kick, prof[1].kick)
             if v.pace:
                 st.pace[i] = (prof[0].pace, prof[1].pace)
             for name in HOLD_RATES:
                 getattr(st, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
-    home, away = par_simulate(tables, st, n_paths, seed=0, distinct=True)
+    home, away = par_simulate(tables, st, n_paths, seed=0, distinct=True, in_play=_priced_in_play(tables))
     own = (home + away).mean(axis=1).reshape(-1, 2).mean(axis=1)
     out = {}
     for (code, means, prof), got in zip(found, own):
