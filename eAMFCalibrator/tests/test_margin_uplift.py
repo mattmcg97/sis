@@ -114,14 +114,15 @@ class TestReport(unittest.TestCase):
     def test_the_same_matches_and_one_clock_for_every_feed(self):
         data = self.data()
         self.assertEqual(data["matches"], 1)                           # M2 has no candidate ticks
-        self.assertEqual([f["ticks"] for f in data["feeds"]], [4, 3])
+        self.assertEqual([f["ticks"] for f in data["feeds"]], [3, 3])  # prod's at 30: v13's last is 20 old
+        self.assertEqual([f["of"] for f in data["feeds"]], [4, 3])
         self.assertAlmostEqual(data["factor"], 2.0)                    # prod's M1 ends at 30, M2 is out
         head = dict(mu.headline(data))
         self.assertEqual([round(m, 2) for m, _, _ in head["Moneyline"]], [-80.0, -80.0])
         text = "\n".join(mu.text(data))
         self.assertIn("uplift on prod", text)
         self.assertIn("FD.csv", text)
-        self.assertIn("on the 1 matches every feed", text)
+        self.assertIn("on 1 matches: prod's ticks", text)
         self.assertIn("Q1, 54 game minutes left -- Moneyline", text)
         page = mu.html(data, str)
         self.assertIn("Uplift on prod", page)
@@ -194,12 +195,8 @@ class TestSections(unittest.TestCase):
                 cli.apply_uplift(args)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TestPairedTicks(unittest.TestCase):
-    """The paired view: the candidate's latest price at each of prod's ticks, the same moments for both."""
+class TestMatchedTicks(unittest.TestCase):
+    """Only prod's ticks every candidate has a fresh price for, with every probability 0.05-0.95."""
 
     def test_the_candidate_is_read_at_prods_moments(self):
         prod = mu.Ticks("prod").add([q("M1", 50, 2, 0.60), q("M1", 50, 3, 0.62), q("M1", 50, 5, 0.65),
@@ -207,21 +204,46 @@ class TestPairedTicks(unittest.TestCase):
                                      q("M2", 50, 4, 0.50)], STARTS, FINALS)
         cand = mu.Ticks("v14").add([q("M1", 50, 2.5, 0.55), q("M1", 50, 4.5, 0.58),
                                     q("M1", 54, 3.5, 0.45, "Over 39.5 points")], STARTS, FINALS)
-        p, c = mu.paired(prod, cand)
+        (_, p), (_, c) = mu.matched([("prod", prod), ("v14", cand)])
         # 2.0: no candidate price yet; 9.0: the candidate's last is 4.5 minutes old; M2: not priced
         self.assertEqual(list(p.array("minutes")), [3.0, 5.0, 4.0])
         self.assertEqual(list(c.array("minutes")), [3.0, 5.0, 4.0])
         self.assertEqual([round(x, 2) for x in p.array("prob")], [0.62, 0.65, 0.50])
         self.assertEqual([round(x, 2) for x in c.array("prob")], [0.55, 0.58, 0.45])
         self.assertEqual(list(c.array("group")), [0, 0, 1])
+        self.assertEqual(set(p.matches), {"M1"})
 
-    def test_compute_scores_each_candidate_on_the_same_ticks(self):
+    def test_every_feeds_probability_within_the_range(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, 2, 0.04), q("M1", 50, 3, 0.50), q("M1", 50, 4, 0.95),
+                                     q("M1", 50, 5, 0.50)], STARTS, FINALS)
+        cand = mu.Ticks("v14").add([q("M1", 50, 2, 0.50), q("M1", 50, 3, 0.97), q("M1", 50, 4, 0.90),
+                                    q("M1", 50, 5, 0.05)], STARTS, FINALS)
+        (_, p), (_, c) = mu.matched([("prod", prod), ("v14", cand)])
+        self.assertEqual(list(p.array("minutes")), [4.0, 5.0])      # 2: prod 0.04; 3: v14 0.97
+        self.assertEqual([round(x, 2) for x in c.array("prob")], [0.90, 0.05])
+
+    def test_every_candidate_needs_a_price(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, k, 0.6) for k in (2, 3, 4)], STARTS, FINALS)
+        a = mu.Ticks("v13").add([q("M1", 50, 2, 0.7)], STARTS, FINALS)
+        b = mu.Ticks("v14").add([q("M1", 50, 3, 0.7)], STARTS, FINALS)
+        out = mu.matched([("prod", prod), ("v13", a), ("v14", b)])
+        self.assertEqual([len(t) for _, t in out], [2, 2, 2])     # 2: no v14 price yet
+
+    def test_compute_bets_every_feed_on_the_same_ticks(self):
         prod = mu.Ticks("prod").add([q("M1", 50, k, 0.6) for k in (2, 3, 4, 5)], STARTS, FINALS)
         cand = mu.Ticks("v14").add([q("M1", 50, 2, 0.7)], STARTS, FINALS)
         data = mu.compute([("prod", prod), ("v14", cand)], chart=CHART)
-        pr = data["paired"][0]
-        self.assertEqual((pr["label"], pr["ticks"], pr["of"]), ("v14", 3, 4))   # 5 is over 2 minutes old
-        handles = [o["Moneyline"]["handle"] for o in pr["overall"]]
+        self.assertEqual([(f["ticks"], f["of"]) for f in data["feeds"]], [(3, 4), (3, 1)])  # 5: over 2 old
+        handles = [o["Moneyline"]["handle"] for o in data["overall"]]
         self.assertEqual(handles[0], handles[1])          # the same bets, at the same chart price
-        self.assertTrue(any("PAIRED TICKS" in line for line in mu.text(data)))
-        self.assertIn("Paired ticks", mu.html(data, lambda x: x))
+        self.assertIn("0.05-0.95", "\n".join(mu.text(data)))
+        self.assertIn("matched", mu.html(data, lambda x: x))
+
+    def test_nothing_matched(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, 2, 0.6)], STARTS, FINALS)
+        cand = mu.Ticks("v14").add([q("M1", 50, 3, 0.6)], STARTS, FINALS)
+        self.assertIsNone(mu.compute([("prod", prod), ("v14", cand)], chart=CHART))
+
+
+if __name__ == "__main__":
+    unittest.main()

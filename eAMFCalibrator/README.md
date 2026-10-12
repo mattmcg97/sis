@@ -1883,8 +1883,8 @@ than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) sho
 
 Every `bets` run (and so `report --bets`) also runs the dummy-bet method from the partner's
 eBasketball notebook. It's applied to AF as they applied it, weaknesses and all, but as a direct
-comparison: prod against each candidate over the report window, on the matches that every feed has
-in-play ticks for. It reuses the quotes the simulation has already fetched, so it costs nothing
+comparison: prod against each candidate over the report window, on matched ticks only (below). It
+reuses the quotes the simulation has already fetched, so it costs nothing
 extra.
 
 ```
@@ -1915,9 +1915,14 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Checkpoints.** At 54, 45, 36, 30, 21 and 15 minutes left (their 18, 15, 12, 10, 7 and 5),
   each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
   feed; its margin needs more than 50.
-
-The feeds can tick at different rates, so each one's tick count is shown. Since that weighs different moments of the game in each feed, the **paired ticks** table bets at prod's ticks only: at each one, the candidate's latest live price for the same match, market and selection (no more than `PAIR_MAX_AGE`, 2 minutes, old), and prod scored on the same ticks. The moments and the bets are the same for both; only the probabilities differ, so its uplift is the model's alone. The matches are the ones
-the simulation covers: those with at least one bet.
+- **Matched ticks only.** The feeds tick at different rates, so every table bets at prod's ticks
+  alone. At each one, each candidate's latest live price for the same match, market and selection
+  is taken (no more than `PAIR_MAX_AGE`, 2 minutes, old). A prod tick without one in every
+  candidate is dropped from every feed, and so is one where any feed's probability is outside
+  `PROB_RANGE` (0.05 to 0.95). The moments and bets are the same for all, only the probabilities
+  differ, so the uplift is the model's alone. Each feed's matched ticks are shown against all its
+  ticks. The clock factor is still fitted on all of prod's ticks. The matches are the ones
+  the simulation covers: those with at least one bet.
 
 The page's betting simulation has three panels:
 - **Re-pricing:** the real bets at each candidate's probability.
