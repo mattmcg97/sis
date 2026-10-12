@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import follow, glmer_prior, nb2_prior, players, sim9, sim14, v14, v14_stream
+from .. import follow, glmer_prior, nb2_prior, players, rolling_prior, sim9, sim14, v14, v14_stream
 from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
@@ -2656,3 +2656,69 @@ class TestReconcile(unittest.TestCase):
             items = fn(matches, grid, priors, held=held)
             self.assertTrue(items)
             self.assertTrue(all(isinstance(it[2], v14.Held) for it in items))
+
+
+class TestOptimumBuild(unittest.TestCase):
+    """v14's build is the optimum build by default: glmer, the calibrator's refreshed inputs, and
+    the pre-match model refitted every day from the cut-off."""
+
+    def setUp(self):
+        from .test_rolling_prior import FakeFit as Base
+
+        class FakeFit(Base):
+            """A fit that, like the real ones, records its cut-off in meta."""
+            built = []
+
+            def __init__(self, directory):
+                super().__init__(directory)
+                self.meta = {"before": f"{self.day}T00:00:00"}
+        self.Fake = FakeFit
+        FakeFit.built = []
+        self.tmp = tempfile.TemporaryDirectory()
+        self.model = os.path.join(self.tmp.name, "v14_model")
+        os.makedirs(self.model)
+        with open(os.path.join(self.model, v14.PRIOR_FILE), "w") as fh:
+            json.dump({"prior": "glmer"}, fh)
+        self.patches = [mock.patch.dict(rolling_prior.PRIORS, {"glmer": FakeFit}),
+                        mock.patch.dict(v14.PRIORS, {"glmer": FakeFit})]
+        for p in self.patches:
+            p.start()
+        FakeFit.build([], os.path.join(self.model, "glmer"), dt.datetime(2026, 9, 10))
+        FakeFit.built = []
+        self.history = [{"MATCH_CODE": f"M{d}", "SCHEDULED_START_TIME_UTC": f"2026-09-{d:02d} 12:00:00"}
+                        for d in (8, 9, 10, 11, 12)]
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_every_day_from_the_cut_off_is_fitted_and_the_build_attached(self):
+        from .. import __main__ as cli
+        cli._daily(self.model, self.history, "glmer", dt.date(2026, 9, 10))
+        # the cut-off day is the build's own fit, copied; the days after it are fitted
+        self.assertEqual(sorted(self.Fake.built), [dt.datetime(2026, 9, 11), dt.datetime(2026, 9, 12)])
+        with open(os.path.join(self.model, v14.PRIOR_FILE)) as fh:
+            meta = json.load(fh)
+        self.assertEqual(meta["rolling"], os.path.abspath(os.path.join(self.model, "glmer_daily")))
+        days = rolling_prior.Rolling(meta["rolling"]).days
+        self.assertEqual(days, [dt.date(2026, 9, d) for d in (10, 11, 12)])
+        # brought up to a later day, only the new day is fitted
+        self.Fake.built = []
+        cli._daily(self.model, self.history + [{"MATCH_CODE": "M13", "SCHEDULED_START_TIME_UTC":
+                                                "2026-09-13 12:00:00"}], "glmer", dt.date(2026, 9, 10))
+        self.assertEqual(self.Fake.built, [dt.datetime(2026, 9, 13)])
+
+    def test_a_history_that_ends_before_the_cut_off_fits_no_day(self):
+        from .. import __main__ as cli
+        self.assertIsNone(cli._daily(self.model, self.history[:2], "glmer", dt.date(2026, 9, 10)))
+        self.assertEqual(self.Fake.built, [])
+
+    def test_v14_builds_glmer_on_every_snapshot_and_the_others_as_before(self):
+        from .. import __main__ as cli
+        parser = cli.build_parser()
+        a = parser.parse_args(["v14-build"])
+        self.assertEqual((a.snapshots, a.prior, a.half, a.no_daily),
+                         (cli.DATA["snapshots"], "glmer", "all", False))
+        b = parser.parse_args(["v13-build", "snaps.csv"])
+        self.assertEqual((b.prior, b.half), ("nb2", "train"))

@@ -51,6 +51,9 @@ FETCH_CACHE = False
 # time, set this to 09:00:00 instead.
 CUTOFF_START = "2026-09-17 10:00:00"
 CUTOFF_END = None  # None = up to the latest data available
+# Where `refresh` starts the snapshots and timeouts when given no --since: the first day the
+# builds read (the match history always runs from the start).
+REFRESH_SINCE = "2026-08-24 00:00:00"
 
 SPORT_CODE = "AF"
 

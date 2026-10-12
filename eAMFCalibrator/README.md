@@ -6,6 +6,7 @@ into cells, and asks the only question that matters for a probability:
 **when the model said 30%, did it happen 30% of the time?**
 
 ```
+py -m eAMFCalibrator refresh --until 2026-10-12   # the data the builds and reports read, in one go
 py -m eAMFCalibrator preflight              # check tables + the play clock
 py -m eAMFCalibrator report                 # everything, one HTML (start here)
 py -m eAMFCalibrator report --days 7        # rolling window, no config edit
@@ -17,6 +18,11 @@ py -m eAMFCalibrator run candidate
 py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
+
+`refresh` writes `scouting_playover.csv` and `timeouts.csv` (the snapshots and timeouts from
+`--since`, default `REFRESH_SINCE`, 24 Aug) and `match_history.csv` (every settled match before
+`--until`) into `out/` over one connection: what `scouting`, `timeouts` and `history` write one at a
+time, and what `eAMFModel v14-build` reads with no options (see eAMFModel's README, "Run it").
 
 Four views:
 

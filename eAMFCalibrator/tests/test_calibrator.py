@@ -5803,3 +5803,39 @@ class TestPlayOverSnapshots(unittest.TestCase):
         self.assertEqual([(p.message_count, p.message_gap) for p in pairs], [(6, 1), (13, 1), (21, 1)])
         self.assertEqual({p.anchor for p in pairs}, {drives.PLAY_OVER})
         self.assertEqual(stats["snapshots"], 3)
+
+
+class TestRefresh(unittest.TestCase):
+    """`refresh`: the snapshots, timeouts and match history in one go."""
+
+    def setUp(self):
+        self.saved = config.CUTOFF_START, config.CUTOFF_END
+
+    def tearDown(self):
+        config.CUTOFF_START, config.CUTOFF_END = self.saved
+
+    def test_it_starts_where_the_builds_read_from_unless_told(self):
+        from .. import __main__ as cli
+        with mock.patch.object(cli, "cmd_refresh", return_value=0) as run:
+            self.assertEqual(cli.main(["refresh"]), 0)
+            self.assertEqual(config.CUTOFF_START, config.REFRESH_SINCE)
+            cli.main(["refresh", "--since", "2026-09-01 00:00:00", "--until", "2026-10-12"])
+            self.assertEqual((config.CUTOFF_START, config.CUTOFF_END), ("2026-09-01 00:00:00", "2026-10-12"))
+        self.assertEqual(run.call_count, 2)
+
+    def test_it_writes_all_three_files_over_one_connection(self):
+        from .. import __main__ as cli
+        conn = mock.MagicMock()
+        with mock.patch.object(cli.snowflake_io, "get_connection", return_value=conn), \
+                mock.patch.object(cli.scouting, "locate", return_value="T"), \
+                mock.patch.object(cli.scouting, "export") as export, \
+                mock.patch("eAMFCalibrator.timeouts.run") as timeouts, \
+                mock.patch.object(cli, "_write_history") as history, \
+                mock.patch("builtins.print"):
+            args = cli.build_parser().parse_args(["refresh", "--out", "x_out"])
+            with mock.patch("os.makedirs"):
+                self.assertEqual(cli.cmd_refresh(args), 0)
+        self.assertEqual(export.call_args[0][2], os.path.join("x_out", "scouting_playover.csv"))
+        self.assertEqual(timeouts.call_args[0][2], "x_out")
+        self.assertEqual(history.call_args[0][1], "x_out")
+        conn.close.assert_called_once()

@@ -2255,17 +2255,29 @@ version that drops one fails the tests before it reaches the page.
 
 ## Run it
 
+Three steps: refresh the data, build, report. v14's build is the optimum build with nothing to set:
+every input from the refresh, glmer as the pre-match model (`glmer/fit.R`'s defaults), and that model
+refitted for every day from the build's cut-off to the history's last day, each on every result
+settled before its day began (the cut-off day's fit is the build's own).
+
 ```bash
-# once: the snapshots, the match history and every timeout (eAMFCalibrator), then a build
-python -m eAMFCalibrator scouting --since 2026-08-24 --until 2026-09-23
-python -m eAMFCalibrator history --until 2026-09-23
-python -m eAMFCalibrator timeouts --since 2026-08-24 --until 2026-09-23
-python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
-    --out v10_model --history eAMFCalibrator/out/match_history.csv \
-    --handles eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
+# 1. the data every build and report reads: snapshots and timeouts from 24 Aug, every settled match
+python -m eAMFCalibrator refresh --until 2026-10-12
 
-# the calibration report with versions standing in for the candidate
-python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
+# 2. the build on everything before the cut-off (about 100 minutes, then the daily fits)
+python -m eAMFModel v14-build --until 2026-10-01
 
-python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v10
+# 3. the report against prod over the days after the cut-off, with the bets and the margin uplift
+python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v14 \
+    --bets --uplift-since 2026-09-01 --uplift-until 2026-10-01 --margin-chart FD_109_BALANCED.csv
+```
+
+- **Live:** build without `--until`, then each day `eAMFCalibrator refresh` and `eAMFModel
+  v14-daily` (fits the days since the last one and keeps the build attached).
+- `v14-build --no-daily` prices from the build's single fit; `--prior nb2` builds on NB2 instead.
+- v8-v13 keep their own commands and defaults (`--prior nb2`, `--half train`; `prior-daily` to
+  attach daily fits).
+
+```bash
+python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v14
 ```

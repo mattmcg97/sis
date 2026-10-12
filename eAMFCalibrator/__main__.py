@@ -379,15 +379,41 @@ def cmd_bets(args):
 def cmd_history(args):
     """Every settled match before --until (default: now), shaped like
     nb2/AMFELO.csv: what v4's own pre-match model (NB2) is fitted on."""
-    import csv
     out_dir = args.out or DEFAULT_OUT
     os.makedirs(out_dir, exist_ok=True)
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
-            rows = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+            _write_history(cur, out_dir)
     finally:
         conn.close()
+    return 0
+
+
+def cmd_refresh(args):
+    """The data every build and report reads, in one go: SCOUTING_FULL's PLAY_OVER snapshots and
+    every timeout from --since (default config.REFRESH_SINCE) to --until, and every settled match
+    before --until -- scouting_playover.csv, timeouts.csv and match_history.csv in --out."""
+    from . import timeouts
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            scouting.export(cur, table, os.path.join(out_dir, "scouting_playover.csv"))
+            timeouts.run(cur, table, out_dir)
+            _write_history(cur, out_dir)
+    finally:
+        conn.close()
+    print(f"\n  refreshed {out_dir}: scouting_playover.csv, timeouts.csv, match_history.csv")
+    return 0
+
+
+def _write_history(cur, out_dir):
+    """match_history.csv: every settled match before config.CUTOFF_END."""
+    import csv
+    rows = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
     path = os.path.join(out_dir, "match_history.csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, snowflake_io.HISTORY_COLUMNS)
@@ -396,7 +422,7 @@ def cmd_history(args):
     first = rows[0]["SCHEDULED_START_TIME_UTC"] if rows else "-"
     last = rows[-1]["SCHEDULED_START_TIME_UTC"] if rows else "-"
     print(f"\n  {len(rows):,} settled {config.SPORT_CODE} matches, {first} -> {last}: {path}")
-    return 0
+    return path
 
 
 def run_one(stream_key, out_dir):
@@ -1151,6 +1177,15 @@ def build_parser():
                                   "(e.g. the customer and VIP columns)")
     bets_parser.set_defaults(func=cmd_bets)
 
+    rf_parser = sub.add_parser(
+        "refresh", parents=[shared],
+        help="the data every build and report reads, in one go: the PLAY_OVER snapshots and timeouts "
+             f"from --since (default {config.REFRESH_SINCE}) and every settled match to --until "
+             "(-> scouting_playover.csv, timeouts.csv, match_history.csv)")
+    rf_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    rf_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE")
+
     sc_parser = sub.add_parser(
         "scouting", parents=[shared],
         help="SCOUTING_FULL: probe it against GAMEPLAI_STREAM and export every "
@@ -1280,7 +1315,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command in ("scouting", "timeouts") and not (args.days or args.since):
         args.days = 30          # the scouting export defaults to the last month
+    if args.command == "refresh" and not (args.days or args.since):
+        args.since = config.REFRESH_SINCE
     apply_overrides(args)
+    if args.command == "refresh":
+        return cmd_refresh(args)
     if args.command == "preflight":
         return cmd_preflight(args)
     if args.command == "run":

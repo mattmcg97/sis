@@ -36,6 +36,7 @@ The calibrator runs a version as a stream in its own right:
 """
 
 import argparse
+import json
 import os
 
 from . import grading, playover, players
@@ -85,6 +86,8 @@ def cmd_sim_build(args):
         cut = dt.date.fromisoformat(args.until)
         keep = {c for c in keep if day(c) < cut}
         print(f"  building on {len(keep):,} matches before {cut}")
+    if name in OPTIMUM:
+        _optimum_inputs(args)
     handles = players.load_handles(args.handles) if args.handles else None
     history = before = None
     if args.history:
@@ -107,6 +110,76 @@ def cmd_sim_build(args):
     players_file = f"{name}players.json"
     print(f"  wrote {args.out}/{name}tables.npz, {args.out}/{name}grid.npz"
           f"{' and ' + players_file if os.path.exists(os.path.join(args.out, players_file)) else ''}")
+    if name in OPTIMUM and not args.no_daily:
+        if before is None:
+            from .remaining import day
+            before = dt.datetime.combine(max(day(c) for c in keep) + dt.timedelta(days=1), dt.time())
+        _daily(args.out, history, prior or "nb2", before.date(), workers=args.workers)
+
+
+# v14's build is the optimum build by default: every input from the calibrator's `refresh`
+# (eAMFCalibrator/out), every snapshot before --until, the glmer pre-match model (glmer/fit.R's
+# defaults) and that model refitted for every day from the build's cut-off to the history's last
+# day, each fit on every result settled before its day began -- as a nightly refit would live.
+OPTIMUM = ("v14",)
+DATA = {"snapshots": os.path.join("eAMFCalibrator", "out", "scouting_playover.csv"),
+        "history": os.path.join("eAMFCalibrator", "out", "match_history.csv"),
+        "timeouts": os.path.join("eAMFCalibrator", "out", "timeouts.csv")}
+
+
+def _optimum_inputs(args):
+    """The optimum build's inputs: the history (and its handles) and the timeouts from the
+    calibrator's out directory when not given."""
+    if not args.history and os.path.exists(DATA["history"]):
+        args.history = DATA["history"]
+    if not args.handles and args.history:
+        args.handles = args.history
+    if not getattr(args, "timeouts", None) and os.path.exists(DATA["timeouts"]):
+        args.timeouts = DATA["timeouts"]
+
+
+def _daily(model_dir, history, prior, since, until=None, workers=2):
+    """The build's pre-match model refitted for every day from `since` (the build's cut-off) to
+    `until` (default: the history's last match day), into model_dir/<prior>_daily, and the build
+    attached to it. The cut-off day's fit is the build's own, copied rather than refitted; days
+    already fitted are kept."""
+    import shutil
+    from . import nb2_prior, rolling_prior, v14
+    days = [s.date() for s in (nb2_prior._start(r) for r in history) if s is not None]
+    until = until or (max(days) if days else since)
+    if until < since:
+        print(f"  daily pre-match fits: none (the history ends {until}, before the cut-off {since})")
+        return None
+    out = os.path.join(model_dir, f"{prior}_daily")
+    own, first = os.path.join(model_dir, prior), os.path.join(out, since.isoformat())
+    if v14.PRIORS[prior].exists(own) and not os.path.exists(first) \
+            and v14.PRIORS[prior](own).meta["before"][:10] == since.isoformat():
+        os.makedirs(out, exist_ok=True)
+        shutil.copytree(own, first)
+    print(f"  daily pre-match fits: {prior} for every day from {since} to {until}")
+    rolling = rolling_prior.fit(history, prior, out, since, until, workers=workers)
+    rolling_prior.attach(model_dir, out)
+    print(f"  {rolling.describe()}; {model_dir} prices each match from its own day's fit")
+    return rolling
+
+
+def cmd_daily(args):
+    """The optimum build's daily pre-match fits brought up to the refreshed history's last day."""
+    import datetime as dt
+    from . import nb2_prior
+    name = args.version
+    with open(os.path.join(args.model, f"{name}prior.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    prior = meta.get("prior", "nb2")
+    model = _sim_module(name)
+    own = os.path.join(args.model, prior)
+    if not model.PRIORS[prior].exists(own):
+        raise SystemExit(f"{args.model}: no {prior} fit of its own to start the days from")
+    since = dt.datetime.fromisoformat(model.PRIORS[prior](own).meta["before"][:19]).date()
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    _daily(args.model, history, prior, since, until, workers=args.workers)
+    return 0
 
 
 def cmd_sim(args):
@@ -314,7 +387,8 @@ def _layer_options(p, what):
                                                              f"his day is going (default: never), {what}")
 
 
-def main(argv=None):
+def build_parser():
+    """The command line's parser."""
     parser = argparse.ArgumentParser(prog="eAMFModel", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -344,8 +418,13 @@ def main(argv=None):
                        ("v14", "v14: v13 played closer to the real game -- strength as boom or bust, the clock "
                                "as played -- built in one joint fit (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
-        p.add_argument("snapshots", help="scouting_playover.csv")
-        p.add_argument("--half", choices=["train", "test", "all"], default="train")
+        if name in OPTIMUM:
+            p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                           help=f"scouting_playover.csv (default {DATA['snapshots']})")
+        else:
+            p.add_argument("snapshots", help="scouting_playover.csv")
+        p.add_argument("--half", choices=["train", "test", "all"],
+                       default="all" if name in OPTIMUM else "train")
         p.add_argument("--out", default=f"{name}_model")
         p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
                                          "(default: the export's own handle columns)")
@@ -362,9 +441,16 @@ def main(argv=None):
                             "(see README: off by default, it has not held up out of sample)")
         p.add_argument("--timeouts", help="the calibrator's timeouts.csv (`python -m eAMFCalibrator "
                                           "timeouts`): every real timeout, to fit when sides call them")
-        p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
-                       help="the pre-match model --history fits: nb2 (nb2/, the default) or "
-                            "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
+        p.add_argument("--prior", choices=["nb2", "glmer"], default="glmer" if name in OPTIMUM else "nb2",
+                       help="the pre-match model --history fits: nb2 (nb2/) or glmer (glmer/ in R, "
+                            "needs R and lme4; see glmer/README.md); default "
+                            + ("glmer" if name in OPTIMUM else "nb2"))
+        if name in OPTIMUM:
+            p.add_argument("--no-daily", action="store_true",
+                           help="price from the build's single pre-match fit, without the daily refits "
+                                "from the cut-off to the history's last day (see v14-daily)")
+            p.add_argument("--workers", type=int, default=2,
+                           help="daily pre-match fits run side by side (default 2)")
         p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
                        help="how drives finish inside the 30 by quarter and lead: hold (the "
                             "default), tilt, or off (see README)")
@@ -407,6 +493,14 @@ def main(argv=None):
                    help="the points on the rest of the drive under way at each scrimmage PLAY_OVER "
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
+
+    p = sub.add_parser("v14-daily", help="bring a v14 build's daily pre-match fits up to the refreshed "
+                                         "history's last day (run after eAMFCalibrator refresh)")
+    p.add_argument("--model", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--history", help=f"the match history (default {DATA['history']})")
+    p.add_argument("--until", help="last day to fit (default: the history's last match day)")
+    p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
+    p.set_defaults(func=cmd_daily, version="v14")
 
     p = sub.add_parser("prior-daily", help="refit the pre-match model every day of a window, as it "
                                            "would be live, and point builds at it (rolling_prior.py)")
@@ -479,7 +573,11 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true", help="do not open the page")
     p.set_defaults(func=cmd_trader)
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     args.func(args)
 
 
