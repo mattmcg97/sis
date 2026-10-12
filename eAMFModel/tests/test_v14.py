@@ -1095,14 +1095,13 @@ class TestBuild(unittest.TestCase):
         sim14.STRENGTH_BOOM = False
         cls.tmp = tempfile.TemporaryDirectory()
         cls.matches = _with_handles(_matches(40))
-        # the in-play shift and the quarter-start fit are off by default; the
-        # build is tested with them on
-        saved = v14.IN_PLAY_FIT, v14.QUARTER_START_FIT
-        v14.IN_PLAY_FIT = v14.QUARTER_START_FIT = True
+        # the in-play shift is off by default; the build is tested with it on
+        saved = v14.IN_PLAY_FIT
+        v14.IN_PLAY_FIT = True
         try:
             v14.build(cls.matches, cls.tmp.name, grid_paths=60, verbose=False)
         finally:
-            v14.IN_PLAY_FIT, v14.QUARTER_START_FIT = saved
+            v14.IN_PLAY_FIT = saved
         cls.tables = sim14.Tables.load(os.path.join(cls.tmp.name, "v14tables.npz"))
         cls.grid = v14.PriorGrid.load(os.path.join(cls.tmp.name, "v14grid.npz"))
 
@@ -1148,7 +1147,6 @@ class TestBuild(unittest.TestCase):
 
     def test_the_build_fits_the_quarters_and_the_two_minute_drills(self):
         import copy
-        self.assertFalse(v14.QUARTER_START_FIT)          # off by default (see v14.py)
         tables = copy.deepcopy(self.tables)
         tables.inplay_theta[:] = 0.0          # this class's build has the in-play shift on too
         quarters, lates = v14.fit_quarter_levels(

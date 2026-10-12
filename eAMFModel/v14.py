@@ -149,7 +149,7 @@ def market_prob(market, line, margin_pmf, total_pmf):
     raise ValueError(market)
 
 
-# Builds run the long simulations (the prior grid, the points responses, the reconcile's holds) on
+# Builds run the long simulations (the prior grid, the points responses, the joint fit's holds) on
 # BUILD_WORKERS processes, splitting the starts by row. Each row's paths draw the same random
 # numbers wherever it runs, so the split changes nothing but the time.
 BUILD_WORKERS = 4
@@ -527,13 +527,8 @@ def held_theta(tables, grid, means, prof, variant, seed=0, n_paths=None):
     return prior_theta(grid, (means[0] * base[0] / own[0], means[1] * base[1] / own[1]), league, variant.pace)
 
 
-# v14: the build's calibration fits play every state at league rates and the prior's strengths,
-# while pricing plays each match with its sides' own rates at the held strengths. Once the profiles
-# exist, the build's last step (RECONCILE) re-fits each quarter's scoring level and its last two
-# minutes' from real quarter starts (fit_quarter_levels), and with RECONCILE_REST the in-play shift
-# by part of the game and margin (fit_rest_of_game), each state played as pricing plays it: Held.
-RECONCILE = True
-RECONCILE_REST = False
+# v14: a calibration state played as pricing plays its match: the match's held strengths with its
+# sides' own profiles (held_starts). The build's joint fit plays every state this way.
 
 
 @dataclass
@@ -541,6 +536,11 @@ class Held:
     """A match's held strengths with its two sides' profiles, as a calibration state's theta0."""
     theta: tuple
     prof: tuple
+
+
+def _held_or_league(held, code):
+    """A state's strengths: its match's held start, or league strengths."""
+    return held[code] if (held is not None and code in held) else LEAGUE_THETA
 
 
 def _set_side(tables, start, i, theta0):
@@ -559,14 +559,14 @@ def _set_side(tables, start, i, theta0):
         getattr(start, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
 
 
-RECONCILE_HOLD_PATHS = 200
+JOINT_HOLD_PATHS = 200
 
 
 def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, variant=None,
-                n_paths=RECONCILE_HOLD_PATHS):
+                n_paths=JOINT_HOLD_PATHS):
     """{match code: Held} for every match with a prior, its profiles as pricing builds them. With
     HOLD_TOTAL every match's kick-off is simulated in one run (n_paths games each, on paths of its
-    own; the reconcile only needs the matches together right, so far fewer than pricing's)."""
+    own; the joint fit only needs the matches together right, so far fewer than pricing's)."""
     v = variant or Variant("v14")
     found = []
     for code, rows in matches.items():
@@ -611,65 +611,6 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
                 for i in (2 * k, 2 * k + 1):
                     st.theta[i], st.strength[i], st.strength_game[i] = sim.strength_draw(tables, th, _forms(tables, prof))
     return {code: Held(tuple(th), prof) for (code, _, prof), th in zip(found, theta0)}
-
-
-def reconcile(tables, grid, matches, priors, book, ratings, handles, teams, grid_paths, verbose=True):
-    """The build's last step (RECONCILE): the scoring levels (and with RECONCILE_REST the in-play
-    shift) re-fitted with every match played as pricing plays it, then the grid rebuilt on them
-    (its responses kept). Returns the new grid."""
-    held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
-    if sim.QUARTER_PACE:
-        # the pace was fitted at league strengths before the levels; with the clock stopping after
-        # failed plays (sim.STOP_LINK) it hangs on the play, so it is fitted again as pricing plays
-        paced = fit_quarter_pace(tables, *pace_states(matches), held=held)
-        if verbose and paced:
-            real_n, before_n, after_n = paced[3:]
-            print("  reconcile, snaps a quarter from the real quarter starts at the matches' own strengths, real / "
-                  "simulated before -> after: " + "; ".join(f"Q{q + 1} {real_n[q]:.2f} / {before_n[q]:.2f} -> {after_n[q]:.2f}"
-                                                         for q in range(4)))
-        if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
-            scaled = fit_call_scale(tables, call_states(matches))
-            if verbose and scaled:
-                print("  reconcile, timeouts: " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
-                                                         for q, (n, r, b, a, s) in sorted(scaled.items())))
-        if sim.MANAGE_FIT:
-            two_minute = manage_states(matches)
-            counted = fit_late_count(tables, two_minute)
-            if verbose and counted:
-                print("  reconcile, snaps from the two-minute mark: " + "; ".join(
-                    f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (x{k:.2f})" for q, (n, r, b, a, k) in sorted(counted.items())))
-            managed = fit_manage(tables, two_minute)
-            if verbose and managed:
-                print("  reconcile, end-of-half field goals on downs 1-3: " + "; ".join(
-                    f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f} (clock held {p:.2f})" for q, (n, r, b, a, p) in sorted(managed.items())))
-    before_q, before_l = tables.period_theta.copy(), tables.late_theta.copy()
-    fitted_q, fitted_l = fit_quarter_levels(
-        tables, quarter_start_states(matches, grid, priors, held=held),
-        late_start_states(matches, grid, priors, held=held), rounds=QUARTER_ROUNDS, n_paths=QUARTER_PATHS)
-    if verbose:
-        print(f"  reconcile, {len(held):,} matches at their own rates and held strengths -- points in each"
-              " quarter from real quarter starts, real / simulated: "
-              + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
-              + "; from the two-minute mark: "
-              + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items()))
-              + "; scoring by quarter moved " + " / ".join(
-                  f"{d:+.3f}" for d in (tables.period_theta - before_q)[1:5])
-              + ", last two minutes " + " / ".join(
-                  f"{tables.late_theta[q] - before_l[q]:+.3f}" for q in (2, 4)))
-    if RECONCILE_REST:
-        rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors, held=held))
-        if verbose and rest:
-            print("  reconcile, points still to come from real in-game states, real / simulated before"
-                  " -> after: " + "; ".join(f"{sim.SEGMENTS[g]} {r:.2f} / {b:.2f} -> {a:.2f}"
-                                           for g, (r, b, a) in rest.items()))
-            if bands:
-                print("    by margin: " + "; ".join(
-                    f"{sim.SEGMENTS[g]} {sim.MARGIN_BANDS[m]} {r:.2f} / {b:.2f} -> {a:.2f}"
-                    for (g, m), (r, b, a) in sorted(bands.items())))
-    new = PriorGrid.build(tables, n_paths=grid_paths)
-    for name in ("pace_home", "pace_away", "big_home", "big_away", "loss_home", "loss_away"):
-        setattr(new, name, getattr(grid, name))
-    return new
 
 
 # v10: the pre-match model's expected points spread wider than real games do. Refitted at the
@@ -1113,7 +1054,6 @@ def handles_of(match_rows):
     return (home.upper(), away.upper()) if home and away else None
 
 
-QUARTER_START_FIT = False
 QUARTER_ROUNDS = 6
 QUARTER_PATHS = 150
 
@@ -1254,8 +1194,9 @@ def fit_period_theta_states(tables, items, rounds=6, n_paths=300, seed=0, verbos
     return tables.period_theta.copy(), got, real
 
 
-def in_game_states(matches, grid, every=5, priors=None):
-    """Real in-game states, with the lead each really ended with."""
+def in_game_states(matches, grid, every=5, priors=None, held=None):
+    """Real in-game states, with the lead each really ended with; with held ({match code: Held}),
+    each match's starts as pricing plays it."""
     out = []
     for code, rows in matches.items():
         if priors is not None and code not in priors:
@@ -1263,7 +1204,9 @@ def in_game_states(matches, grid, every=5, priors=None):
         rows = resolve_sides(rows)
         if rows[0].get("final_p1") in ("", None):
             continue
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        if held is not None and code not in held:
+            continue
+        theta0 = held[code] if held is not None else prior_theta(grid, None if priors is None else priors[code])
         final = int(float(rows[0]["final_p1"])) - int(float(rows[0]["final_p2"]))
         for r in rows[::every]:
             state, _ = state_for(r)
@@ -1287,7 +1230,7 @@ SETTLE_PRIOR = 150.0
 SETTLE_HALF_LIFE = 7.0
 
 
-def settle_states(matches, grid, priors=None, as_of=None, half_life=None):
+def settle_states(matches, grid, priors=None, as_of=None, half_life=None, held=None):
     """Every real snapshot with a snap to come as a simulation start: its settle cell, its start
     fields, the match's prior strengths, whether the next play was the offense's touchdown and its
     weight (v9: halving every `half_life` days of the match's age at `as_of`; 1 without)."""
@@ -1300,8 +1243,10 @@ def settle_states(matches, grid, priors=None, as_of=None, half_life=None):
             day = match_day(rows)
             if day is not None:
                 w = 0.5 ** (max(0, (as_of - day).days) / half_life)
+        if held is not None and code not in held:
+            continue
         rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        theta0 = held[code] if held is not None else prior_theta(grid, None if priors is None else priors[code])
         for r, nxt in zip(rows, rows[1:]):
             if r["play_kind"] not in sim.SNAP_KINDS or r["period"] != nxt["period"]:
                 continue
@@ -1353,7 +1298,7 @@ def call_states(matches):
                 continue
             r, state = start
             used = lambda x: int(x.get("timeouts_used_a") or 0) + int(x.get("timeouts_used_b") or 0)
-            out.append((int(q), start_from(state), max(0, used(in_q[-1]) - used(r))))
+            out.append((int(q), start_from(state), max(0, used(in_q[-1]) - used(r)), code))
     return out
 
 
@@ -1381,14 +1326,14 @@ def manage_states(matches):
                         if b["play_kind"] == "FIELD_GOAL" and a["down"] and int(float(a["down"])) < 4)
             snaps = sum(1 for a, b in zip(in_q[first:], in_q[first + 1:])
                         if a["play_kind"] in sim.SNAP_KINDS and a["down"] and b["play_kind"] not in ("PUNT", "FIELD_GOAL"))
-            out.append((int(q), start_from(state), kicks, snaps))
+            out.append((int(q), start_from(state), kicks, snaps, code))
     return out
 
 
 LATE_COUNT_ROUNDS = 5
 
 
-def fit_late_count(tables, items, rounds=LATE_COUNT_ROUNDS, n_paths=MANAGE_PATHS, seed=0):
+def fit_late_count(tables, items, rounds=LATE_COUNT_ROUNDS, n_paths=MANAGE_PATHS, seed=0, held=None):
     """Q2's and Q4's last two minutes of Tables.quarter_pace scaled together until as many snaps
     are played from every real two-minute state (manage_states) to the half's end as really were
     (kneels in). The quarter's own fit (fit_quarter_pace) matches the whole quarter and leaves the
@@ -1403,7 +1348,7 @@ def fit_late_count(tables, items, rounds=LATE_COUNT_ROUNDS, n_paths=MANAGE_PATHS
         start = sim.Start(len(its))
         for i, it in enumerate(its):
             _fill(start, i, it[1])
-            start.theta[i] = LEAGUE_THETA
+            _set_side(tables, start, i, _held_or_league(held, it[4] if len(it) > 4 else None))
         real = float(np.mean([it[3] for it in its]))
 
         def snaps():
@@ -1423,7 +1368,7 @@ def fit_late_count(tables, items, rounds=LATE_COUNT_ROUNDS, n_paths=MANAGE_PATHS
     return out
 
 
-def fit_manage(tables, items, n_paths=MANAGE_PATHS, steps=MANAGE_STEPS, seed=0):
+def fit_manage(tables, items, n_paths=MANAGE_PATHS, steps=MANAGE_STEPS, seed=0, held=None):
     """Tables.manage_p: for Q2 and Q4, the chance a play in range that would run the half out has
     its clock held for the kick, bisected so the field goals tried on downs 1-3 from every real
     two-minute state come as often as real. Returns {quarter: (halves, real, before, after, p)}."""
@@ -1435,7 +1380,7 @@ def fit_manage(tables, items, n_paths=MANAGE_PATHS, steps=MANAGE_STEPS, seed=0):
         start = sim.Start(len(its))
         for i, it in enumerate(its):
             _fill(start, i, it[1])
-            start.theta[i] = LEAGUE_THETA
+            _set_side(tables, start, i, _held_or_league(held, it[4] if len(it) > 4 else None))
         real = float(np.mean([it[2] for it in its]))
         qi = q // 2 - 1
 
@@ -1446,6 +1391,9 @@ def fit_manage(tables, items, n_paths=MANAGE_PATHS, steps=MANAGE_STEPS, seed=0):
             return stats.get(f"fg_early_q{q}", 0) / (len(its) * n_paths)
 
         before = kicks(float(tables.manage_p[qi]))
+        if not steps:
+            out[q] = (len(its), real, before, before, float(tables.manage_p[qi]))
+            continue
         lo, hi = 0.0, 1.0
         for _ in range(steps):
             mid = 0.5 * (lo + hi)
@@ -1504,7 +1452,7 @@ def fit_quarter_pace(tables, starts, quarters, played, real_secs, real_snaps, co
     average (kneels and snaps a quarter's end cut short apart); then each quarter's whole row is
     scaled until as many snaps are played from its real starts to its end as really were (kneels in),
     so the time the quarter spends elsewhere -- kicks, kneels, a clock run out -- comes out as real.
-    With held ({match code: Held}, the reconcile's), each start is played as pricing plays its match;
+    With held ({match code: Held}), each start is played as pricing plays its match;
     otherwise at league strengths.
     Returns (real, before, after) seconds a snap (4, slices) and (real, before, after) snaps a
     quarter (4,)."""
@@ -1547,18 +1495,19 @@ def fit_quarter_pace(tables, starts, quarters, played, real_secs, real_snaps, co
     return real, before, got, real_n, n_before, n_got
 
 
-def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0):
+def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0, held=None, steps=CALL_FIT_STEPS):
     """Scale each half's call rates (Q2, Q4) so the simulated timeouts from the two-minute mark
-    match the real ones. Returns {quarter: (halves, real, before, after, scale)}."""
+    match the real ones; with held, each state played as pricing plays its match. Returns
+    {quarter: (halves, real, before, after, scale)}."""
     out = {}
     for q in (2, 4):
         its = [it for it in items if it[0] == q]
         if len(its) < 50:
             continue
         start = sim.Start(len(its))
-        for i, (_, fields, _) in enumerate(its):
-            _fill(start, i, fields)
-            start.theta[i] = LEAGUE_THETA
+        for i, it in enumerate(its):
+            _fill(start, i, it[1])
+            _set_side(tables, start, i, _held_or_league(held, it[3] if len(it) > 3 else None))
         real = float(np.mean([it[2] for it in its]))
         qi = 0 if q == 2 else 1
         base = tables.call_p[qi].copy()
@@ -1570,8 +1519,12 @@ def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0):
             return stats.get(f"timeouts_q{q}", 0) / (len(its) * n_paths)
 
         before = calls(1.0)
+        if not steps:
+            tables.call_p[qi] = base
+            out[q] = (len(its), real, before, before, 1.0)
+            continue
         lo, hi = CALL_FIT_RANGE
-        for _ in range(CALL_FIT_STEPS):
+        for _ in range(steps):
             mid = 0.5 * (lo + hi)
             lo, hi = (mid, hi) if calls(mid) < real else (lo, mid)
         scale = 0.5 * (lo + hi)
@@ -1613,7 +1566,7 @@ def close_level_cells():
             for c in (sim.QUARTER / sim.CLOCK_CELLS * k - 1.0 for k in (1, 2, 3))]
 
 
-def close_level_states(matches, grid, priors=None):
+def close_level_states(matches, grid, priors=None, held=None):
     """Every real fourth-quarter snap in the last two minutes with the score level: its start fields,
     the match's prior strengths, the points the real drive under way scored and whether the match
     went to overtime."""
@@ -1622,8 +1575,10 @@ def close_level_states(matches, grid, priors=None):
     for code, rows in matches.items():
         if priors is not None and code not in priors:
             continue
+        if held is not None and code not in held:
+            continue
         rows = sorted(resolve_sides(rows), key=lambda r: int(r["message"]))
-        theta0 = prior_theta(grid, None if priors is None else priors[code])
+        theta0 = held[code] if held is not None else prior_theta(grid, None if priors is None else priors[code])
         overtime = any(str(r.get("period") or "").isdigit() and int(r["period"]) >= 5 for r in rows)
         for i, r in enumerate(rows):
             if r["period"] != "4" or r["play_kind"] not in sim.SNAP_KINDS:
@@ -1643,7 +1598,8 @@ def _logit(p):
     return np.log(p / (1 - p))
 
 
-def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0):
+def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0, rounds=CLOSE_LEVEL_ROUNDS,
+                    kicks=CLOSE_LEVEL_KICK):
     """The level side's late kick, 4th-down kick and efficiency shifts that bring its late drives'
     field-goal and touchdown shares, and the share of games level at the end of regulation, to the
     real ones; set on the tables. Returns (states, real (fg, td, ot), before, after, kick shift,
@@ -1653,7 +1609,7 @@ def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0):
     start = sim.Start(len(items))
     for i, (fields, theta, *_rest) in enumerate(items):
         _fill(start, i, fields)
-        start.theta[i] = theta
+        _set_side(tables, start, i, theta)
     team = start.team.astype(int)
     base = np.where(team == 0, start.home, start.away)[:, None]
     pts = np.array([it[2] for it in items])
@@ -1691,8 +1647,8 @@ def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0):
     err = lambda sh: sum(w * (a - b) ** 2 for w, a, b in zip(weights, sh, real))
     before = shares(0.0, 0.0, 0.0)
     x = [0.0, 0.0, 0.0]
-    grids = (CLOSE_LEVEL_KICK, CLOSE_LEVEL_FOURTH if CLOSE_LEVEL_LATE else np.array([0.0]), CLOSE_LEVEL_EFF)
-    for _ in range(CLOSE_LEVEL_ROUNDS):
+    grids = (kicks, CLOSE_LEVEL_FOURTH if CLOSE_LEVEL_LATE else np.array([0.0]), CLOSE_LEVEL_EFF)
+    for _ in range(rounds):
         for k, grid in enumerate(grids):
             best = min((err(shares(*(x[:k] + [v] + x[k + 1:]))), v) for v in grid)
             x[k] = float(best[1])
@@ -1713,7 +1669,7 @@ def fit_settle(tables, items, rounds=SETTLE_ROUNDS, n_paths=SETTLE_PATHS, prior=
         start = sim.Start(len(its))
         for i, it in enumerate(its):
             _fill(start, i, it[1])
-            start.theta[i] = it[2]
+            _set_side(tables, start, i, it[2])
         team = start.team.astype(int)
         base = np.where(team == 0, start.home, start.away)
         w = np.array([it[4] if len(it) > 4 else 1.0 for it in its])
@@ -1791,7 +1747,7 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
         for k, i in enumerate(sel):
             st, theta0, _, _ = items[i]
             _fill(start, k, start_from(st))
-            start.theta[k] = theta0
+            _set_side(tables, start, k, theta0)
         return start
 
     def simulated(pull, sel, start):
@@ -1806,6 +1762,8 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
         nearest wins (the simulated slopes are noisy)."""
         p0 = pull.copy()
         g0 = simulated(p0, sel, start)
+        if not rounds:                                   # measure only (calibration_report)
+            return p0, g0
         p1 = pull + 0.1 * which
         g1 = simulated(p1, sel, start)
         q = int(np.argmax(which))
@@ -2297,9 +2255,9 @@ def _print_settle(settled, tables):
 
 def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history=None,
           before=None, prior="nb2"):
-    """Build the model: tables, fits, prior grid, the pre-match model (`prior`: "nb2" or
-    "glmer", fitted on `history`) and player profiles."""
-    import copy
+    """Build the model: the pre-match model (`prior`: "nb2" or "glmer", fitted on `history`), the
+    fits on real data alone (tables, player profiles, ratings), the joint fit through the
+    simulation (JOINT_ROUNDS) with the prior grid, and the calibration report."""
     import os
     import time
     clock0 = [time.time()]
@@ -2363,170 +2321,163 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
              max(days) + dt.timedelta(days=1) if days else None)
     tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
     lap("tables")
-    if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
-        scaled = fit_call_scale(tables, call_states(matches))
-        if verbose and scaled:
-            print("  timeouts from the two-minute mark, real / simulated before -> after: "
-                  + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f}, {n:,} halves)"
-                              for q, (n, r, b, a, s) in sorted(scaled.items())))
-    if sim.QUARTER_PACE:
-        paced = fit_quarter_pace(tables, *pace_states(matches))
-        if verbose and paced:
-            real_p, before_p, after_p, real_n, before_n, after_n = paced
-            print("  snaps a quarter from the real quarter starts, real / simulated before -> after: "
-                  + "; ".join(f"Q{q + 1} {real_n[q]:.2f} / {before_n[q]:.2f} -> {after_n[q]:.2f}" for q in range(4)))
-            for q in range(4):
-                print(f"    Q{q + 1} seconds a snap by 20-second slice, real / after: "
-                      + " ".join(f"{a:.0f}/{c:.0f}" for a, c in zip(real_p[q], after_p[q]))
-                      + "; x " + " ".join(f"{x:.2f}" for x in tables.quarter_pace[q]))
-        if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False):
-            # the pace moves how often the clock runs before a snap, and so the timeouts: refit them
-            scaled = fit_call_scale(tables, call_states(matches))
-            if verbose and scaled:
-                print("  timeouts again, after the pace: "
-                      + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (rates x{s:.2f})"
-                                  for q, (n, r, b, a, s) in sorted(scaled.items())))
-    if sim.MANAGE_FIT:
-        two_minute = manage_states(matches)
-        if sim.QUARTER_PACE:
-            counted = fit_late_count(tables, two_minute)
-            if verbose and counted:
-                print("  snaps from the two-minute mark to the half's end, real / simulated before -> after: "
-                      + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f} (x{k:.2f})" for q, (n, r, b, a, k) in sorted(counted.items())))
-        managed = fit_manage(tables, two_minute)
-        if verbose and managed:
-            print("  end-of-half field goals on downs 1-3 from the two-minute mark, real / simulated before -> "
-                  "after: " + "; ".join(f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f} (clock held {p:.2f})"
-                                        for q, (n, r, b, a, p) in sorted(managed.items())))
-    lap("timeouts and pace")
-    real = sim.quarter_points(matches)
-    offsets, got = sim.fit_period_theta(tables, real)
-    quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
-    items = in_game_states(matches, quick, priors=priors)
-    if len(items) >= 200 and "band" in sim.PLAY_CALLING:
-        pull, band_got, band_real = fit_rubber_band(tables, items)
-        offsets, got = sim.fit_period_theta(tables, real)
-        if verbose:
-            names = (["first half", "Q3", "Q4"] if len(pull) == 3
-                     else ["first half", "second half"])
-            print("  rubber band: of every point of lead, how much comes back by the end, "
-                  "real / simulated -- " + ", ".join(
-                      f"{nm} {-r:.3f} / {-g:.3f}" for nm, r, g in zip(names, band_real, band_got))
-                  + "; pull per score " + " / ".join(f"{x:.2f}" for x in pull))
-    if sim.SETTLE_FIT:
-        states = settle_states(matches, quick, priors, as_of=as_of, half_life=SETTLE_HALF_LIFE)
-        for _ in range(SETTLE_OUTER):
-            settled = fit_settle(tables, states)
-            offsets, got = sim.fit_period_theta(tables, real)
-        if verbose:
-            _print_settle(settled, tables)
-    if CLOSE_LEVEL and sim.CLOSE_FG:
-        fitted = fit_close_level(tables, close_level_states(matches, quick, priors))
-        if fitted:
-            offsets, got = sim.fit_period_theta(tables, real)      # the scoring level, refitted after
-        if verbose and fitted:
-            n, drives, sim_before, sim_after, kick, k4, eff = fitted
-            pct = lambda x: (f"field goal {100 * x[0]:.1f}% / touchdown {100 * x[1]:.1f}% / overtime"
-                             f" {100 * x[2]:.1f}%")
-            print(f"  close endings: from {n:,} real level snaps in Q4's last two minutes, real"
-                  f" {pct(drives)}; simulated {pct(sim_before)} -> {pct(sim_after)} (level kick odds in"
-                  f" the last {CLOSE_LEVEL_LATE:.0f}s {kick:+.1f}, 4th down {k4:+.1f}, efficiency {eff:+.2f})")
-    lap("scoring levels, rubber band, settle, close endings")
-    if verbose and sim.TIMEOUTS:
-        if tables.call_p.any():
-            source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
-                      else "the real rates in sim14.DEFAULT_CALL_P (build with --timeouts to refit)")
-            print(f"  timeouts: {source}; overtime, two a side each period, called at"
-                  f" {tables.ot_call_scale:.2f}x the fourth quarter's rates")
-            p = tables.call_p
-            print("  timeouts, share of running clocks a side stops before the snap in each 40-second"
-                  " slice (4:00 -> 0:00), level score: Q2 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[0, 0, 2])
-                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[0, 1, 2])
-                  + "; Q4 trailing 1-8 with the ball " + " ".join(f"{100 * x:.0f}" for x in p[1, 0, 1])
-                  + " / without " + " ".join(f"{100 * x:.0f}" for x in p[1, 1, 1]) + " %")
-        else:
-            print("  timeouts: off -- the leader kneels out as v7 did")
-    if verbose:
-        print(f"  {tables.n_snaps:,} snaps in the tables; points by quarter real "
-              + " / ".join(f"{x:.2f}" for x in real) + ", simulated from kickoff "
-              + " / ".join(f"{x:.2f}" for x in got))
-    if QUARTER_START_FIT:
-        quick = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
-        before_q = tables.period_theta.copy()
-        fitted_q, fitted_l = fit_quarter_levels(
-            tables, quarter_start_states(matches, quick, priors),
-            late_start_states(matches, quick, priors), rounds=QUARTER_ROUNDS, n_paths=QUARTER_PATHS)
-        if verbose:
-            print("  points in each quarter from real quarter starts, real / simulated: "
-                  + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
-                  + "; from the two-minute mark: "
-                  + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items()))
-                  + "; scoring by quarter moved " + " / ".join(
-                      f"{d:+.3f}" for d in (tables.period_theta - before_q)[1:5])
-                  + ", last two minutes of each half " + " / ".join(
-                      f"{tables.late_theta[q]:+.3f}" for q in (2, 4)))
-    if verbose and sim.FOURTH_JOINT:
-        go_sd = np.std(list(tables.player_go.values())) if tables.player_go else 0.0
-        kick_sd = np.std(list(tables.player_kick.values())) if tables.player_kick else 0.0
-        print(f"  4th downs: the league go curve, the part-of-game shifts and {len(tables.player_go):,}"
-              f" players' own go shifts fitted together (sd {go_sd:.2f} in log odds); kick rather than"
-              f" punt the same way ({len(tables.player_kick):,} players, sd {kick_sd:.2f})")
-    if verbose and sim.KNEELS and tables.kneel_p.any():
-        print("  kneels, leader on 1st down by 40-second slice of Q4 (one score / more): "
-              + " ".join(f"{100 * a:.0f}/{100 * b:.0f}" for a, b in zip(tables.kneel_p[0, 0], tables.kneel_p[1, 0]))
-              + f"%; a kneel takes {np.median(tables.kneel_secs):.0f}s when nothing stops the clock")
-    if verbose and tables.backed is not None:
-        print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
-              + "; ".join(f"{name.replace('_', ' ')} "
-                          + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
-                          for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
-    lap("quarter levels")
-    form = {}
-    if pre is not None:
-        var_fn, cov_fn, slope = fixed_strength_spread(tables)
-        tables.strength_theta, tables.strength_slope = FORM_GRID.copy(), slope
-        cutoff = dt.datetime.fromisoformat(pre.meta["before"])
-        finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
-                    and nb2_prior._start(r) is not None and nb2_prior._start(r) < cutoff
-                    and nb2_prior._start(r) >= cutoff - dt.timedelta(days=FORM_DAYS)]
-        sides = form_sides(history, pre.means(finished, n_sims=1000, results=history), cutoff)
-        if len(sides) >= 200:
-            tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
-            if verbose:
-                sds = sorted(np.sqrt(list(form.values())))
-                print(f"  form on the day, sd in log points: the game {np.sqrt(tables.strength_game):.3f}"
-                      f" (both sides together), each player's own {sds[0]:.3f} to {sds[-1]:.3f}"
-                      f" ({len(form)} players; {np.sqrt(tables.strength_league):.3f} for one"
-                      f" with no history)")
-    lap("form")
+    # -- the fits that read real data alone: the tables above (bins, clock, kicks, 4th downs,
+    # decisions), the players' profiles and kick-off styles, the big-play and lost-yardage ratings.
+    # Nothing later moves them.
     tables_path = os.path.join(out_dir, "v14tables.npz")
     grid_path = os.path.join(out_dir, "v14grid.npz")
-    grid = PriorGrid.build(tables, n_paths=grid_paths)
-    lap("prior grid")
+    teams = match_teams(history)
+    book = players.build(matches, handles) if handles else players.Book()
+    if sim.FOURTH_JOINT:
+        for h, prof in book.players.items():
+            prof.aggression = tables.player_go.get(h, 0.0)
+            prof.kick = tables.player_kick.get(h, 0.0)
+        for h in set(tables.player_go) - set(book.players):
+            book.players[h] = players.Profile(aggression=tables.player_go[h],
+                                              kick=tables.player_kick.get(h, 0.0))
+    if sim.KICK_STYLES and tables.kick_mix is not None and handles:
+        styles = fit_kick_styles(matches, tables, handles)
+        for h, (tb, nlz) in styles.items():
+            prof = book.players.setdefault(h, players.Profile())
+            prof.kick_tb, prof.kick_nlz = tb, nlz
+        if verbose and styles:
+            mix = tables.kick_mix
+            top = lambda i: ", ".join(f"{h} x{v[i]:.1f}" for h, v in sorted(styles.items(), key=lambda kv: -kv[1][i])[:4])
+            print(f"  kick-offs: touchback {100 * mix[0, 0]:.1f}% / no landing zone {100 * mix[0, 1]:.1f}% of"
+                  f" kicks, {100 * mix[1, 0]:.1f}% / {100 * mix[1, 1]:.1f}% in Q2's and Q4's last"
+                  f" {sim.KICK_LATE:.0f}s; {len(styles)} kickers, touchbacks most {top(0)}; no landing zone"
+                  f" most {top(1)}")
     big_path = os.path.join(out_dir, BIG_FILE)
     if os.path.exists(big_path):
         os.remove(big_path)
     ratings = None
     if sim.BIG_PLAYS and tables.n_big_stop is not None and handles:
-        ratings = fit_big_ratings(big_records(matches, tables, handles, match_teams(history), as_of=as_of))
-        grid.big_home, grid.big_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3))
-        ratings["elasticity"] = round(fit_big_elasticity(tables, grid, n_paths=max(400, grid_paths // 3)), 4)
+        ratings = fit_big_ratings(big_records(matches, tables, handles, teams, as_of=as_of))
         if sim.LOSS_PLAYS and tables.n_loss_stop is not None:
-            loss = fit_big_ratings(big_records(matches, tables, handles, match_teams(history), as_of=as_of,
-                                               kind="loss"))
-            grid.loss_home, grid.loss_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3),
-                                                              attr="loss")
-            loss["elasticity"] = round(fit_big_elasticity(tables, grid, n_paths=max(400, grid_paths // 3),
-                                                          attr="loss"), 4)
-            ratings["loss"] = loss
+            ratings["loss"] = fit_big_ratings(big_records(matches, tables, handles, teams, as_of=as_of,
+                                                          kind="loss"))
             ratings["loss_size"] = fit_loss_sizes(matches, handles)
-            if verbose:
-                _print_loss(loss, ratings["loss_size"], grid)
+    _print_decisions(tables, verbose)
+    lap("data fits: profiles, kick-offs, ratings")
+
+    # -- the joint fit: everything calibrated through the simulation, in JOINT_ROUNDS rounds, each
+    # stage starting where the last left it, every state played as pricing plays its match
+    real = sim.quarter_points(matches)
+    sim.fit_period_theta(tables, real)                 # a starting scoring level, from kick-off
+    form, grid, held = {}, None, None
+    sides = _form_sides(pre, history) if pre is not None else []
+    states = clock_states(matches, tables)
+    for rnd in range(JOINT_ROUNDS):
+        warm = rnd > 0
+        grid = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
+        _responses(tables, grid, ratings, grid_paths, verbose=verbose and not warm)
+        if priors and handles:
+            held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
+        _joint_clock(tables, states, held, warm, verbose, f"round {rnd + 1}")
+        _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, f"round {rnd + 1}")
+        if pre is not None:
+            form = _fit_form(tables, sides, verbose and rnd == JOINT_ROUNDS - 1)
+            for h, f in form.items():
+                book.players.setdefault(h, players.Profile()).form = f
+        lap(f"joint fit, round {rnd + 1}")
+    grid = PriorGrid.build(tables, n_paths=grid_paths)
+    _responses(tables, grid, ratings, grid_paths, verbose=verbose)
+    if ratings is not None:
         with open(big_path, "w", encoding="utf-8") as fh:
             json.dump(ratings, fh, indent=1)
+    if IN_PLAY_FIT:
+        rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors, held=held))
+        if verbose and rest:
+            print("  points still to come from real in-game states, real / simulated before -> "
+                  "after the in-play shift: "
+                  + "; ".join(f"{sim.SEGMENTS[g]} {r:.2f} / {b:.2f} -> {a:.2f}"
+                              for g, (r, b, a) in rest.items()))
+    grid.save(grid_path)
+    tables.save(tables_path)
+    if handles or form:
+        book.save(os.path.join(out_dir, "v14players.json"))
+        if verbose:
+            print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
+    elif verbose:
+        print("  player profiles: no handles in the export, none built")
+    if verbose and pre is not None and prior != "glmer":
+        m = pre.meta
+        ratio = f"{m['scale_raw_ratio']:.3f}" if m["scale_raw_ratio"] else "n/a"
+        print(f"  pre-match: NB2 fitted on {m['fitted_on']:,} matches before {before:%Y-%m-%d};"
+              f" its totals ran {ratio} x under the last {nb2_prior.SCALE_DAYS} days'"
+              f" ({m['scale_matches']} matches) -> expected points scaled {m['scale']:.3f}")
+    lap("final grid and responses")
+
+    # -- the report: every target the joint fit aims at, measured once more on the final tables
+    if verbose:
+        calibration_report(tables, grid, matches, priors, held, as_of)
+        lap("calibration report")
+    return tables_path, grid_path
+
+
+# v14: the build in three parts. First every fit that reads real data alone -- the tables (play
+# bins, the clock's stopped shares and seconds, kicks, punts, kneels, the 4th-down curves and every
+# decision table), the players' profiles, kick-off styles and big-play and lost-yardage ratings --
+# which nothing later moves. Then one joint fit of everything calibrated through the simulation:
+# the quarters' pace, the timeouts, the two-minute snaps and field goals, the rubber band, settle,
+# close endings and the quarters' scoring levels, with the grid, its responses and the form spread
+# they need. Fitted one after another, each moved what the ones before had fitted (the reconcile
+# took Q1 back from 9.93 snaps to the real 9.39, and Q4's from the two-minute mark from 6.30 to
+# 7.12), so they are fitted in JOINT_ROUNDS rounds, each stage starting where the last round left
+# it (the later rounds with fewer steps) and every state played as pricing plays its match (held
+# strengths, own profiles). Last, calibration_report measures every target once more on the final
+# tables and marks the misses beyond REPORT_TOL.
+JOINT_ROUNDS = 2
+JOINT_WARM = dict(pace=3, calls=7, late=3, manage=6, band=2, settle=2, close=1, quarters=3)
+CLOSE_WARM_KICK = np.arange(-1.0, 1.01, 0.25)    # a later round's close-ending kick shift, either way
+REPORT_TOL = 0.05
+
+
+def _print_decisions(tables, verbose):
+    """The build's lines on the fits read from real data alone: timeouts, 4th downs, kneels and
+    backed-up snaps."""
+    if not verbose:
+        return
+    if sim.TIMEOUTS:
+        if tables.call_p.any():
+            source = ("fitted on the real calls given (--timeouts)" if getattr(tables, "call_fitted", False)
+                      else "the real rates in sim14.DEFAULT_CALL_P (build with --timeouts to refit)")
+            print(f"  timeouts: {source}; overtime, two a side each period, called at"
+                  f" {tables.ot_call_scale:.2f}x the fourth quarter's rates")
+        else:
+            print("  timeouts: off -- the leader kneels out as v7 did")
+    if sim.FOURTH_JOINT:
+        go_sd = np.std(list(tables.player_go.values())) if tables.player_go else 0.0
+        kick_sd = np.std(list(tables.player_kick.values())) if tables.player_kick else 0.0
+        print(f"  4th downs: the league go curve, the part-of-game shifts and {len(tables.player_go):,}"
+              f" players' own go shifts fitted together (sd {go_sd:.2f} in log odds); kick rather than"
+              f" punt the same way ({len(tables.player_kick):,} players, sd {kick_sd:.2f})")
+    if sim.KNEELS and tables.kneel_p.any():
+        print("  kneels, leader on 1st down by 40-second slice of Q4 (one score / more): "
+              + " ".join(f"{100 * a:.0f}/{100 * b:.0f}" for a, b in zip(tables.kneel_p[0, 0], tables.kneel_p[1, 0]))
+              + f"%; a kneel takes {np.median(tables.kneel_secs):.0f}s when nothing stops the clock")
+    if tables.backed is not None:
+        print("  backed up, per snap on the own 1 / 2 / 3 / 4 / 5: "
+              + "; ".join(f"{name.replace('_', ' ')} "
+                          + " / ".join(f"{100 * tables.backed[y, o]:.1f}" for y in range(1, 6))
+                          for o, name in enumerate(sim.BACKED_OUTCOMES)) + " %")
+
+
+def _responses(tables, grid, ratings, grid_paths, verbose=False):
+    """The grid's big-play, lost-yardage and pace responses and the ratings' elasticities, on the
+    tables as they stand."""
+    if ratings is not None:
+        grid.big_home, grid.big_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3))
+        ratings["elasticity"] = round(fit_big_elasticity(tables, grid, n_paths=max(400, grid_paths // 3)), 4)
+        if "loss" in ratings:
+            grid.loss_home, grid.loss_away = fit_big_response(tables, n_paths=max(500, grid_paths * 2 // 3),
+                                                              attr="loss")
+            ratings["loss"]["elasticity"] = round(fit_big_elasticity(
+                tables, grid, n_paths=max(400, grid_paths // 3), attr="loss"), 4)
+            if verbose:
+                _print_loss(ratings["loss"], ratings.get("loss_size", {}), grid)
         if verbose:
             _print_big(ratings, grid)
-    lap("big-play and loss ratings and responses")
     if PACE_NEUTRAL:
         grid.pace_home, grid.pace_away = fit_pace_response(tables, n_paths=max(500, grid_paths * 2 // 3))
         if verbose:
@@ -2535,76 +2486,178 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                   + " / ".join(f"{p:.3f}" for p in PACE_POINTS) + ", away at 1): "
                   + " / ".join(f"{grid.pace_home[i, n // 2]:.3f}" for i in range(n))
                   + "; at the away pace: " + " / ".join(f"{grid.pace_home[n // 2, j]:.3f}" for j in range(n)))
-    lap("pace response")
-    grid.save(grid_path)
-    if IN_PLAY_FIT:
-        rest, bands = fit_rest_of_game(tables, rest_of_game_states(matches, grid, priors))
-        if verbose and rest:
-            print("  points still to come from real in-game states, real / simulated before -> "
-                  "after the in-play shift: "
-                  + "; ".join(f"{sim.SEGMENTS[g]} {r:.2f} / {b:.2f} -> {a:.2f}"
-                              for g, (r, b, a) in rest.items()))
-            if bands:
-                print("    by margin: " + "; ".join(
-                    f"{sim.SEGMENTS[g]} {sim.MARGIN_BANDS[m]} {r:.2f} / {b:.2f} -> {a:.2f}"
-                    for (g, m), (r, b, a) in sorted(bands.items())))
-    tables.save(tables_path)
+
+
+def _form_sides(pre, history):
+    """The recent finished sides the form spread is fitted on (real data and the prior alone)."""
+    cutoff = dt.datetime.fromisoformat(pre.meta["before"])
+    finished = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
+                and nb2_prior._start(r) is not None and nb2_prior._start(r) < cutoff
+                and nb2_prior._start(r) >= cutoff - dt.timedelta(days=FORM_DAYS)]
+    return form_sides(history, pre.means(finished, n_sims=1000, results=history), cutoff)
+
+
+def _fit_form(tables, sides, verbose=False):
+    """The day's strength spread (the game's and each player's) on the tables as they stand:
+    {player: own variance}."""
+    var_fn, cov_fn, slope = fixed_strength_spread(tables)
+    tables.strength_theta, tables.strength_slope = FORM_GRID.copy(), slope
+    if len(sides) < 200:
+        return {}
+    tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
     if verbose:
-        sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches, priors=priors)
-        print("  in-game check, points in each quarter from real quarter-start states: real "
-              + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
-              + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
-    lap("in-play fit and in-game check")
-    if pre is not None:
-        if verbose and prior == "glmer":
-            print(f"  pre-match: {pre.describe()}")
-        elif verbose:
-            m = pre.meta
-            ratio = f"{m['scale_raw_ratio']:.3f}" if m["scale_raw_ratio"] else "n/a"
-            print(f"  pre-match: NB2 fitted on {m['fitted_on']:,} matches before {before:%Y-%m-%d};"
-                  f" its totals ran {ratio} x under the last {nb2_prior.SCALE_DAYS} days'"
-                  f" ({m['scale_matches']} matches) -> expected points scaled {m['scale']:.3f}")
-    if handles or form:
-        book = players.build(matches, handles) if handles else players.Book()
-        if sim.FOURTH_JOINT:
-            for h, prof in book.players.items():
-                prof.aggression = tables.player_go.get(h, 0.0)
-                prof.kick = tables.player_kick.get(h, 0.0)
-            for h in set(tables.player_go) - set(book.players):
-                book.players[h] = players.Profile(aggression=tables.player_go[h],
-                                                  kick=tables.player_kick.get(h, 0.0))
-        for h, f in form.items():
-            book.players.setdefault(h, players.Profile()).form = f
-        if sim.KICK_STYLES and tables.kick_mix is not None:
-            styles = fit_kick_styles(matches, tables, handles)
-            for h, (tb, nlz) in styles.items():
-                prof = book.players.setdefault(h, players.Profile())
-                prof.kick_tb, prof.kick_nlz = tb, nlz
-            if verbose and styles:
-                mix = tables.kick_mix
-                top = lambda i: ", ".join(f"{h} x{v[i]:.1f}" for h, v in sorted(styles.items(), key=lambda kv: -kv[1][i])[:4])
-                print(f"  kick-offs: touchback {100 * mix[0, 0]:.1f}% / no landing zone {100 * mix[0, 1]:.1f}% of"
-                      f" kicks, {100 * mix[1, 0]:.1f}% / {100 * mix[1, 1]:.1f}% in Q2's and Q4's last"
-                      f" {sim.KICK_LATE:.0f}s; {len(styles)} kickers, touchbacks most {top(0)}; no landing zone"
-                      f" most {top(1)}")
-        book.save(os.path.join(out_dir, "v14players.json"))
-        if verbose:
-            print(f"  player profiles: {len(book.players):,} players from {len(handles):,} matches")
-    elif verbose:
-        print("  player profiles: no handles in the export, none built")
-    lap("player profiles and kick-offs")
-    if RECONCILE and priors and handles:
-        grid = reconcile(tables, grid, matches, priors, book, ratings, handles, match_teams(history),
-                         grid_paths, verbose=verbose)
-        grid.save(grid_path)
-        tables.save(tables_path)
-        if verbose:
-            sim_q, real_q = in_game_check(copy.deepcopy(tables), grid, matches, priors=priors)
-            print("  in-game check after the reconcile (league rates): real "
-                  + " / ".join(f"{real_q[q]:.2f}" for q in sorted(real_q)) + ", simulated "
-                  + " / ".join(f"{sim_q[q]:.2f}" for q in sorted(sim_q)))
-    lap("reconcile")
-    return tables_path, grid_path
+        sds = sorted(np.sqrt(list(form.values())))
+        print(f"  form on the day, sd in log points: the game {np.sqrt(tables.strength_game):.3f}"
+              f" (both sides together), each player's own {sds[0]:.3f} to {sds[-1]:.3f}"
+              f" ({len(form)} players; {np.sqrt(tables.strength_league):.3f} for one with no history)")
+    return form
+
+
+def clock_states(matches, tables):
+    """The real states the joint fit's clock stages play: quarter starts (pace), the halves' first
+    snaps inside 2:00 with timeouts known (calls) and the two-minute states (late count, management)."""
+    calls = (call_states(matches) if CALL_FIT and sim.TIMEOUTS and getattr(tables, "call_fitted", False)
+             else None)
+    return dict(pace=pace_states(matches) if sim.QUARTER_PACE else None, calls=calls,
+                manage=manage_states(matches) if sim.MANAGE_FIT else None)
+
+
+def _joint_clock(tables, states, held, warm, verbose, label):
+    """One round of the clock: the quarters' pace, the timeouts, the two-minute snaps and the
+    end-of-half field goals."""
+    w = JOINT_WARM if warm else {}
+    say = []
+    if states["pace"] is not None:
+        paced = fit_quarter_pace(tables, *states["pace"], held=held, rounds=w.get("pace", PACE_FIT_ROUNDS))
+        if paced:
+            say.append("snaps a quarter " + "; ".join(f"Q{q + 1} {paced[3][q]:.2f} / {paced[4][q]:.2f} -> {paced[5][q]:.2f}"
+                                                     for q in range(4)))
+    if states["calls"] is not None:
+        scaled = fit_call_scale(tables, states["calls"], held=held, steps=w.get("calls", CALL_FIT_STEPS))
+        if scaled:
+            say.append("timeouts from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f}"
+                                                         for q, (n, r, b, a, s) in sorted(scaled.items())))
+    if states["manage"] is not None:
+        if sim.QUARTER_PACE:
+            counted = fit_late_count(tables, states["manage"], held=held, rounds=w.get("late", LATE_COUNT_ROUNDS))
+            if counted:
+                say.append("snaps from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f}"
+                                                          for q, (n, r, b, a, k) in sorted(counted.items())))
+        managed = fit_manage(tables, states["manage"], held=held, steps=w.get("manage", MANAGE_STEPS))
+        if managed:
+            say.append("field goals on downs 1-3 from 2:00 " + "; ".join(
+                f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f}" for q, (n, r, b, a, p) in sorted(managed.items())))
+    if verbose and say:
+        print(f"  {label}, the clock, real / simulated before -> after: " + " | ".join(say))
+
+
+def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, label):
+    """One round of the scoring: the rubber band, settle, close endings and the quarters' scoring
+    levels from real quarter starts and two-minute marks."""
+    w = JOINT_WARM if warm else {}
+    say = []
+    if "band" in sim.PLAY_CALLING:
+        items = in_game_states(matches, grid, priors=priors, held=held)
+        if len(items) >= 200:
+            pull, got, real = fit_rubber_band(tables, items, rounds=w.get("band", 4))
+            say.append("rubber band, of each point of lead how much comes back " + " / ".join(
+                f"{-r:.3f} / {-g:.3f}" for r, g in zip(real, got)))
+    if sim.SETTLE_FIT:
+        settled = fit_settle(tables, settle_states(matches, grid, priors, as_of=as_of,
+                                                   half_life=SETTLE_HALF_LIFE, held=held),
+                             rounds=w.get("settle", SETTLE_ROUNDS))
+        if settled:
+            n = sum(v[0] for v in settled.values())
+            say.append("touchdowns a snap in the settle cells "
+                       f"{sum(v[0] * v[1] for v in settled.values()) / n:.4f} / "
+                       f"{sum(v[0] * v[2] for v in settled.values()) / n:.4f} -> "
+                       f"{sum(v[0] * v[3] for v in settled.values()) / n:.4f}")
+    if CLOSE_LEVEL and sim.CLOSE_FG:
+        fitted = fit_close_level(tables, close_level_states(matches, grid, priors, held=held),
+                                 rounds=w.get("close", CLOSE_LEVEL_ROUNDS),
+                                 kicks=CLOSE_WARM_KICK if warm else CLOSE_LEVEL_KICK)
+        if fitted:
+            n, real, before, after = fitted[:4]
+            say.append("close level drives, field goal / touchdown "
+                       f"{100 * real[0]:.1f}/{100 * real[1]:.1f}% / {100 * before[0]:.1f}/{100 * before[1]:.1f}% -> "
+                       f"{100 * after[0]:.1f}/{100 * after[1]:.1f}%")
+    fitted_q, fitted_l = fit_quarter_levels(
+        tables, quarter_start_states(matches, grid, priors, held=held),
+        late_start_states(matches, grid, priors, held=held),
+        rounds=w.get("quarters", QUARTER_ROUNDS), n_paths=QUARTER_PATHS)
+    say.append("points a quarter from real quarter starts (before the last step) "
+               + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
+               + ", from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items())))
+    if verbose:
+        print(f"  {label}, the scoring, real / simulated: " + " | ".join(say))
+
+
+def calibration_report(tables, grid, matches, priors=None, held=None, as_of=None):
+    """Every target the joint fit aims at, measured on the final tables as pricing plays the
+    matches (nothing is fitted), with each miss beyond REPORT_TOL marked."""
+    import copy
+    rows = []
+
+    def add(name, real, got):
+        rows.append((name, float(real), float(got)))
+
+    t = lambda: copy.deepcopy(tables)
+    states = clock_states(matches, tables)
+    if states["pace"] is not None:
+        paced = fit_quarter_pace(t(), *states["pace"], held=held, rounds=0)
+        if paced:
+            real_s, got_s, real_n, got_n = paced[0], paced[1], paced[3], paced[4]
+            for q in range(4):
+                add(f"snaps in Q{q + 1}, from its real start", real_n[q], got_n[q])
+            n = states["pace"][4]
+            for q in range(4):
+                add(f"seconds a snap in Q{q + 1}", (real_s[q] * n[q]).sum() / max(1, n[q].sum()),
+                    (got_s[q] * n[q]).sum() / max(1, n[q].sum()))
+    if states["calls"] is not None:
+        for q, (n, r, b, a, s) in sorted(fit_call_scale(t(), states["calls"], held=held, steps=0).items()):
+            add(f"timeouts from 2:00, Q{q}", r, b)
+    if states["manage"] is not None:
+        for q, (n, r, b, a, k) in sorted(fit_late_count(t(), states["manage"], held=held, rounds=0).items()):
+            add(f"snaps from 2:00, Q{q}", r, b)
+        for q, (n, r, b, a, p) in sorted(fit_manage(t(), states["manage"], held=held, steps=0).items()):
+            add(f"field goals on downs 1-3 from 2:00, Q{q}", r, b)
+    if "band" in sim.PLAY_CALLING:
+        items = in_game_states(matches, grid, priors=priors, held=held)
+        if len(items) >= 200:
+            pull, got, real = fit_rubber_band(t(), items, rounds=0)
+            for name, r, g in zip(("first half", "Q3", "Q4"), real, got):
+                add(f"rubber band, lead coming back, {name}", -r, -g)
+    if sim.SETTLE_FIT:
+        settled = fit_settle(t(), settle_states(matches, grid, priors, as_of=as_of,
+                                                half_life=SETTLE_HALF_LIFE, held=held), rounds=1)
+        if settled:
+            n = sum(v[0] for v in settled.values())
+            add("touchdowns a snap, settle cells", sum(v[0] * v[1] for v in settled.values()) / n,
+                sum(v[0] * v[2] for v in settled.values()) / n)
+    if CLOSE_LEVEL and sim.CLOSE_FG:
+        fitted = fit_close_level(t(), close_level_states(matches, grid, priors, held=held), rounds=0)
+        if fitted:
+            real, before = fitted[1], fitted[2]
+            add("close level drives ending in a field goal", real[0], before[0])
+            add("close level drives ending in a touchdown", real[1], before[1])
+    fitted_q, fitted_l = fit_quarter_levels(t(), quarter_start_states(matches, grid, priors, held=held),
+                                            late_start_states(matches, grid, priors, held=held),
+                                            rounds=1, n_paths=QUARTER_PATHS)
+    for q, (r, g) in sorted(fitted_q.items()):
+        add(f"points in Q{q}, from its real start", r, g)
+    for q, (r, g) in sorted(fitted_l.items()):
+        add(f"points from 2:00, Q{q}", r, g)
+    real_k = sim.quarter_points(matches)
+    got_k = sim.kickoff_quarter_points(tables)
+    for q in range(4):
+        add(f"points in Q{q + 1} from kick-off, league strengths (not fitted)", real_k[q], got_k[q])
+    width = max(len(r[0]) for r in rows)
+    print("  calibration report, every joint-fit target on the final tables, real / simulated (miss):")
+    for name, real, got in rows:
+        miss = (got - real) / real if abs(real) > 1e-9 else 0.0
+        flag = "  <--" if abs(miss) > REPORT_TOL and "not fitted" not in name else ""
+        print(f"    {name:{width}s}  {real:8.3f} / {got:8.3f}  ({100 * miss:+5.1f}%){flag}")
+    return rows
 
 
 def _print_loss(loss, sizes, grid):
