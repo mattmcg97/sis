@@ -100,6 +100,7 @@ class Trader:
         self.prior_takes_pace = len(inspect.signature(self.m.prior_theta).parameters) >= 3
         self.paths, self.margin = paths, margin
         self.lock = threading.Lock()
+        self._held = {}                                 # v14's held strengths by setup
 
     # -- what the page offers to choose from ---------------------------------------------------
 
@@ -182,7 +183,15 @@ class Trader:
             prof = self.m.with_big(prof, self.big, (home.upper(), away.upper()),
                                    setup.get("home_team") or "", setup.get("away_team") or "")
         means = tuple(float(x) for x in setup["means"])
-        if self.prior_takes_pace:
+        if hasattr(self.m, "held_theta"):
+            # v14: the match's strengths hold the prior's points with its sides' own rates, as the
+            # stream prices it; the same for every state of a setup, so worked out once
+            key = (home, away, means, setup.get("home_team"), setup.get("away_team"))
+            if key not in self._held:
+                self._held[key] = self.m.held_theta(self.tables, self.grid, means, prof, self.variant,
+                                                    seed=self.m.match_seed(f"{home}|{away}|{means}"))
+            theta0 = self._held[key]
+        elif self.prior_takes_pace:
             theta0 = self.m.prior_theta(self.grid, means,
                                         prof if getattr(self.variant, "pace", False) else None)
         else:
