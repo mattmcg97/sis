@@ -1266,7 +1266,9 @@ def _margin_bucket_np(m):
 # v14: the early-kick table read only snaps whose next row was in the same quarter, so a side in range
 # whose half ran out before it could kick never counted as one that did not: the kick rates came out
 # as if every such side got its kick away. With EARLY_FG_HALF_END a snap in Q2 or Q4 whose half
-# ended before the next row counts as one that did not kick.
+# ended before the next row counts as one that did not kick. A state at 0:00 is the half's end, not a
+# choice (the sim never decides there), and is left out: 264 of them in range on downs 1-3 at Q2's
+# end had counted as sides that chose not to kick, taking the last five seconds' rate from 49% to 37%.
 EARLY_FG_HALF_END = True
 EARLY_FG_RANGES = (45, 55, 65)
 EARLY_FG_RANGE = EARLY_FG_RANGES[-1]
@@ -1295,6 +1297,8 @@ def early_kicks(rows):
         if kick > EARLY_FG_RANGE:
             continue
         rb = int(np.searchsorted(EARLY_FG_RANGES, kick))
+        if _f(a["clock_seconds"]) <= 0:
+            continue                        # the half is over: nothing left to choose
         p, cb = _i(a["period"]), _clock_bin(_f(a["clock_seconds"]))
         margin = _margin(a, a["offense"])
         if margin is None:
@@ -2412,10 +2416,11 @@ def _styled_kicks(tables, sub, kicker, period, clock, kick_tb, kick_nlz, rand, p
 
 def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0,
              desperate_seconds=180.0, max_steps=400, stats=None, common=True, seed=None,
-             in_play=False, distinct=False, one_drive=False):
+             in_play=False, distinct=False, one_drive=False, path_offset=0):
     """Play every starting state n_paths times to the end and return the final scores; with
     one_drive, only to the end of the drive under way (the ball changes hands, a kick-off after a
-    score, or the half ends)."""
+    score, or the half ends). With distinct, every path draws its own random numbers, numbered from
+    path_offset (a block of a longer run starts where its rows do, so it plays as in one run)."""
     rng = rng or np.random.default_rng()
     seed = int(rng.integers(0, 2 ** 62)) if seed is None else int(seed) % (2 ** 62)
     S = len(start.period)
@@ -2457,7 +2462,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
 
     tally = (lambda name, k: stats.__setitem__(name, stats.get(name, 0) + int(k))) \
         if stats is not None else (lambda name, k: None)
-    path_no = (np.arange(P, dtype=np.int64) if distinct
+    path_no = (np.arange(P, dtype=np.int64) + int(path_offset) if distinct
                else np.tile(np.arange(n_paths, dtype=np.int64), S))
     free = np.zeros(P, dtype=bool)
     ot_cur = np.full(P, -1, dtype=np.int8)
@@ -2978,7 +2983,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 if not held_td.any():
                     break
                 u2 = rand(sx, 20 + attempt)
-                if big_on or loss_on:
+                if big_on or loss_on or boom_on:     # a redraw is warped as the first draw was
                     u2 = warp(u2)
                 u2 = 1.0 - (1.0 - u2) ** tilt
                 j = np.where(held_td, seg0 + np.minimum(seg_n - 1, (u2 * seg_n).astype(np.int64)), j)

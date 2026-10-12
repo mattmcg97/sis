@@ -149,12 +149,12 @@ def market_prob(market, line, margin_pmf, total_pmf):
     raise ValueError(market)
 
 
-# Builds run the long simulations (the prior grid, the points responses, the joint fit's holds) on
-# BUILD_WORKERS processes, splitting the starts by row. Each row's paths draw the same random
-# numbers wherever it runs, so the split changes nothing but the time. The job reaches each worker
-# through the pool's initializer, with the simulation's switches as they stand: where processes are
-# spawned rather than forked (Windows) a worker starts from a fresh import and sees neither the
-# parent's job nor a switch changed at run time.
+# Builds run the long simulations (the prior grid, the points responses, the joint fit's holds and
+# rubber band) on BUILD_WORKERS processes (v14-build --sim-workers), splitting the starts by row.
+# Each row's paths draw the same random numbers wherever it runs, so the split changes nothing but
+# the time. The job reaches each worker through the pool's initializer, with the simulation's
+# switches as they stand: where processes are spawned rather than forked (Windows) a worker starts
+# from a fresh import and sees neither the parent's job nor a switch changed at run time.
 BUILD_WORKERS = 4
 _PAR = {}
 
@@ -189,7 +189,7 @@ def _par_rows(bounds):
     n = len(start.period)
     kw = {k: (v[lo:hi] if isinstance(v, np.ndarray) and v.shape[:1] == (n,) else v) for k, v in kw.items()}
     if kw.get("distinct"):
-        seed = seed + int(lo)              # each block its own paths, not the first block's again
+        kw["path_offset"] = int(lo) * n_paths      # each block its own paths, numbered as in one run
     stats = {k: ([] if isinstance(v, list) else 0) for k, v in keep.items()} if keep is not None else None
     home, away = sim.simulate(tables, _slice_start(start, lo, hi), n_paths, np.random.default_rng(seed),
                               seed=seed, stats=stats, **kw)
@@ -1356,10 +1356,26 @@ MANAGE_PATHS = 40
 MANAGE_STEPS = 8
 
 
+# The fourth quarter's early kicks are the close sides' alone in the simulation (sim.CLOSE_FG: level or
+# 1-3 behind), so its target counts those: real sides ahead or 4+ behind kicked 26 of the 207 field
+# goals on downs 1-3 from Q4's two-minute states, which no stage of the sim makes, and fit_manage held
+# the close sides' clock at its limit chasing them (the report's Q4 early field goals, 15.5% short).
+MANAGE_Q4_CLOSE = True
+
+
+def _counted_kick(q, a):
+    """Whether a real field goal from state `a` counts toward the quarter's early kicks."""
+    if q != "4" or not MANAGE_Q4_CLOSE:
+        return True
+    margin = sim._margin(a, a["offense"])
+    return margin is not None and -3 <= margin <= 0
+
+
 def manage_states(matches):
     """For each real half, its first snap at or inside 2:00 of Q2 or Q4: (quarter, start fields,
-    field goals tried on downs 1-3 from there to the quarter's end, snaps played from there (kneels
-    in; not the half's last live state, never snapped))."""
+    field goals tried on downs 1-3 from there to the quarter's end (Q4: by sides level or 1-3 behind,
+    MANAGE_Q4_CLOSE), snaps played from there (kneels in; not the half's last live state, never
+    snapped))."""
     out = []
     for code, rows in matches.items():
         rows = resolve_sides(rows)
@@ -1373,7 +1389,8 @@ def manage_states(matches):
             if state is None or not state.has_snap:
                 continue
             kicks = sum(1 for a, b in zip(in_q[first:], in_q[first + 1:])
-                        if b["play_kind"] == "FIELD_GOAL" and a["down"] and int(float(a["down"])) < 4)
+                        if b["play_kind"] == "FIELD_GOAL" and a["down"] and int(float(a["down"])) < 4
+                        and _counted_kick(q, a))
             snaps = sum(1 for a, b in zip(in_q[first:], in_q[first + 1:])
                         if a["play_kind"] in sim.SNAP_KINDS and a["down"] and b["play_kind"] not in ("PUNT", "FIELD_GOAL"))
             out.append((int(q), start_from(state), kicks, snaps, code))
@@ -1684,23 +1701,29 @@ def fit_close_level(tables, items, n_paths=CLOSE_LEVEL_PATHS, seed=0, rounds=CLO
             tables.close_fourth[0] = 1 / (1 + np.exp(-(_logit(f40) + kick)))
         tables.eff_shift[cells] = eff0 + eff
 
-    def shares(kick, k4, eff):
+    def shares(kick, k4, eff, ot=True):
         set_shifts(kick, k4, eff)
         home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), one_drive=True)
         got = np.where(team[:, None] == 0, home, away) - base
-        stats = {}
-        sim.simulate(tables, start, n_paths, np.random.default_rng(seed + 1), stats=stats)
-        return (float(np.mean(got == 3)), float(np.mean(got >= 6)),
-                stats.get("overtime", 0) / (len(items) * n_paths))
+        level = 0.0
+        if ot:                       # the games played out, for the share level at the end
+            stats = {}
+            sim.simulate(tables, start, n_paths, np.random.default_rng(seed + 1), stats=stats)
+            level = stats.get("overtime", 0) / (len(items) * n_paths)
+        return float(np.mean(got == 3)), float(np.mean(got >= 6)), level
 
     weights = (1.0, 1.0, CLOSE_LEVEL_OT_WEIGHT)
     err = lambda sh: sum(w * (a - b) ** 2 for w, a, b in zip(weights, sh, real))
     before = shares(0.0, 0.0, 0.0)
     x = [0.0, 0.0, 0.0]
     grids = (kicks, CLOSE_LEVEL_FOURTH if CLOSE_LEVEL_LATE else np.array([0.0]), CLOSE_LEVEL_EFF)
+    search_ot = CLOSE_LEVEL_OT_WEIGHT > 0    # weighing nothing, the share is read before and after only
     for _ in range(rounds):
         for k, grid in enumerate(grids):
-            best = min((err(shares(*(x[:k] + [v] + x[k + 1:]))), v) for v in grid)
+            if len(grid) == 1:
+                x[k] = float(grid[0])
+                continue
+            best = min((err(shares(*(x[:k] + [v] + x[k + 1:]), ot=search_ot)), v) for v in grid)
             x[k] = float(best[1])
     after = shares(*x)
     return len(items), real, before, after, x[0], x[1], x[2]
@@ -1803,8 +1826,7 @@ def fit_rubber_band(tables, items, rounds=4, n_paths=200, seed=0, verbose=False)
     def simulated(pull, sel, start):
         """How the simulated leads change with this pull."""
         tables.eff_shift = base + _band_shift(pull)
-        home, away = sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed + 1,
-                                  distinct=True)
+        home, away = par_simulate(tables, start, n_paths, seed=seed + 1, distinct=True)
         return _slopes(sign[sel] * (home - away).mean(1) - leads[sel], leads[sel], groups[sel], n)
 
     def secant(pull, which, sel, start):

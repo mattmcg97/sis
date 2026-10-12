@@ -100,6 +100,8 @@ def cmd_sim_build(args):
                          "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
         model.IN_PLAY_FIT = True
+    if getattr(args, "sim_workers", None):
+        model.BUILD_WORKERS = max(1, args.sim_workers)
     if getattr(args, "red_zone", None) == "off":
         model.sim.RED_ZONE_FIT = False
     elif getattr(args, "red_zone", None):
@@ -451,6 +453,9 @@ def build_parser():
                                 "from the cut-off to the history's last day (see v14-daily)")
             p.add_argument("--workers", type=int, default=2,
                            help="daily pre-match fits run side by side (default 2)")
+            p.add_argument("--sim-workers", type=int,
+                           help="processes for the build's long simulations (default 4); the results"
+                                " are the same for any number, only the time changes")
         p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
                        help="how drives finish inside the 30 by quarter and lead: hold (the "
                             "default), tilt, or off (see README)")

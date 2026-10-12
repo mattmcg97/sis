@@ -2790,3 +2790,79 @@ class TestSpawnedWorkers(unittest.TestCase):
             sim14.STRENGTH_BOOM = saved
         for a, b in zip(one, got):
             np.testing.assert_array_equal(a, b)
+
+
+class TestSweepFixes(unittest.TestCase):
+    """The v14 sweep: a half's end is no choice to kick, a held touchdown's redraw is warped as the
+    first draw, Q4's early-kick target counts the close sides, and the build's simulations play the
+    same games on any number of processes."""
+
+    def test_a_state_at_the_halfs_end_is_not_a_choice_to_kick(self):
+        rows = [_row("SCRIMMAGE", 2, 6, "TEAM_A", 75, 0, 0, down="2"),
+                _row("SCRIMMAGE", 2, 0, "TEAM_A", 78, 0, 0, down="3"),
+                _row("KICKOFF", 3, 236, "TEAM_B", 25, 0, 0)]
+        got = sim14.early_kicks(rows)
+        self.assertEqual(got, [(0, 1, 0, False)])         # 0:06 chose not to kick; 0:00 is left out
+
+    def test_a_held_touchdown_is_redrawn_through_the_boom_warp(self):
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        self.assertIsNotNone(tables.n_loss_stop)
+        st = sim14.Start(4)
+        st.team = (np.arange(4) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        warps, steps = [], []
+        real_warp, real_cells = sim14.zone_warp, sim14._cells_np
+
+        def counting_warp(u, *a):
+            warps.append(1)
+            return real_warp(u, *a)
+
+        def counting_cells(*a):
+            steps.append(1)
+            return real_cells(*a)
+
+        tables.td_hold[:] = 1.0                           # every touchdown drawn is held and redrawn
+        with mock.patch.object(sim14, "zone_warp", counting_warp), \
+                mock.patch.object(sim14, "_cells_np", counting_cells):
+            sim14.simulate(tables, st, 50, np.random.default_rng(1), seed=1)
+        self.assertTrue(sim14.STRENGTH_BOOM)
+        self.assertGreater(len(warps), len(steps))        # the redraws too, not the first draws alone
+
+    def test_q4s_early_kick_target_counts_the_close_sides(self):
+        rows = [_row("SCRIMMAGE", 4, 20, "TEAM_A", 80, 17, 10),       # 7 ahead
+                _row("SCRIMMAGE", 4, 20, "TEAM_A", 80, 10, 10),       # level
+                _row("SCRIMMAGE", 4, 20, "TEAM_B", 80, 13, 10),       # 3 behind
+                _row("SCRIMMAGE", 4, 20, "TEAM_B", 80, 17, 10)]       # 7 behind
+        self.assertEqual([v14._counted_kick("4", r) for r in rows], [False, True, True, False])
+        self.assertTrue(v14._counted_kick("2", rows[0]))
+        with mock.patch.object(v14, "MANAGE_Q4_CLOSE", False):
+            self.assertTrue(v14._counted_kick("4", rows[0]))
+
+    def test_distinct_paths_play_as_one_run_on_any_number_of_processes(self):
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        st = sim14.Start(8)
+        st.theta = np.tile([[0.1, -0.1]], (8, 1))
+        st.team = (np.arange(8) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        one = sim14.simulate(tables, st, 20, np.random.default_rng(3), seed=3, distinct=True)
+        for workers in (2, 3):
+            got = v14.par_simulate(tables, st, 20, seed=3, workers=workers, distinct=True)
+            for a, b in zip(one, got):
+                np.testing.assert_array_equal(a, b)
+
+    def test_sim_workers_set_the_builds_processes(self):
+        from .. import __main__ as cli
+        seen = []
+        saved = v14.BUILD_WORKERS
+        try:
+            with mock.patch.object(cli.playover, "load", return_value={"M1": []}), \
+                    mock.patch.object(nb2_prior, "load_history", return_value=[]), \
+                    mock.patch.object(cli.players, "load_handles", return_value={}), \
+                    mock.patch.object(v14, "build", lambda *a, **k: seen.append(v14.BUILD_WORKERS)), \
+                    mock.patch("builtins.print"):
+                args = cli.build_parser().parse_args(["v14-build", "snaps.csv", "--history", "h.csv",
+                                                      "--no-daily", "--sim-workers", "12"])
+                cli.cmd_sim_build(args)
+        finally:
+            v14.BUILD_WORKERS = saved
+        self.assertEqual(seen, [12])

@@ -1317,11 +1317,34 @@ real games, each simulated at its own expectations) set v13's play-by-play again
    tables, real against simulated, with misses beyond `REPORT_TOL` (5%) marked. Each round also
    prints its seconds by stage.
 
+The long simulations (the grid, the responses, the held strengths, the two-minute fits and the rubber
+band) run on `--sim-workers` processes (default 4; `BUILD_WORKERS`). Each start's paths draw the same
+random numbers wherever they run, so any number of processes builds the same model; on a 16-core
+machine `--sim-workers 12` leaves room for the daily glmer fits.
+
 On the held-out build (before 10 Sep) the build takes about 100 minutes. The report's points by
 quarter, from real quarter starts and from the two-minute marks, are within 0.6%. Still marked: the
 rubber band (+8% to +20%), the settle cells' touchdowns (+12%) and Q4's seconds a snap (-8%) move
 after they are fitted; the level side's late field goals (50% of drives, real 68%) and Q4's field
 goals on downs 1-3 from 2:00 (0.076, real 0.094) sit at the edge of what their fits may move.
+
+### Fixed in the sweep (12 Oct)
+
+- **End-of-half kicks** (`sim14.early_kicks`). A state at 0:00 is the half's end, not a choice, but
+  `EARLY_FG_HALF_END` counted it as a side that chose not to kick: 264 at Q2's end, in range on downs
+  1-3. Left out, Q2's last-five-seconds kick rates by range go from 36/44/31% to 47/58/47%.
+- **Held touchdowns' redraws** (`sim14.simulate`). A would-be touchdown held back (`td_hold`) was
+  redrawn without the boom warp where neither side had a big-play or lost-yardage rate of its own, so
+  the redraw ignored the strengths' boom or bust.
+- **Q4's early-kick target** (`v14.manage_states`, `MANAGE_Q4_CLOSE`). The sim's fourth-quarter early
+  kicks are the close sides' alone (level or 1-3 behind), but the target counted every side's: 26 of
+  the 207 real kicks were by sides ahead or 4+ behind, which no stage makes, and `fit_manage` held the
+  close sides' clock at its limit chasing them. That was the report's Q4 miss (15.5% short).
+- **Distinct paths split across processes** (`par_simulate`). Each block now numbers its paths where
+  its rows start (`path_offset`), so the held strengths no longer change with the number of processes.
+- **Faster**: the rubber band runs on the build's processes (it was about half of each round), and the
+  close-level fit no longer plays out every grid point's games for an overtime share that weighs
+  nothing.
 
 ### Held out
 
@@ -2275,6 +2298,8 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Live:** build without `--until`, then each day `eAMFCalibrator refresh` and `eAMFModel
   v14-daily` (fits the days since the last one and keeps the build attached).
 - `v14-build --no-daily` prices from the build's single fit; `--prior nb2` builds on NB2 instead.
+- `v14-build --sim-workers 12` runs the build's simulations on 12 processes (default 4): the same
+  model, sooner.
 - v8-v13 keep their own commands and defaults (`--prior nb2`, `--half train`; `prior-daily` to
   attach daily fits).
 
