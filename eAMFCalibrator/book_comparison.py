@@ -284,14 +284,14 @@ def html(data, esc):
                             + _pct_cell(r["cand"], esc) + _change(r["head"]) + _pct_cell(r["both"], esc)
                             + _pct_cell(r["alone"], esc) + _change(r["change"]) + "</tr>")
     return f"""
-    <h3>Book comparison <span class="dim">sharp: {esc(sharp)}</span></h3>
-    <h4>Acceptance</h4>
+    <p class="dim">Each candidate set against prod as a book; sharp: {esc(sharp)}</p>
+    <h3>Acceptance</h3>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod (as bet)</th><th>Same bets</th>
         <th>Acceptance</th><th>Kept</th><th>Change</th></tr></thead>
       <tbody>{''.join(acc_rows)}</tbody>
     </table>
-    <h4>Two books</h4>
+    <h3>Two books</h3>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>To candidate</th><th>Prod keeps</th>
         <th>Candidate takes</th><th>Candidate &minus; prod</th><th>Both books</th><th>Prod alone</th>

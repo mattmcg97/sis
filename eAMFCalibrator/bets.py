@@ -631,6 +631,12 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
     checks = fetch_checks(cur, matches, prod_rows)
     prod_tl = timeline(prod_rows)
+    uplift, history = config.UPLIFT and not only_checks and not prematch_only, None
+    if uplift:
+        from . import margin_uplift
+        history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+        up_starts, up_finals = margin_uplift._starts(history), margin_uplift._finals(history)
+        uplift = [("prod (report)", margin_uplift.Ticks("prod").add(prod_rows, up_starts, up_finals))]
     del prod_rows
     lags = fit_lags(bets, prod_tl)
     signs = fit_line_signs(bets, prod_tl, lags)
@@ -653,6 +659,9 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
             print(f"\n  pricing the bets with {label(stream)}", flush=True)
             cand_rows = candidate_quotes(cur, stream, matches)
             cand_tl = timeline(cand_rows)
+            if uplift:
+                uplift.append((label(stream), margin_uplift.Ticks(label(stream)).add(cand_rows, up_starts,
+                                                                                     up_finals)))
             results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
                                                  cand_tl, finals, checks,
                                                  same_state=snowflake_io.is_model(stream))))
@@ -684,7 +693,8 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         lines = gamer_report(config.GAMERS, gamer_info, results, closing, finals)
         print("\n".join(lines))
         write_text(os.path.join(out_dir, f"{prefix}_gamers.txt"), lines)
-    history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+    if history is None:
+        history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
     lines = trend_report(results, {r["MATCH_CODE"]: r for r in history}, gamer_games(history))
     print("\n".join(lines))
     write_text(os.path.join(out_dir, f"{prefix}_trends.txt"), lines)
@@ -701,9 +711,13 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     book_lines = book_comparison.text(books)
     print("\n".join(book_lines))
     write_text(os.path.join(out_dir, "bets_book_comparison.txt"), book_lines)
+    if uplift:
+        uplift = margin_uplift.run(cur, out_dir, uplift, history, chart_path=config.UPLIFT_CHART,
+                                   since=config.UPLIFT_SINCE, until=config.UPLIFT_UNTIL,
+                                   factor=config.UPLIFT_FACTOR)
     if summary is not None:
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
-                       book_comparison=books)
+                       book_comparison=books, uplift=uplift or None)
     return results[0][1] if len(results) == 1 else results
 
 
@@ -1309,12 +1323,14 @@ def html_section(summary):
     common_n = split[0] if split else 0
     from . import bet_moments
     moments = bet_moments.html_tables(results, _esc, _change_cell)
-    from . import book_comparison
+    from . import book_comparison, margin_uplift
     books = book_comparison.html(summary.get("book_comparison"), _esc)
+    uplift = margin_uplift.html(summary.get("uplift"), _esc)
     return f"""
   <section class="panel" id="bets">
-    <h2>Betting simulation</h2>
-    <p class="dim">{summary.get('bets', 0):,} bets &middot; {summary.get('matches', 0):,} matches</p>
+    <h2>Betting simulation &middot; Re-pricing</h2>
+    <p class="dim">{summary.get('bets', 0):,} bets &middot; {summary.get('matches', 0):,} matches: each real
+      bet re-priced at the candidate's probability with the operator's own margin kept</p>
     <h3>Re-priced</h3>
     <table class="reach">
       <thead><tr><th>Candidate</th><th>Bets</th><th>Stake</th><th>Prod</th><th>Candidate</th><th>Change</th>
@@ -1332,8 +1348,15 @@ def html_section(summary):
       <tbody>{''.join(effect_rows)}</tbody>
     </table>
     {moments}
-    {books}
     <h3>Not re-priced</h3>
     <table class="reach"><tbody>{''.join(why)}</tbody></table>
     <p class="dim">Lag: {lag_line or 'none fitted'}</p>
+  </section>
+  <section class="panel" id="books">
+    <h2>Betting simulation &middot; Book comparison</h2>
+    {books or '<p class="dim">No book comparison.</p>'}
+  </section>
+  <section class="panel" id="uplift">
+    <h2>Betting simulation &middot; Margin uplift</h2>
+    {uplift}
   </section>"""
