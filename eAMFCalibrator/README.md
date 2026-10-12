@@ -1881,13 +1881,14 @@ than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) sho
 
 ### Margin uplift, the partner's way: `margin_uplift.txt`
 
-`report --bets` (and `bets --uplift`) also runs the partner's before/after method from their
-eBasketball notebook (July's old feed against September's new). Here it's applied to AF as they
-applied it, weaknesses and all. The old feed is prod over a baseline month. The new feed is each
-candidate over the report window.
+Every `bets` run (and so `report --bets`) also runs the dummy-bet method from the partner's
+eBasketball notebook. It's applied to AF as they applied it, weaknesses and all, but as a direct
+comparison: prod against each candidate over the report window, on the matches that every feed has
+in-play ticks for. It reuses the quotes the simulation has already fetched, so it costs nothing
+extra.
 
 ```
-python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v13 --v13-model v13_model --bets --uplift-since 2026-09-01 --uplift-until 2026-10-01 --margin-chart FD_109_BALANCED.csv
+python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v13 --v13-model v13_model --bets --margin-chart FD_109_BALANCED.csv
 ```
 
 - **Dummy bets.** Every live in-play tick on the moneyline (50/51, home is their side A) and
@@ -1900,12 +1901,12 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
   - Expected margin = 1 − price × probability.
   - GGR = stake − price × stake if it won, else the stake. A moneyline tie loses both sides, and
     a totals push loses both.
-- **The clock.** Minutes run from the scheduled start, scaled so the baseline's matches end at 60
-  game minutes on average (their 0.146 cut made basketball's 20). The same factor applies to every
+- **The clock.** Minutes run from the scheduled start, scaled so prod's matches end at 60 game
+  minutes on average (their 0.146 cut made basketball's 20). The same factor applies to every
   feed (`--uplift-factor` sets it). The money leaves out the last 6 minutes (their last 2 of 20),
   and anything with a fair price of 1.001 or less.
 - **Headline.** Margin % (GGR / handle) and expected margin % for each feed and market, and the
-  uplift: each feed's margin less the baseline's.
+  uplift: each candidate's margin less prod's.
 - **Calibration.** Their weighted MAE: |mean probability − win rate| for each game minute left,
   selection and band, weighted by ticks.
   - Moneyline bands are tenths of probability.
@@ -1914,11 +1915,11 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Checkpoints.** At 54, 45, 36, 30, 21 and 15 minutes left (their 18, 15, 12, 10, 7 and 5),
   each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
   feed; its margin needs more than 50.
-- **Control.** Prod over the report window rides along. It covers the same matches as the
-  candidate (the matches with bets), so the gap between those two is the model's alone. The
-  baseline gap also includes the change of month.
 
-The page's betting simulation now has three panels:
+The feeds can tick at different rates, so each one's tick count is shown. The matches are the ones
+the simulation covers: those with at least one bet.
+
+The page's betting simulation has three panels:
 - **Re-pricing:** the real bets at each candidate's probability.
 - **Book comparison.**
 - **Margin uplift.**

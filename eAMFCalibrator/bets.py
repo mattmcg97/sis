@@ -631,12 +631,12 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
     checks = fetch_checks(cur, matches, prod_rows)
     prod_tl = timeline(prod_rows)
-    uplift, history = config.UPLIFT and not only_checks and not prematch_only, None
-    if uplift:
+    uplift = None
+    if not only_checks and not prematch_only:
         from . import margin_uplift
         history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
-        up_starts, up_finals = margin_uplift._starts(history), margin_uplift._finals(history)
-        uplift = [("prod (report)", margin_uplift.Ticks("prod").add(prod_rows, up_starts, up_finals))]
+        starts = margin_uplift.starts_of(history)
+        uplift = [("prod", margin_uplift.Ticks("prod").add(prod_rows, starts, finals))]
     del prod_rows
     lags = fit_lags(bets, prod_tl)
     signs = fit_line_signs(bets, prod_tl, lags)
@@ -659,9 +659,8 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
             print(f"\n  pricing the bets with {label(stream)}", flush=True)
             cand_rows = candidate_quotes(cur, stream, matches)
             cand_tl = timeline(cand_rows)
-            if uplift:
-                uplift.append((label(stream), margin_uplift.Ticks(label(stream)).add(cand_rows, up_starts,
-                                                                                     up_finals)))
+            if uplift is not None:
+                uplift.append((label(stream), margin_uplift.Ticks(label(stream)).add(cand_rows, starts, finals)))
             results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
                                                  cand_tl, finals, checks,
                                                  same_state=snowflake_io.is_model(stream))))
@@ -693,7 +692,7 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         lines = gamer_report(config.GAMERS, gamer_info, results, closing, finals)
         print("\n".join(lines))
         write_text(os.path.join(out_dir, f"{prefix}_gamers.txt"), lines)
-    if history is None:
+    if uplift is None:
         history = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
     lines = trend_report(results, {r["MATCH_CODE"]: r for r in history}, gamer_games(history))
     print("\n".join(lines))
@@ -711,13 +710,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     book_lines = book_comparison.text(books)
     print("\n".join(book_lines))
     write_text(os.path.join(out_dir, "bets_book_comparison.txt"), book_lines)
-    if uplift:
-        uplift = margin_uplift.run(cur, out_dir, uplift, history, chart_path=config.UPLIFT_CHART,
-                                   since=config.UPLIFT_SINCE, until=config.UPLIFT_UNTIL,
-                                   factor=config.UPLIFT_FACTOR)
+    uplift = margin_uplift.run(out_dir, uplift, chart_path=config.UPLIFT_CHART, factor=config.UPLIFT_FACTOR)
     if summary is not None:
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
-                       book_comparison=books, uplift=uplift or None)
+                       book_comparison=books, uplift=uplift)
     return results[0][1] if len(results) == 1 else results
 
 
