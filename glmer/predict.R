@@ -98,7 +98,7 @@ rows <- floor_experience(long[long$MatchId %in% schedule$MATCH_CODE, ])
 src <- predict_sources(bundle, rows)
 pred <- price_matches(bundle, src, mode)
 sch <- schedule[match(pred$MATCH_CODE, schedule$MATCH_CODE), ]
-known <- rownames(ranef(bundle$global$fit)$Player)
+known <- rownames(ranef(bundle$global$fit, condVar = FALSE)$Player)
 out <- data.frame(
   MATCH_CODE = pred$MATCH_CODE, SCHEDULED_START_TIME_UTC = format(sch$Time, "%Y-%m-%d %H:%M:%S"),
   STREAM_NUMBER = sch$Stream, PLAYER_1_HANDLE = sch$P1, PLAYER_1_TEAM = sch$P1Team,

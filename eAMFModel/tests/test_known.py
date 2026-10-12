@@ -174,6 +174,10 @@ class TestGlmerReadsTheFinals(unittest.TestCase):
         self.assertTrue(prematch({"feature_set": "form"}).AS_OF)
         self.assertFalse(prematch({"feature_set": "form_session"}).AS_OF)
         self.assertFalse(prematch({"feature_set": "x", "formula": "Score ~ RestLog + (1|Player)"}).AS_OF)
+        # form_clock's late-in-session and time-of-day terms are read near enough at an earlier time
+        clock = "Score ~ FormFor + SessLate + OppSessLate + (1 | HourBlock) + (1 | Player)"
+        self.assertTrue(prematch({"feature_set": "form_clock", "formula": clock}).AS_OF)
+        self.assertFalse(prematch({"feature_set": "x", "formula": clock + " + SessFormFor"}).AS_OF)
         self.assertTrue(prematch({"feature_set": "context",
                                   "formula": "Score ~ FormFor + ExpLog + (1|Player)"}).AS_OF)
         self.assertTrue(glmer_prior.Prematch.FOLLOWS_RESULTS)

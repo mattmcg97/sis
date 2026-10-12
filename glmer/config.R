@@ -144,6 +144,25 @@ FEATURE_SETS <- list(
                    "OwnSessFormFor + RivalSessFormAgainst +", PLAYER_BASE),
     match_re = TRUE, olre = TRUE, player_offset = FALSE),
 
+  # form + when in the shift and the day: lower scoring from a side's 8th match of a session on,
+  # by time of day (4h blocks, UTC), and each gamer's own start to a session (slow or fast
+  # starters: their first two matches, shrunk per gamer).
+  form_shift = list(
+    global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +",
+                   "SessLate + OppSessLate + SessEarly + OppSessEarly + (1|HourBlock) +",
+                   "(0 + SessEarly|Player) + (0 + OppSessEarly|OpponentPlayer) +", GLOBAL_BASE),
+    player = paste("OwnHome + OwnFormFor + OwnFormAgainst + RivalFormFor + RivalFormAgainst +",
+                   PLAYER_BASE),
+    match_re = TRUE, olre = TRUE, player_offset = FALSE),
+
+  # form_shift's league-wide part alone: late in the session and time of day.
+  form_clock = list(
+    global = paste("IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +",
+                   "SessLate + OppSessLate + (1|HourBlock) +", GLOBAL_BASE),
+    player = paste("OwnHome + OwnFormFor + OwnFormAgainst + RivalFormFor + RivalFormAgainst +",
+                   PLAYER_BASE),
+    match_re = TRUE, olre = TRUE, player_offset = FALSE),
+
   # form + gamer-v-gamer matchups: how a gamer scores against this particular opponent. About
   # level with form out of sample (README.md's "Gamer-v-gamer and team-v-team matchups").
   form_pair = list(
