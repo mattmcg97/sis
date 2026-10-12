@@ -104,53 +104,41 @@ class TestGrade(unittest.TestCase):
 class TestReport(unittest.TestCase):
 
     def data(self):
-        old = mu.Ticks("old").add([q("M1", 50, 3, 0.5), q("M1", 50, 10, 0.5), q("M1", 50, 30, 0.5), q("M1", 54, 10, 0.5, "Over 40.5")],
-                                  STARTS, FINALS)
-        new = mu.Ticks("new").add([q("M1", 50, 3, 0.6), q("M1", 50, 10, 0.6), q("M1", 54, 10, 0.4, "Over 40.5")], STARTS, FINALS)
-        return mu.compute(old, [("prod", old), ("v13", new)], CHART, chart_name="FD.csv",
-                          window={"baseline": "2026-08-01 to 2026-09-01", "report": "2026-10-01 to 2026-10-12"})
+        prod = mu.Ticks("prod").add([q("M1", 50, 3, 0.5), q("M1", 50, 10, 0.5), q("M1", 50, 30, 0.5),
+                                     q("M1", 54, 10, 0.5, "Over 40.5"), q("M2", 50, 60, 0.5)], STARTS, FINALS)
+        cand = mu.Ticks("v13").add([q("M1", 50, 3, 0.6), q("M1", 50, 10, 0.6), q("M1", 54, 10, 0.4, "Over 40.5")],
+                                   STARTS, FINALS)
+        return mu.compute([("prod", prod), ("v13", cand)], CHART, chart_name="FD.csv",
+                          window="2026-10-01 to 2026-10-12")
 
-    def test_one_clock_for_every_feed_and_the_uplift(self):
+    def test_the_same_matches_and_one_clock_for_every_feed(self):
         data = self.data()
-        self.assertAlmostEqual(data["factor"], 2.0)                    # the baseline's match ends at 30
+        self.assertEqual(data["matches"], 1)                           # M2 has no candidate ticks
+        self.assertEqual([f["ticks"] for f in data["feeds"]], [4, 3])
+        self.assertAlmostEqual(data["factor"], 2.0)                    # prod's M1 ends at 30, M2 is out
         head = dict(mu.headline(data))
-        self.assertEqual([round(m, 2) for m, _, _ in head["Moneyline"]], [-80.0, -80.0, -80.0])
+        self.assertEqual([round(m, 2) for m, _, _ in head["Moneyline"]], [-80.0, -80.0])
         text = "\n".join(mu.text(data))
-        self.assertIn("uplift on baseline", text)
+        self.assertIn("uplift on prod", text)
         self.assertIn("FD.csv", text)
+        self.assertIn("on the 1 matches every feed", text)
         self.assertIn("Q1, 54 game minutes left -- Moneyline", text)
         page = mu.html(data, str)
-        self.assertIn("Uplift on baseline", page)
+        self.assertIn("Uplift on prod", page)
         self.assertIn("Q1, 54 game minutes left &middot; Moneyline", page)
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "u.csv")
             mu.write_csv(path, data)
             with open(path) as fh:
                 self.assertTrue(fh.readline().startswith("feed,market,remaining,quarter"))
-                self.assertEqual(len(fh.readlines()), 9)
+                self.assertEqual(len(fh.readlines()), 6)
 
-    def test_the_baseline_is_the_month_before(self):
-        with mock.patch.object(config, "CUTOFF_START", "2026-10-01 00:00:00"):
-            self.assertEqual(mu.baseline_window(None), (dt.datetime(2026, 9, 1), dt.datetime(2026, 10, 1)))
-        self.assertEqual(mu.baseline_window("2026-07-01"), (dt.datetime(2026, 7, 1), dt.datetime(2026, 8, 1)))
-        self.assertEqual(mu.baseline_window("2026-07-01", "2026-07-15")[1], dt.datetime(2026, 7, 15))
-
-    def test_the_baseline_fetch_reads_prod_over_its_own_window(self):
-        history = [{"MATCH_CODE": c, "SCHEDULED_START_TIME_UTC": f"{KICK:%Y-%m-%d %H:%M:%S}",
-                    "PLAYER_1_FINAL_SCORE": "24", "PLAYER_2_FINAL_SCORE": "17"} for c in ("M1",)] + \
-                  [{"MATCH_CODE": "LATE", "SCHEDULED_START_TIME_UTC": "2026-10-05 12:00:00",
-                    "PLAYER_1_FINAL_SCORE": "1", "PLAYER_2_FINAL_SCORE": "2"}]
-        seen = []
-
-        def fetch(cur, stream, codes):
-            seen.append((stream, list(codes), config.CUTOFF_START, config.CUTOFF_END))
-            return [q("M1", 50, 10, 0.5)]
-        with mock.patch.object(mu.snowflake_io, "fetch_quotes", side_effect=fetch):
-            ticks, codes = mu.baseline_ticks(None, history, dt.datetime(2026, 9, 1), dt.datetime(2026, 10, 1))
-        self.assertEqual(codes, ["M1"])
-        self.assertEqual(seen[0][1:], (["M1"], "2026-09-01 00:00:00", "2026-10-01 01:00:00"))
-        self.assertEqual(len(ticks), 1)
-        self.assertNotEqual(config.CUTOFF_START, "2026-09-01 00:00:00")    # the window is put back
+    def test_no_match_in_every_feed(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, 3, 0.5)], STARTS, FINALS)
+        cand = mu.Ticks("v13").add([q("M2", 50, 3, 0.5)], STARTS, FINALS)
+        self.assertIsNone(mu.compute([("prod", prod), ("v13", cand)], CHART))
+        with mock.patch("builtins.print"):
+            self.assertIsNone(mu.run("out", [("prod", prod), ("v13", cand)]))
 
 
 class TestPipeline(unittest.TestCase):
@@ -169,18 +157,18 @@ class TestPipeline(unittest.TestCase):
         with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
                 mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
                 mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
-                mock.patch.object(snowflake_io, "fetch_history", return_value=history), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=history) as fh, \
                 mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text"), \
                 mock.patch("builtins.print"), mock.patch("os.makedirs"), \
                 mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
-                mock.patch.object(config, "LAG_RANGE", (-20, 30)), mock.patch.object(config, "UPLIFT", True), \
+                mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
                 mock.patch.object(config, "CANDIDATES", ["CAND_TABLE"]), \
                 mock.patch.object(mu, "run", return_value={"x": 1}) as run:
             bets.run(None, "out", summary=summary)
-        feeds = run.call_args.args[2]
-        self.assertEqual([name for name, _ in feeds], ["prod (report)", "CAND_TABLE"])
-        self.assertGreater(len(feeds[0][1]), 0)
-        self.assertIs(run.call_args.args[3], history)
+        feeds = run.call_args.args[1]
+        self.assertEqual([name for name, _ in feeds], ["prod", "CAND_TABLE"])
+        self.assertEqual([len(t) for _, t in feeds], [len(MONEYLINE)] * 2)
+        self.assertEqual(fh.call_count, 1)                              # one history read serves both
         self.assertEqual(summary["uplift"], {"x": 1})
 
 
@@ -192,20 +180,18 @@ class TestSections(unittest.TestCase):
         for anchor in ('id="bets"', 'id="books"', 'id="uplift"'):
             self.assertIn(anchor, page)
         self.assertIn("Re-pricing", page)
-        self.assertIn("Uplift on baseline", page)
-        self.assertIn("--uplift was not run", bets.html_section({"results": [("v13", [])]}))
+        self.assertIn("Uplift on prod", page)
+        self.assertIn("No margin uplift", bets.html_section({"results": [("v13", [])]}))
 
     def test_the_options(self):
         from .. import __main__ as cli
-        args = cli.build_parser().parse_args(["report", "--bets", "--uplift-since", "2026-08-01",
-                                              "--uplift-factor", "2.5"])
-        with mock.patch.multiple(config, UPLIFT=False, UPLIFT_SINCE=None, UPLIFT_UNTIL=None,
-                                 UPLIFT_CHART=None, UPLIFT_FACTOR=None):
-            cli.apply_uplift(args, not args.no_uplift)
-            self.assertEqual((config.UPLIFT, config.UPLIFT_SINCE, config.UPLIFT_FACTOR), (True, "2026-08-01", 2.5))
+        args = cli.build_parser().parse_args(["report", "--bets", "--uplift-factor", "2.5"])
+        with mock.patch.multiple(config, UPLIFT_CHART=None, UPLIFT_FACTOR=None):
+            cli.apply_uplift(args)
+            self.assertEqual((config.UPLIFT_CHART, config.UPLIFT_FACTOR), (None, 2.5))
             args = cli.build_parser().parse_args(["bets", "--margin-chart", "/no/such.csv"])
             with self.assertRaises(SystemExit):
-                cli.apply_uplift(args, args.uplift)
+                cli.apply_uplift(args)
 
 
 if __name__ == "__main__":
