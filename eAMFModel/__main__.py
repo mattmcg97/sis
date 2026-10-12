@@ -23,6 +23,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
   form-trace             one gamer's matches as the pre-match model priced them and as the
                          post-game form layer moves them
   trader                 a local page to click through a game and see a version's prices
+  prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's
+                         kick-off does off it, both graded on the results (calibration)
   kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
                          against the real ones
   remaining SNAPS.csv    a version's points still to come against what really came
@@ -178,6 +180,26 @@ def cmd_kickoff_dist(args):
         raise SystemExit("--means takes two expected points, home,away (e.g. 15.5,15.5)")
     kickoff_check.run(args.model, means, args.history, since=args.since or kickoff_check.default_since(),
                       until=args.until, n_paths=args.paths, seed=args.seed)
+
+
+def cmd_prior_vs_sim(args):
+    import datetime as dt
+    import os
+    from . import nb2_prior, prior_check
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = nb2_prior.load_history(args.history)
+    results = prior_check.run(args.model, history, since, until, n_paths=args.paths,
+                              workers=args.workers or max(1, (os.cpu_count() or 2) - 1), seed=args.seed)
+    lines = prior_check.report(results, since, until)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "prior_vs_sim.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        prior_check.write_csv(os.path.join(args.out, "prior_vs_sim.csv"), results)
+        print(f"\n  -> {args.out}/prior_vs_sim.txt and prior_vs_sim.csv")
+    return 0
 
 
 def cmd_prior_daily(args):
@@ -394,6 +416,18 @@ def main(argv=None):
     p.add_argument("--detach", help="builds to return to their own single fit, comma-separated")
     p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
     p.set_defaults(func=cmd_prior_daily)
+
+    p = sub.add_parser("prior-vs-sim", help="calibration: a window's matches priced by the pre-match prior "
+                                            "itself and by v13's kick-off off it, graded on the results")
+    p.add_argument("--model", required=True, help="a v13 build (its prior: glmer or NB2, daily if attached)")
+    p.add_argument("--history", required=True, help="the match history CSV (eAMFCalibrator history)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=4000, help="simulated games per kick-off (default 4000)")
+    p.add_argument("--workers", type=int, help="processes for the kick-offs (default: all cores but one)")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", help="also write prior_vs_sim.txt and a per-match prior_vs_sim.csv here")
+    p.set_defaults(func=cmd_prior_vs_sim)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")

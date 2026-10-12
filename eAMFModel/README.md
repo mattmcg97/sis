@@ -1757,6 +1757,31 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
+## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13)
+
+For every settled match in a window, priced as of its kick-off, this grades three prices of it on the
+real results:
+- **glmer raw**: the prior's own expected points and its own score model. That is Poisson with
+  glmer's log-normal noise for each side (`sigma_obs`) and one shared by the match (`sigma_match`),
+  as `glmer/predict.R` prices the moneyline. A prior with no sigmas, NB2, gets plain Poisson.
+- **glmer + layers**: the same score model off the means the build prices with, after the prior
+  shrink and any follow or form layer. Against raw it shows what those do.
+- **v13 sim**: v13's kick-off price off those means, with each side's profile and big-play rates.
+  That is what the stream quotes before the first play. Against the column before, it shows what
+  the simulation alone gains or loses.
+
+Each is graded on the moneyline (log loss, Brier, a decile calibration table, pushes left out) and on
+the margin and the total. For those it reports the bias and RMSE of the expected value, the ranked
+probability score over the whole distribution, and how often the result lands inside the central 50%
+and 80%.
+
+```powershell
+python -m eAMFModel prior-vs-sim --model v13_glmer_1001 --history eAMFCalibrator/out/match_history.csv --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_prior_vs_sim
+```
+
+`--paths` sets the simulated games per kick-off (default 4000), and `--workers` the processes. `--out`
+also writes a per-match CSV.
+
 ## Refitting the prior every day (`prior-daily`, v10–v13)
 
 A build fits its pre-match model (NB2 or glmer) once, at its cut-off. Over a test window of weeks
