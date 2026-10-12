@@ -40,10 +40,11 @@ The code that runs:
 | v11 | v10 with close endings, late conversions by the clock, late-half timeouts, overtime and kick-off touchdowns as played (overtime 5.4% → 3.2% of games, real 2.7%; held out RPS level) |
 | v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
 | v13 | v12 with each side's big-play rate: its gamer's, its team's and what the other side allows, boom or bust (held out in-play RPS 3.821 → 3.811; totals' spread follows the big-play sides) |
+| v14 | v13 played closer to the real game -- strength as boom or bust, the clock as played, long plays, losses and kick-offs by side, the go curve's field shape -- and built in one joint fit with a calibration report (first downs 37.6% → 41.5% of snaps, real 41.0%; field goals 1.51 → 1.22 a game, real 1.15; held out RPS level) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
-onward still carries everything they introduced. Their own commands no longer run, so use v8–v13
+onward still carries everything they introduced. Their own commands no longer run, so use v8–v14
 in their place.
 
 ## v3: a play-by-play simulation
@@ -1249,6 +1250,106 @@ Points still to come, built before Sep 10, played on Sep 10–22 (56,890 snapsho
 The two-score states come down; level states rise a little. A half-life can only follow a trend
 as far as the build's own weeks show it: the held-out week's leaders up 9+ bled far more (38.1
 seconds a running play) than any week before.
+
+## v14: v13 played closer to the real game, and built in one joint fit
+
+v14 (`sim14.py`, `v14.py`, `v14_stream.py`) started as v13 copied exactly. Each of its changes has a
+switch in `sim14` or `v14`; with them off it plays as v13. Its build is `python -m eAMFModel v14-build`
+and its candidate `--candidate v14` (`--v14-model`, `--v14-paths`, `--v14-lines`).
+
+### What v13 got wrong
+
+An audit (the calibrator's snapshots, every match with both expectations within 3 of 15.5: 1,178
+real games, each simulated at its own expectations) set v13's play-by-play against the real games:
+
+- **Strength worked through success, not variance.** In real matches about level on paper the share
+  of snaps that make the line hardly moves with the expected total (43% at 26 points a match, 45% at
+  47) and neither does the share that gain nothing; the 40+ yard plays run from 1.6% of snaps to
+  5.6%. v13 moved a side's whole draw with its strength, so a low-scoring match made the line on 36%
+  of snaps and gained nothing on 22%, and its points were held up by too many long plays. It reached
+  4th and long a quarter more often than real sides, and kicked more: 1.51 field goals tried a game
+  (real 1.15).
+- **The clock.** A snap whose play could not start before the quarter's end was played anyway; the
+  two-minute warning did not stop the clock; the stopped-clock share took no account of what the
+  play before did (a real snap after nothing gained follows a stopped clock 76% of the time, after a
+  gain 10%). Snaps per quarter ran off by up to a snap.
+- **Kick-offs and losses.** Every kicker kicked alike; every side lost yards alike.
+
+### What v14 changes
+
+- **Strength as boom or bust** (`sim14.STRENGTH_BOOM`, `BOOM`, `TILT_SCALE`). A side's strength also
+  acts as its big-play rate does: exp(BOOM x theta) times its bin's big plays and the same chance
+  more of its failed plays, with only TILT_SCALE of it tilting the whole draw. The prior grid
+  (now -1.1 to 0.8) fits the strengths to the points. The big-play ratings' elasticity is held at
+  0.5 or more (`BIG_ELASTICITY_MIN`).
+- **The clock as played.** A snap with no time to start is not played (`CLOCK_EXPIRES`); the
+  two-minute warning stops the clock (`TWO_MINUTE`); the stopped-clock share follows the play before
+  (`STOP_LINK`, `play_class`: nothing gained, a short gain, a first down, a loss); each quarter's
+  pace is fitted by 20-second slice to the real seconds a snap and snaps a quarter
+  (`QUARTER_PACE`); the snaps from the two-minute mark and the end-of-half field goals there are
+  fitted to the real ones (`MANAGE_FIT`, `EARLY_FG_HALF_END`).
+- **Long plays run on** (`LONG_TAIL`): a touchdown play stretched to a longer field runs on as often
+  as real gains that long do (Kaplan-Meier, `gain_survival`), else stops short.
+- **Each side's lost-yardage rate and loss size** (`LOSS_PLAYS`, `zone_warp`), rated as the big plays
+  are, and **each kicker's touchback and no-landing-zone rates** by the part of the half
+  (`KICK_STYLES`).
+- **The go curve's field shape** (`GO_ZONES`): a term and a distance slope for midfield (own 40-54)
+  and the goal line, where real sides go for it far more than the smooth curve gave (in-sample
+  misfit over 29 field x distance cells: chi-square 88 -> 33).
+- **The prior's points held as pricing plays the match** (`HOLD_AS_PRICED`, `HOLD_STEPS`): the held
+  kick-off is simulated with the day's strength spread and the total's in-play run, and stepped until
+  it lands within `HOLD_TOL` points of the prior's total.
+
+### The build
+
+`v14.build` runs in three parts:
+
+1. **The fits on real data alone** -- the tables (play bins, the clock's stopped shares and seconds,
+   kicks, punts, kneels, the 4th-down curves and every decision table), the players' profiles,
+   kick-off styles and big-play and lost-yardage ratings. Nothing later moves them.
+2. **One joint fit** of everything calibrated through the simulation -- the quarters' pace, the
+   timeouts, the two-minute snaps and field goals, the rubber band, settle, close endings and the
+   quarters' scoring levels, with the grid, its responses and the form spread -- in `JOINT_ROUNDS`
+   (2) rounds, each stage starting where the last round left it (`JOINT_WARM`: fewer steps after
+   the first) and every state played as pricing plays its match (held strengths, own profiles). Fitted
+   one after another, each stage moved what the ones before had fitted.
+3. **The calibration report** (`calibration_report`): every target measured once more on the final
+   tables, real against simulated, with misses beyond `REPORT_TOL` (5%) marked. Each round also
+   prints its seconds by stage.
+
+On the held-out build (before 10 Sep) the build takes about 100 minutes. The report's points by
+quarter, from real quarter starts and from the two-minute marks, are within 0.6%. Still marked: the
+rubber band (+8% to +20%), the settle cells' touchdowns (+12%) and Q4's seconds a snap (-8%) move
+after they are fitted; the level side's late field goals (50% of drives, real 68%) and Q4's field
+goals on downs 1-3 from 2:00 (0.076, real 0.094) sit at the edge of what their fits may move.
+
+### Held out
+
+The audit's 1,178 games (real in brackets):
+
+| | v13 | v14 | real |
+|---|---|---|---|
+| first downs a snap | 37.6% | 41.5% | 41.0% |
+| 40+ yard gains a snap | 3.01% | 2.70% | 2.80% |
+| turnovers a snap | 4.08% | 3.52% | 3.59% |
+| 4th downs a game | 3.53 | 2.87 | 2.96 |
+| field goals tried a game | 1.51 | 1.22 | 1.15 |
+| interceptions and fumbles a game | 2.05 | 1.66 | 1.64 |
+
+Pre-match, the 906 matches of 10-22 Sep (12,000 paths each), v14 minus v13 [95% over matches]: total
+RPS +0.004 [-0.011, +0.021], margin RPS -0.002 [-0.022, +0.016], moneyline +0.0007 [-0.0006, +0.0021].
+In play, points still to come at 56,890 snapshots (`remaining`, 500 paths), RPS v14 minus v13: all
++0.004 [-0.007, +0.016], Q1 +0.009 [-0.006, +0.022], Q2 +0.007 [-0.011, +0.026], Q3 -0.009
+[-0.029, +0.013], Q4 +0.008 [-0.000, +0.016]. A run of the same model on other seeds moves these by
+up to 0.007: v14 prices level with v13 while playing much closer to the real game.
+
+### Still open
+
+- Too few blowouts in matches level on paper (margins 9-13: 14.6% of games, real 17.0%).
+- Too few 4th and 1 (33% of 4th downs, real 40%): too few short gains on 2nd down.
+- Punts 0.61 a game (real 0.71); overtime still runs high.
+- Points still to come early in play run 0.5 low, from a heavy right tail; correcting the mean
+  (by level, by points scored or by margin) made the RPS worse in every quarter, cross-validated.
 
 ## v13: v12 with each side's big-play rate
 

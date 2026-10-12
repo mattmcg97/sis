@@ -2585,6 +2585,10 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                             tally(f"timeouts_q{q}", (period[sx[ci]] == q).sum())
         clock[sx] -= used
         fresh[sx] = False
+        if stats is not None and "_snaps" in stats:      # an audit's per-snap log (sim_audit)
+            stats["_snaps"].append((sx.copy(), period[sx].copy(), clock[sx] + used, lead.copy(),
+                                    down[sx].copy(), dist[sx].copy(), y[sx].copy(), tables.kind[j].copy(),
+                                    tables.gain[j].copy(), used.copy(), stops.copy()))
         tally("clock_used", used.sum())
         tally("fresh_snaps", fr.sum())
         kd = tables.kind[j]
