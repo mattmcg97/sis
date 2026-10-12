@@ -1916,7 +1916,7 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
   each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
   feed; its margin needs more than 50.
 
-The feeds can tick at different rates, so each one's tick count is shown. The matches are the ones
+The feeds can tick at different rates, so each one's tick count is shown. Since that weighs different moments of the game in each feed, the **paired ticks** table bets at prod's ticks only: at each one, the candidate's latest live price for the same match, market and selection (no more than `PAIR_MAX_AGE`, 2 minutes, old), and prod scored on the same ticks. The moments and the bets are the same for both; only the probabilities differ, so its uplift is the model's alone. The matches are the ones
 the simulation covers: those with at least one bet.
 
 The page's betting simulation has three panels:

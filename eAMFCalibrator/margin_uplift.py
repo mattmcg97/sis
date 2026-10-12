@@ -29,6 +29,12 @@ tenth of probability; totals: the line's band, TOTAL_BANDS here for AF's lines),
 - win rate| weighted by the ticks. The checkpoints (54, 45, 36, 30, 21 and 15 minutes left: their
 18, 15, 12, 10, 7 and 5 of 20) show each band, calibration where every feed has 25 ticks and
 margins where a feed has more than 50.
+
+Paired ticks: the feeds don't tick at the same moments (prod far more often than a candidate priced at
+the PLAY_OVER snapshots), so their margins weigh different moments of the game. The paired view bets
+at prod's ticks only: at each one, the candidate's latest live price for the same match, market and
+selection (no older than PAIR_MAX_AGE minutes), and prod scored on the same ticks -- the same moments
+for both, only the probabilities differ.
 """
 
 import csv
@@ -50,6 +56,7 @@ STAKE_TO_WIN = 100.0
 FALLBACK_BOOK = 1.09
 MIN_CAL = 25                             # a checkpoint band's calibration: this many ticks in every feed
 MIN_MARGIN = 50                          # a checkpoint band's margin: more ticks than this in a feed
+PAIR_MAX_AGE = 2.0                       # paired ticks: the candidate's price at most this many minutes old
 
 MONEYLINE, TOTALS = "Moneyline", "Totals"
 GROUPS = (MONEYLINE, TOTALS)
@@ -202,6 +209,38 @@ class Ticks:
         return float(last[np.isfinite(last)].mean())
 
 
+def paired(prod, cand, max_age=PAIR_MAX_AGE):
+    """(prod, candidate) Ticks on prod's moments: at each prod tick, the candidate's latest tick for the
+    same match, market and selection at or before it (no older than `max_age` minutes); the prod
+    ticks without one are left out of both. The candidate's tick keeps its own probability, band and
+    result, at prod's minute."""
+    codes = {i: c for c, i in cand.matches.items()}
+    common = {c: i for c, i in prod.matches.items() if c in cand.matches}
+    p_match, c_match = prod.array("match").astype(int), cand.array("match").astype(int)
+    to_prod = np.full(max(cand.matches.values(), default=-1) + 1, -1)
+    for i, c in codes.items():
+        to_prod[i] = prod.matches.get(c, -1)
+    c_match = to_prod[c_match] if len(c_match) else c_match
+    key = lambda m, t: (m * 2 + t.array("group").astype(int)) * 2 + t.array("sel").astype(int)
+    pk, ck = key(p_match, prod), key(c_match, cand)
+    pm, cm = prod.array("minutes"), cand.array("minutes")
+    order = np.lexsort((cm, ck))
+    ck, cm = ck[order], cm[order]
+    span = (max(pm.max(initial=0), cm.max(initial=0)) + 1.0) * 2
+    at = np.searchsorted(ck * span + cm, pk * span + pm, side="right") - 1
+    ok = at >= 0
+    hit = np.where(ok, order[np.clip(at, 0, None)], 0)
+    ok &= (ck[np.clip(at, 0, None)] == pk) & (pm - cm[np.clip(at, 0, None)] <= max_age) & (c_match[hit] >= 0)
+    ok &= np.isin(p_match, list(common.values()))
+    p_out, c_out = Ticks(prod.name), Ticks(cand.name)
+    for key_ in prod.parts:
+        p_out.parts[key_] = [prod.array(key_)[ok]]
+        src = cand.array(key_)[hit[ok]] if key_ not in ("match", "minutes") else prod.array(key_)[ok]
+        c_out.parts[key_] = [src]
+    p_out.matches = c_out.matches = dict(common)
+    return p_out, c_out
+
+
 def factor_for(ticks):
     """The scale that ends the feed's matches at GAME_MINUTES on average."""
     end = ticks.mean_end()
@@ -340,6 +379,12 @@ def compute(feeds, chart=None, chart_name=None, factor=None, window=None):
     out["overall"] = [overall(c) for c in cells]
     out["wmae"] = [wmae(c) for c in cells]
     out["checkpoints"] = [(r, q, g, checkpoint(cells, r, g)) for r, q in CHECKPOINTS for g in GROUPS]
+    out["paired"] = []
+    for label, t in feeds[1:]:
+        p, c = paired(feeds[0][1], t)
+        pc, cc = grade(p, factor, chart), grade(c, factor, chart)
+        out["paired"].append(dict(label=label, ticks=len(p), of=len(feeds[0][1]),
+                                  overall=[overall(pc), overall(cc)], wmae=[wmae(pc), wmae(cc)]))
     return out
 
 
@@ -394,6 +439,20 @@ def text(data):
             vals = [x.get((g, s)) for x in data["wmae"]]
             lines.append(f"    {g + ' ' + s:20s}" + "".join(
                 f"{'-' if v is None else f'{v[1]:.3f}':>{w}s}" for v in vals))
+    for pr in data.get("paired", []):
+        lines += ["", f"  PAIRED TICKS -- prod against {pr['label']} at the same moments: prod's {pr['ticks']:,} ticks"
+                  f" of {pr['of']:,} with a {pr['label']} price no more than {PAIR_MAX_AGE:g} minutes old",
+                  f"  {'':22s}{'prod':>{w}s}{pr['label']:>{w}s}"]
+        for g in GROUPS:
+            ms = [margins(o.get(g, {})) for o in pr["overall"]]
+            lines.append(f"  {g}")
+            lines.append(f"    {'margin %':20s}" + "".join(f"{_pct(m[0]):>{w}s}" for m in ms))
+            lines.append(f"    {'expected margin %':20s}" + "".join(f"{_pct(m[1]):>{w}s}" for m in ms))
+            lines.append(f"    {'uplift on prod':20s}{'':>{w}s}" + f"{_pct(None if None in (ms[0][0], ms[1][0]) else ms[1][0] - ms[0][0], True):>{w}s}")
+            for s_ in SELECTIONS[g]:
+                vals = [x.get((g, s_)) for x in pr["wmae"]]
+                lines.append(f"    {'WMAE ' + s_:20s}" + "".join(
+                    f"{'-' if v is None else f'{v[1]:.3f}':>{w}s}" for v in vals))
     for r, q, g, rows in data["checkpoints"]:
         if not rows:
             continue
@@ -506,6 +565,7 @@ def html(data, esc):
       <thead><tr><th></th>{head}</tr></thead>
       <tbody>{''.join(rows)}</tbody>
     </table>
+    {_paired_html(data, esc)}
     <h3>Calibration <span class="dim">weighted MAE, per game minute left, selection and band</span></h3>
     <table class="reach">
       <thead><tr><th></th>{head}</tr></thead>
@@ -523,6 +583,34 @@ def html(data, esc):
         (&gt; {MIN_MARGIN} ticks)</summary>
       {''.join(checks)}
     </details>"""
+
+
+def _paired_html(data, esc):
+    """The paired view: prod and each candidate bet at the same moments (prod's ticks)."""
+    out = []
+    for pr in data.get("paired", []):
+        rows = []
+        for g in GROUPS:
+            ms = [margins(o.get(g, {})) for o in pr["overall"]]
+            rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"3\">{esc(g)}</th></tr>")
+            rows.append("<tr><th>Margin</th>" + "".join(f"<td>{_pct(m)}</td>" for m, _ in ms) + "</tr>")
+            rows.append("<tr><th>Expected margin</th>" + "".join(f"<td>{_pct(e)}</td>" for _, e in ms) + "</tr>")
+            rows.append("<tr><th>Uplift on prod</th><td>&mdash;</td>"
+                        + _cell(None if None in (ms[0][0], ms[1][0]) else ms[1][0] - ms[0][0]) + "</tr>")
+            for s in SELECTIONS[g]:
+                vals = [x.get((g, s)) for x in pr["wmae"]]
+                rows.append(f"<tr><th>WMAE {esc(s)}</th>" + "".join(
+                    f"<td>{'&mdash;' if v is None else f'{v[1]:.2f}%'}</td>" for v in vals) + "</tr>")
+        out.append(f"""
+    <h3>Paired ticks <span class="dim">prod against {esc(pr['label'])} at the same moments</span></h3>
+    <p class="dim">Bets at prod's ticks only ({pr['ticks']:,} of {pr['of']:,}): at each, {esc(pr['label'])}'s
+      latest live price for the same match, market and selection, no more than {PAIR_MAX_AGE:g} minutes
+      old, and prod's own. The same moments for both; only the probabilities differ.</p>
+    <table class="reach">
+      <thead><tr><th></th><th>prod</th><th>{esc(pr['label'])}</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>""")
+    return "".join(out)
 
 
 def _cell(v):

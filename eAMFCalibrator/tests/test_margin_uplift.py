@@ -196,3 +196,32 @@ class TestSections(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPairedTicks(unittest.TestCase):
+    """The paired view: the candidate's latest price at each of prod's ticks, the same moments for both."""
+
+    def test_the_candidate_is_read_at_prods_moments(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, 2, 0.60), q("M1", 50, 3, 0.62), q("M1", 50, 5, 0.65),
+                                     q("M1", 50, 9, 0.70), q("M1", 54, 4, 0.50, "Over 40.5 points"),
+                                     q("M2", 50, 4, 0.50)], STARTS, FINALS)
+        cand = mu.Ticks("v14").add([q("M1", 50, 2.5, 0.55), q("M1", 50, 4.5, 0.58),
+                                    q("M1", 54, 3.5, 0.45, "Over 39.5 points")], STARTS, FINALS)
+        p, c = mu.paired(prod, cand)
+        # 2.0: no candidate price yet; 9.0: the candidate's last is 4.5 minutes old; M2: not priced
+        self.assertEqual(list(p.array("minutes")), [3.0, 5.0, 4.0])
+        self.assertEqual(list(c.array("minutes")), [3.0, 5.0, 4.0])
+        self.assertEqual([round(x, 2) for x in p.array("prob")], [0.62, 0.65, 0.50])
+        self.assertEqual([round(x, 2) for x in c.array("prob")], [0.55, 0.58, 0.45])
+        self.assertEqual(list(c.array("group")), [0, 0, 1])
+
+    def test_compute_scores_each_candidate_on_the_same_ticks(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, k, 0.6) for k in (2, 3, 4, 5)], STARTS, FINALS)
+        cand = mu.Ticks("v14").add([q("M1", 50, 2, 0.7)], STARTS, FINALS)
+        data = mu.compute([("prod", prod), ("v14", cand)], chart=CHART)
+        pr = data["paired"][0]
+        self.assertEqual((pr["label"], pr["ticks"], pr["of"]), ("v14", 3, 4))   # 5 is over 2 minutes old
+        handles = [o["Moneyline"]["handle"] for o in pr["overall"]]
+        self.assertEqual(handles[0], handles[1])          # the same bets, at the same chart price
+        self.assertTrue(any("PAIRED TICKS" in line for line in mu.text(data)))
+        self.assertIn("Paired ticks", mu.html(data, lambda x: x))
