@@ -2269,7 +2269,7 @@ python -m eAMFModel v14-build --until 2026-10-01
 
 # 3. the report against prod over the days after the cut-off, with the bets and the margin uplift
 python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v14 \
-    --bets --uplift-since 2026-09-01 --uplift-until 2026-10-01 --margin-chart FD_109_BALANCED.csv
+    --bets --margin-chart FD_109_BALANCED.csv
 ```
 
 - **Live:** build without `--until`, then each day `eAMFCalibrator refresh` and `eAMFModel
