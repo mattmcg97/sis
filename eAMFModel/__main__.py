@@ -17,7 +17,8 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          the kick as real ones are)
   v13-build / v13        the same for v13 (v12 with each side's big-play rate: its gamer's,
                          its team's and what the other side allows)
-  v14-build / v14        the same for v14 (v13 with kick-offs by the clock and by the kicker)
+  v14-build / v14        the same for v14 (v13 played closer to the real game, built in one
+                         joint fit with a calibration report)
   prior-daily            refit the pre-match model every day of a window, as live, and point
                          builds at the daily fits
   form-layer DIR         switch the post-game form layer on or off for builds (form_layer.py)
@@ -340,8 +341,8 @@ def main(argv=None):
                                "ones are (see README)"),
                        ("v13", "v13: v12 with each side's big-play rate -- its gamer's, its team's and "
                                "what the other side allows (see README)"),
-                       ("v14", "v14: v13 with kick-offs by the clock (late in a half or not) and by the "
-                               "kicker (see README)")):
+                       ("v14", "v14: v13 played closer to the real game -- strength as boom or bust, the clock "
+                               "as played -- built in one joint fit (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
         p.add_argument("snapshots", help="scouting_playover.csv")
         p.add_argument("--half", choices=["train", "test", "all"], default="train")
