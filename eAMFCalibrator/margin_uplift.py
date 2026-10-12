@@ -1,12 +1,12 @@
-"""Margin uplift, the partner's way: their eBasketball before/after notebook (July old feed against
-September new) applied to AF, a baseline month of prod's prices (the old feed) against the report
-candidate over the report window (the new feed), weaknesses and all.
+"""Margin uplift, the partner's way: their eBasketball before/after notebook's dummy bets, applied
+to AF as a direct comparison -- prod against each candidate over the report window, on the matches
+every feed has in-play ticks for -- weaknesses and all.
 
 Every live in-play price tick is a dummy bet. Per tick:
 
   minutes     from the match's scheduled start (not the first play), in play once past half a
               minute; scaled to a game clock (normalised = round(minutes x factor)), the factor set
-              so the old feed's matches end, on average, at GAME_MINUTES -- the partner scaled by
+              so prod's matches end, on average, at GAME_MINUTES -- the partner scaled by
               (1 - 0.146) so a 20-minute game ended at 20; AF's four quarters make 60
   remaining   GAME_MINUTES - normalised; the quarter off it (> 45 Q1, > 30 Q2, > 15 Q3, else Q4)
   price       the margin chart's price at the probability rounded to 3 places (their
@@ -18,7 +18,7 @@ Every live in-play price tick is a dummy bet. Per tick:
 
 Kept for the money: a chart price, a fair price above 1.001, and more than CUT_LAST game minutes
 left (the partner's 2 of 20). Margin % = GGR / handle, expected % = expected revenue / handle;
-the uplift is the new feed's margin less the old's.
+the uplift is a candidate's margin less prod's.
 
 Moneyline: home is their side A, away B; a selection wins when its side scores more (a tie loses
 both). Totals: over wins above the line, under below it (a push loses both). Spreads are left out,
@@ -27,12 +27,8 @@ as the partner had none.
 Calibration, their weighted MAE: per game minute left, selection and band (moneyline: the price's
 tenth of probability; totals: the line's band, TOTAL_BANDS here for AF's lines), |mean probability
 - win rate| weighted by the ticks. The checkpoints (54, 45, 36, 30, 21 and 15 minutes left: their
-18, 15, 12, 10, 7 and 5 of 20) show each band, calibration where both feeds have 25 ticks and
+18, 15, 12, 10, 7 and 5 of 20) show each band, calibration where every feed has 25 ticks and
 margins where a feed has more than 50.
-
-The prod feed over the report window rides along as a control: the same matches as the candidate,
-so its gap to the candidate is the model's alone, where the baseline month's also carries the
-month.
 """
 
 import csv
@@ -42,7 +38,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from . import config, markets, snowflake_io
+from . import config, markets
 from .pipeline import to_unit_probability
 
 GAME_MINUTES = 60                        # the clock the minutes are scaled to (four 15-minute quarters)
@@ -52,7 +48,7 @@ CHECKPOINTS = ((54, 1), (45, 2), (36, 2), (30, 3), (21, 3), (15, 4))
 FAIR_FLOOR = 1.001
 STAKE_TO_WIN = 100.0
 FALLBACK_BOOK = 1.09
-MIN_CAL = 25                             # a checkpoint band's calibration: this many ticks in both feeds
+MIN_CAL = 25                             # a checkpoint band's calibration: this many ticks in every feed
 MIN_MARGIN = 50                          # a checkpoint band's margin: more ticks than this in a feed
 
 MONEYLINE, TOTALS = "Moneyline", "Totals"
@@ -183,6 +179,16 @@ class Ticks:
         parts = self.parts.get(key)
         return np.concatenate(parts) if parts else np.zeros(0)
 
+    def subset(self, codes):
+        """The ticks of these matches only."""
+        keep = [i for code, i in self.matches.items() if code in codes]
+        mask = np.isin(self.array("match"), keep)
+        out = Ticks(self.name)
+        for key in self.parts:
+            out.parts[key] = [self.array(key)[mask]]
+        out.matches = {code: i for code, i in self.matches.items() if code in codes}
+        return out
+
     def __len__(self):
         return int(sum(len(p) for p in self.parts.get("prob", [])))
 
@@ -191,7 +197,7 @@ class Ticks:
         match, minutes = self.array("match").astype(int), self.array("minutes")
         if not len(match):
             return None
-        last = np.full(len(self.matches), -np.inf)
+        last = np.full(max(self.matches.values()) + 1 if self.matches else 0, -np.inf)
         np.maximum.at(last, match, minutes)
         return float(last[np.isfinite(last)].mean())
 
@@ -243,18 +249,13 @@ def quarter(remaining):
     return 4
 
 
-def _add(into, cell):
-    for f in FIELDS:
-        into[f] = into.get(f, 0.0) + cell[f]
-    return into
-
-
 def overall(cells):
     """{group: sums} over every minute, selection and band."""
-    out = {}
+    out = defaultdict(lambda: dict.fromkeys(FIELDS, 0.0))
     for (g, _, _, _), c in cells.items():
-        _add(out.setdefault(g, {}), c)
-    return out
+        for f in FIELDS:
+            out[g][f] += c[f]
+    return dict(out)
 
 
 def margins(s):
@@ -263,13 +264,13 @@ def margins(s):
     return (100 * s["ggr"] / h, 100 * s["expected"] / h) if h else (None, None)
 
 
-def wmae(cells, keep=lambda key: True):
+def wmae(cells):
     """{(group, selection): (ticks, weighted MAE %)} and per minute {(group, selection, remaining):
     (ticks, WMAE %)}, their ip_minute_errors: per minute, selection and band, |mean probability -
     win rate| weighted by the ticks."""
     err, n = defaultdict(float), defaultdict(float)
     for (g, r, s, b), c in cells.items():
-        if r <= 0 or not c["n_cal"] or not keep((g, r, s, b)):
+        if r <= 0 or not c["n_cal"]:
             continue
         e = abs(c["sum_p"] / c["n_cal"] - c["sum_won"] / c["n_cal"]) * c["n_cal"]
         for key in ((g, s), (g, s, r)):
@@ -315,77 +316,27 @@ def checkpoint_wmae(rows, i):
     return out
 
 
-# ---------------------------------------------------------------- fetching
-
-def _starts(history):
+def starts_of(history):
+    """{match: scheduled start} off fetch_history rows."""
     return {r["MATCH_CODE"]: _when(r.get("SCHEDULED_START_TIME_UTC")) for r in history}
-
-
-def _finals(history):
-    out = {}
-    for r in history:
-        try:
-            out[r["MATCH_CODE"]] = (float(r["PLAYER_1_FINAL_SCORE"]), float(r["PLAYER_2_FINAL_SCORE"]))
-        except (KeyError, TypeError, ValueError):
-            pass
-    return out
-
-
-def baseline_window(since, until=None):
-    """(start, end) of the old feed's month: --uplift-since/--uplift-until, else the calendar month
-    before the report window starts."""
-    if since:
-        start = _when(since)
-        end = _when(until) if until else _month_after(start)
-        return start, end
-    report_start = _when(config.CUTOFF_START)
-    first = report_start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-    prev = (first - dt.timedelta(days=1)).replace(day=1)
-    return prev, first
-
-
-def _month_after(t):
-    return (t.replace(day=28) + dt.timedelta(days=4)).replace(day=1) if t.day == 1 else \
-        t + dt.timedelta(days=30)
-
-
-def baseline_ticks(cur, history, start, end, stream=None):
-    """Prod's ticks over the baseline window: every settled match that started in it, its quotes
-    from its start to an hour past the window's end."""
-    codes = sorted(r["MATCH_CODE"] for r in history
-                   if (t := _when(r.get("SCHEDULED_START_TIME_UTC"))) is not None and start <= t < end)
-    ticks = Ticks("prod (baseline)")
-    if not codes:
-        return ticks, codes
-    starts, finals = _starts(history), _finals(history)
-    saved = config.CUTOFF_START, config.CUTOFF_END
-    config.CUTOFF_START = f"{start:%Y-%m-%d %H:%M:%S}"
-    config.CUTOFF_END = f"{end + dt.timedelta(hours=1):%Y-%m-%d %H:%M:%S}"
-    try:
-        for i in range(0, len(codes), config.MATCH_CHUNK_SIZE):
-            batch = codes[i:i + config.MATCH_CHUNK_SIZE]
-            ticks.add(snowflake_io.fetch_quotes(cur, stream or config.STREAMS["prod"], batch), starts, finals)
-            print(f"  baseline: {min(i + len(batch), len(codes)):,} of {len(codes):,} matches, "
-                  f"{len(ticks):,} ticks", flush=True)
-    finally:
-        config.CUTOFF_START, config.CUTOFF_END = saved
-    return ticks, codes
 
 
 # ---------------------------------------------------------------- the whole thing
 
-def compute(baseline, feeds, chart=None, chart_name=None, factor=None, window=None):
-    """`baseline` the old feed's Ticks, `feeds` [(label, Ticks)] the report window's (the prod
-    control and each candidate). One factor, fitted on the baseline unless given, scales every
-    feed's minutes, as the partner's one 0.146 did."""
+def compute(feeds, chart=None, chart_name=None, factor=None, window=None):
+    """`feeds` [(label, Ticks)] over the report window, prod first: each cut to the matches every
+    feed has ticks for. One factor, fitted on prod unless given, scales every feed's minutes, as the
+    partner's one 0.146 did."""
+    common = set.intersection(*(set(t.matches) for _, t in feeds)) if feeds else set()
+    if not common:
+        return None
+    feeds = [(label, t.subset(common)) for label, t in feeds]
     chart = chart or fallback_chart()
-    factor = factor or factor_for(baseline)
-    allf = [("prod (baseline)", baseline)] + list(feeds)
-    cells = [grade(t, factor, chart) for _, t in allf]
-    out = dict(feeds=[dict(label=label, matches=len(t.matches), ticks=len(t),
-                           mean_end=t.mean_end()) for label, t in allf],
-               factor=factor, chart=chart_name or f"proportional {100 * FALLBACK_BOOK:.0f}% (no chart given)",
-               window=window, cells=cells)
+    factor = factor or factor_for(feeds[0][1])
+    cells = [grade(t, factor, chart) for _, t in feeds]
+    out = dict(feeds=[dict(label=label, ticks=len(t), mean_end=t.mean_end()) for label, t in feeds],
+               matches=len(common), factor=factor, window=window, cells=cells,
+               chart=chart_name or f"proportional {100 * FALLBACK_BOOK:.0f}% (no chart given)")
     out["overall"] = [overall(c) for c in cells]
     out["wmae"] = [wmae(c) for c in cells]
     out["checkpoints"] = [(r, q, g, checkpoint(cells, r, g)) for r, q in CHECKPOINTS for g in GROUPS]
@@ -418,14 +369,12 @@ def text(data):
         return []
     labels = [f["label"] for f in data["feeds"]]
     w = max(14, max(len(x) for x in labels) + 2)
-    win = data.get("window") or {}
     lines = ["", "  MARGIN UPLIFT -- the partner's dummy-bet method (every in-play tick a bet to win 100)",
-             f"  old feed: prod {win.get('baseline', '')}; new: each candidate {win.get('report', '')}"
-             f"; prod over the report window as a control",
+             f"  prod against each candidate, {data.get('window') or 'the report window'}, on the"
+             f" {data['matches']:,} matches every feed has in-play ticks for",
              f"  margin chart: {data['chart']}; clock: minutes x {data['factor']:.3f} -> {GAME_MINUTES}"
              f" game minutes; money leaves out the last {CUT_LAST}", ""]
     lines.append(f"  {'':22s}" + "".join(f"{x:>{w}s}" for x in labels))
-    lines.append(f"  {'matches':22s}" + "".join(f"{f['matches']:>{w},d}" for f in data["feeds"]))
     lines.append(f"  {'ticks':22s}" + "".join(f"{f['ticks']:>{w},d}" for f in data["feeds"]))
     lines.append(f"  {'mean match (minutes)':22s}" + "".join(f"{_mins(f['mean_end']):>{w}s}" for f in data["feeds"]))
     for g in GROUPS:
@@ -437,7 +386,7 @@ def text(data):
         lines.append(f"    {'margin %':20s}" + "".join(f"{_pct(m[0]):>{w}s}" for m in ms))
         lines.append(f"    {'expected margin %':20s}" + "".join(f"{_pct(m[1]):>{w}s}" for m in ms))
         base = ms[0][0]
-        lines.append(f"    {'uplift on baseline':20s}" + "".join(
+        lines.append(f"    {'uplift on prod':20s}" + "".join(
             f"{_pct(None if m[0] is None or base is None else m[0] - base, True):>{w}s}" for m in ms))
     lines += ["", "  calibration, weighted MAE % (per game minute left, selection and band):"]
     for g in GROUPS:
@@ -484,10 +433,9 @@ def write_csv(path, data):
 def html(data, esc):
     """The panel body: the headline, the calibration, then each checkpoint folded away."""
     if not data:
-        return '<p class="dim">No margin uplift: --uplift was not run.</p>'
+        return '<p class="dim">No margin uplift: no match with in-play ticks in every feed.</p>'
     labels = [f["label"] for f in data["feeds"]]
     head = "".join(f"<th>{esc(x)}</th>" for x in labels)
-    win = data.get("window") or {}
     rows = []
     for g, cells in headline(data):
         base = cells[0][0]
@@ -496,7 +444,7 @@ def html(data, esc):
         rows.append("<tr><th>Expected margin</th>" + "".join(f"<td>{_pct(e)}</td>" for _, e, _ in cells) + "</tr>")
         rows.append("<tr><th>Actual less expected</th>" + "".join(
             _cell(None if m is None else m - e) for m, e, _ in cells) + "</tr>")
-        rows.append("<tr><th>Uplift on baseline</th>" + "".join(
+        rows.append("<tr><th>Uplift on prod</th>" + "".join(
             _cell(None if m is None or base is None else m - base) if i else "<td>&mdash;</td>"
             for i, (m, _, _) in enumerate(cells)) + "</tr>")
         rows.append("<tr><th>Bets (ticks)</th>" + "".join(f"<td>{n:,}</td>" for _, _, n in cells) + "</tr>")
@@ -545,14 +493,13 @@ def html(data, esc):
           <tr><th>Band</th>{sub}</tr></thead>
         <tbody>{''.join(body)}</tbody>
       </table>""")
-    feeds = " &middot; ".join(f"{esc(f['label'])}: {f['matches']:,} matches, {f['ticks']:,} ticks, the last"
-                              f" {_mins(f['mean_end'])} minutes after the scheduled start on average"
-                              for f in data["feeds"])
+    feeds = " &middot; ".join(f"{esc(f['label'])}: {f['ticks']:,} ticks, the last {_mins(f['mean_end'])}"
+                              " minutes after the scheduled start on average" for f in data["feeds"])
     return f"""
     <p class="dim">The partner's method: every live in-play price tick is a dummy bet to win
       {STAKE_TO_WIN:.0f} at the margin chart's price ({esc(data['chart'])}), settled on the result.
-      Old feed: prod {esc(win.get('baseline', ''))}. New: each candidate {esc(win.get('report', ''))},
-      with prod over the same window as a control. Minutes from the scheduled start &times;
+      Prod against each candidate, {esc(data.get('window') or 'the report window')}, on the
+      {data['matches']:,} matches every feed has in-play ticks for. Minutes from the scheduled start &times;
       {data['factor']:.3f} make a {GAME_MINUTES}-minute game; the last {CUT_LAST} are left out.</p>
     <p class="dim">{feeds}</p>
     <table class="reach">
@@ -572,7 +519,7 @@ def html(data, esc):
       </table>
     </details>
     <details>
-      <summary>Checkpoints: each band's calibration (both feeds &ge; {MIN_CAL} ticks) and margin
+      <summary>Checkpoints: each band's calibration (every feed &ge; {MIN_CAL} ticks) and margin
         (&gt; {MIN_MARGIN} ticks)</summary>
       {''.join(checks)}
     </details>"""
@@ -585,22 +532,16 @@ def _cell(v):
     return f'<td class="{cls}">{v:+.2f}</td>'
 
 
-def run(cur, out_dir, report_feeds, history, chart_path=None, since=None, until=None, factor=None):
-    """Fetch the baseline month and grade it with the report window's feeds, `report_feeds`
-    [(label, Ticks)]; writes margin_uplift.txt and .csv. The summary for html()."""
+def run(out_dir, feeds, chart_path=None, factor=None):
+    """Grade the report window's feeds, `feeds` [(label, Ticks)] with prod first; writes
+    margin_uplift.txt and .csv. The summary for html(), or None when no match has every feed."""
     import os
-    start, end = baseline_window(since, until)
-    print(f"\n  margin uplift: prod's baseline {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M}", flush=True)
-    baseline, codes = baseline_ticks(cur, history, start, end)
-    if not len(baseline):
-        print("  margin uplift: no prod ticks in the baseline window; skipped")
-        return None
     chart = load_chart(chart_path) if chart_path else None
-    report_end = config.CUTOFF_END or "latest"
-    data = compute(baseline, report_feeds, chart, chart_name=os.path.basename(chart_path) if chart_path else None,
-                   factor=factor,
-                   window={"baseline": f"{start:%Y-%m-%d} to {end:%Y-%m-%d}",
-                           "report": f"{str(config.CUTOFF_START)[:10]} to {str(report_end)[:10]}"})
+    window = f"{str(config.CUTOFF_START)[:10]} to {str(config.CUTOFF_END or 'latest')[:10]}"
+    data = compute(feeds, chart, os.path.basename(chart_path) if chart_path else None, factor, window)
+    if data is None:
+        print("\n  margin uplift: no match has in-play ticks in every feed; skipped")
+        return None
     lines = text(data)
     print("\n".join(lines))
     with open(os.path.join(out_dir, "margin_uplift.txt"), "w", encoding="utf-8") as fh:

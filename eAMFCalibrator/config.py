@@ -26,14 +26,10 @@ PREMATCH_ONLY = False
 # `bets --gamer NAME`: only the matches these gamers played, with each match's closing pre-match
 # prices and what its bets returned, prod against each candidate.
 GAMERS = []
-# The margin uplift (margin_uplift.py, the partner's dummy-bet method) with the betting simulation:
-# prod over a baseline window (UPLIFT_SINCE/UNTIL; None: the calendar month before CUTOFF_START)
-# against each candidate over the report window, priced off UPLIFT_CHART (a margin chart CSV:
-# probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
-# minutes from the scheduled start to the game clock (None: fitted on the baseline).
-UPLIFT = False
-UPLIFT_SINCE = None
-UPLIFT_UNTIL = None
+# The margin uplift every betting simulation runs (margin_uplift.py, the partner's dummy-bet
+# method): prod against each candidate over the window, priced off UPLIFT_CHART (a margin chart
+# CSV: probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
+# minutes from the scheduled start to the game clock (None: fitted on prod).
 UPLIFT_CHART = None
 UPLIFT_FACTOR = None
 # Answer repeated identical queries from memory (set by a report that runs

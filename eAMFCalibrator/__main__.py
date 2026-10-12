@@ -322,7 +322,7 @@ def cmd_bets(args):
         config.MAX_SCOUTING_GAP = args.gap
     if args.max_lag is not None:
         config.LAG_RANGE = (config.LAG_RANGE[0], args.max_lag)
-    apply_uplift(args, args.uplift)
+    apply_uplift(args)
     if args.extra_columns:
         config.BET_EXTRA_COLUMNS = [c.strip().upper() for c in args.extra_columns.split(",") if c.strip()]
     conn = snowflake_io.get_connection()
@@ -369,8 +369,7 @@ def cmd_bets(args):
                 print(f"\n  -> {os.path.join(out_dir, 'bets_checks.csv')}")
             else:
                 bets.run(cur, out_dir)
-                print(f"\n  -> {os.path.join(out_dir, 'bets_sim.csv')} and bets_latency.csv"
-                      + (", margin_uplift.txt and .csv" if config.UPLIFT else ""))
+                print(f"\n  -> {os.path.join(out_dir, 'bets_sim.csv')}, bets_latency.csv and margin_uplift.txt")
     finally:
         conn.close()
     return 0
@@ -755,7 +754,7 @@ def cmd_report(args):
         from . import bets
         print(f"\n{'=' * 78}\nBetting simulation\n{'=' * 78}")
         summary = {}
-        apply_uplift(args, not args.no_uplift)
+        apply_uplift(args)
         conn = snowflake_io.get_connection()
         try:
             with conn.cursor() as cur:
@@ -961,25 +960,18 @@ def apply_overrides(args):
 
 
 def uplift_options(parser):
-    """The margin uplift's options (margin_uplift.py), for report --bets and bets --uplift."""
+    """The margin uplift's options (margin_uplift.py: prod against each candidate, the partner's
+    dummy bets), for report --bets and bets."""
     group = parser.add_argument_group("margin uplift")
-    group.add_argument("--uplift-since", metavar="TS",
-                       help="the baseline (old feed, prod) window's start (default: the calendar "
-                            "month before --since)")
-    group.add_argument("--uplift-until", metavar="TS",
-                       help="the baseline window's end (default: a month after --uplift-since)")
     group.add_argument("--margin-chart", metavar="CSV",
                        help="the margin chart the dummy bets are priced at (probability, numerator, "
                             "denominator, e.g. FD_109_BALANCED.csv); default a proportional 109%% book")
     group.add_argument("--uplift-factor", type=float, metavar="X",
-                       help="minutes from the scheduled start x X = game minutes (default: fitted so the "
-                            "baseline's matches end at 60)")
+                       help="minutes from the scheduled start x X = game minutes (default: fitted so "
+                            "prod's matches end at 60)")
 
 
-def apply_uplift(args, on):
-    config.UPLIFT = bool(on)
-    config.UPLIFT_SINCE = getattr(args, "uplift_since", None)
-    config.UPLIFT_UNTIL = getattr(args, "uplift_until", None)
+def apply_uplift(args):
     config.UPLIFT_CHART = getattr(args, "margin_chart", None)
     config.UPLIFT_FACTOR = getattr(args, "uplift_factor", None)
     if config.UPLIFT_CHART and not os.path.exists(config.UPLIFT_CHART):
@@ -1013,8 +1005,6 @@ def build_parser():
     report_parser.add_argument("--bets", action="store_true",
                                help="also run the betting simulation for the same window and "
                                     "candidates, and add it as a section at the bottom of the page")
-    report_parser.add_argument("--no-uplift", action="store_true",
-                               help="with --bets: skip the margin uplift (the baseline month of prod)")
     uplift_options(report_parser)
     report_parser.add_argument("--axes", action="store_true",
                                help="also print the integrity tables and the "
@@ -1098,9 +1088,6 @@ def build_parser():
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",
                              help="lines: draw this match (repeatable)")
-    bets_parser.add_argument("--uplift", action="store_true",
-                             help="also the margin uplift: prod over a baseline month against each "
-                                  "candidate, the partner's dummy-bet method (margin_uplift.txt)")
     uplift_options(bets_parser)
     bets_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
     bets_parser.add_argument("--bet-table", metavar="NAME",
