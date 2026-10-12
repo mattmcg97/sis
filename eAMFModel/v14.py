@@ -2369,16 +2369,22 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     states = clock_states(matches, tables)
     for rnd in range(JOINT_ROUNDS):
         warm = rnd > 0
+        took = _Stopwatch()
         grid = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
         _responses(tables, grid, ratings, grid_paths, verbose=verbose and not warm)
+        took("grid and responses")
         if priors and handles:
             held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
-        _joint_clock(tables, states, held, warm, verbose, f"round {rnd + 1}")
-        _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, f"round {rnd + 1}")
+            took("held strengths")
+        _joint_clock(tables, states, held, warm, verbose, f"round {rnd + 1}", took)
+        _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, f"round {rnd + 1}", took)
         if pre is not None:
             form = _fit_form(tables, sides, verbose and rnd == JOINT_ROUNDS - 1)
             for h, f in form.items():
                 book.players.setdefault(h, players.Profile()).form = f
+            took("form")
+        if verbose:
+            print(f"  round {rnd + 1}, seconds by stage: {took}")
         lap(f"joint fit, round {rnd + 1}")
     grid = PriorGrid.build(tables, n_paths=grid_paths)
     _responses(tables, grid, ratings, grid_paths, verbose=verbose)
@@ -2431,6 +2437,23 @@ JOINT_ROUNDS = 2
 JOINT_WARM = dict(pace=3, calls=7, late=3, manage=6, band=2, settle=2, close=1, quarters=3)
 CLOSE_WARM_KICK = np.arange(-1.0, 1.01, 0.25)    # a later round's close-ending kick shift, either way
 REPORT_TOL = 0.05
+
+
+class _Stopwatch:
+    """Seconds spent on each named stage of a joint-fit round, in order."""
+
+    def __init__(self):
+        import time
+        self._now = time.time
+        self.last, self.spent = time.time(), []
+
+    def __call__(self, name):
+        now = self._now()
+        self.spent.append((name, now - self.last))
+        self.last = now
+
+    def __str__(self):
+        return ", ".join(f"{name} {secs:.0f}" for name, secs in self.spent)
 
 
 def _print_decisions(tables, verbose):
@@ -2522,7 +2545,7 @@ def clock_states(matches, tables):
                 manage=manage_states(matches) if sim.MANAGE_FIT else None)
 
 
-def _joint_clock(tables, states, held, warm, verbose, label):
+def _joint_clock(tables, states, held, warm, verbose, label, took=lambda name: None):
     """One round of the clock: the quarters' pace, the timeouts, the two-minute snaps and the
     end-of-half field goals."""
     w = JOINT_WARM if warm else {}
@@ -2532,26 +2555,31 @@ def _joint_clock(tables, states, held, warm, verbose, label):
         if paced:
             say.append("snaps a quarter " + "; ".join(f"Q{q + 1} {paced[3][q]:.2f} / {paced[4][q]:.2f} -> {paced[5][q]:.2f}"
                                                      for q in range(4)))
+        took("pace")
     if states["calls"] is not None:
         scaled = fit_call_scale(tables, states["calls"], held=held, steps=w.get("calls", CALL_FIT_STEPS))
         if scaled:
             say.append("timeouts from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f}"
                                                          for q, (n, r, b, a, s) in sorted(scaled.items())))
+        took("timeouts")
     if states["manage"] is not None:
         if sim.QUARTER_PACE:
             counted = fit_late_count(tables, states["manage"], held=held, rounds=w.get("late", LATE_COUNT_ROUNDS))
             if counted:
                 say.append("snaps from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {b:.2f} -> {a:.2f}"
                                                           for q, (n, r, b, a, k) in sorted(counted.items())))
+            took("two-minute snaps")
         managed = fit_manage(tables, states["manage"], held=held, steps=w.get("manage", MANAGE_STEPS))
         if managed:
             say.append("field goals on downs 1-3 from 2:00 " + "; ".join(
                 f"Q{q} {r:.3f} / {b:.3f} -> {a:.3f}" for q, (n, r, b, a, p) in sorted(managed.items())))
+        took("two-minute field goals")
     if verbose and say:
         print(f"  {label}, the clock, real / simulated before -> after: " + " | ".join(say))
 
 
-def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, label):
+def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, label,
+                   took=lambda name: None):
     """One round of the scoring: the rubber band, settle, close endings and the quarters' scoring
     levels from real quarter starts and two-minute marks."""
     w = JOINT_WARM if warm else {}
@@ -2562,6 +2590,7 @@ def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, la
             pull, got, real = fit_rubber_band(tables, items, rounds=w.get("band", 4))
             say.append("rubber band, of each point of lead how much comes back " + " / ".join(
                 f"{-r:.3f} / {-g:.3f}" for r, g in zip(real, got)))
+        took("rubber band")
     if sim.SETTLE_FIT:
         settled = fit_settle(tables, settle_states(matches, grid, priors, as_of=as_of,
                                                    half_life=SETTLE_HALF_LIFE, held=held),
@@ -2572,6 +2601,7 @@ def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, la
                        f"{sum(v[0] * v[1] for v in settled.values()) / n:.4f} / "
                        f"{sum(v[0] * v[2] for v in settled.values()) / n:.4f} -> "
                        f"{sum(v[0] * v[3] for v in settled.values()) / n:.4f}")
+        took("settle")
     if CLOSE_LEVEL and sim.CLOSE_FG:
         fitted = fit_close_level(tables, close_level_states(matches, grid, priors, held=held),
                                  rounds=w.get("close", CLOSE_LEVEL_ROUNDS),
@@ -2581,10 +2611,12 @@ def _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, la
             say.append("close level drives, field goal / touchdown "
                        f"{100 * real[0]:.1f}/{100 * real[1]:.1f}% / {100 * before[0]:.1f}/{100 * before[1]:.1f}% -> "
                        f"{100 * after[0]:.1f}/{100 * after[1]:.1f}%")
+        took("close endings")
     fitted_q, fitted_l = fit_quarter_levels(
         tables, quarter_start_states(matches, grid, priors, held=held),
         late_start_states(matches, grid, priors, held=held),
         rounds=w.get("quarters", QUARTER_ROUNDS), n_paths=QUARTER_PATHS)
+    took("quarter levels")
     say.append("points a quarter from real quarter starts (before the last step) "
                + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_q.items()))
                + ", from 2:00 " + "; ".join(f"Q{q} {r:.2f} / {g:.2f}" for q, (r, g) in sorted(fitted_l.items())))
