@@ -151,9 +151,25 @@ def market_prob(market, line, margin_pmf, total_pmf):
 
 # Builds run the long simulations (the prior grid, the points responses, the joint fit's holds) on
 # BUILD_WORKERS processes, splitting the starts by row. Each row's paths draw the same random
-# numbers wherever it runs, so the split changes nothing but the time.
+# numbers wherever it runs, so the split changes nothing but the time. The job reaches each worker
+# through the pool's initializer, with the simulation's switches as they stand: where processes are
+# spawned rather than forked (Windows) a worker starts from a fresh import and sees neither the
+# parent's job nor a switch changed at run time.
 BUILD_WORKERS = 4
 _PAR = {}
+
+
+def _sim_switches():
+    """The simulation module's settings as they stand: its upper-case names of plain values."""
+    plain = (bool, int, float, str, tuple, type(None))
+    return {k: v for k, v in vars(sim).items() if k.isupper() and isinstance(v, plain)}
+
+
+def _par_init(job, switches):
+    """Worker set-up: the job, and the parent's simulation switches."""
+    for k, v in switches.items():
+        setattr(sim, k, v)
+    _PAR["job"] = job
 
 
 def _slice_start(start, lo, hi):
@@ -189,13 +205,10 @@ def par_simulate(tables, start, n_paths, seed=0, workers=None, stats=None, **kw)
     n = len(start.period)
     if workers <= 1 or n < 2 * workers:
         return sim.simulate(tables, start, n_paths, np.random.default_rng(seed), seed=seed, stats=stats, **kw)
-    _PAR["job"] = (tables, start, n_paths, seed, kw, stats)
+    job = (tables, start, n_paths, seed, kw, stats)
     edges = np.linspace(0, n, workers + 1).astype(int)
-    try:
-        with pool_context().Pool(workers) as pool:
-            parts = pool.map(_par_rows, list(zip(edges[:-1], edges[1:])))
-    finally:
-        _PAR.clear()
+    with pool_context().Pool(workers, initializer=_par_init, initargs=(job, _sim_switches())) as pool:
+        parts = pool.map(_par_rows, list(zip(edges[:-1], edges[1:])))
     if stats is not None:
         for _, _, st in parts:
             for k, v in st.items():
@@ -677,6 +690,43 @@ def experience(history):
         for g in gamers:
             seen[g] += 1
     return out
+
+
+# v14: a rebuild keeps the pre-match fit and the prior shrink already in its directory when they were
+# made from the same history before the same cut-off (FIT_KEY: the prior, the cut-off and a hash of
+# every finished match before it), so a build that stopped after them -- a glmer fit and its shrink
+# take an hour or more -- does not fit them again.
+FIT_KEY = "fit_key.json"
+
+
+def _fit_key(history, before, prior):
+    """What a pre-match fit and its shrink are made from: the prior, the cut-off and every finished
+    match before it."""
+    import hashlib
+    rows = sorted(tuple(str(r.get(f) or "") for f in nb2_prior.HISTORY_FIELDS) for r in history
+                  if r.get("PLAYER_1_FINAL_SCORE") not in ("", None) and nb2_prior._start(r) is not None
+                  and nb2_prior._start(r) < before)
+    return {"prior": prior, "before": before.isoformat(),
+            "history": hashlib.sha256(repr(rows).encode("utf-8")).hexdigest()}
+
+
+def _reusable_fit(directory, key, prior, before):
+    """Whether `directory` holds a fit of `prior` made from the same history before the same cut-off:
+    by its recorded key, or (a glmer fit from before keys were recorded) by the history it saved."""
+    import os
+    if not PRIORS[prior].exists(directory):
+        return False
+    path = os.path.join(directory, FIT_KEY)
+    if os.path.exists(path):
+        with open(path, encoding="utf-8") as fh:
+            return json.load(fh) == key
+    saved = os.path.join(directory, glmer_prior.HISTORY)
+    if prior != "glmer" or not os.path.exists(saved):
+        return False
+    with open(os.path.join(directory, glmer_prior.META), encoding="utf-8") as fh:
+        if json.load(fh).get("before", "")[:19] != before.isoformat()[:19]:
+            return False
+    return _fit_key(nb2_prior.load_history(saved), before, prior) == key
 
 
 def fit_shrink(history, prior, before, centre, work_dir, scale=1.0, days=SHRINK_DAYS,
@@ -2277,16 +2327,42 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
             days = [match_day(rows) for rows in matches.values()]
             last = max(d for d in days if d is not None)
             before = dt.datetime.combine(last + dt.timedelta(days=1), dt.time())
-        if verbose and prior == "glmer":
-            print("  pre-match: fitting the glmer model in R (a few minutes on a full history)")
-        pre = PRIORS[prior].build(history, os.path.join(out_dir, prior), before)
+        key, pre_dir = _fit_key(history, before, prior), os.path.join(out_dir, prior)
+        reused = _reusable_fit(pre_dir, key, prior, before)
+        if reused:
+            pre = PRIORS[prior](pre_dir)
+            if verbose:
+                print(f"  pre-match: the {prior} fit already in {pre_dir} (the same history before the same"
+                      " cut-off), not refitted")
+        else:
+            if verbose and prior == "glmer":
+                print("  pre-match: fitting the glmer model in R (10-30 minutes on a full history)")
+            pre = PRIORS[prior].build(history, pre_dir, before)
+        with open(os.path.join(pre_dir, FIT_KEY), "w", encoding="utf-8") as fh:
+            json.dump(key, fh)
         with open(os.path.join(out_dir, PRIOR_FILE), "w", encoding="utf-8") as fh:
             json.dump({"prior": prior}, fh)
         priors = pre.means([r for r in history if r["MATCH_CODE"] in matches], results=history)
         shrink_path = os.path.join(out_dir, SHRINK_FILE)
+        kept = None
         if os.path.exists(shrink_path):
-            os.remove(shrink_path)
-        if PRIOR_SHRINK and priors:
+            with open(shrink_path, encoding="utf-8") as fh:
+                kept = json.load(fh)
+            # an earlier shrink holds when its fits were made from the same history and cut-off (one
+            # from before the key was recorded, only alongside a pre-match fit kept for that reason)
+            if not (kept.get("key") == key or ("key" not in kept and reused)):
+                kept = None
+                os.remove(shrink_path)
+        if PRIOR_SHRINK and priors and kept is not None:
+            kept["key"] = key
+            with open(shrink_path, "w", encoding="utf-8") as fh:
+                json.dump(kept, fh, indent=1)
+            pre = ShrunkPrematch(pre, kept)
+            priors = {c: shrink_means(m, kept) for c, m in priors.items()}
+            if verbose:
+                print(f"  prior shrink: kept from {shrink_path} (the same history and cut-off) -> totals pulled"
+                      f" {kept['total_slope']:.3f}, margins {kept['margin_slope']:.3f}")
+        elif PRIOR_SHRINK and priors:
             centre = (float(np.mean([h + a for h, a in priors.values()])),
                       float(np.mean([h - a for h, a in priors.values()])))
             if verbose:
@@ -2294,6 +2370,7 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
                       f" {SHRINK_WINDOWS} stretches of {SHRINK_DAYS} days before the cut-off")
             shrink = fit_shrink(history, prior, before, centre, out_dir, scale=pre.scale)
             if shrink is not None:
+                shrink["key"] = key
                 with open(shrink_path, "w", encoding="utf-8") as fh:
                     json.dump(shrink, fh, indent=1)
                 pre = ShrunkPrematch(pre, shrink)

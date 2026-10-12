@@ -2722,3 +2722,71 @@ class TestOptimumBuild(unittest.TestCase):
                          (cli.DATA["snapshots"], "glmer", "all", False))
         b = parser.parse_args(["v13-build", "snaps.csv"])
         self.assertEqual((b.prior, b.half), ("nb2", "train"))
+
+
+class TestKeptFits(unittest.TestCase):
+    """v14: a rebuild keeps the pre-match fit made from the same history before the same cut-off."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.tmp.name, "glmer")
+        os.makedirs(self.dir)
+        self.before = dt.datetime(2026, 10, 1)
+        self.history = [{"MATCH_CODE": f"AF{k}", "SPORT_CODE": "AF", "STREAM_NUMBER": "1",
+                         "SCHEDULED_START_TIME_UTC": f"2026-09-{10 + k:02d} 12:00:00",
+                         "PLAYER_1_HANDLE": "ANN", "PLAYER_1_TEAM": "T1", "PLAYER_2_HANDLE": "BOB",
+                         "PLAYER_2_TEAM": "T2", "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "14"}
+                        for k in range(5)]
+        # a glmer fit as fit() leaves it, from before the key was recorded
+        nb2_prior._write(os.path.join(self.dir, glmer_prior.HISTORY), self.history, nb2_prior.HISTORY_FIELDS)
+        with open(os.path.join(self.dir, glmer_prior.META), "w") as fh:
+            json.dump({"before": self.before.isoformat(), "scale": 1.0, "league_average": [17, 17]}, fh)
+        with open(os.path.join(self.dir, glmer_prior.MODEL), "w") as fh:
+            fh.write("x")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def kept(self, history, before=None):
+        before = before or self.before
+        return v14._reusable_fit(self.dir, v14._fit_key(history, before, "glmer"), "glmer", before)
+
+    def test_the_same_history_before_the_cut_off_keeps_the_fit(self):
+        later = dict(self.history[0], MATCH_CODE="AF9", SCHEDULED_START_TIME_UTC="2026-10-02 12:00:00")
+        self.assertTrue(self.kept(self.history))
+        self.assertTrue(self.kept(self.history + [later]))          # after the cut-off: not in the fit
+
+    def test_another_history_or_cut_off_refits(self):
+        moved = [dict(self.history[0], PLAYER_1_FINAL_SCORE="28")] + self.history[1:]
+        self.assertFalse(self.kept(moved))
+        self.assertFalse(self.kept(self.history, dt.datetime(2026, 9, 30)))
+        self.assertFalse(v14._reusable_fit(self.dir, v14._fit_key(self.history, self.before, "nb2"), "nb2",
+                                           self.before))
+
+    def test_a_recorded_key_decides(self):
+        key = v14._fit_key(self.history, self.before, "glmer")
+        with open(os.path.join(self.dir, v14.FIT_KEY), "w") as fh:
+            json.dump(dict(key, history="other"), fh)
+        self.assertFalse(v14._reusable_fit(self.dir, key, "glmer", self.before))
+
+
+class TestSpawnedWorkers(unittest.TestCase):
+    """par_simulate where workers are spawned (Windows): the same games as one run, the switches kept."""
+
+    def test_spawned_blocks_play_as_one_run(self):
+        import multiprocessing as mp
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        st = sim14.Start(8)
+        st.theta = np.tile([[0.1, -0.1]], (8, 1))
+        st.team = (np.arange(8) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        saved = sim14.STRENGTH_BOOM
+        try:
+            sim14.STRENGTH_BOOM = not saved                       # a switch set at run time
+            one = sim14.simulate(tables, st, 20, np.random.default_rng(3), seed=3)
+            with mock.patch.object(v14, "pool_context", lambda: mp.get_context("spawn")):
+                got = v14.par_simulate(tables, st, 20, seed=3, workers=2)
+        finally:
+            sim14.STRENGTH_BOOM = saved
+        for a, b in zip(one, got):
+            np.testing.assert_array_equal(a, b)
