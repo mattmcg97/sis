@@ -859,7 +859,7 @@ class TestModelStream(unittest.TestCase):
 
     def test_the_cli_swaps_the_candidate(self):
         from .. import __main__ as cli
-        saved = dict(config.STREAMS)
+        saved, saved_candidates = dict(config.STREAMS), config.CANDIDATES
         try:
             args = cli.build_parser().parse_args(["report", "--candidate", "v9"])
             with contextlib.redirect_stdout(io.StringIO()):
@@ -868,6 +868,7 @@ class TestModelStream(unittest.TestCase):
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
+            config.CANDIDATES = saved_candidates
 
 
 class TestPlayOverCandidate(unittest.TestCase):
@@ -1087,7 +1088,7 @@ class TestV8Candidate(unittest.TestCase):
 
     def test_the_reports_call_it_by_its_version(self):
         from .. import labels, snowflake_io as sio
-        saved = dict(config.STREAMS)
+        saved, saved_candidates = dict(config.STREAMS), config.CANDIDATES
         try:
             config.STREAMS["candidate"] = sio.stream_name(self.NAME)
             self.assertEqual(labels.candidate_label(), self.NAME)
@@ -1096,6 +1097,7 @@ class TestV8Candidate(unittest.TestCase):
         finally:
             config.STREAMS.clear()
             config.STREAMS.update(saved)
+            config.CANDIDATES = saved_candidates
 
 
 class TestV9Candidate(TestV8Candidate):
