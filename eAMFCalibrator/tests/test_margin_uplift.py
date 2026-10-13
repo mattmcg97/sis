@@ -245,5 +245,78 @@ class TestMatchedTicks(unittest.TestCase):
         self.assertIsNone(mu.compute([("prod", prod), ("v14", cand)], chart=CHART))
 
 
+class TestByMatch(unittest.TestCase):
+    """Every match's dummy bets and its part of the uplift, with a proper score on the same ticks."""
+
+    def data(self):
+        starts = dict(STARTS, M3=KICK)
+        finals = dict(FINALS, M3=(10.0, 13.0))                        # M1 home won, M3 away won
+        prod = mu.Ticks("prod").add([q("M1", 50, 5, 0.80), q("M1", 51, 5, 0.20), q("M1", 50, 8, 0.90),
+                                     q("M3", 50, 5, 0.85), q("M3", 51, 5, 0.15), q("M3", 50, 8, 0.92),
+                                     q("M3", 54, 6, 0.55, "Over 20.5"), q("M1", 50, 29, 0.95)], starts, finals)
+        cand = mu.Ticks("v14").add([q("M1", 50, 5, 0.75), q("M1", 51, 5, 0.25), q("M1", 50, 8, 0.85),
+                                    q("M3", 50, 5, 0.70), q("M3", 51, 5, 0.30), q("M3", 50, 8, 0.80),
+                                    q("M3", 54, 6, 0.50, "Over 20.5"), q("M1", 50, 29, 0.95)], starts, finals)
+        return mu.compute([("prod", prod), ("v14", cand)], factor=2.0, window="2026-10-01 to 2026-10-12")
+
+    def test_the_parts_add_up_to_the_uplift(self):
+        data = self.data()
+        rows = {r["code"]: r for r in data["by_match"]}
+        self.assertEqual(set(rows), {"M1", "M3"})
+        self.assertEqual(rows["M3"]["final"], (10.0, 13.0))
+        m1 = rows["M1"]["feeds"][0]["Moneyline"]
+        self.assertEqual((m1["n"], m1["scored"]), (3, 3))             # minute 29: 2 game minutes left
+        self.assertAlmostEqual(m1["brier"], 0.2 ** 2 + 0.2 ** 2 + 0.1 ** 2)
+        self.assertAlmostEqual(rows["M1"]["feeds"][0]["Moneyline"]["top_loser"], 0.20)
+        self.assertAlmostEqual(rows["M3"]["feeds"][0]["Moneyline"]["top_loser"], 0.92)
+        self.assertAlmostEqual(rows["M3"]["feeds"][1]["Moneyline"]["top_loser"], 0.80)
+        for g in mu.GROUPS:
+            ov = [o.get(g) for o in data["overall"]]
+            if not ov[0]:
+                continue
+            uplift = mu.margins(ov[1])[0] - mu.margins(ov[0])[0]
+            part = mu.parts(data["by_match"], 2)[(1, g)]
+            self.assertAlmostEqual(sum(part.values()), uplift)
+            tot = mu.match_totals(data["by_match"], 2)
+            self.assertAlmostEqual(tot[0][g]["ggr"], ov[0]["ggr"])
+            self.assertAlmostEqual(mu.uplift_of(tot, 1, g), uplift)
+        # prod surer of M3's home side, which lost: a big stake kept, so prod's margin is higher
+        part = mu.parts(data["by_match"], 2)[(1, "Moneyline")]
+        self.assertLess(part["M3"], 0)
+        b = data["scores"]
+        self.assertLess(b[1]["Moneyline"][0], b[0]["Moneyline"][0])     # yet v14 scores better on Brier
+
+    def test_the_reports(self):
+        data = self.data()
+        text = "\n".join(mu.text(data))
+        for s in ("Brier, same ticks", "log loss, same ticks", "BY MATCH", "the 10 matches that cost v14 most"):
+            self.assertIn(s, text)
+        names = {"M1": ("09-01 12:00", "ALPHA v BRAVO")}
+        lines = mu.match_text(data, names)
+        self.assertTrue(any("ALPHA v BRAVO" in x and "24-17" in x for x in lines))
+        first = next(i for i, x in enumerate(lines) if x.strip().startswith("match"))
+        self.assertTrue(lines[first + 1].strip().startswith("M3"))      # the match that cost v14 most first
+        self.assertIn("By match", mu.html(data, str))
+        with tempfile.TemporaryDirectory() as d, mock.patch("builtins.print"):
+            mu.write_match_csv(os.path.join(d, "m.csv"), data, names)
+            with open(os.path.join(d, "m.csv")) as fh:
+                head, *body = fh.read().splitlines()
+            self.assertIn("v14_moneyline_part", head)
+            self.assertEqual(len(body), 2)
+
+    def test_run_writes_every_match(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, 5, 0.8)], STARTS, FINALS)
+        cand = mu.Ticks("v14").add([q("M1", 50, 5, 0.7)], STARTS, FINALS)
+        with tempfile.TemporaryDirectory() as d, mock.patch("builtins.print"):
+            mu.run(d, [("prod", prod), ("v14", cand)], factor=2.0)
+            self.assertTrue(os.path.exists(os.path.join(d, "margin_uplift_matches.txt")))
+            self.assertTrue(os.path.exists(os.path.join(d, "margin_uplift_matches.csv")))
+
+    def test_names(self):
+        got = mu.names_of([{"MATCH_CODE": "M1", "SCHEDULED_START_TIME_UTC": "2026-10-03 12:05:00",
+                            "PLAYER_1_HANDLE": "ALPHA", "PLAYER_2_HANDLE": "BRAVO"}])
+        self.assertEqual(got, {"M1": ("10-03 12:05", "ALPHA v BRAVO")})
+
+
 if __name__ == "__main__":
     unittest.main()

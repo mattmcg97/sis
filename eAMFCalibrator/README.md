@@ -1946,6 +1946,29 @@ The page's betting simulation has three panels:
 `margin_uplift.csv` holds the sums behind every table: one row per feed, market, minute,
 selection and band.
 
+- **Brier and log loss, same ticks.** The headline also scores every feed on exactly the matched
+  ticks with more than 6 game minutes left, every tick alike (lower is better). It's a proper
+  score: it's best when the probabilities are right. The dummy-bet margin isn't:
+  - A bet to win 100 at a short price carries a big stake. At a 0.92 favourite, the 1.01 floor of
+    the proportional book makes it a stake of 10,000.
+  - So a book keeps a lot when it was sure of a side that lost, and the margin rewards confidence.
+  - At a true 75% for one side, pricing it 80% scores about 12.9%, pricing it 75% scores 8.3%, and
+    pricing it 70% scores 4.6%.
+  - Read the uplift next to the Brier score: a candidate behind on the uplift but ahead on Brier
+    is the less confident book, not the worse one.
+- **By match: `margin_uplift_matches.txt` and `.csv`.**
+  - **Contents.** Every match with its start, players, final score and dummy bets (ticks) per
+    market. Each feed has its share of the handle (wt), GGR, margin, Brier and "sure": the highest
+    probability it gave a selection that lost.
+  - **Part.** Each candidate's part of the uplift: the match's GGR over the candidate's whole
+    handle, less prod's over prod's. The parts add up to the uplift exactly.
+  - **Order.** Matches are sorted so the ones that cost the candidate most come first, with a
+    running sum.
+  - **Summary.** `margin_uplift.txt` (and the page's "By match" fold) sums it up for each market:
+    - the 10 matches that cost the candidate most and the 10 that gain it most;
+    - the uplift without them;
+    - how many matches hold half of prod's handle.
+
 ### The operators' margin
 
 Every `bets` run prints each operator's margin over prod's probability: the median of
