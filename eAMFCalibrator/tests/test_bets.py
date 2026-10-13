@@ -602,3 +602,33 @@ class TestGamer(unittest.TestCase):
         report = "\n".join(written[os.path.join("out", "bets_gamers.txt")])
         self.assertIn("NIGHTMARE: 1 matches, won 1, lost 0", report)
         self.assertIn(os.path.join("out", "bets_trends.txt"), written)
+
+
+class TestOnlyMatches(unittest.TestCase):
+    """bets --only-matches: a quick test on a chosen few matches."""
+
+    def test_a_list_from_a_file_or_the_command_line(self):
+        import tempfile
+        from .. import __main__ as cli
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "list.txt")
+            with open(path, "w") as fh:
+                fh.write("# the worst\nAF031111026  # 12,804\n\nAF054021026\n")
+            self.assertEqual(cli.read_match_list(path), ["AF031111026", "AF054021026"])
+        self.assertEqual(cli.read_match_list("A1, B2"), ["A1", "B2"])
+        args = cli.build_parser().parse_args(["bets", "--only-matches", "A1,B2"])
+        self.assertEqual(args.only_matches, "A1,B2")
+
+    def test_only_those_matches_bets_are_priced(self):
+        kept = []
+        fake = [mock.Mock(match_code=c, in_play=True) for c in ("M1", "M2", "M2", "M3")]
+        with mock.patch.object(bets, "check_models"), mock.patch.object(bets, "bets_sql", return_value=("", [], None)), \
+                mock.patch.object(bets, "fetch_all", return_value=([], [])), \
+                mock.patch.object(bets, "to_bets", return_value=fake), \
+                mock.patch.object(bets.snowflake_io, "fetch_quotes", side_effect=lambda cur, t, batch: kept.extend(batch) or []), \
+                mock.patch.object(bets.snowflake_io, "fetch_final_scores", return_value={}), \
+                mock.patch.object(bets, "fetch_checks", side_effect=RuntimeError("stop")), \
+                mock.patch.object(config, "ONLY_MATCHES", ["M2", "M9"]), mock.patch("builtins.print"):
+            with self.assertRaises(RuntimeError):
+                bets.run(None, "out")
+        self.assertEqual(kept, ["M2"])

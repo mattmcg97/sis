@@ -615,6 +615,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     if prematch_only:
         bets = [b for b in bets if not b.in_play]
     gamer_info = None
+    if config.ONLY_MATCHES:
+        want = set(config.ONLY_MATCHES)
+        bets = [b for b in bets if b.match_code in want]
+        print(f"  only the {len(want):,} matches asked for: {len({b.match_code for b in bets}):,} of them have bets")
     if config.GAMERS:
         bets, gamer_info = for_gamers(cur, bets, config.GAMERS)
         print(f"  {', '.join(g.upper() for g in config.GAMERS)}: {len(gamer_info):,} matches in the window")

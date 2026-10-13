@@ -1881,6 +1881,30 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
+## Which prior on a few matches (`v14-variants`, `v14-priors`)
+
+`v14-variants v14_model` makes three copies of a v14 build that share its tables, grid, profiles and
+ratings and differ only in the prior they price with:
+- `v14_model_raw`: the same daily glmer fits without the prior shrink;
+- `v14_model_layered`: the same fits and shrink, with the post-game form layer on top;
+- `v14_model_nb2`: NB2, fitted at the build's cut-off, refitted every day after it and shrunk by its
+  own `fit_shrink` (the glmer shrink's centre), as the glmer prior is.
+
+The build itself is the shrunk glmer. Each copy then runs in the calibrator as its own candidate, so
+the same bets are re-priced by every prior; `bets --only-matches` keeps it to a chosen list.
+`v14-priors` lays the list out match by match: prod's closing pre-match prices (and the expected
+margin and total they imply, off a normal with the fitted sds), each prior's expected points as
+priced and bare (before the shrink and layers), v14's kick-off simulation off them (expected points,
+P home win, and its prices at prod's spread and total lines), the result, and with the calibrator's
+bets_sim.csv what each kept of the match's bets. A summary grades the list on the moneyline (Brier),
+the margin and the total, and adds up what each kept.
+
+```powershell
+python -m eAMFModel v14-variants v14_model
+python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --candidate v14,v14-raw=v14_model_raw,v14-layered=v14_model_layered,v14-nb2=v14_model_nb2 --v14-model v14_model --out eAMFCalibrator/out_worst15
+python -m eAMFModel v14-priors --matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --bets eAMFCalibrator/out_worst15/bets_sim.csv --out eAMFCalibrator/out_worst15
+```
+
 ## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13)
 
 For every settled match in a window, priced as of its kick-off, this grades three prices of it on the
