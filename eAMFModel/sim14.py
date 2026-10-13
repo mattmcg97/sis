@@ -767,11 +767,15 @@ def is_fresh(row):
 
 
 def _margin(row, team):
-    """A team's lead on a row's scoreboard."""
+    """A team's lead on a row's scoreboard. The board is home's (score_p1) and away's; TEAM_A is
+    whichever side team_a_side says (home when it is not known). Until v14's strength refit the
+    lead was read as if TEAM_A were always home, so on a match where it is away every lead the
+    tables read -- modes, settle, kneels, 4th downs, kicks, conversions -- had the wrong sign."""
     home, away = _i(row["score_p1"]), _i(row["score_p2"])
     if home is None or away is None or team not in ("TEAM_A", "TEAM_B"):
         return None
-    return (home - away) * (1 if team == "TEAM_A" else -1)
+    a_home = (row.get("team_a_side") or "home") != "away"
+    return (home - away) * (1 if (team == "TEAM_A") == a_home else -1)
 
 
 def _is_big(rec):
@@ -932,6 +936,50 @@ def play_class(gain, dist):
     line, 2 a first down, 3 a loss."""
     gain = np.asarray(gain)
     return np.where(gain == 0, 0, np.where(gain < 0, 3, np.where(gain >= np.asarray(dist), 2, 1))).astype(np.int8)
+
+
+# v14: a scrimmage snap's class, as the strength fit (v14.fit_strength) and strength_check read
+# them: a turnover, a loss, no gain, a gain short of the line, a first down under 20 yards, 20-39
+# yards, 40 or more. Gains are cut at the goal line.
+SNAP_CLASSES = ("turnover", "loss", "no gain", "short", "1st <20", "20-39", "40+")
+N_CLASSES = len(SNAP_CLASSES)
+
+
+def snap_class(kind, gain, dist, field):
+    """Each snap's class, an index into SNAP_CLASSES."""
+    kind, dist = np.asarray(kind), np.asarray(dist)
+    gain = np.minimum(np.asarray(gain), 100 - np.asarray(field))
+    return np.select([kind != GAIN, gain < 0, gain == 0, gain >= 40, gain >= 20, gain < dist],
+                     [0, 1, 2, 6, 5, 3], 4).astype(np.int64)
+
+
+def real_snap_counts(rows):
+    """A match's real scrimmage snaps in regulation by side (0 home, 1 away, by team_a_side) and
+    class, kneels left out: a (2, N_CLASSES) array."""
+    counts = np.zeros((2, N_CLASSES))
+    a_home = ((rows[0].get("team_a_side") if rows else None) or "home") != "away"
+    for r in snap_records(rows):
+        if r["period"] > 4 or is_kneel(r) or r["offense"] not in ("TEAM_A", "TEAM_B"):
+            continue
+        side = 0 if (r["offense"] == "TEAM_A") == a_home else 1
+        counts[side, snap_class(r["kind"], r["gain"], r["distance"], r["field"])] += 1
+    return counts
+
+
+def sim_snap_counts(log, rows=None, n_paths=1):
+    """Snap counts by side and class off a simulation's per-snap log (stats["_snaps"]), regulation
+    only: summed over every path as (2, N_CLASSES), or with `rows` start states, per start as
+    (rows, 2, N_CLASSES), path p belonging to start p // n_paths."""
+    shape = (2, N_CLASSES) if rows is None else (rows, 2, N_CLASSES)
+    if not log:
+        return np.zeros(shape)
+    path, per, dist, y, kind, gain, so = (np.concatenate([x[k] for x in log]) for k in (0, 1, 5, 6, 7, 8, 12))
+    on = per <= 4
+    cls = snap_class(kind[on], gain[on], dist[on], y[on])
+    key = so[on].astype(np.int64) * N_CLASSES + cls
+    if rows is not None:
+        key = key + (path[on].astype(np.int64) // n_paths) * 2 * N_CLASSES
+    return np.bincount(key, minlength=int(np.prod(shape))).reshape(shape).astype(float)
 
 
 def link_prev(recs):
@@ -1889,6 +1937,14 @@ BOOM = 3.0
 TILT_SCALE = 0.5
 
 
+def strength_mech(tables):
+    """(boom, tilt): the build's own (v14.STRENGTH_FIT, Tables.boom and tilt_scale), else BOOM and
+    TILT_SCALE."""
+    boom = getattr(tables, "boom", None)
+    tilt = getattr(tables, "tilt_scale", None)
+    return (BOOM if boom is None else float(boom)), (TILT_SCALE if tilt is None else float(tilt))
+
+
 class Tables:
     """Everything the simulation draws from, built from real plays."""
 
@@ -1941,6 +1997,11 @@ class Tables:
         self.strength_theta = np.zeros(0)
         self.strength_slope = np.zeros(0)
         self.inplay_theta = np.zeros((N_SEGMENTS, N_BANDS))
+        self.boom = None                       # v14 strength fit: the build's own boom and tilt
+        self.tilt_scale = None                 # (None: BOOM and TILT_SCALE)
+        self.theta_grid = None                 # the prior grid's strengths (None: v14.GRID)
+        self.form_grid = None                  # the strengths the day's spread is read at (None: v14.FORM_GRID)
+        self.spread_scale = None               # (game swing, own form) multipliers from the spread fit
         self.go_shift = np.zeros((4, 7))
         self.late_fg = np.array([0.32, 0.62])
         self.late_fourth = None
@@ -2193,6 +2254,13 @@ class Tables:
                       kneel_p=self.kneel_p, kneel_secs=self.kneel_secs)
         if self.gain_surv is not None:
             arrays["gain_surv"] = self.gain_surv
+        if self.boom is not None:
+            arrays["strength_mech"] = np.array([self.boom, self.tilt_scale])
+        for name in ("theta_grid", "form_grid"):
+            if getattr(self, name) is not None:
+                arrays[name] = np.asarray(getattr(self, name), float)
+        if self.spread_scale is not None:
+            arrays["spread_scale"] = np.asarray(self.spread_scale, float)
         arrays["quarter_pace"] = self.quarter_pace
         arrays["prev_stop"], arrays["prev_mix"] = self.prev_stop, self.prev_mix
         arrays["manage_p"] = self.manage_p
@@ -2245,6 +2313,13 @@ class Tables:
             t.strength_theta, t.strength_slope = z["strength_theta"], z["strength_slope"]
         if "period_theta" in z:
             t.period_theta = z["period_theta"]
+        if "strength_mech" in z:
+            t.boom, t.tilt_scale = (float(x) for x in z["strength_mech"])
+        for name in ("theta_grid", "form_grid"):
+            if name in z:
+                setattr(t, name, z[name])
+        if "spread_scale" in z:
+            t.spread_scale = tuple(float(x) for x in z["spread_scale"])
         if "go_shift" in z:
             t.go_shift, t.fg_shift = z["go_shift"], z["fg_shift"]
         if "late_fg" in z:
@@ -2455,7 +2530,8 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     loss_s = rep(getattr(start, "loss_size", np.ones((S, 2))))
     loss_on = LOSS_PLAYS and getattr(tables, "n_loss_stop", None) is not None \
         and bool(np.any(loss_r != 1.0) or np.any(loss_s != 1.0))
-    boom_on = STRENGTH_BOOM and BOOM != 0 and getattr(tables, "n_loss_stop", None) is not None \
+    boom_k, tilt_k = strength_mech(tables)
+    boom_on = STRENGTH_BOOM and boom_k != 0 and getattr(tables, "n_loss_stop", None) is not None \
         and tables.n_big_stop is not None
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
     prev_cls = np.full(P, -1, dtype=np.int8)            # STOP_LINK: the drive's previous play, -1 not known
@@ -2952,7 +3028,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         seg0 = tables.start[key] + np.where(stops, 0, ns)
         seg_n = np.maximum(1, np.where(stops, ns, n - ns))
         uu = rand(sx, 11)
-        tilt = (np.exp(TILT_SCALE * theta[sx, so]) if STRENGTH_BOOM else exp_theta[sx, so]) \
+        tilt = (np.exp(tilt_k * theta[sx, so]) if STRENGTH_BOOM else exp_theta[sx, so]) \
             * period_exp[np.minimum(period[sx], 5)] * np.exp(tables.eff_shift[cell])
         rz = y[sx] >= RED_ZONE
         if rz.any():
@@ -2966,7 +3042,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if big_on or loss_on or boom_on:
             share = np.where(stops, tables.n_big_stop[key], tables.n_big_run[key]) / seg_n
             fails = np.where(stops, tables.n_fail_stop[key], tables.n_fail_run[key]) / seg_n
-            bs = big[sx, so] * np.exp(BOOM * theta[sx, so]) if boom_on else big[sx, so]
+            bs = big[sx, so] * np.exp(boom_k * theta[sx, so]) if boom_on else big[sx, so]
             if loss_on or boom_on:
                 to_sh = np.where(stops, tables.n_to_stop[key], tables.n_to_run[key]) / seg_n
                 loss_sh = np.where(stops, tables.n_loss_stop[key], tables.n_loss_run[key]) / seg_n

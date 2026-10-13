@@ -1328,6 +1328,58 @@ rubber band (+8% to +20%), the settle cells' touchdowns (+12%) and Q4's seconds 
 after they are fitted; the level side's late field goals (50% of drives, real 68%) and Q4's field
 goals on downs 1-3 from 2:00 (0.076, real 0.094) sit at the edge of what their fits may move.
 
+### The strength refit (13 Oct)
+
+Three changes, all in the build. The next `v14-build` makes all three, and a build from before plays
+as it did.
+
+- **The lead with TEAM_A on either side** (`sim14._margin`).
+  - The export's scoreboard is home's (`score_p1`) and away's. TEAM_A is whichever side
+    `team_a_side` says.
+  - Every lead the tables read off the snaps assumed TEAM_A was home. So on a match where it is
+    away, the lead had the wrong sign in the modes, settle, kneels, 4th downs, kick-offs,
+    conversions and the close endings.
+  - The rest of v14 (the 4th-down players, kick styles, big-play records, pricing) already read
+    `team_a_side`. The build now prints how many matches have TEAM_A on each side.
+- **How strength reaches the snaps, fitted** (`v14.STRENGTH_FIT`, `fit_strength`).
+  - **Before:** with `BOOM` 3 and `TILT_SCALE` 0.5, strength worked almost all through the 40+
+    yard plays. From kick-off, a side expected at 10 points drew them on 0.2% of its snaps and one
+    at 25 on 19%. Its first downs under 20 yards fell from 25% to 14.5%, and its snaps from 25 a
+    game to 16.
+  - **Real sides** (`strength-check`, 1-12 Oct, 1,494 sides), from under 13 expected points to
+    over 21:
+    - the 40+ plays only double (2.3% to 4.8%; the sim 0.6% to 8.1%);
+    - the plays short of the line fall (27.9% to 23.7%);
+    - the 20-39 yard plays rise (9.1% to 11.7%);
+    - the first downs under 20 hold at 28-29%;
+    - the snaps rise (20 to 24 a game).
+  - **The fit.** The build tries each boom (`STRENGTH_BOOMS`) with each tilt (`STRENGTH_TILTS`),
+    then the steps around the best. For each:
+    - it finds the strengths on a coarse grid of the candidate's own;
+    - it plays its newest 1,500 matches from kick-off at them, with the players' own profiles;
+    - it scores their snaps by class against the real ones in each band of the side's expected
+      points (`STRENGTH_BANDS`) by the multinomial deviance.
+  - **Kept with the tables.** The best boom and tilt are kept (`Tables.boom`, `tilt_scale`), and
+    the build prints the deviance of each candidate and the real, fitted and old snap mix by band.
+    The prior grid then spans the strengths that give 6 to 34 points against a league side
+    (`Tables.theta_grid`), and the day's spread is read at those for 10 to 26 (`Tables.form_grid`).
+  - **Order.** It runs before the joint fit, so everything after it fits on the new strength.
+- **The day's spread, through the priced sim** (`v14.SPREAD_FIT`, `fit_spread`).
+  - **Before:** priced, the draw made the total too wide (central 50% holding 53.4% of results, 80%
+    holding 83.8%) and the margin a touch narrow.
+  - **The fit.** After the first round's form fit, the build prices its newest 600 matches as the
+    stream does: held strengths, own profiles, and the total off its in-play run, read as if
+    centred on the prior's.
+    - It scales the shared swing (x0, 0.25, 0.5 or 1) to the best margin RPS plus total RPS.
+    - Then it scales each player's own form (x1 to x4) the same way.
+  - **Kept with the tables.** The scales are kept (`Tables.spread_scale`) and applied to every
+    later form fit, and the build prints each candidate's scores and coverage.
+  - **Caveat.** The prior's means on those matches are in-sample, so if anything the fit leans a
+    little narrow; `strength-check` part C and `prior-vs-sim` grade it out of sample.
+
+The fits add about 15-25 minutes to the build. `strength-check` reads a build's own boom and tilt;
+its sweep's "tilt alone" and "boom alone" switch the build's own off.
+
 ### Fixed in the sweep (12 Oct)
 
 - **End-of-half kicks** (`sim14.early_kicks`). A state at 0:00 is the half's end, not a choice, but
@@ -1944,11 +1996,14 @@ the window.
 ## A side's strength, snap by snap (`strength-check`, v14)
 
 A side's strength (theta) reaches its snaps two ways in `sim14.simulate`:
-- **The tilt**, exp(`TILT_SCALE` x theta) with `TILT_SCALE` 0.5. It leans every draw toward the
-  better end of its bin: fewer turnovers and losses, and longer gains, all at once.
-- **The boom**, exp(`BOOM` x theta) with `BOOM` 3. It multiplies the bin's 40+ yard plays and moves
-  the same share onto its failed plays (turnovers, losses and the rest short of the line), out of
-  the plays between. A side's own big-play rate works the same way.
+- **The tilt**, exp(tilt x theta). It leans every draw toward the better end of its bin: fewer
+  turnovers and losses, and longer gains, all at once.
+- **The boom**, exp(boom x theta). It multiplies the bin's 40+ yard plays and moves the same share
+  onto its failed plays (turnovers, losses and the rest short of the line), out of the plays
+  between. A side's own big-play rate works the same way.
+
+A build from before the strength refit plays `TILT_SCALE` 0.5 and `BOOM` 3. One with it plays its
+own (`Tables.tilt_scale`, `Tables.boom`; see "The strength refit").
 
 Nothing else reads the strength. The play calling, the clock, 4th-down choices, kicking and red-zone
 holds are the same for a strong side as for a weak one; they differ only by the states the plays
@@ -1962,8 +2017,8 @@ and each player's own form.
     profiles and no draw.
   - It shows the side's points, snaps a game and how its snaps split: turnover, loss, no gain, short
     of the line, a first down under 20 yards, 20-39 yards, 40+.
-  - Each step is run as built, with the tilt alone (`BOOM` 0) and with the boom alone (`TILT_SCALE`
-    0), at the same strengths. So it shows which kinds of play each part of the strength moves, and
+  - Each step is run as built, with the tilt alone (the boom off) and with the boom alone (the tilt
+    off), at the same strengths. So it shows which kinds of play each part of the strength moves, and
     how many of the points each carries.
 - **B. Every side, real against the sim.** The window's settled matches are priced as the stream
   prices their kick-off: the held strengths, the players' profiles and the day's draw. Every side's

@@ -14,7 +14,8 @@ from . import follow, form_layer, glmer_prior, nb2_prior, playover, players, sim
 from .state import HOME, GameState
 
 # v14: with STRENGTH_BOOM the strengths move the points less through the draw's tilt, so a side at
-# 10 points a match (the weakest prior) sits near -0.8: the grid reaches down to -1.1.
+# 10 points a match (the weakest prior) sits near -0.8: the grid reaches down to -1.1. A build with
+# the strength fit (STRENGTH_FIT) spans its own strengths instead (Tables.theta_grid, theta_grid_of).
 GRID = np.round(np.linspace(-1.1, 0.8, 20) if sim.STRENGTH_BOOM else np.linspace(-0.8, 0.8, 17), 3)
 MARGIN_MAX = 100
 TOTAL_MAX = 160
@@ -263,8 +264,10 @@ class PriorGrid:
         return tuple(out)
 
     @classmethod
-    def build(cls, tables, n_paths=6000, seed=0, grid=GRID, theta_sd=0.0, **sim_kw):
-        """Simulate from kickoff at every grid point."""
+    def build(cls, tables, n_paths=6000, seed=0, grid=None, theta_sd=0.0, **sim_kw):
+        """Simulate from kickoff at every grid point: `grid`, else the tables' own strength grid
+        (v14 strength fit), else GRID."""
+        grid = theta_grid_of(tables) if grid is None else np.asarray(grid, float)
         g = len(grid)
         start = sim.Start(g * g)
         th, ta = np.meshgrid(grid, grid, indexing="ij")
@@ -371,7 +374,7 @@ def fit_big_elasticity(tables, grid, n_paths=BIG_PATHS // 2, seed=0, attr="big")
     slope of log(big plays a snap) on log(rate), both sides at each of BIG_POINTS from league
     strengths. A rating (log odds of a big play) x is then played at rate exp(x / slope)."""
     x_t = np.arange(grid.total.shape[-1])
-    mid = len(grid.grid) // 2
+    mid = int(np.argmin(np.abs(np.asarray(grid.grid))))       # the grid's point nearest league
     league = float((grid.total[mid, mid] * x_t).sum()) / 2
     logs = []
     for b in BIG_POINTS:
@@ -408,6 +411,30 @@ def _surface_fn(grid, step):
         return (v[lo][:, lo] * np.outer(1 - w, 1 - w) + v[lo + 1][:, lo] * np.outer(w, 1 - w)
                 + v[lo][:, lo + 1] * np.outer(1 - w, w) + v[lo + 1][:, lo + 1] * np.outer(w, w))
     return fine, surface
+
+
+def theta_grid_of(tables):
+    """The prior grid's strengths: the build's own (Tables.theta_grid, from the strength fit), else
+    GRID."""
+    own = getattr(tables, "theta_grid", None)
+    return GRID if own is None else np.asarray(own, float)
+
+
+def means_solver(grid, step=0.01):
+    """fit_means for many matches on one grid: a function of (home points, away points)."""
+    fine, surface = _surface_fn(grid.grid, step)
+    x_m = np.arange(grid.margin.shape[-1]) - MARGIN_MAX
+    x_t = np.arange(grid.total.shape[-1])
+    e_margin = surface((grid.margin * x_m).sum(-1))
+    e_total = surface((grid.total * x_t).sum(-1))
+    lh = np.log(np.maximum(0.1, (e_total + e_margin) / 2))
+    la = np.log(np.maximum(0.1, (e_total - e_margin) / 2))
+
+    def solve(home_points, away_points):
+        err = (lh - math.log(max(0.1, home_points))) ** 2 + (la - math.log(max(0.1, away_points))) ** 2
+        i, j = np.unravel_index(np.argmin(err), err.shape)
+        return float(fine[i]), float(fine[j])
+    return solve
 
 
 def fit_means(grid, home_points, away_points, step=0.01):
@@ -624,6 +651,344 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
                 for i in (2 * k, 2 * k + 1):
                     st.theta[i], st.strength[i], st.strength_game[i] = sim.strength_draw(tables, th, _forms(tables, prof))
     return {code: Held(tuple(th), prof) for (code, _, prof), th in zip(found, theta0)}
+
+
+# v14: how a side's strength reaches its snaps, fitted. With sim.BOOM 3 and TILT_SCALE 0.5 the strength
+# worked almost all through the 40+ yard plays: from kick-off, a side expected at 10 points drew them on
+# 0.2% of its snaps and one at 25 on 19%, its first downs under 20 yards fell from 25% to 14.5% and its
+# snaps from 25 a game to 16 (it scored in one play and gave the ball back). Real sides are not like that
+# (strength_check, 1-12 Oct, 1,494 sides): from under 13 expected points to over 21 the 40+ plays only
+# double (2.3% to 4.8%, the sim 0.6% to 8.1%), the plays short of the line fall (27.9% to 23.7%), the
+# 20-39 yard ones rise (9.1% to 11.7%), the first downs under 20 hold at 28-29% and the snaps rise (20 to
+# 24 a game): a strong side mostly moves the chains and keeps the ball. With STRENGTH_FIT the build picks
+# the boom and tilt (Tables.boom, tilt_scale) that bring the simulated snaps closest to the real ones by
+# the side's expected points: each candidate's strengths are found on a coarse grid of its own, the
+# build's newest matches (STRENGTH_MATCHES) are played from kick-off at them with the players' own
+# profiles, and their snaps by class (sim.SNAP_CLASSES) are scored against the real ones in each band
+# of expected points (STRENGTH_BANDS) by the multinomial deviance. The prior grid's strengths then
+# span what the fit gives STRENGTH_COVER points (Tables.theta_grid), and the day's spread is read
+# at the strengths of FORM_POINTS (Tables.form_grid). The big-play ratings play at their odds in the
+# fit (elasticity 1); the joint fit then works out their elasticity on the fitted strengths.
+STRENGTH_FIT = True
+STRENGTH_BANDS = (13.0, 15.0, 17.0, 19.0, 21.0)
+STRENGTH_BOOMS = (0.0, 0.75, 1.5, 3.0)
+STRENGTH_TILTS = (0.5, 0.75, 1.0, 1.25)
+STRENGTH_MATCHES = 1500
+STRENGTH_MIN_MATCHES = 200
+STRENGTH_PATHS = 40                      # games a fit match plays for each side receiving first
+STRENGTH_GRID_N = 9
+STRENGTH_GRID_PATHS = 400
+STRENGTH_SWEEP = np.linspace(-3.0, 2.5, 12)
+STRENGTH_SWEEP_PATHS = 300
+STRENGTH_COVER = (6.0, 34.0)
+FORM_POINTS = (10.0, 26.0)
+GRID_N = 20
+
+
+def _par_counts(bounds):
+    """Worker: one block of rows played (distinct paths, numbered as in one run) and its snaps
+    counted by row, side and class."""
+    tables, start, n_paths, seed, kw, _ = _PAR["job"]
+    lo, hi = bounds
+    stats = {"_snaps": []}
+    home, away = sim.simulate(tables, _slice_start(start, lo, hi), n_paths, np.random.default_rng(seed),
+                              seed=seed, stats=stats, distinct=True, path_offset=int(lo) * n_paths, **kw)
+    return home.mean(1), away.mean(1), sim.sim_snap_counts(stats["_snaps"], rows=hi - lo, n_paths=n_paths)
+
+
+def par_counts(tables, start, n_paths, seed=0, workers=None, **kw):
+    """Every start played n_paths times across processes: (home mean, away mean, snap counts by row,
+    side and class)."""
+    workers = BUILD_WORKERS if workers is None else workers
+    n = len(start.period)
+    job = (tables, start, n_paths, seed, kw, None)
+    if workers <= 1 or n < 2 * workers:
+        _PAR["job"] = job
+        return _par_counts((0, n))
+    edges = np.linspace(0, n, workers + 1).astype(int)
+    with pool_context().Pool(workers, initializer=_par_init, initargs=(job, _sim_switches())) as pool:
+        parts = pool.map(_par_counts, list(zip(edges[:-1], edges[1:])))
+    return tuple(np.concatenate([p[k] for p in parts]) for k in range(3))
+
+
+def _set_profiles(start, i, prof, pace=True):
+    """A start's two sides' profiles as pricing sets them (price_kickoff)."""
+    start.aggression[i] = (prof[0].aggression, prof[1].aggression)
+    start.kick[i] = (prof[0].kick, prof[1].kick)
+    if pace:
+        start.pace[i] = (prof[0].pace, prof[1].pace)
+    for name in ("big", "kick_tb", "kick_nlz", "loss", "loss_size"):
+        getattr(start, name)[i] = (getattr(prof[0], name), getattr(prof[1], name))
+
+
+def match_profiles(matches, book, ratings, handles, teams):
+    """{match: (home profile, away profile)} with the big-play and lost-yardage rates, as
+    held_starts builds them."""
+    out = {}
+    for code, rows in matches.items():
+        pair = (handles or {}).get(code) or handles_of(resolve_sides(rows))
+        prof = ((book.profile(pair[0]), book.profile(pair[1])) if (book and pair)
+                else (players.Profile(), players.Profile()))
+        out[code] = with_big(prof, ratings, pair, *side_teams(pair, (teams or {}).get(code)))
+    return out
+
+
+def strength_curve(tables, thetas=STRENGTH_SWEEP, n_paths=STRENGTH_SWEEP_PATHS, seed=0):
+    """A side's points from kick-off at each strength, the other at league, league profiles."""
+    k = len(thetas)
+    start = sim.Start(2 * k)
+    for i, th in enumerate(thetas):
+        for j, first in ((2 * i, 0), (2 * i + 1, 1)):
+            start.theta[j] = (th, 0.0)
+            start.team[j], start.kicks_second_half[j] = first, 1 - first
+    home, _ = sim.simulate(tables, start, max(1, n_paths // 2), np.random.default_rng(seed), seed=seed)
+    return np.asarray(thetas, float), home.mean(1).reshape(k, 2).mean(1)
+
+
+def theta_at(curve, points):
+    """The strength at which a side makes `points` on a strength curve (log points against strength,
+    made rising; straight on past either end)."""
+    th, pts = curve
+    lp = np.maximum.accumulate(np.log(np.maximum(0.1, pts))) + np.arange(len(pts)) * 1e-6
+    y = math.log(points)
+    if y <= lp[0]:
+        slope = (lp[1] - lp[0]) / (th[1] - th[0])
+        return float(th[0] + (y - lp[0]) / max(slope, 1e-3))
+    if y >= lp[-1]:
+        slope = (lp[-1] - lp[-2]) / (th[-1] - th[-2])
+        return float(th[-1] + (y - lp[-1]) / max(slope, 1e-3))
+    return float(np.interp(y, lp, th))
+
+
+def _strength_matches(matches, priors, profiles, limit=STRENGTH_MATCHES):
+    """[(code, means, profiles, real snap counts by side and class)], newest first."""
+    found = []
+    for code, rows in matches.items():
+        if code not in priors or code not in profiles:
+            continue
+        real = sim.real_snap_counts(resolve_sides(rows))
+        if real.sum() < 20:
+            continue
+        found.append((match_day(rows) or dt.date.min, code, tuple(priors[code]), profiles[code], real))
+    found.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    return [x[1:] for x in found[:limit]]
+
+
+def strength_band(points):
+    return int(np.searchsorted(STRENGTH_BANDS, points, side="right"))
+
+
+def snap_deviance(real, simulated):
+    """2 x the real counts' log-likelihood ratio, their own shares against the simulated shares,
+    summed over every band and class: (bands, classes) arrays."""
+    r = real / np.maximum(real.sum(1, keepdims=True), 1e-12)
+    q = np.maximum(simulated / np.maximum(simulated.sum(1, keepdims=True), 1e-12), 1e-9)
+    on = real > 0
+    return float(2 * (real[on] * np.log(r[on] / q[on])).sum())
+
+
+def try_strength(tables, fit, boom, tilt, seed=0, workers=None):
+    """One candidate boom and tilt played on the fit's matches: {deviance, band counts real and
+    simulated, points by band, the strength curve}."""
+    tables.boom, tables.tilt_scale = float(boom), float(tilt)
+    curve = strength_curve(tables, seed=seed)
+    lo, hi = (theta_at(curve, p) for p in STRENGTH_COVER)
+    grid = PriorGrid.build(tables, n_paths=STRENGTH_GRID_PATHS, seed=seed,
+                           grid=np.round(np.linspace(lo, hi, STRENGTH_GRID_N), 3))
+    solve = means_solver(grid)
+    start = sim.Start(2 * len(fit))
+    for k, (_, means, prof, _) in enumerate(fit):
+        th = solve(*means)
+        for i, first in ((2 * k, 0), (2 * k + 1, 1)):
+            start.theta[i] = th
+            start.team[i], start.kicks_second_half[i] = first, 1 - first
+            _set_profiles(start, i, prof)
+    home, away, counts = par_counts(tables, start, STRENGTH_PATHS, seed=seed, workers=workers)
+    nb = len(STRENGTH_BANDS) + 1
+    real_b, sim_b = np.zeros((nb, sim.N_CLASSES)), np.zeros((nb, sim.N_CLASSES))
+    pts = np.zeros((nb, 3))                                       # sides, prior, simulated
+    for k, (_, means, _, real) in enumerate(fit):
+        c = counts[2 * k] + counts[2 * k + 1]
+        got = ((home[2 * k] + home[2 * k + 1]) / 2, (away[2 * k] + away[2 * k + 1]) / 2)
+        for side in (0, 1):
+            b = strength_band(means[side])
+            real_b[b] += real[side]
+            sim_b[b] += c[side]
+            pts[b] += (1, means[side], got[side])
+    return dict(boom=float(boom), tilt=float(tilt), deviance=snap_deviance(real_b, sim_b), real=real_b,
+                sim=sim_b, points=pts, curve=curve, cover=(lo, hi))
+
+
+def _strength_line(label, counts):
+    sh = 100 * counts / max(counts.sum(), 1e-12)
+    return f"{label}" + "".join(f"{v:>8.1f}" for v in sh)
+
+
+def fit_strength(tables, matches, priors, profiles, verbose=True, seed=0, workers=None):
+    """STRENGTH_FIT: the boom and tilt whose simulated snaps by the side's expected points come
+    closest to the real ones, the prior grid's strengths and the form grid; sets them on the tables
+    and returns every candidate tried (None, the tables as they were, with too few matches)."""
+    fit = _strength_matches(matches, priors, profiles)
+    if len(fit) < STRENGTH_MIN_MATCHES:
+        if verbose:
+            print(f"  strength fit: {len(fit)} matches with a prior and real snaps, fewer than"
+                  f" {STRENGTH_MIN_MATCHES}; boom {sim.BOOM:g} and tilt {sim.TILT_SCALE:g} kept")
+        return None
+    tried = {}
+
+    def run(b, t):
+        key = (round(b, 3), round(t, 3))
+        if key not in tried:
+            tried[key] = try_strength(tables, fit, *key, seed=seed, workers=workers)
+        return tried[key]
+
+    for b in STRENGTH_BOOMS:
+        for t in STRENGTH_TILTS:
+            run(b, t)
+    best = min(tried.values(), key=lambda r: r["deviance"])
+    db = min((abs(b - best["boom"]) for b in STRENGTH_BOOMS if b != best["boom"]), default=0.5) / 2
+    dtl = min((abs(t - best["tilt"]) for t in STRENGTH_TILTS if t != best["tilt"]), default=0.25) / 2
+    for b in (best["boom"] - db, best["boom"], best["boom"] + db):
+        for t in (best["tilt"] - dtl, best["tilt"], best["tilt"] + dtl):
+            if b >= 0 and t >= 0.1:
+                run(b, t)
+    best = min(tried.values(), key=lambda r: r["deviance"])
+    tables.boom, tables.tilt_scale = best["boom"], best["tilt"]
+    lo, hi = best["cover"]
+    tables.theta_grid = np.round(np.linspace(lo, hi, GRID_N), 3)
+    tables.form_grid = np.round(np.linspace(*(theta_at(best["curve"], p) for p in FORM_POINTS), 7), 3)
+    if verbose:
+        was = tried.get((round(sim.BOOM, 3), round(sim.TILT_SCALE, 3)))
+        print(f"  strength fit on {len(fit):,} matches ({2 * len(fit):,} sides), deviance of the snaps by"
+              f" expected points: " + "; ".join(f"boom {b:g} tilt {t:g} {r['deviance']:,.0f}"
+                                               for (b, t), r in sorted(tried.items())))
+        print(f"    -> boom {best['boom']:g}, tilt {best['tilt']:g}; the prior grid's strengths {lo:+.2f} to"
+              f" {hi:+.2f} ({STRENGTH_COVER[0]:g}-{STRENGTH_COVER[1]:g} points against a league side)")
+        print("    % of a side's snaps, real / fitted" + (" / before" if was else "") + ":"
+              + "".join(f"{c:>8s}" for c in sim.SNAP_CLASSES))
+        for k in range(len(STRENGTH_BANDS) + 1):
+            if not best["real"][k].sum():
+                continue
+            n, prior, got = best["points"][k]
+            label = f"      {prior / max(n, 1):5.1f} pts ({int(n)} sides, sim {got / max(n, 1):5.1f})"
+            print(_strength_line(f"{label:42s}real ", best["real"][k]))
+            print(_strength_line(f"{'':42s}fitted", best["sim"][k]))
+            if was:
+                print(_strength_line(f"{'':42s}before", was["sim"][k]))
+    return tried
+
+
+# v14: the day's spread, refitted through the sim as it prices. The form fit (fit_form) splits the
+# real results' spread about the prior into a swing both sides share and each player's own, after
+# taking off the sim's own spread -- measured from kick-off at league profiles, without the total's
+# in-play run, and turned into strengths by the local slope of points on strength. Priced, the draw
+# came out too wide on the total and a touch narrow on the margin (strength_check, 1-12 Oct, 747
+# matches: the total's central 50% held 53.4% of results and its 80% 83.8%, 50.3% and 78.8% with no
+# draw at all). With SPREAD_FIT the build scales the shared swing and the players' own form
+# (Tables.spread_scale, applied to every later form fit) to whatever scores best -- the margin's
+# and total's ranked probability scores -- on SPREAD_MATCHES of its newest matches priced as the
+# stream prices them (held strengths, own profiles, the total off its in-play run), each total
+# read as if centred on the prior's (the hold puts it there in pricing). The swing's scale is
+# chosen first, then the players' own.
+SPREAD_FIT = True
+SPREAD_GAME = (0.0, 0.25, 0.5, 1.0)
+SPREAD_OWN = (1.0, 2.0, 3.0, 4.0)
+SPREAD_MATCHES = 600
+SPREAD_PATHS = 150
+
+
+def _rps(pmf, offset, actual):
+    k = np.arange(len(pmf)) - offset
+    return float(((np.cumsum(pmf) - (k >= actual)) ** 2).sum())
+
+
+def _finals_of(rows):
+    try:
+        return float(rows[0]["final_p1"]), float(rows[0]["final_p2"])
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def try_spread(tables, items, game, own, form, seed=0, workers=None):
+    """The sample's mean margin and total RPS (and central 50% / 80% coverage) with the shared
+    swing at `game` and every player's own form at `own` times the form fit's."""
+    base_game, base_league = tables.strength_game, tables.strength_league
+    try:
+        tables.strength_game, tables.strength_league = base_game * game, base_league * own
+        start = sim.Start(2 * len(items))
+        for k, (_, held, pair, _, _) in enumerate(items):
+            forms = [own * form.get(h, base_league) for h in pair]
+            for i, first in ((2 * k, 0), (2 * k + 1, 1)):
+                start.team[i], start.kicks_second_half[i] = first, 1 - first
+                start.theta[i], start.strength[i], start.strength_game[i] = sim.strength_draw(tables, held.theta, forms)
+                _set_profiles(start, i, held.prof)
+        home, away = par_simulate(tables, start, SPREAD_PATHS, seed=seed, workers=workers)
+        if np.any(tables.inplay_theta):
+            th, ta = par_simulate(tables, start, SPREAD_PATHS, seed=seed, workers=workers, in_play=True)
+        else:
+            th, ta = home, away
+    finally:
+        tables.strength_game, tables.strength_league = base_game, base_league
+    out = np.zeros(6)
+    for k, (_, _, _, means, finals) in enumerate(items):
+        h, a = home[2 * k:2 * k + 2].ravel(), away[2 * k:2 * k + 2].ravel()
+        t = (th[2 * k:2 * k + 2] + ta[2 * k:2 * k + 2]).ravel()
+        margin, _ = _distributions(h, a)
+        total = _distributions(t, np.zeros_like(t))[1]
+        real_m, real_t = finals[0] - finals[1], finals[0] + finals[1] + (t.mean() - sum(means))
+        out += (_rps(margin, MARGIN_MAX, real_m), _rps(total, 0, real_t),
+                *_inside(margin, MARGIN_MAX, real_m), *_inside(total, 0, real_t))
+    return out / len(items)
+
+
+def _inside(pmf, offset, actual):
+    k = np.arange(len(pmf)) - offset
+    cdf = np.cumsum(pmf)
+    q = lambda p: k[min(len(k) - 1, np.searchsorted(cdf, p))]
+    return float(q(0.25) <= actual <= q(0.75)), float(q(0.10) <= actual <= q(0.90))
+
+
+def fit_spread(tables, matches, held, form, handles, priors, verbose=True, seed=0, workers=None):
+    """SPREAD_FIT: the swing's and the players' own scales that price the newest matches best;
+    sets Tables.spread_scale (times any scale already there) and returns {(game, own): scores}."""
+    items = []
+    for code, rows in sorted(matches.items(), key=lambda kv: (match_day(kv[1]) or dt.date.min, kv[0]),
+                             reverse=True):
+        finals = _finals_of(rows)
+        pair = (handles or {}).get(code)
+        if finals is None or not pair or code not in (held or {}) or code not in (priors or {}):
+            continue
+        items.append((code, held[code], pair, tuple(priors[code]), finals))
+        if len(items) >= SPREAD_MATCHES:
+            break
+    if len(items) < STRENGTH_MIN_MATCHES or not len(tables.strength_slope):
+        return None
+    scores = {}
+
+    def run(g, o):
+        if (g, o) not in scores:
+            scores[(g, o)] = try_spread(tables, items, g, o, form, seed=seed, workers=workers)
+        return scores[(g, o)]
+
+    score = lambda r: r[0] + r[1]
+    g = min(SPREAD_GAME, key=lambda x: score(run(x, 1.0)))
+    o = min(SPREAD_OWN, key=lambda x: score(run(g, x)))
+    old = tables.spread_scale or (1.0, 1.0)
+    tables.spread_scale = (old[0] * g, old[1] * o)
+    tables.strength_game *= g
+    tables.strength_league *= o
+    for h in form:
+        form[h] *= o
+    if verbose:
+        print(f"  the day's spread on {len(items)} of the newest matches, priced as the stream prices them"
+              " (margin RPS, total RPS; central 50% / 80% holding margin, total):")
+        for (gg, oo), r in sorted(scores.items()):
+            mark = "  <-" if (gg, oo) == (g, o) else ""
+            print(f"    swing x{gg:<5g} own form x{oo:<4g} {r[0]:.3f} {r[1]:.3f};"
+                  f" {100 * r[2]:.1f}% / {100 * r[3]:.1f}%, {100 * r[4]:.1f}% / {100 * r[5]:.1f}%{mark}")
+        print(f"    -> the swing x{g:g}, each player's own form x{o:g}: sd {math.sqrt(tables.strength_game):.3f}"
+              f" and {math.sqrt(tables.strength_league):.3f} (a player with no history) in log points")
+    return scores
 
 
 # v10: the pre-match model's expected points spread wider than real games do. Refitted at the
@@ -2419,6 +2784,11 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     as_of = (before.date() if before is not None else
              max(days) + dt.timedelta(days=1) if days else None)
     tables = sim.Tables.build(matches, handles=handles, as_of=as_of, half_life=sim.CLOCK_HALF_LIFE)
+    if verbose:
+        sides_a = Counter((rows[0].get("team_a_side") or "not known") if rows else "not known"
+                          for rows in matches.values())
+        print("  TEAM_A's side: " + ", ".join(f"{k} in {v:,} matches" for k, v in sides_a.most_common())
+              + " (every lead read off the snaps follows it: sim14._margin)")
     lap("tables")
     # -- the fits that read real data alone: the tables above (bins, clock, kicks, 4th downs,
     # decisions), the players' profiles and kick-off styles, the big-play and lost-yardage ratings.
@@ -2463,6 +2833,10 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     # stage starting where the last left it, every state played as pricing plays its match
     real = sim.quarter_points(matches)
     sim.fit_period_theta(tables, real)                 # a starting scoring level, from kick-off
+    if STRENGTH_FIT and priors and handles:
+        fit_strength(tables, matches, priors, match_profiles(matches, book, ratings, handles, teams),
+                     verbose=verbose)               # (league strength plays the same at any boom
+        lap("strength fit")                            # and tilt: the starting level holds)
     form, grid, held = {}, None, None
     sides = _form_sides(pre, history) if pre is not None else []
     states = clock_states(matches, tables)
@@ -2479,6 +2853,9 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         _joint_scoring(tables, matches, grid, priors, held, as_of, warm, verbose, f"round {rnd + 1}", took)
         if pre is not None:
             form = _fit_form(tables, sides, verbose and rnd == JOINT_ROUNDS - 1)
+            if SPREAD_FIT and rnd == 0 and held and form:
+                fit_spread(tables, matches, held, form, handles, priors, verbose=verbose)
+                took("spread")
             for h, f in form.items():
                 book.players.setdefault(h, players.Profile()).form = f
             took("form")
@@ -2621,12 +2998,19 @@ def _form_sides(pre, history):
 
 def _fit_form(tables, sides, verbose=False):
     """The day's strength spread (the game's and each player's) on the tables as they stand:
-    {player: own variance}."""
-    var_fn, cov_fn, slope = fixed_strength_spread(tables)
-    tables.strength_theta, tables.strength_slope = FORM_GRID.copy(), slope
+    {player: own variance}. It is read at the tables' own form grid (the strength fit's) and scaled
+    by the spread fit's Tables.spread_scale where the build has them."""
+    grid = FORM_GRID if getattr(tables, "form_grid", None) is None else np.asarray(tables.form_grid, float)
+    var_fn, cov_fn, slope = fixed_strength_spread(tables, grid=grid)
+    tables.strength_theta, tables.strength_slope = grid.copy(), slope
     if len(sides) < 200:
         return {}
     tables.strength_game, tables.strength_league, form = fit_form(sides, var_fn, cov_fn)
+    if getattr(tables, "spread_scale", None) is not None:
+        g, o = tables.spread_scale
+        tables.strength_game *= g
+        tables.strength_league *= o
+        form = {h: f * o for h, f in form.items()}
     if verbose:
         sds = sorted(np.sqrt(list(form.values())))
         print(f"  form on the day, sd in log points: the game {np.sqrt(tables.strength_game):.3f}"
