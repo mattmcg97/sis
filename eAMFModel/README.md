@@ -1380,6 +1380,36 @@ as it did.
 The fits add about 15-25 minutes to the build. `strength-check` reads a build's own boom and tilt;
 its sweep's "tilt alone" and "boom alone" switch the build's own off.
 
+**The first refit, out of sample** (1-12 Oct, `v14_fit`):
+- **What it chose:** boom 0 and tilt 0.75 (deviance 409, against 892 for the old setting), and the
+  shared swing went to 0. TEAM_A was home in all 2,960 build matches, so the lead fix changed
+  nothing there.
+- **What improved:** the averages landed on the prior (margin 0.00, total +0.01). The margin and
+  total covered close to 50% and 80% (51.4% / 80.2%, 51.8% / 81.3%). The moneyline was unchanged
+  (log loss 0.6817).
+- **What didn't:** priced, the strongest sides (21+ points) still drew too many 40+ yard plays
+  (7.2%, real 4.8%) and too few first downs under 20 (23.2%, real 28.8%). Their share short of the
+  line stayed at 27.6% (real 23.7%).
+
+So the fit was extended (13 Oct, the second refit):
+- **A conversion** (`sim14.CONVERT`, `Tables.convert`, `ZERO_SPLIT`).
+  - Each bin keeps its no-gain plays below its short gains (`Tables.n_zero_stop/run`).
+  - A side's strength multiplies the odds of a first down against a short gain by
+    exp(convert x theta). Turnovers, losses, no gains and big plays stay where the tilt and boom
+    put them; real strong sides convert, and those hardly move.
+  - `zone_warp` takes six parts. With no conversion it plays exactly as before.
+- **The fit reads the ratings as pricing does, and holds the points.**
+  - It runs in the joint fit's first round, once the grid's responses have given the big-play and
+    lost-yardage ratings their elasticity. Then the grid and its responses are made again on the
+    fitted strength.
+  - Each candidate's sides are held to their priors by one step along its strength curve before
+    their snaps are counted. In the first refit the strongest band ran 2.4 points over.
+- **One knob at a time** (`STRENGTH_START`, `STRENGTH_AXES`, `STRENGTH_CYCLES`).
+  - The search starts from the first refit's boom 0, tilt 0.75 and convert 0, and tries the boom
+    from -1 to 1, the tilt from 0.25 to 1.25 and the conversion from 0 to 3, two cycles round.
+  - The build prints every candidate's deviance and, by band, the real snap mix against the
+    fitted one, the first refit's and the old one.
+
 ### Fixed in the sweep (12 Oct)
 
 - **End-of-half kicks** (`sim14.early_kicks`). A state at 0:00 is the half's end, not a choice, but
@@ -2017,9 +2047,9 @@ and each player's own form.
     profiles and no draw.
   - It shows the side's points, snaps a game and how its snaps split: turnover, loss, no gain, short
     of the line, a first down under 20 yards, 20-39 yards, 40+.
-  - Each step is run as built, with the tilt alone (the boom off) and with the boom alone (the tilt
-    off), at the same strengths. So it shows which kinds of play each part of the strength moves, and
-    how many of the points each carries.
+  - Each step is run as built and with each of the tilt, the boom and the conversion alone (the
+    other two off), at the same strengths. So it shows which kinds of play each part of the strength
+    moves, and how many of the points each carries.
 - **B. Every side, real against the sim.** The window's settled matches are priced as the stream
   prices their kick-off: the held strengths, the players' profiles and the day's draw. Every side's
   points and snap split are set against its real ones. They're grouped by the side's expected points

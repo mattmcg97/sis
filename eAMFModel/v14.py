@@ -669,10 +669,27 @@ def held_starts(tables, grid, matches, priors, book, ratings, handles, teams, va
 # span what the fit gives STRENGTH_COVER points (Tables.theta_grid), and the day's spread is read
 # at the strengths of FORM_POINTS (Tables.form_grid). The big-play ratings play at their odds in the
 # fit (elasticity 1); the joint fit then works out their elasticity on the fitted strengths.
+#
+# The first fit (boom and tilt alone, 13 Oct) chose boom 0 and tilt 0.75: from kick-off a side at 10 to
+# 25 points now draws 40+ yard plays on 1.2% to 7.5% of its snaps and its first downs under 20 yards
+# rise. Priced, the strongest sides still drew too many (7.2%, real 4.8%) and too few first downs
+# (23.2%, real 28.8%) and the share short of the line stayed at 27% in every band (real 27.9% to
+# 23.7%): the big-play ratings, played at about their odds squared (their elasticity, 0.5), had been
+# read at face value, each candidate's sides had not been held to their priors (the strongest band
+# ran 2.4 points over), and neither knob converts. So the fit now also tries a conversion
+# (sim.CONVERT: the odds of a first down against a short gain), lets the boom go below 0, runs in the
+# joint fit's first round once the grid's responses have given the ratings their elasticity, and
+# holds each candidate's sides to their priors with one step of the strength curve before it counts
+# their snaps. The search starts from STRENGTH_START and moves one knob at a time over its values
+# (STRENGTH_AXES), STRENGTH_CYCLES times round.
 STRENGTH_FIT = True
 STRENGTH_BANDS = (13.0, 15.0, 17.0, 19.0, 21.0)
-STRENGTH_BOOMS = (0.0, 0.75, 1.5, 3.0)
-STRENGTH_TILTS = (0.5, 0.75, 1.0, 1.25)
+STRENGTH_START = (0.0, 0.75, 0.0)             # boom, tilt, convert
+STRENGTH_AXES = (("boom", (-1.0, -0.5, 0.0, 0.5, 1.0)),
+                 ("tilt", (0.25, 0.5, 0.75, 1.0, 1.25)),
+                 ("convert", (0.0, 0.5, 1.0, 1.5, 2.0, 3.0)))
+STRENGTH_CYCLES = 2
+STRENGTH_HOLD_MAX = 0.5                       # the most one hold step moves a side's strength
 STRENGTH_MATCHES = 1500
 STRENGTH_MIN_MATCHES = 200
 STRENGTH_PATHS = 40                      # games a fit match plays for each side receiving first
@@ -787,10 +804,19 @@ def snap_deviance(real, simulated):
     return float(2 * (real[on] * np.log(r[on] / q[on])).sum())
 
 
-def try_strength(tables, fit, boom, tilt, seed=0, workers=None):
-    """One candidate boom and tilt played on the fit's matches: {deviance, band counts real and
-    simulated, points by band, the strength curve}."""
-    tables.boom, tables.tilt_scale = float(boom), float(tilt)
+def _curve_slope(curve, theta):
+    """d log points / d strength on a strength curve at these strengths (at least 0.2)."""
+    th, pts = curve
+    g = np.gradient(np.log(np.maximum(0.1, pts)), th)
+    return np.maximum(0.2, np.interp(theta, th, g))
+
+
+def try_strength(tables, fit, boom, tilt, convert=0.0, seed=0, workers=None):
+    """One candidate boom, tilt and conversion played on the fit's matches: {deviance, band counts
+    real and simulated, points by band (sides, prior, simulated), the strength curve}. Each match's
+    strengths are found on a coarse grid of the candidate's own, moved once along the strength curve
+    by how far its sides' simulated points miss their priors, and played again for the counts."""
+    tables.boom, tables.tilt_scale, tables.convert = float(boom), float(tilt), float(convert)
     curve = strength_curve(tables, seed=seed)
     lo, hi = (theta_at(curve, p) for p in STRENGTH_COVER)
     grid = PriorGrid.build(tables, n_paths=STRENGTH_GRID_PATHS, seed=seed,
@@ -804,19 +830,27 @@ def try_strength(tables, fit, boom, tilt, seed=0, workers=None):
             start.team[i], start.kicks_second_half[i] = first, 1 - first
             _set_profiles(start, i, prof)
     home, away, counts = par_counts(tables, start, STRENGTH_PATHS, seed=seed, workers=workers)
+    got = np.stack([home.reshape(-1, 2).mean(1), away.reshape(-1, 2).mean(1)], axis=1)
+    want = np.array([m for _, m, _, _ in fit], float)
+    theta = start.theta[::2].copy()
+    step = np.log(np.maximum(0.1, want)) - np.log(np.maximum(0.1, got))
+    theta += np.clip(step / _curve_slope(curve, theta), -STRENGTH_HOLD_MAX, STRENGTH_HOLD_MAX)
+    start.theta = np.repeat(theta, 2, axis=0)
+    home, away, counts = par_counts(tables, start, STRENGTH_PATHS, seed=seed + 1, workers=workers)
+    got = np.stack([home.reshape(-1, 2).mean(1), away.reshape(-1, 2).mean(1)], axis=1)
     nb = len(STRENGTH_BANDS) + 1
     real_b, sim_b = np.zeros((nb, sim.N_CLASSES)), np.zeros((nb, sim.N_CLASSES))
     pts = np.zeros((nb, 3))                                       # sides, prior, simulated
     for k, (_, means, _, real) in enumerate(fit):
         c = counts[2 * k] + counts[2 * k + 1]
-        got = ((home[2 * k] + home[2 * k + 1]) / 2, (away[2 * k] + away[2 * k + 1]) / 2)
         for side in (0, 1):
             b = strength_band(means[side])
             real_b[b] += real[side]
             sim_b[b] += c[side]
-            pts[b] += (1, means[side], got[side])
-    return dict(boom=float(boom), tilt=float(tilt), deviance=snap_deviance(real_b, sim_b), real=real_b,
-                sim=sim_b, points=pts, curve=curve, cover=(lo, hi))
+            pts[b] += (1, means[side], got[k, side])
+    return dict(boom=float(boom), tilt=float(tilt), convert=float(convert),
+                deviance=snap_deviance(real_b, sim_b), real=real_b, sim=sim_b, points=pts,
+                curve=curve, cover=(lo, hi))
 
 
 def _strength_line(label, counts):
@@ -824,57 +858,70 @@ def _strength_line(label, counts):
     return f"{label}" + "".join(f"{v:>8.1f}" for v in sh)
 
 
+def _mech_name(key):
+    return f"boom {key[0]:g} tilt {key[1]:g} convert {key[2]:g}"
+
+
 def fit_strength(tables, matches, priors, profiles, verbose=True, seed=0, workers=None):
-    """STRENGTH_FIT: the boom and tilt whose simulated snaps by the side's expected points come
-    closest to the real ones, the prior grid's strengths and the form grid; sets them on the tables
-    and returns every candidate tried (None, the tables as they were, with too few matches)."""
+    """STRENGTH_FIT: the boom, tilt and conversion whose simulated snaps by the side's expected points
+    come closest to the real ones, the prior grid's strengths and the form grid; sets them on the
+    tables and returns every candidate tried (None, the tables as they were, with too few matches)."""
     fit = _strength_matches(matches, priors, profiles)
     if len(fit) < STRENGTH_MIN_MATCHES:
         if verbose:
             print(f"  strength fit: {len(fit)} matches with a prior and real snaps, fewer than"
-                  f" {STRENGTH_MIN_MATCHES}; boom {sim.BOOM:g} and tilt {sim.TILT_SCALE:g} kept")
+                  f" {STRENGTH_MIN_MATCHES}; boom {sim.BOOM:g}, tilt {sim.TILT_SCALE:g} and convert"
+                  f" {sim.CONVERT:g} kept")
         return None
     tried = {}
 
-    def run(b, t):
-        key = (round(b, 3), round(t, 3))
+    def run(key):
+        key = tuple(round(float(x), 3) for x in key)
         if key not in tried:
             tried[key] = try_strength(tables, fit, *key, seed=seed, workers=workers)
         return tried[key]
 
-    for b in STRENGTH_BOOMS:
-        for t in STRENGTH_TILTS:
-            run(b, t)
-    best = min(tried.values(), key=lambda r: r["deviance"])
-    db = min((abs(b - best["boom"]) for b in STRENGTH_BOOMS if b != best["boom"]), default=0.5) / 2
-    dtl = min((abs(t - best["tilt"]) for t in STRENGTH_TILTS if t != best["tilt"]), default=0.25) / 2
-    for b in (best["boom"] - db, best["boom"], best["boom"] + db):
-        for t in (best["tilt"] - dtl, best["tilt"], best["tilt"] + dtl):
-            if b >= 0 and t >= 0.1:
-                run(b, t)
-    best = min(tried.values(), key=lambda r: r["deviance"])
-    tables.boom, tables.tilt_scale = best["boom"], best["tilt"]
+    best = tuple(STRENGTH_START)
+    run(best)
+    for _ in range(STRENGTH_CYCLES):
+        moved = False
+        for axis, (_, values) in enumerate(STRENGTH_AXES):
+            for v in values:
+                key = tuple(v if i == axis else best[i] for i in range(3))
+                if axis == 1 and v <= 0:
+                    continue
+                run(key)
+            new = min((k for k in tried if all(k[i] == round(best[i], 3) for i in range(3) if i != axis)),
+                      key=lambda k: tried[k]["deviance"])
+            moved |= new != tuple(round(x, 3) for x in best)
+            best = new
+        if not moved:
+            break
+    was = run((sim.BOOM, sim.TILT_SCALE, sim.CONVERT))             # the old setting, for the print
+    first = tried.get((0.0, 0.75, 0.0))
+    best = tried[min(tried, key=lambda k: tried[k]["deviance"])]
+    tables.boom, tables.tilt_scale, tables.convert = best["boom"], best["tilt"], best["convert"]
     lo, hi = best["cover"]
     tables.theta_grid = np.round(np.linspace(lo, hi, GRID_N), 3)
     tables.form_grid = np.round(np.linspace(*(theta_at(best["curve"], p) for p in FORM_POINTS), 7), 3)
     if verbose:
-        was = tried.get((round(sim.BOOM, 3), round(sim.TILT_SCALE, 3)))
         print(f"  strength fit on {len(fit):,} matches ({2 * len(fit):,} sides), deviance of the snaps by"
-              f" expected points: " + "; ".join(f"boom {b:g} tilt {t:g} {r['deviance']:,.0f}"
-                                               for (b, t), r in sorted(tried.items())))
-        print(f"    -> boom {best['boom']:g}, tilt {best['tilt']:g}; the prior grid's strengths {lo:+.2f} to"
-              f" {hi:+.2f} ({STRENGTH_COVER[0]:g}-{STRENGTH_COVER[1]:g} points against a league side)")
-        print("    % of a side's snaps, real / fitted" + (" / before" if was else "") + ":"
+              " expected points, one knob at a time from " + _mech_name(STRENGTH_START) + ": "
+              + "; ".join(f"{_mech_name(k)} {r['deviance']:,.0f}" for k, r in tried.items()))
+        print(f"    -> {_mech_name((best['boom'], best['tilt'], best['convert']))}; the prior grid's strengths"
+              f" {lo:+.2f} to {hi:+.2f} ({STRENGTH_COVER[0]:g}-{STRENGTH_COVER[1]:g} points against a league side)")
+        rows = [("real", None), ("fitted", best)] + ([("13 Oct", first)] if first and first is not best else []) \
+            + [("before", was)]
+        print("    % of a side's snaps by its expected points (the sim's points held to the prior's):"
               + "".join(f"{c:>8s}" for c in sim.SNAP_CLASSES))
         for k in range(len(STRENGTH_BANDS) + 1):
             if not best["real"][k].sum():
                 continue
             n, prior, got = best["points"][k]
             label = f"      {prior / max(n, 1):5.1f} pts ({int(n)} sides, sim {got / max(n, 1):5.1f})"
-            print(_strength_line(f"{label:42s}real ", best["real"][k]))
-            print(_strength_line(f"{'':42s}fitted", best["sim"][k]))
-            if was:
-                print(_strength_line(f"{'':42s}before", was["sim"][k]))
+            for name, r in rows:
+                head = f"{label:42s}" if name == "real" else " " * 42
+                print(_strength_line(f"{head}{name:7s}", best["real"][k] if r is None else r["sim"][k]))
     return tried
 
 
@@ -2833,10 +2880,6 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
     # stage starting where the last left it, every state played as pricing plays its match
     real = sim.quarter_points(matches)
     sim.fit_period_theta(tables, real)                 # a starting scoring level, from kick-off
-    if STRENGTH_FIT and priors and handles:
-        fit_strength(tables, matches, priors, match_profiles(matches, book, ratings, handles, teams),
-                     verbose=verbose)               # (league strength plays the same at any boom
-        lap("strength fit")                            # and tilt: the starting level holds)
     form, grid, held = {}, None, None
     sides = _form_sides(pre, history) if pre is not None else []
     states = clock_states(matches, tables)
@@ -2844,8 +2887,18 @@ def build(matches, out_dir, grid_paths=6000, verbose=True, handles=None, history
         warm = rnd > 0
         took = _Stopwatch()
         grid = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
-        _responses(tables, grid, ratings, grid_paths, verbose=verbose and not warm)
+        strength = STRENGTH_FIT and rnd == 0 and bool(priors) and bool(handles)
+        _responses(tables, grid, ratings, grid_paths, verbose=verbose and not warm and not strength)
         took("grid and responses")
+        if strength:
+            # league strength plays the same at any boom, tilt or conversion: the starting level
+            # holds; the grid and its responses are made again on the fitted strength
+            fit_strength(tables, matches, priors, match_profiles(matches, book, ratings, handles, teams),
+                         verbose=verbose)
+            took("strength fit")
+            grid = PriorGrid.build(tables, n_paths=max(500, grid_paths // 4))
+            _responses(tables, grid, ratings, grid_paths, verbose=verbose)
+            took("grid and responses again")
         if priors and handles:
             held = held_starts(tables, grid, matches, priors, book, ratings, handles, teams)
             took("held strengths")

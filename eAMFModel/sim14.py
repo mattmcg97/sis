@@ -1882,35 +1882,43 @@ def _is_turnover(rec):
     return rec["kind"] != GAIN
 
 
-def zone_warp(u, tilt, to, loss, fail, top, big, loss_rate, loss_size):
-    """Uniform draws `u`, moved so the tilted draw lands on its bin's five parts -- turnovers (the
-    bottom `to` share), losses (`loss`), the other failed plays (to `fail` in all), the rest, and
-    the big plays (the top `top`) -- with the big plays `big` times as often and the failed plays as
-    much more often (as big_warp), the losses `loss_rate` times as often again, out of the rest
-    (never under BIG_MIDDLE), and inside the losses the draw leaned by `loss_size` toward the
-    biggest (above 1). Inside each part the tilted draw keeps its shape; with every rate 1 and no
-    loss in the bin, u comes back unchanged."""
+def zone_warp(u, tilt, to, loss, fail, top, big, loss_rate, loss_size, zero=None, conv=None):
+    """Uniform draws `u`, moved so the tilted draw lands on its bin's six parts -- turnovers (the
+    bottom `to` share), losses (`loss`), no gains (`zero`), the short gains (to `fail` in all), the
+    first downs, and the big plays (the top `top`) -- with the big plays `big` times as often and the
+    failed plays as much more often (as big_warp), the losses `loss_rate` times as often again, out
+    of the rest (never under BIG_MIDDLE), the odds of a first down against a short gain times `conv`
+    (the strength refit's conversion), and inside the losses the draw leaned by `loss_size` toward
+    the biggest (above 1). Inside each part the tilted draw keeps its shape; with every rate 1, no
+    loss in the bin and no conversion, u comes back unchanged. Without `zero` the no gains are with
+    the short gains, as before the refit."""
     inv = 1.0 / np.maximum(tilt, 1e-9)
     F = lambda x: 1.0 - np.power(np.clip(1.0 - x, 0.0, 1.0), inv)
-    bounds = [np.zeros_like(u), to, to + loss, fail, 1.0 - top, np.ones_like(u)]
+    zero = np.zeros_like(u) if zero is None else np.asarray(zero, float)
+    bounds = [np.zeros_like(u), to, to + loss, to + loss + zero, fail, 1.0 - top, np.ones_like(u)]
     old = [F(np.asarray(b, float)) for b in bounds]
-    q = [old[i + 1] - old[i] for i in range(5)]
-    c2 = np.where(top > 0, np.minimum(BIG_MAX, q[4] * big), q[4])
-    d = q[0] + q[1] + q[2]
-    grow = np.where(d > 0, np.maximum(0.0, d + (c2 - q[4])) / np.where(d > 0, d, 1.0), 1.0)
-    new = [q[0] * grow, q[1] * grow * loss_rate, q[2] * grow, None, c2]
-    new[3] = 1.0 - new[0] - new[1] - new[2] - new[4]
-    short = np.minimum(new[3] - BIG_MIDDLE, 0.0)          # the middle would run out: scale the rest
-    keep = np.where(short < 0, (1.0 - BIG_MIDDLE) / np.maximum(1e-12, 1.0 - new[3]), 1.0)
-    for i in (0, 1, 2, 4):
+    q = [np.maximum(0.0, old[i + 1] - old[i]) for i in range(6)]
+    c2 = np.where(top > 0, np.minimum(BIG_MAX, q[5] * big), q[5])
+    d = q[0] + q[1] + q[2] + q[3]
+    grow = np.where(d > 0, np.maximum(0.0, d + (c2 - q[5])) / np.where(d > 0, d, 1.0), 1.0)
+    new = [q[0] * grow, q[1] * grow * loss_rate, q[2] * grow, q[3] * grow, None, c2]
+    new[4] = 1.0 - new[0] - new[1] - new[2] - new[3] - new[5]
+    if conv is not None:                      # first downs against short gains, the two together kept
+        both = new[3] + np.maximum(new[4], 0.0)
+        denom = new[3] + conv * np.maximum(new[4], 0.0)
+        new[3] = np.where(denom > 0, both * new[3] / np.where(denom > 0, denom, 1.0), new[3])
+        new[4] = 1.0 - new[0] - new[1] - new[2] - new[3] - new[5]
+    short = np.minimum(new[4] - BIG_MIDDLE, 0.0)          # the middle would run out: scale the rest
+    keep = np.where(short < 0, (1.0 - BIG_MIDDLE) / np.maximum(1e-12, 1.0 - new[4]), 1.0)
+    for i in (0, 1, 2, 3, 5):
         new[i] = new[i] * keep
-    new[3] = 1.0 - new[0] - new[1] - new[2] - new[4]
+    new[4] = 1.0 - new[0] - new[1] - new[2] - new[3] - new[5]
     cum = [np.zeros_like(u)]
-    for i in range(5):
+    for i in range(6):
         cum.append(cum[-1] + new[i])
     out = u.copy()
-    for i in range(5):
-        m = (u >= cum[i]) & (u < cum[i + 1]) if i < 4 else (u >= cum[4])
+    for i in range(6):
+        m = (u >= cum[i]) & (u < cum[i + 1]) if i < 5 else (u >= cum[5])
         if not m.any():
             continue
         v = (u[m] - cum[i][m]) / np.maximum(new[i][m], 1e-12)
@@ -1937,12 +1945,36 @@ BOOM = 3.0
 TILT_SCALE = 0.5
 
 
+# v14 strength refit: strength as conversion. Real sides from under 13 expected points to over 21 turn
+# their gains short of the line into first downs (short of it on 27.9% of snaps to 23.7%, first downs
+# of 20-39 yards 9.1% to 11.7%) while their turnovers, losses and plays that gain nothing hardly move
+# (4.1-4.9%, 7.5-10.4%, 17-21%). Neither the tilt (every part of the bin at once, the top most) nor
+# the boom (the big plays and every failed play together) does that. Each bin now keeps its no-gain
+# plays below its short gains (ZERO_SPLIT, Tables.n_zero_stop/run), and a side's strength multiplies
+# the odds of a first down against a short gain by exp(convert x theta) (zone_warp): the turnovers,
+# losses, no gains and big plays stay where the tilt and boom put them. CONVERT is a build's without
+# a fit of its own (Tables.convert).
+ZERO_SPLIT = True
+CONVERT = 0.0
+
+
+def _is_zero(rec):
+    """A snap that gained nothing (an incomplete pass, mostly): no turnover, no yards."""
+    return rec["kind"] == GAIN and rec["gain"] == 0
+
+
 def strength_mech(tables):
     """(boom, tilt): the build's own (v14.STRENGTH_FIT, Tables.boom and tilt_scale), else BOOM and
     TILT_SCALE."""
     boom = getattr(tables, "boom", None)
     tilt = getattr(tables, "tilt_scale", None)
     return (BOOM if boom is None else float(boom)), (TILT_SCALE if tilt is None else float(tilt))
+
+
+def strength_convert(tables):
+    """The build's conversion (Tables.convert), else CONVERT."""
+    c = getattr(tables, "convert", None)
+    return CONVERT if c is None else float(c)
 
 
 class Tables:
@@ -1964,6 +1996,7 @@ class Tables:
         self.n_big_stop = self.n_big_run = None
         self.n_fail_stop = self.n_fail_run = None
         self.n_to_stop = self.n_to_run = self.n_loss_stop = self.n_loss_run = None
+        self.n_zero_stop = self.n_zero_run = None
         self.kick_pools, self.kick_mix = {}, None
         self.gain_surv = None
         self.quarter_pace = np.ones((4, PACE_SLICES))
@@ -1999,6 +2032,7 @@ class Tables:
         self.inplay_theta = np.zeros((N_SEGMENTS, N_BANDS))
         self.boom = None                       # v14 strength fit: the build's own boom and tilt
         self.tilt_scale = None                 # (None: BOOM and TILT_SCALE)
+        self.convert = None                    # and its conversion (None: CONVERT)
         self.theta_grid = None                 # the prior grid's strengths (None: v14.GRID)
         self.form_grid = None                  # the strengths the day's spread is read at (None: v14.FORM_GRID)
         self.spread_scale = None               # (game swing, own form) multipliers from the spread fit
@@ -2103,13 +2137,15 @@ class Tables:
         start, count, succ, nstop, ssucc, rsucc, nfresh, nfstop = {}, {}, {}, {}, {}, {}, {}, {}
         nbig_stop, nbig_run, nfail_stop, nfail_run = {}, {}, {}, {}
         nto_stop, nto_run, nloss_stop, nloss_run = {}, {}, {}, {}
+        nzero_stop, nzero_run = {}, {}
         kind, gain, newf, secs, rep, tdf = [], [], [], [], [], []
         for g in order:
             recs = list(bins[g])
             rng.shuffle(recs)
-            if LOSS_PLAYS:                # turnovers, losses (biggest first), the rest, big plays on top
+            if LOSS_PLAYS:                # turnovers, losses (biggest first), no gain, the rest, big plays on top
                 recs.sort(key=lambda r: (r["seconds"] > STOP_SECONDS, BIG_PLAYS and _is_big(r),
-                                         0 if _is_turnover(r) else 1 if _is_loss(r) else 2,
+                                         0 if _is_turnover(r) else 1 if _is_loss(r)
+                                         else 2 if (ZERO_SPLIT and _is_zero(r)) else 3,
                                          -2000 if r["kind"] == DEF_TD else -1000 if r["kind"] == TURNOVER
                                          else r["gain"] if _is_loss(r) else r["gain"] - r["distance"]))
             else:
@@ -2130,6 +2166,9 @@ class Tables:
             nto_run[g] = (sum(1 for r in recs if _is_turnover(r)) - nto_stop[g]) if LOSS_PLAYS else 0
             nloss_stop[g] = sum(1 for r in stops if _is_loss(r)) if LOSS_PLAYS else 0
             nloss_run[g] = (sum(1 for r in recs if _is_loss(r)) - nloss_stop[g]) if LOSS_PLAYS else 0
+            zeros = LOSS_PLAYS and ZERO_SPLIT
+            nzero_stop[g] = sum(1 for r in stops if _is_zero(r) and not _is_big(r)) if zeros else 0
+            nzero_run[g] = (sum(1 for r in recs if _is_zero(r) and not _is_big(r)) - nzero_stop[g]) if zeros else 0
             nfstop[g] = sum(1 for r in stops if r.get("fresh"))
             ssucc[g] = sum(r["success"] for r in stops) / max(1, len(stops))
             rsucc[g] = (sum(r["success"] for r in recs) - sum(r["success"] for r in stops)) \
@@ -2156,6 +2195,9 @@ class Tables:
             t.n_to_run = np.array([nto_run[g] for g in chosen], dtype=np.int64)
             t.n_loss_stop = np.array([nloss_stop[g] for g in chosen], dtype=np.int64)
             t.n_loss_run = np.array([nloss_run[g] for g in chosen], dtype=np.int64)
+            if ZERO_SPLIT:
+                t.n_zero_stop = np.array([nzero_stop[g] for g in chosen], dtype=np.int64)
+                t.n_zero_run = np.array([nzero_run[g] for g in chosen], dtype=np.int64)
         t.q4_modes = Q4_MODES
         t.stop_success = np.array([ssucc[g] for g in chosen])
         t.run_success = np.array([rsucc[g] for g in chosen])
@@ -2255,7 +2297,9 @@ class Tables:
         if self.gain_surv is not None:
             arrays["gain_surv"] = self.gain_surv
         if self.boom is not None:
-            arrays["strength_mech"] = np.array([self.boom, self.tilt_scale])
+            arrays["strength_mech"] = np.array([self.boom, self.tilt_scale, self.convert or 0.0])
+        if self.n_zero_stop is not None:
+            arrays["n_zero_stop"], arrays["n_zero_run"] = self.n_zero_stop, self.n_zero_run
         for name in ("theta_grid", "form_grid"):
             if getattr(self, name) is not None:
                 arrays[name] = np.asarray(getattr(self, name), float)
@@ -2314,7 +2358,11 @@ class Tables:
         if "period_theta" in z:
             t.period_theta = z["period_theta"]
         if "strength_mech" in z:
-            t.boom, t.tilt_scale = (float(x) for x in z["strength_mech"])
+            mech = [float(x) for x in z["strength_mech"]]
+            t.boom, t.tilt_scale = mech[:2]
+            t.convert = mech[2] if len(mech) > 2 else None
+        if "n_zero_stop" in z:
+            t.n_zero_stop, t.n_zero_run = z["n_zero_stop"], z["n_zero_run"]
         for name in ("theta_grid", "form_grid"):
             if name in z:
                 setattr(t, name, z[name])
@@ -2533,6 +2581,9 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
     boom_k, tilt_k = strength_mech(tables)
     boom_on = STRENGTH_BOOM and boom_k != 0 and getattr(tables, "n_loss_stop", None) is not None \
         and tables.n_big_stop is not None
+    conv_k = strength_convert(tables)
+    conv_on = conv_k != 0 and getattr(tables, "n_loss_stop", None) is not None and tables.n_big_stop is not None
+    zeros = getattr(tables, "n_zero_stop", None)
     fresh = rep(getattr(start, "fresh", np.zeros(S, dtype=bool))).astype(bool)
     prev_cls = np.full(P, -1, dtype=np.int8)            # STOP_LINK: the drive's previous play, -1 not known
     tos = rep(getattr(start, "timeouts", np.full((S, 2), -1))).astype(np.int8)
@@ -3039,15 +3090,18 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
         if inplay_exp is not None:
             tilt = tilt * inplay_exp[_segments_np(period[sx], clock[sx]),
                                      _bands_np(score[sx, 0] - score[sx, 1])]
-        if big_on or loss_on or boom_on:
+        if big_on or loss_on or boom_on or conv_on:
             share = np.where(stops, tables.n_big_stop[key], tables.n_big_run[key]) / seg_n
             fails = np.where(stops, tables.n_fail_stop[key], tables.n_fail_run[key]) / seg_n
             bs = big[sx, so] * np.exp(boom_k * theta[sx, so]) if boom_on else big[sx, so]
-            if loss_on or boom_on:
+            if loss_on or boom_on or conv_on:
                 to_sh = np.where(stops, tables.n_to_stop[key], tables.n_to_run[key]) / seg_n
                 loss_sh = np.where(stops, tables.n_loss_stop[key], tables.n_loss_run[key]) / seg_n
+                zero_sh = (np.where(stops, zeros[key], tables.n_zero_run[key]) / seg_n
+                           if conv_on and zeros is not None else None)
+                cv = np.exp(conv_k * theta[sx, so]) if conv_on else None
                 lr, ls = loss_r[sx, so], loss_s[sx, so]
-                warp = lambda u_: zone_warp(u_, tilt, to_sh, loss_sh, fails, share, bs, lr, ls)
+                warp = lambda u_: zone_warp(u_, tilt, to_sh, loss_sh, fails, share, bs, lr, ls, zero_sh, cv)
             else:
                 warp = lambda u_: big_warp(u_, tilt, share, fails, bs)
             uu = warp(uu)
@@ -3065,7 +3119,7 @@ def simulate(tables, start, n_paths, rng=None, theta_sd=None, kneel_seconds=20.0
                 if not held_td.any():
                     break
                 u2 = rand(sx, 20 + attempt)
-                if big_on or loss_on or boom_on:     # a redraw is warped as the first draw was
+                if big_on or loss_on or boom_on or conv_on:     # a redraw is warped as the first draw was
                     u2 = warp(u2)
                 u2 = 1.0 - (1.0 - u2) ** tilt
                 j = np.where(held_td, seg0 + np.minimum(seg_n - 1, (u2 * seg_n).astype(np.int64)), j)

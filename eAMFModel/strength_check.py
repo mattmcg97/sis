@@ -6,14 +6,16 @@ and the day's strength draw against fixed strengths.
 A side's strength (theta) reaches its snaps two ways (sim14.simulate): the tilt, exp(tilt x theta),
 which leans every draw toward the better end of its bin (fewer turnovers and losses, longer gains,
 all at once); and the boom, exp(boom x theta) times its bin's 40+ yard plays, the same share more
-of its failed plays, out of the plays between. A build fitted with v14.STRENGTH_FIT carries its own
-boom and tilt (Tables.boom, Tables.tilt_scale); an older one plays sim14.BOOM and TILT_SCALE. The build's prior grid finds the strengths that
+of its failed plays, out of the plays between; and (the strength refit) the conversion, exp(convert x
+theta) times the odds of a first down against a short gain. A build fitted with v14.STRENGTH_FIT
+carries its own (Tables.boom, tilt_scale, convert); an older one plays sim14.BOOM, TILT_SCALE and
+CONVERT. The build's prior grid finds the strengths that
 give each side its expected points. Each simulated game also draws the day's strengths around them
 (sim14.strength_draw: one swing both sides share, and each player's own form). Three parts:
 
   A  from kick-off: one side's expected points stepped, the other at SWEEP_OTHER, league profiles,
-     no draw. Its points and how its snaps split (SNAP_CLASSES), as built, with the tilt alone
-     (the boom off) and the boom alone (the tilt off): which kinds of play the strength moves.
+     no draw. Its points and how its snaps split (SNAP_CLASSES), as built and with each of the
+     three alone (the other two off): which kinds of play each part of the strength moves.
   B  the window's settled matches, each priced as the stream prices its kick-off (the held
      strengths, the players' profiles, the day's draw): every side's snaps against its real ones,
      grouped by the side's expected points and by its expected margin.
@@ -40,7 +42,9 @@ N_CLASSES = sim.N_CLASSES
 SWEEP_POINTS = (10.0, 13.0, 16.0, 19.0, 22.0, 25.0)
 SWEEP_OTHER = 16.0
 SWEEP_PATHS = 4000
-CHANNELS = (("as built", {}), ("tilt alone", {"boom": 0.0}), ("boom alone", {"tilt_scale": 0.0}))
+CHANNELS = (("as built", {}), ("tilt alone", {"boom": 0.0, "convert": 0.0}),
+            ("boom alone", {"tilt_scale": 0.0, "convert": 0.0}),
+            ("convert alone", {"tilt_scale": 0.0, "boom": 0.0}))
 POINT_BINS = (13.0, 15.0, 17.0, 19.0, 21.0)
 MARGIN_BINS = (-7.0, -3.5, -1.0, 1.0, 3.5, 7.0)
 DEFAULT_PATHS = 2000
@@ -209,8 +213,8 @@ def _diff(label, diff):
 def sweep_lines(rows):
     lines = ["", f"  A. FROM KICK-OFF: one side's expected points stepped, the other at {SWEEP_OTHER:g}"
                  " (league profiles, no strength draw)",
-             "     its points and snaps a game, and how its snaps split (% of its snaps); the tilt alone"
-             " has the boom off, the boom alone the tilt off, at the same strengths",
+             "     its points and snaps a game, and how its snaps split (% of its snaps); each part alone"
+             " has the other two off, at the same strengths",
              _head(f"{'expected':>9s} {'strength':>9s} {'':12s}")]
     for pts, name, theta, g in rows:
         first = f"{pts:>9.0f} {theta[0]:>+9.2f} " if name == CHANNELS[0][0] else " " * 20
