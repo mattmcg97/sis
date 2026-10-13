@@ -1937,7 +1937,61 @@ python -m eAMFModel prior-vs-sim --model v13_glmer_1001 --history eAMFCalibrator
 ```
 
 `--paths` sets the simulated games per kick-off (default 4000), and `--workers` the processes. `--out`
-also writes a per-match CSV.
+also writes a per-match CSV. Under the table, the moneyline log loss differences are given match by
+match with their paired standard error. A difference inside about two of them is within the noise of
+the window.
+
+## A side's strength, snap by snap (`strength-check`, v14)
+
+A side's strength (theta) reaches its snaps two ways in `sim14.simulate`:
+- **The tilt**, exp(`TILT_SCALE` x theta) with `TILT_SCALE` 0.5. It leans every draw toward the
+  better end of its bin: fewer turnovers and losses, and longer gains, all at once.
+- **The boom**, exp(`BOOM` x theta) with `BOOM` 3. It multiplies the bin's 40+ yard plays and moves
+  the same share onto its failed plays (turnovers, losses and the rest short of the line), out of
+  the plays between. A side's own big-play rate works the same way.
+
+Nothing else reads the strength. The play calling, the clock, 4th-down choices, kicking and red-zone
+holds are the same for a strong side as for a weak one; they differ only by the states the plays
+lead to. The prior grid finds the strengths that give each side its expected points. Each simulated
+game also draws the day's strengths around them (`sim14.strength_draw`): one swing both sides share,
+and each player's own form.
+
+`strength-check` measures all of this on a build, in three parts:
+- **A. From kick-off.**
+  - One side's expected points are stepped from 10 to 25, with the other side at 16, league
+    profiles and no draw.
+  - It shows the side's points, snaps a game and how its snaps split: turnover, loss, no gain, short
+    of the line, a first down under 20 yards, 20-39 yards, 40+.
+  - Each step is run as built, with the tilt alone (`BOOM` 0) and with the boom alone (`TILT_SCALE`
+    0), at the same strengths. So it shows which kinds of play each part of the strength moves, and
+    how many of the points each carries.
+- **B. Every side, real against the sim.** The window's settled matches are priced as the stream
+  prices their kick-off: the held strengths, the players' profiles and the day's draw. Every side's
+  points and snap split are set against its real ones. They're grouped by the side's expected points
+  and by its expected margin, with the sim less real on each class.
+  - If strong sides really get their points with fewer failed plays while the sim gets them from big
+    plays, it shows here.
+  - The margin grouping shows how favourites and outsiders differ.
+- **C. The day's draw against fixed strengths.**
+  - The same matches are priced again with the draw off. The hold is run without the draw too, so
+    the prior's total is still met.
+  - It compares, for both: the mean total and margin against the prior's, the margin and total
+    spread (against the real results' RMS about the prior), the moneyline log loss and Brier, and
+    the margin and total RPS and coverage, all on the results.
+  - It ends with the log loss difference and its paired standard error.
+
+```powershell
+python -m eAMFModel strength-check --model v14_model --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_strength
+```
+
+- `--no-matches` runs part A alone, in a few minutes.
+- `--paths` sets the games per kick-off for B and C (default 2000); every match is priced twice, each
+  with its own hold.
+- `--out` also writes a per-side CSV with each side's prior, real and simulated points, strengths
+  and snap counts.
+- Sim snaps are the real plays the draws landed on, with the gain cut at the goal line. The
+  touchdown run-on and backed-up rules that can change a play afterwards are not applied, so the
+  shares are what each side draws. Kneels and overtime are left out of both.
 
 ## Refitting the prior every day (`prior-daily`, v10–v13)
 

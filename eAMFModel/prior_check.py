@@ -178,10 +178,11 @@ def _cdf_scores(pmf, offset, actual):
     return float((k * pmf).sum()), rps, lo50 <= actual <= hi50, lo80 <= actual <= hi80
 
 
-def grade(results, buckets=10):
-    """{method: summary dict} and the calibration tables."""
+def grade(results, buckets=10, methods=None):
+    """{method: summary dict} and the calibration tables, for `methods` (default METHODS): the keys
+    of every result's books."""
     summary, tables = {}, {}
-    for m in METHODS:
+    for m in methods or METHODS:
         p, won, mstats, tstats = [], [], [], []
         for x in results:
             mp_, tp = x["books"][m]
@@ -195,9 +196,9 @@ def grade(results, buckets=10):
             mstats.append(_cdf_scores(mp_, mid, margin) + (margin,))
             tstats.append(_cdf_scores(tp, 0, total) + (total,))
         p, won = np.clip(np.array(p), 1e-9, 1 - 1e-9), np.array(won)
-        out = dict(n=len(results), ml_n=len(p),
-                   log_loss=float(-(won * np.log(p) + (1 - won) * np.log(1 - p)).mean()),
-                   brier=float(((p - won) ** 2).mean()))
+        ll = -(won * np.log(p) + (1 - won) * np.log(1 - p))
+        out = dict(n=len(results), ml_n=len(p), log_loss=float(ll.mean()),
+                   brier=float(((p - won) ** 2).mean()), ll=ll)
         for name, st in (("margin", mstats), ("total", tstats)):
             a = np.array([s[:4] + (s[4],) for s in st], dtype=float)
             err = a[:, 4] - a[:, 0]
@@ -210,6 +211,12 @@ def grade(results, buckets=10):
                 rows.append((float(p[chunk].mean()), float(won[chunk].mean()), len(chunk)))
         summary[m], tables[m] = out, rows
     return summary, tables
+
+
+def paired(summary, a, b):
+    """(mean, standard error) of method a's moneyline log loss less b's, match by match."""
+    d = summary[a]["ll"] - summary[b]["ll"]
+    return float(d.mean()), float(d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 1 else float("nan")
 
 
 LABELS = {"raw": "glmer raw", "raw+": "glmer + layers", "sim": "v13 sim"}
@@ -230,6 +237,10 @@ def report(results, since, until, version="v13"):
                                 ("in80", "inside central 80%", "{:.1%}")):
             lines.append(f"  {name + ' ' + label:26s}" + "".join(
                 f"{fmt.format(summary[m][name][key]):>16s}" for m in METHODS))
+    for a, b in (("sim", "raw"), ("sim", "raw+"), ("raw+", "raw")):
+        d, se = paired(summary, a, b)
+        lines.append(f"  {'log loss, ' + LABELS[a] + ' less ' + LABELS[b]:42s}{d:>+9.4f} +/- {se:.4f}"
+                     " (paired standard error)")
     lines += ["", "  moneyline calibration by decile of each one's own home win chance (pushes out):"]
     lines.append(f"  {'':4s}" + "".join(f"{LABELS[m]:>24s}" for m in METHODS))
     lines.append(f"  {'':4s}" + "".join(f"{'priced':>9s}{'won':>8s}{'n':>7s}" for _ in METHODS))

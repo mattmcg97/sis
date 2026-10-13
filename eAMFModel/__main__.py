@@ -283,6 +283,34 @@ def cmd_prior_vs_sim(args):
     return 0
 
 
+def cmd_strength_check(args):
+    import datetime as dt
+    from . import strength_check as sc
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print("  A: the sweep from kick-off", flush=True)
+    rows = sc.sweep(args.model, n_paths=args.sweep_paths, workers=workers)
+    results = []
+    if not args.no_matches:
+        history = sc.history_rows(args.history or DATA["history"])
+        codes = sc.window_codes(history, since, until)
+        print(f"  B and C: reading the snapshots of {len(codes):,} matches", flush=True)
+        snaps = sc.load_snapshots(args.snapshots or DATA["snapshots"], codes)
+        print("  B and C: pricing the window's matches, with the day's draw and with fixed strengths", flush=True)
+        results = sc.run(args.model, history, snaps, since, until, n_paths=args.paths, workers=workers)
+    lines = sc.report(rows, results, since, until)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "strength_check.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        if results:
+            sc.write_csv(os.path.join(args.out, "strength_check.csv"), results)
+        print(f"\n  -> {args.out}/strength_check.txt" + (" and strength_check.csv" if results else ""))
+    return 0
+
+
 def cmd_v14_variants(args):
     import datetime as dt
     from . import nb2_prior, prior_variants
@@ -604,6 +632,21 @@ def build_parser():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", help="also write v14_priors.txt and v14_priors.csv here")
     p.set_defaults(func=cmd_v14_priors)
+
+    p = sub.add_parser("strength-check", help="a v14 build's strengths snap by snap: which kinds of play "
+                                              "they move, the sim's snaps against the real ones, and the day's "
+                                              "strength draw against fixed strengths, graded on the results")
+    p.add_argument("--model", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=2000, help="simulated games per kick-off (default 2000)")
+    p.add_argument("--sweep-paths", type=int, default=4000, help="games per step of the sweep (default 4000)")
+    p.add_argument("--no-matches", action="store_true", help="the sweep only (part A)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write strength_check.txt and a per-side strength_check.csv here")
+    p.set_defaults(func=cmd_strength_check)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")
