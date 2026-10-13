@@ -2866,3 +2866,36 @@ class TestSweepFixes(unittest.TestCase):
         finally:
             v14.BUILD_WORKERS = saved
         self.assertEqual(seen, [12])
+
+
+class TestTimeoutsRead(unittest.TestCase):
+    """The optimum build reads the calibrator's timeouts.csv before it fits when sides call them, and a
+    build that has none never fits every call rate to nothing."""
+
+    def test_the_optimum_build_places_the_real_calls(self):
+        from .. import __main__ as cli
+        with tempfile.TemporaryDirectory() as d:
+            paths = {k: os.path.join(d, os.path.basename(v)) for k, v in cli.DATA.items()}
+            for p in paths.values():
+                open(p, "w").close()
+            placed = []
+            with mock.patch.dict(cli.DATA, paths), \
+                    mock.patch.object(cli.playover, "load", return_value={"M1": []}), \
+                    mock.patch.object(cli.playover, "annotate_timeouts",
+                                      side_effect=lambda data, path: placed.append(path) or 0), \
+                    mock.patch.object(nb2_prior, "load_history", return_value=[]), \
+                    mock.patch.object(cli.players, "load_handles", return_value={}), \
+                    mock.patch.object(v14, "build"), mock.patch("builtins.print"):
+                args = cli.build_parser().parse_args(["v14-build", "--no-daily"])
+                cli.cmd_sim_build(args)
+        self.assertEqual(placed, [paths["timeouts"]])
+
+    def test_timeouts_used_without_the_calls_fall_back_to_the_real_rates(self):
+        matches = _matches(20)
+        for rows in matches.values():
+            for r in rows:
+                r["timeouts_used_a"], r["timeouts_used_b"] = "0", "0"
+        with mock.patch("builtins.print"):
+            tables = sim14.Tables.build(matches, min_records=20)
+        self.assertFalse(tables.call_fitted)
+        np.testing.assert_allclose(tables.call_p, np.array(sim14.DEFAULT_CALL_P))

@@ -80,6 +80,8 @@ def cmd_sim_build(args):
     name = args.version
     model = _sim_module(name)
     import datetime as dt
+    if name in OPTIMUM:
+        _optimum_inputs(args)            # before the timeouts are read: it finds timeouts.csv
     data = playover.load(args.snapshots)
     if getattr(args, "timeouts", None):
         found = playover.annotate_timeouts(data, args.timeouts)
@@ -90,8 +92,6 @@ def cmd_sim_build(args):
         cut = dt.date.fromisoformat(args.until)
         keep = {c for c in keep if day(c) < cut}
         print(f"  building on {len(keep):,} matches before {cut}")
-    if name in OPTIMUM:
-        _optimum_inputs(args)
     handles = players.load_handles(args.handles) if args.handles else None
     history = before = None
     if args.history:

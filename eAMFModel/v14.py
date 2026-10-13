@@ -1191,10 +1191,10 @@ def fit_quarter_levels(tables, quarter_items, late_items, rounds=6, n_paths=150,
         return out
 
     def scored(start, q):
-        """Points the simulation scores in a quarter from these starts."""
+        """Points the simulation scores in a quarter from these starts (each start's paths on its own
+        random numbers, the same every round, on the build's processes)."""
         stats = {}
-        sim.simulate(tables, start, n_paths, np.random.default_rng(seed + q), stats=stats,
-                     common=False)
+        par_simulate(tables, start, n_paths, seed=seed + q, stats=stats)
         began = float((start.home + start.away).sum()) * n_paths
         return (stats[f"points_by_q{q}"] - began) / (len(start.period) * n_paths)
 
@@ -1582,7 +1582,7 @@ def fit_call_scale(tables, items, n_paths=CALL_FIT_PATHS, seed=0, held=None, ste
         def calls(scale):
             tables.call_p[qi] = np.minimum(base * scale, CALL_MAX)
             stats = {}
-            sim.simulate(tables, start, n_paths, np.random.default_rng(seed + q), stats=stats)
+            par_simulate(tables, start, n_paths, seed=seed + q, stats=stats)
             return stats.get(f"timeouts_q{q}", 0) / (len(its) * n_paths)
 
         before = calls(1.0)

@@ -1342,9 +1342,16 @@ goals on downs 1-3 from 2:00 (0.076, real 0.094) sit at the edge of what their f
   close sides' clock at its limit chasing them. That was the report's Q4 miss (15.5% short).
 - **Distinct paths split across processes** (`par_simulate`). Each block now numbers its paths where
   its rows start (`path_offset`), so the held strengths no longer change with the number of processes.
-- **Faster**: the rubber band runs on the build's processes (it was about half of each round), and the
-  close-level fit no longer plays out every grid point's games for an overtime share that weighs
-  nothing.
+- **The default build never read the timeouts** (13 Oct). `v14-build` with no `--timeouts` finds the
+  calibrator's `timeouts.csv` itself, but looked for it after placing the calls, so none were placed:
+  the export says how many timeouts each side has used, not who called one, and every call rate was
+  fitted at nothing (the report: 2.26 timeouts from Q2's two-minute mark, simulated 0.006). It reads
+  them first now, and a build with timeouts used but no calls placed warns and takes the real rates in
+  `DEFAULT_CALL_P`. Builds since 12 Oct, the 1-12 Oct report's among them, played without timeouts.
+- **Faster**: the rubber band (about half of each round), the timeout calls' fit and the quarters'
+  scoring levels run on the build's processes, and the close-level fit no longer plays out every grid
+  point's games for an overtime share that weighs nothing: a round took 30 and 21 minutes on 12
+  processes, against 64 and 53 on one.
 
 ### Held out
 

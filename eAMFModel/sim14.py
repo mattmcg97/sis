@@ -1995,7 +1995,13 @@ class Tables:
         age_weights(snaps + ends, as_of, half_life)
         t = cls()
         if TIMEOUTS:
-            known = any("timeouts_left" in r for r in snaps)
+            # the calls are fitted where the snaps say who called one (playover.annotate_timeouts off
+            # the calibrator's timeouts.csv); the export's timeouts-used columns alone carry none,
+            # and fitting on them would put every rate at nothing
+            known = any("timeouts_left" in r for r in snaps) and any(r.get("timeout_role") is not None for r in snaps)
+            if not known and any("timeouts_left" in r for r in snaps):
+                print("  timeouts: WARNING the snapshots carry the timeouts each side has used but no call was"
+                      " placed before its snap (no timeouts.csv read?): the real rates in DEFAULT_CALL_P", flush=True)
             t.call_p = fit_timeout_calls(snaps) if known else np.array(DEFAULT_CALL_P)
             t.call_fitted = known
             t.ot_call_scale = fit_ot_call_scale(snaps, t.call_p) if known else OT_CALL_DEFAULT
