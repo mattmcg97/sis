@@ -1268,12 +1268,14 @@ class TestBuild(unittest.TestCase):
         self.assertFalse(hasattr(v14.PriorGrid, "fit"))
 
     def test_the_build_needs_history_on_the_command_line(self):
-        from ..__main__ import main
+        from .. import __main__ as cli
         path = os.path.join(self.tmp.name, "snaps_cli.csv")
         with open(path, "w") as fh:
             fh.write("match_code\n")
-        with self.assertRaises(SystemExit) as caught:
-            main(["v14-build", path, "--out", os.path.join(self.tmp.name, "cli")])
+        # no refreshed history for the optimum build to find either
+        nowhere = {k: os.path.join(self.tmp.name, "none", os.path.basename(v)) for k, v in cli.DATA.items()}
+        with mock.patch.dict(cli.DATA, nowhere), self.assertRaises(SystemExit) as caught:
+            cli.main(["v14-build", path, "--out", os.path.join(self.tmp.name, "cli")])
         self.assertIn("--history", str(caught.exception))
 
     def test_handles_come_off_the_export(self):
