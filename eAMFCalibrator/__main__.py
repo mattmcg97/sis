@@ -283,6 +283,16 @@ def cmd_expected_points(args):
     return 0
 
 
+def read_match_list(value):
+    """Match codes from a file (one a line, the first word; # starts a comment) or a comma-separated
+    list."""
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as fh:
+            codes = [line.split("#", 1)[0].split() for line in fh]
+        return [c[0] for c in codes if c]
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
 def cmd_bets(args):
     """The betting simulation: every in-play bet in the window with prod's and the candidate's
     probability at the moment it was priced (`probe` first checks the names it reads)."""
@@ -318,6 +328,8 @@ def cmd_bets(args):
         config.BET_TABLE = args.bet_table
     if getattr(args, "gamer", None):
         config.GAMERS = [g.strip() for g in args.gamer if g.strip()]
+    if getattr(args, "only_matches", None):
+        config.ONLY_MATCHES = read_match_list(args.only_matches)
     if args.gap is not None:
         config.MAX_SCOUTING_GAP = args.gap
     if args.max_lag is not None:
@@ -1122,6 +1134,9 @@ def build_parser():
                                   "with each one's closing pre-match prices -- prod against each "
                                   "candidate -- the result, and what its bets returned the book both "
                                   "ways (out/bets_gamers.txt); one night of one gamer is quick, in play too")
+    bets_parser.add_argument("--only-matches", metavar="FILE|CODES",
+                             help="run, prematch: only these matches' bets -- a file of match codes (one a "
+                                  "line, # comments), or codes comma-separated; a quick test on a chosen few")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",

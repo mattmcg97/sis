@@ -25,6 +25,10 @@ by play, off PLAY_OVER snapshots on the real game clock.
   form-trace             one gamer's matches as the pre-match model priced them and as the
                          post-game form layer moves them
   trader                 a local page to click through a game and see a version's prices
+  v14-variants DIR       copies of a v14 build pricing off other priors: without the shrink,
+                         with the form layer, NB2 (refitted daily) -- each a calibrator candidate
+  v14-priors             chosen matches as prod and each v14 variant price them: prior and
+                         kick-off expected points, prices at prod's lines, what the bets kept
   prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's
                          kick-off does off it, both graded on the results (calibration)
   kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
@@ -279,6 +283,51 @@ def cmd_prior_vs_sim(args):
     return 0
 
 
+def cmd_v14_variants(args):
+    import datetime as dt
+    from . import nb2_prior, prior_variants
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    made = prior_variants.make(args.model, history, variants=[v.strip() for v in args.variants.split(",") if v.strip()],
+                               workers=args.workers, until=until, daily=None if args.no_daily else _daily)
+    for name, d in made.items():
+        print(f"  {name}: {d}")
+    tags = ",".join(f"v14-{name}={d}" for name, d in made.items())
+    print(f"\n  as calibrator candidates: --candidate v14,{tags} --v14-model {args.model}")
+    return 0
+
+
+def cmd_v14_priors(args):
+    import os
+    from . import nb2_prior, prior_variants
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    codes = _match_list(args.matches)
+    models = {}
+    for item in args.models.split(","):
+        label, eq, directory = item.strip().partition("=")
+        models[label] = directory if eq else label
+    results = prior_variants.compare(models, history, codes, snapshots=args.snapshots or DATA["snapshots"],
+                                     bets_csv=args.bets, n_paths=args.paths, seed=args.seed)
+    lines = prior_variants.report(results, list(models))
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v14_priors.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        prior_variants.write_csv(os.path.join(args.out, "v14_priors.csv"), results, list(models))
+        print(f"\n  -> {args.out}/v14_priors.txt and v14_priors.csv")
+    return 0
+
+
+def _match_list(value):
+    """Match codes from a file (one a line, the first word; # starts a comment) or a comma-separated
+    list."""
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as fh:
+            return [w[0] for w in (line.split("#", 1)[0].split() for line in fh) if w]
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
 def cmd_prior_daily(args):
     import datetime as dt
     from . import nb2_prior, rolling_prior
@@ -531,6 +580,30 @@ def build_parser():
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", help="also write prior_vs_sim.txt and a per-match prior_vs_sim.csv here")
     p.set_defaults(func=cmd_prior_vs_sim)
+
+    p = sub.add_parser("v14-variants", help="copies of a v14 build pricing off other priors (no shrink, the "
+                                            "form layer, NB2 refitted daily), for the calibrator side by side")
+    p.add_argument("model", nargs="?", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--variants", default="raw,layered,nb2", help="which: raw, layered, nb2 (default all)")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--until", help="NB2's daily fits up to this day (default: the history's last)")
+    p.add_argument("--no-daily", action="store_true", help="NB2 from its single fit at the cut-off")
+    p.add_argument("--workers", type=int, default=2, help="NB2's daily fits run side by side (default 2)")
+    p.set_defaults(func=cmd_v14_variants)
+
+    p = sub.add_parser("v14-priors", help="chosen matches as prod and each v14 variant price them before "
+                                          "kick-off, and what each kept of their bets")
+    p.add_argument("--matches", required=True, help="a file of match codes (one a line) or codes, comma-separated")
+    p.add_argument("--models", default="v14=v14_model,v14-raw=v14_model_raw,v14-layered=v14_model_layered,"
+                                       "v14-nb2=v14_model_nb2",
+                   help="label=build pairs, comma-separated; the labels the calibrator's candidates had")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", help=f"the snapshot export, for prod's prices (default {DATA['snapshots']})")
+    p.add_argument("--bets", help="the calibrator's bets_sim.csv with every model a candidate: each one's kept")
+    p.add_argument("--paths", type=int, default=4000, help="simulated games per kick-off (default 4000)")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", help="also write v14_priors.txt and v14_priors.csv here")
+    p.set_defaults(func=cmd_v14_priors)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")

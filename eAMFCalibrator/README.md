@@ -1840,6 +1840,20 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### A chosen few matches: `bets --only-matches`
+
+```bash
+python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --candidate v14,v14-raw=v14_model_raw --v14-model v14_model --out eAMFCalibrator/out_worst15
+```
+
+`--only-matches` takes a file of match codes (one a line, the first word; `#` starts a comment) or
+codes comma-separated, and keeps only those matches' bets, so a handful is priced in minutes, in play
+included. `match_lists/` holds the lists: `v14_worst15_oct.txt`, the 15 matches where v14's re-priced
+bets fell furthest short of its markup over 1-11 Oct (96% of its shortfall on 4.5% of the stake), and
+`v14_control15_oct.txt`, 15 others with as much money on them, drawn at random. A list chosen for
+losing flatters any model that disagrees with the one it was chosen on, so read the two together.
+`eAMFModel v14-priors` lays the same matches out by each prior (see its README).
+
 ### One gamer's night: `bets --gamer`
 
 ```bash

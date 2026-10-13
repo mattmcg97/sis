@@ -26,6 +26,8 @@ PREMATCH_ONLY = False
 # `bets --gamer NAME`: only the matches these gamers played, with each match's closing pre-match
 # prices and what its bets returned, prod against each candidate.
 GAMERS = []
+# `bets --only-matches FILE`: only these matches' bets (a quick test on a chosen few).
+ONLY_MATCHES = []
 # The margin uplift every betting simulation runs (margin_uplift.py, the partner's dummy-bet
 # method): prod against each candidate over the window, priced off UPLIFT_CHART (a margin chart
 # CSV: probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
