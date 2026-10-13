@@ -1810,11 +1810,27 @@ class TestGlmerPrior(unittest.TestCase):
         self.assertFalse(glmer_prior.Prematch.exists(self.tmp.name))
         self.assertIn("glmer form / hl60", pre.describe())
 
+    def test_predictions_side_by_side_off_one_fit_keep_to_their_own_matches(self):
+        from concurrent.futures import ThreadPoolExecutor
+        history = self.history()
+        out = os.path.join(self.tmp.name, "model")
+        pre = glmer_prior.Prematch.build(history, out, self.BEFORE)
+        late = [r for r in history if nb2_prior._start(r) >= self.BEFORE]
+        groups = [late[k::4] for k in range(4)]
+        with ThreadPoolExecutor(4) as pool:
+            got = list(pool.map(lambda rows: glmer_prior.predict(out, rows, results=history), groups * 3))
+        for rows, g in zip(groups * 3, got):
+            self.assertEqual(set(g), {r["MATCH_CODE"] for r in rows})
+        left = os.listdir(os.path.join(out, "predict"))
+        self.assertFalse([f for f in left if f.endswith(".csv")])       # each call cleans up after itself
+        self.assertTrue(pre.means(late[:2]))
+
     def test_predict_gets_the_models_history_and_skips_the_simulation(self):
         out = os.path.join(self.tmp.name, "model")
         pre = glmer_prior.Prematch.build(self.history(), out, self.BEFORE)
         last = self.history()[-1]
-        pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
+        with mock.patch.object(glmer_prior, "KEEP_FILES", True):
+            pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
         with open(os.path.join(out, "predict", "args.json")) as fh:
             args = json.load(fh)
         self.assertEqual(args["n_sims"], "0")                 # expected points only

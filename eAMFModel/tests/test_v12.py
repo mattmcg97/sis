@@ -1806,7 +1806,8 @@ class TestGlmerPrior(unittest.TestCase):
         out = os.path.join(self.tmp.name, "model")
         pre = glmer_prior.Prematch.build(self.history(), out, self.BEFORE)
         last = self.history()[-1]
-        pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
+        with mock.patch.object(glmer_prior, "KEEP_FILES", True):
+            pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
         with open(os.path.join(out, "predict", "args.json")) as fh:
             args = json.load(fh)
         self.assertEqual(args["n_sims"], "0")                 # expected points only
