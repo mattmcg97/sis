@@ -1912,7 +1912,7 @@ python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-match
 python -m eAMFModel v14-priors --matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --bets eAMFCalibrator/out_worst15/bets_sim.csv --out eAMFCalibrator/out_worst15
 ```
 
-## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13)
+## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13 and v14)
 
 For every settled match in a window, priced as of its kick-off, this grades three prices of it on the
 real results:
@@ -1921,9 +1921,11 @@ real results:
   as `glmer/predict.R` prices the moneyline. A prior with no sigmas, NB2, gets plain Poisson.
 - **glmer + layers**: the same score model off the means the build prices with, after the prior
   shrink and any follow or form layer. Against raw it shows what those do.
-- **v13 sim**: v13's kick-off price off those means, with each side's profile and big-play rates.
-  That is what the stream quotes before the first play. Against the column before, it shows what
-  the simulation alone gains or loses.
+- **v13 sim** (or **v14 sim**, for a v14 build): the build's kick-off price off those means, with each
+  side's profile and big-play rates. That is what the stream quotes before the first play. Against
+  the column before, it shows what the simulation alone gains or loses. v14 holds the prior's total
+  (within `HOLD_TOL`) but lets each side's rates move the margin, so its expected margin differs from
+  the prior's by design; this grades whether that move helps.
 
 Each is graded on the moneyline (log loss, Brier, a decile calibration table, pushes left out) and on
 the margin and the total. For those it reports the bias and RMSE of the expected value, the ranked

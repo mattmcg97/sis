@@ -14,8 +14,9 @@ before it):
   raw+    the same score model off the means the build prices with: the prior shrink and any
           follow or form layer on top. Set against raw it shows what those do; set against sim,
           what the simulation alone does.
-  sim     v13's kick-off price (v13_stream.kickoff_book) off those means, with each side's profile
-          and big-play rates: what the stream quotes before the first play.
+  sim     the build's kick-off price (vN_stream.kickoff_book: v13 or v14, whichever the build is) off
+          those means, with each side's profile and big-play rates: what the stream quotes before the
+          first play.
 
 Graded on the moneyline (log loss, Brier, a calibration table by decile, pushes left out), the
 margin and the total: the bias and RMSE of the expected value, the ranked probability score over the
@@ -27,9 +28,29 @@ import math
 
 import numpy as np
 
+import importlib
+import os
+
 from . import nb2_prior, players, v13, v13_stream
 
 RAW_DRAWS = 20000
+VERSIONS = ("v13", "v14")
+
+
+def version_of(model_dir):
+    """The version a build directory holds (its <version>tables.npz), newest first; v13 when none."""
+    for v in reversed(VERSIONS):
+        if os.path.exists(os.path.join(str(model_dir), f"{v}tables.npz")):
+            return v
+    return "v13"
+
+
+def _modules(version):
+    """The version's model and stream modules."""
+    if version == "v13":
+        return v13, v13_stream
+    return (importlib.import_module(f"{__package__}.{version}"),
+            importlib.import_module(f"{__package__}.{version}_stream"))
 DEFAULT_PATHS = 4000
 
 
@@ -73,37 +94,42 @@ def raw_books(means, s_obs, s_match, n=RAW_DRAWS, seed=0):
 
 
 def _sim_worker(job):
-    model_dir, items, n_paths, seed = job
-    tables_path, grid_path = v13_stream.model_paths(model_dir)
-    tables = v13.sim.Tables.load(tables_path)
-    grid = v13.PriorGrid.load(grid_path)
-    variant = v13.Variant("v13")
+    model_dir, items, n_paths, seed = job[:4]
+    m, st = _modules(job[4] if len(job) > 4 else "v13")
+    tables_path, grid_path = st.model_paths(model_dir)
+    tables = m.sim.Tables.load(tables_path)
+    grid = m.PriorGrid.load(grid_path)
+    variant = m.Variant(job[4] if len(job) > 4 else "v13")
     rng = np.random.default_rng(seed)
-    return {code: v13_stream.kickoff_book(tables, grid, variant, code, n_paths, rng, prof, means)
+    return {code: st.kickoff_book(tables, grid, variant, code, n_paths, rng, prof, means)
             for code, prof, means in items}
 
 
 def profiles(model_dir, rows):
-    """{match: (home profile, away profile)} with big-play rates, as v13's stream prices them."""
-    tables_path, _ = v13_stream.model_paths(model_dir)
-    book = v13.players_book(tables_path)
-    ratings = v13.big_ratings(tables_path)
-    teams = v13.match_teams(rows)
+    """{match: (home profile, away profile)} with big-play rates (and v14's lost-yardage rates and
+    loss sizes), as the build's stream prices them."""
+    v13_, st = _modules(version_of(model_dir))
+    tables_path, _ = st.model_paths(model_dir)
+    book = v13_.players_book(tables_path)
+    ratings = v13_.big_ratings(tables_path)
+    teams = v13_.match_teams(rows)
     out = {}
     for r in rows:
         pair = (r["PLAYER_1_HANDLE"].strip().upper(), r["PLAYER_2_HANDLE"].strip().upper())
         prof = (book.profile(pair[0]), book.profile(pair[1])) if book else \
             (players.Profile(), players.Profile())
         if ratings:
-            prof = v13.with_big(prof, ratings, pair, *v13.side_teams(pair, teams.get(r["MATCH_CODE"])))
+            prof = v13_.with_big(prof, ratings, pair, *v13_.side_teams(pair, teams.get(r["MATCH_CODE"])))
         out[r["MATCH_CODE"]] = prof
     return out
 
 
 def run(model_dir, history, since, until, n_paths=DEFAULT_PATHS, workers=1, seed=0):
     """Per match: its row, finals and the three (margin, total) books, and both sets of means."""
-    tables_path, _ = v13_stream.model_paths(model_dir)
-    pre = v13.prematch_model(tables_path)
+    version = version_of(model_dir)
+    m, st = _modules(version)
+    tables_path, _ = st.model_paths(model_dir)
+    pre = m.prematch_model(tables_path)
     if pre is None:
         raise SystemExit(f"{model_dir}: no pre-match model to check")
     base = base_prior(pre)
@@ -117,11 +143,11 @@ def run(model_dir, history, since, until, n_paths=DEFAULT_PATHS, workers=1, seed
     items = [(r["MATCH_CODE"], prof[r["MATCH_CODE"]], priced[r["MATCH_CODE"]]) for r in rows
              if r["MATCH_CODE"] in priced]
     workers = max(1, min(workers, len(items)))
-    jobs = [(model_dir, items[k::workers], n_paths, seed + k) for k in range(workers)]
+    jobs = [(model_dir, items[k::workers], n_paths, seed + k, version) for k in range(workers)]
     if workers == 1:
         parts = [_sim_worker(j) for j in jobs]
     else:
-        with v13.pool_context().Pool(workers) as pool:
+        with m.pool_context().Pool(workers) as pool:
             parts = pool.map(_sim_worker, jobs)
     sims = {code: book for part in parts for code, book in part.items()}
     out = []
@@ -130,7 +156,7 @@ def run(model_dir, history, since, until, n_paths=DEFAULT_PATHS, workers=1, seed
         if code not in sims or code not in raw:
             continue
         s = sigmas(base, _start(r).date())
-        seed_ = v13.match_seed(code)
+        seed_ = m.match_seed(code)
         out.append(dict(row=r, finals=_finals(r), raw_means=raw[code], means=priced[code],
                         books={"raw": raw_books(raw[code], *s, seed=seed_),
                                "raw+": raw_books(priced[code], *s, seed=seed_),
@@ -189,8 +215,9 @@ def grade(results, buckets=10):
 LABELS = {"raw": "glmer raw", "raw+": "glmer + layers", "sim": "v13 sim"}
 
 
-def report(results, since, until):
+def report(results, since, until, version="v13"):
     """Lines of text: the three side by side."""
+    LABELS = dict(globals()["LABELS"], sim=f"{version} sim")
     summary, tables = grade(results)
     n = summary["raw"]["n"]
     lines = [f"  {n:,} settled matches {since} to {until}, each priced as of its kick-off", "",
@@ -213,7 +240,7 @@ def report(results, since, until):
             cells.append(f"{t[i][0]:>9.1%}{t[i][1]:>8.1%}{t[i][2]:>7d}" if i < len(t) else " " * 24)
         lines.append(f"  {i + 1:<4d}" + "".join(cells))
     lines += ["", "  (raw: the prior's own expected points and score model; glmer + layers: the same off the"
-                  " means the build prices with -- shrink, follow or form layer; v13 sim: the kick-off price"
+                  f" means the build prices with -- shrink, follow or form layer; {version} sim: the kick-off price"
                   " off those means)"]
     return lines
 
