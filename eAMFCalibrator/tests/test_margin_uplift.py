@@ -167,10 +167,39 @@ class TestPipeline(unittest.TestCase):
                 mock.patch.object(mu, "run", return_value={"x": 1}) as run:
             bets.run(None, "out", summary=summary)
         feeds = run.call_args.args[1]
+        self.assertEqual(set(run.call_args.kwargs["names"]), {"M1"})
         self.assertEqual([name for name, _ in feeds], ["prod", "CAND_TABLE"])
         self.assertEqual([len(t) for _, t in feeds], [len(MONEYLINE)] * 2)
         self.assertEqual(fh.call_count, 1)                              # one history read serves both
         self.assertEqual(summary["uplift"], {"x": 1})
+
+
+class TestUpliftFailure(unittest.TestCase):
+
+    def test_the_bets_run_reports_without_it(self):
+        from .. import snowflake_io
+        from .test_bets import MONEYLINE, PRICES, _checks_for, at, odds_for
+        cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
+                "ODDS", "STAKE_GBP", "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER",
+                "OPERATOR_NAME", "BET_IN_PLAY", "CUSTOMER_TEMPERATURE"]
+        rows = [(i, "M1", at(c + 7), 1, 1, odds_for(p), 10, 10, None, 2, "FANDUEL", "Yes", "Standard")
+                for i, (c, p) in enumerate(PRICES[1:])]
+        history = [{"MATCH_CODE": "M1", "SCHEDULED_START_TIME_UTC": f"{at(0) - dt.timedelta(minutes=5):%Y-%m-%d %H:%M:%S}",
+                    "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "17"}]
+        summary = {}
+        with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
+                mock.patch.object(snowflake_io, "fetch_quotes", return_value=MONEYLINE), \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=history), \
+                mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text"), \
+                mock.patch("builtins.print"), mock.patch("os.makedirs"), mock.patch("traceback.print_exc"), \
+                mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
+                mock.patch.object(config, "LAG_RANGE", (-20, 30)), \
+                mock.patch.object(config, "CANDIDATES", ["CAND_TABLE"]), \
+                mock.patch.object(mu, "run", side_effect=ValueError("bad chart row")):
+            bets.run(None, "out", summary=summary)
+        self.assertIsNone(summary["uplift"])
+        self.assertIn("results", summary)
 
 
 class TestSections(unittest.TestCase):
@@ -193,6 +222,19 @@ class TestSections(unittest.TestCase):
             args = cli.build_parser().parse_args(["bets", "--margin-chart", "/no/such.csv"])
             with self.assertRaises(SystemExit):
                 cli.apply_uplift(args)
+            with tempfile.TemporaryDirectory() as d:
+                bad = os.path.join(d, "bad.csv")
+                with open(bad, "w") as fh:
+                    fh.write("probability,price\n0.5,1.9\n")
+                with self.assertRaises(SystemExit) as caught:         # read at once, not after the run
+                    cli.apply_uplift(cli.build_parser().parse_args(["bets", "--margin-chart", bad]))
+                self.assertIn("numerator and denominator", str(caught.exception))
+                good = os.path.join(d, "good.csv")
+                with open(good, "w", encoding="cp1252") as fh:
+                    fh.write("Probability,Numerator,Denominator,Note\n50%,10,11,\xe9\n")
+                with mock.patch("builtins.print"):
+                    cli.apply_uplift(cli.build_parser().parse_args(["bets", "--margin-chart", good]))
+                self.assertEqual(mu.load_chart(good), {500: 1.0 + 10 / 11})
 
 
 class TestMatchedTicks(unittest.TestCase):

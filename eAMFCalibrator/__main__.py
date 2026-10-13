@@ -1026,6 +1026,11 @@ def apply_uplift(args):
     config.UPLIFT_FACTOR = getattr(args, "uplift_factor", None)
     if config.UPLIFT_CHART and not os.path.exists(config.UPLIFT_CHART):
         raise SystemExit(f"--margin-chart {config.UPLIFT_CHART}: no such file")
+    if config.UPLIFT_CHART:                     # read it now: a bad chart stops the run before the long part
+        from . import margin_uplift
+        chart = margin_uplift.load_chart(config.UPLIFT_CHART)
+        print(f"  margin chart {config.UPLIFT_CHART}: {len(chart):,} prices, probability"
+              f" {min(chart) / 1000:.3f} to {max(chart) / 1000:.3f}")
 
 
 def build_parser():

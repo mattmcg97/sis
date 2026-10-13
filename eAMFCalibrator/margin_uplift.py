@@ -79,22 +79,32 @@ FIELDS = ("n_cal", "sum_p", "sum_won", "n", "handle", "expected", "ggr")
 def load_chart(path):
     """{probability in thousandths: marginated decimal price} off a chart CSV: the probability in
     the first column, then `numerator` and `denominator` (fractional odds)."""
-    out = {}
-    with open(path, newline="", encoding="utf-8-sig") as fh:
-        reader = csv.reader(fh)
-        head = [h.strip().lower() for h in next(reader)]
+    rows = None
+    for encoding in ("utf-8-sig", "cp1252"):            # a chart saved from Excel may not be UTF-8
         try:
-            num, den = head.index("numerator"), head.index("denominator")
-        except ValueError:
-            raise SystemExit(f"{path}: a margin chart needs numerator and denominator columns "
-                             f"(it has {', '.join(head)})")
-        for r in reader:
-            try:
-                p, n, d = float(r[0]), float(r[num]), float(r[den])
-            except (ValueError, IndexError):
-                continue
-            if d:
-                out[int(round(p * 1000))] = n / d + 1.0
+            with open(path, newline="", encoding=encoding) as fh:
+                rows = list(csv.reader(fh))
+            break
+        except UnicodeDecodeError:
+            continue
+    if not rows:
+        raise SystemExit(f"{path}: the margin chart could not be read")
+    head = [h.strip().lower() for h in rows[0]]
+    try:
+        num, den = head.index("numerator"), head.index("denominator")
+    except ValueError:
+        raise SystemExit(f"{path}: a margin chart needs numerator and denominator columns "
+                         f"(it has {', '.join(head)})")
+    got = []
+    for r in rows[1:]:
+        try:
+            p, n, d = float(r[0].strip().rstrip("%")), float(r[num]), float(r[den])
+        except (ValueError, IndexError):
+            continue
+        if d:
+            got.append((p, n / d + 1.0))
+    scale = 100.0 if got and max(p for p, _ in got) > 1.5 else 1.0     # probabilities written as percents
+    out = {int(round(p / scale * 1000)): price for p, price in got}
     if not out:
         raise SystemExit(f"{path}: no prices in the margin chart")
     return out

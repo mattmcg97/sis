@@ -714,8 +714,14 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     book_lines = book_comparison.text(books)
     print("\n".join(book_lines))
     write_text(os.path.join(out_dir, "bets_book_comparison.txt"), book_lines)
-    uplift = margin_uplift.run(out_dir, uplift, chart_path=config.UPLIFT_CHART, factor=config.UPLIFT_FACTOR,
-                               names=margin_uplift.names_of(history))
+    try:
+        uplift = margin_uplift.run(out_dir, uplift, chart_path=config.UPLIFT_CHART, factor=config.UPLIFT_FACTOR,
+                                   names=margin_uplift.names_of(history))
+    except Exception:                           # the uplift is an extra: the rest of the run still reports
+        import traceback
+        print("\n  margin uplift failed, the report goes on without it:")
+        traceback.print_exc()
+        uplift = None
     if summary is not None:
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
                        book_comparison=books, uplift=uplift)
