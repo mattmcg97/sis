@@ -235,6 +235,10 @@ class TestSections(unittest.TestCase):
                 with mock.patch("builtins.print"):
                     cli.apply_uplift(cli.build_parser().parse_args(["bets", "--margin-chart", good]))
                 self.assertEqual(mu.load_chart(good), {500: 1.0 + 10 / 11})
+                bare = os.path.join(d, "FD_109_BALANCED.csv")          # theirs: no header
+                with open(bare, "w") as fh:
+                    fh.write("0.001,25000,100\n0.5,10,11\n")
+                self.assertEqual(mu.load_chart(bare), {1: 251.0, 500: 1.0 + 10 / 11})
 
 
 class TestMatchedTicks(unittest.TestCase):

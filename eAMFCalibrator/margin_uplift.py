@@ -78,7 +78,8 @@ FIELDS = ("n_cal", "sum_p", "sum_won", "n", "handle", "expected", "ggr")
 
 def load_chart(path):
     """{probability in thousandths: marginated decimal price} off a chart CSV: the probability in
-    the first column, then `numerator` and `denominator` (fractional odds)."""
+    the first column, then `numerator` and `denominator` (fractional odds) -- named in a header, or,
+    with no header (FD_109_BALANCED.csv), the second and third columns."""
     rows = None
     for encoding in ("utf-8-sig", "cp1252"):            # a chart saved from Excel may not be UTF-8
         try:
@@ -90,13 +91,18 @@ def load_chart(path):
     if not rows:
         raise SystemExit(f"{path}: the margin chart could not be read")
     head = [h.strip().lower() for h in rows[0]]
-    try:
-        num, den = head.index("numerator"), head.index("denominator")
-    except ValueError:
-        raise SystemExit(f"{path}: a margin chart needs numerator and denominator columns "
-                         f"(it has {', '.join(head)})")
+    if _number(head[0] if head else "") is not None and len(head) >= 3:
+        num, den, body = 1, 2, rows                    # no header: probability, numerator, denominator
+    else:
+        try:
+            num, den = head.index("numerator"), head.index("denominator")
+        except ValueError:
+            raise SystemExit(f"{path}: a margin chart needs numerator and denominator columns, or no header"
+                             f" and probability, numerator, denominator in that order (it has"
+                             f" {', '.join(head)})")
+        body = rows[1:]
     got = []
-    for r in rows[1:]:
+    for r in body:
         try:
             p, n, d = float(r[0].strip().rstrip("%")), float(r[num]), float(r[den])
         except (ValueError, IndexError):
@@ -108,6 +114,13 @@ def load_chart(path):
     if not out:
         raise SystemExit(f"{path}: no prices in the margin chart")
     return out
+
+
+def _number(v):
+    try:
+        return float(str(v).strip().rstrip("%"))
+    except ValueError:
+        return None
 
 
 def fallback_chart(book=FALLBACK_BOOK):

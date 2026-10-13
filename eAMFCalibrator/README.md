@@ -1908,7 +1908,9 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Dummy bets.** Every live in-play tick on the moneyline (50/51, home is their side A) and
   totals (54/55) is a bet to win 100. It's priced at the margin chart's price for the probability
   rounded to 3 places: their `FD_109_BALANCED.csv`, probability then `numerator`, `denominator`,
-  so the price is numerator / denominator + 1. Without `--margin-chart`, a proportional 109% book
+  so the price is numerator / denominator + 1. The file can have a header naming those columns, or,
+  as theirs does, no header with the three in that order. The chart is read when the run starts, so
+  a chart it can't use stops the run at once. Without `--margin-chart`, a proportional 109% book
   stands in.
 - **Per bet.**
   - Stake = 100 / (price − 1).
