@@ -339,6 +339,10 @@ def cmd_bets(args):
             elif args.action == "sessions":
                 from . import bet_sessions
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
+            elif args.action == "ml-losers":
+                from . import bet_losers
+                path = bet_losers.run(cur, out_dir)
+                print(f"\n  -> {path}, bets_ml_losers.csv, bets_ml_matches.csv and bets_ml_pileons.csv")
             elif args.action == "favourite":
                 from . import bet_favourite
                 path = bet_favourite.run(cur, out_dir, min_bets=args.min_bets)
@@ -1053,13 +1057,19 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite"],
+                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
                                   "placed before kick-off, each model version priced off its kick-off "
                                   "alone (cheap over many weeks), margins week by week and each "
                                   "candidate against the first with a bootstrap interval "
                                   "(out/bets_prematch.txt); "
+                                  "ml-losers: the matches the book loses on the moneyline against "
+                                  "the rest (what is targeted, how they played out), every moneyline "
+                                  "bet's residual (won less prod's p) by the game at the bet (lead, ball, "
+                                  "down and distance, pace, session, form), the features ranked, the "
+                                  "pile-ons, gamers, teams and the customers who win; --candidate adds "
+                                  "each model's residual (out/bets_ml_losers.txt); "
                                   "favourite: every bet split by the pre-match favourite, the score "
                                   "when it was struck and the side it backs, by temperature: where "
                                   "the stake goes and the book's margin against what prod's price "
