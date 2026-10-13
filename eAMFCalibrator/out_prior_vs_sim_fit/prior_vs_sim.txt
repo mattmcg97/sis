@@ -1,0 +1,34 @@
+  747 settled matches 2026-10-01 to 2026-10-12, each priced as of its kick-off
+
+                                   glmer raw  glmer + layers         v14 sim
+  moneyline log loss                  0.6804          0.6806          0.6817
+  moneyline Brier                     0.2437          0.2438          0.2443
+  margin result less expected           -0.30           -0.30           -0.29
+  margin RMSE of expected              9.881           9.881           9.902
+  margin RPS (lower better)            5.550           5.549           5.542
+  margin inside central 50%            56.2%           56.4%           51.4%
+  margin inside central 80%            83.7%           83.7%           80.2%
+  total result less expected           +0.30           +0.29           +0.29
+  total RMSE of expected              12.287          12.267          12.275
+  total RPS (lower better)             6.922           6.909           6.870
+  total inside central 50%             51.4%           51.7%           51.8%
+  total inside central 80%             82.5%           82.3%           81.3%
+  log loss, v14 sim less glmer raw            +0.0013 +/- 0.0018 (paired standard error)
+  log loss, v14 sim less glmer + layers       +0.0011 +/- 0.0019 (paired standard error)
+  log loss, glmer + layers less glmer raw     +0.0003 +/- 0.0005 (paired standard error)
+
+  moneyline calibration by decile of each one's own home win chance (pushes out):
+                     glmer raw          glmer + layers                 v14 sim
+         priced     won      n   priced     won      n   priced     won      n
+  1       38.6%   30.7%     75    39.6%   29.3%     75    37.8%   32.0%     75
+  2       44.5%   45.3%     75    45.0%   46.7%     75    43.7%   48.0%     75
+  3       47.2%   44.0%     75    47.6%   41.3%     75    46.8%   42.7%     75
+  4       49.3%   46.7%     75    49.5%   53.3%     75    49.0%   46.7%     75
+  5       50.9%   56.0%     75    50.9%   56.0%     75    51.1%   60.0%     75
+  6       52.5%   58.7%     75    52.4%   54.7%     75    53.0%   54.7%     75
+  7       54.4%   57.3%     75    54.2%   61.3%     75    54.8%   56.0%     75
+  8       56.2%   59.5%     74    55.9%   55.4%     74    56.8%   52.7%     74
+  9       59.0%   56.8%     74    58.4%   56.8%     74    59.8%   59.5%     74
+  10      64.0%   56.8%     74    63.0%   56.8%     74    65.0%   59.5%     74
+
+  (raw: the prior's own expected points and score model; glmer + layers: the same off the means the build prices with -- shrink, follow or form layer; v14 sim: the kick-off price off those means)
