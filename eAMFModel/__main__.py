@@ -29,7 +29,7 @@ by play, off PLAY_OVER snapshots on the real game clock.
                          with the form layer, NB2 (refitted daily) -- each a calibrator candidate
   v14-priors             chosen matches as prod and each v14 variant price them: prior and
                          kick-off expected points, prices at prod's lines, what the bets kept
-  prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's
+  prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's or v14's
                          kick-off does off it, both graded on the results (calibration)
   kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
                          against the real ones
@@ -272,7 +272,7 @@ def cmd_prior_vs_sim(args):
     history = nb2_prior.load_history(args.history)
     results = prior_check.run(args.model, history, since, until, n_paths=args.paths,
                               workers=args.workers or max(1, (os.cpu_count() or 2) - 1), seed=args.seed)
-    lines = prior_check.report(results, since, until)
+    lines = prior_check.report(results, since, until, prior_check.version_of(args.model))
     print("\n".join(lines))
     if args.out:
         os.makedirs(args.out, exist_ok=True)
@@ -570,8 +570,8 @@ def build_parser():
     p.set_defaults(func=cmd_prior_daily)
 
     p = sub.add_parser("prior-vs-sim", help="calibration: a window's matches priced by the pre-match prior "
-                                            "itself and by v13's kick-off off it, graded on the results")
-    p.add_argument("--model", required=True, help="a v13 build (its prior: glmer or NB2, daily if attached)")
+                                            "itself and by the build's (v13 or v14) kick-off off it, graded on the results")
+    p.add_argument("--model", required=True, help="a v13 or v14 build (its prior: glmer or NB2, daily if attached)")
     p.add_argument("--history", required=True, help="the match history CSV (eAMFCalibrator history)")
     p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
