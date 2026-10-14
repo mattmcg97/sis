@@ -2604,6 +2604,49 @@ The tables are, in order:
 Writes `out/bets_favourite.csv` (one row per bet, with its prod price, favourite, state and side)
 and `out/bets_favourite.txt`.
 
+### Every gamer's h2hggl stats from our own data: `player-stats`
+
+```bash
+python -m eAMFCalibrator player-stats --since 2026-08-01 --check scrapes/h2hggl_api/<time>/players.csv
+python -m eAMFCalibrator player-stats                       # every match, all of SCOUTING_FULL
+```
+
+This rebuilds the player stats h2hggl.com shows (see `analysis/h2hggl_api.py`)
+from our own data. They are meant as inputs to a pre-match model, and are
+checked against the site's own numbers.
+
+- **From the match history, all time:** matches played, won, lost and drawn,
+  win %, the longest and current winning streaks, the last ten results, and
+  points for and against.
+- **From SCOUTING_FULL, match by match:**
+  - **How plays are read:** the PLAY_OVER snapshots are taken in pairs, as
+    the models read them. A snapshot's offence, down, distance and field
+    position are the snap. The next snapshot's play kind and spot are what
+    that snap became.
+  - **The stats:** scrimmage plays, yards and yards per play, 3rd and 4th
+    downs converted, red-zone trips and how they ended (touchdown or field
+    goal), turnovers on downs, time of possession (game clock), punts and
+    their net yards, touchdowns, two-point tries, and fouls. A side's yards
+    conceded are its opponent's yards.
+  - **The detail gap:** field position, down and distance were missing for a
+    while (about 23 Sep – 9 Oct 2026). Those matches count only towards the
+    stats that need no spot.
+
+One row per match and side goes to `out/player_match_stats.csv`. It is kept
+between runs, so a rerun reads only the matches it lacks, and it is the input
+for pre-match features. The per-player totals go to `out/player_stats.csv`.
+
+With `--check`, each stat is set against the site's figures (the site's are
+career totals):
+- **Exact matches:** played, won, lost, win % and the form.
+- **Level and rank across the players:** the rest.
+- **Both readings, where a stat has two:** red zone as touchdowns only or
+  any score; fouls by the team on the message or the other side; yards with
+  or without plays that had a foul. The comparison shows which reading the
+  site uses.
+
+Writes `out/player_stats.txt` and `out/player_stats_check.csv`.
+
 ### The matches the book loses on the moneyline: `bets ml-losers`
 
 ```bash
