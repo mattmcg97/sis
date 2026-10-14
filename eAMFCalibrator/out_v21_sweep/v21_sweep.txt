@@ -1,164 +1,69 @@
-  v2.1 sweep: where each decision's options never happen, or all but never (30+ real decisions, the option 1% of them or fewer; every part of the situation alike)
+  v2.1 sweep: where each decision's options never happen, or all but never. The matches split at random in two; found on one half -- 20+ real decisions, the option taken by 1% of them or fewer and by a tenth or less of its overall rate, every part of the situation alike -- and kept where the other half bears it out, too few to be chance at the overall rate (p 0.005 or less), with 30+ in all. Counts: both halves.
 
-  the game's own end -- the side ahead in Q4, its downs left x 40s more than the clock, the defense out of timeouts: 529 real states, play went on after 149: AF001101026 #370 2:00 +11, AF002070926 #345 0:06 +10, AF003051026 #344 0:57 +3, AF004260826 #310 0:34 +20, AF004260926 #343 0:18 +14, AF004300826 #284 0:53 +5, AF004300926 #280 2:39 +21, AF005220926 #290 1:40 +14, AF005220926 #294 1:15 +14, AF007061026 #426 1:45 +3
+  the game's own end -- the side ahead in Q4, its downs left x 40s more than the clock, the defense out of timeouts. What came after the real states it covers:
+    at 2:00 or less: 746 states -- no more snaps 320, only the same side's snaps, every one a loss of 1-4 (kneels) 225, other snaps by the same side 155, the other side got the ball 18, points scored after 28
+    2:00 still to come: 15 states -- no more snaps 2, only the same side's snaps, every one a loss of 1-4 (kneels) 2, other snaps by the same side 7, the other side got the ball 2, points scored after 2
+    other snaps by the same side: AF001270926 #372 0:35 +7, AF002070926 #345 0:06 +10, AF003051026 #344 0:57 +3, AF003280926 #433 0:10 +4, AF004050926 #380 0:44 +14, AF004260826 #310 0:34 +20, AF004300826 #284 0:53 +5, AF005020926 #310 0:04 +6
+    the other side got the ball: AF004260926 #343 0:18 +14, AF010020926 #352 0:35 +3, AF013290926 #397 0:22 +4, AF018080926 #422 0:09 +25, AF019010926 #299 1:18 +18, AF019010926 #303 0:38 +18, AF019010926 #305 0:14 +18, AF019081026 #354 1:02 +15
+    points scored after: AF010011026 #277 0:54 +4, AF017240926 #291 0:51 +7, AF022170926 #436 0:31 +6, AF022240826 #324 2:00 +7, AF024220926 #300 1:19 +3, AF025210926 #452 1:53 +3, AF028140926 #396 0:14 +6, AF028140926 #403 0:05 +6
 
   4th down (by the offense): 10,640 real
-    go for it: never or all but never in
-      6:40 or less left in the half, lead +0 to +10, 20-30 yards from the goal, 11 or more to go, after nothing gained or short gain or first down or loss: 122 real, 1 of them (0.8%)
-        who did: AF065250926 HERMES Q2 3:24 0
-      6:41-7:11 left in the half, lead +0 or more, 11 or more to go, after nothing gained or short gain or first down or loss: 69 real, never
-      6:40 or less left in the half, ahead by 8 or more, 64 or more yards from the goal, 11 or more to go, after nothing gained or short gain or first down or loss: 56 real, never
-      0:09 or less left in the half, lead +0 or more, 42 or less yards from the goal, 5-10 to go, after nothing gained or short gain or first down or loss: 34 real, never
-      Q1-Q3, behind by 1 or more, 90 or more yards from the goal, 12 or more to go, after nothing gained or short gain or first down or loss: 32 real, never
     field goal: never or all but never in
-      1:40 or more left in the half, 53 or more yards from the goal: 3,213 real, never
-      1:39 or less left in the half, 66 or more yards from the goal: 686 real, never
-      1:39 or less left in the half, behind by 1 or more, 53-65 yards from the goal: 262 real, never
-      50-52 yards from the goal, 4 or less to go: 127 real, never
-      1:39 or less left in the half, lead +0 or more, 53-65 yards from the goal, 9 or less to go: 113 real, never
-      Q4-OT, behind by 4 or more, 49 or less yards from the goal, 3 or less to go, own timeouts 2 or fewer: 107 real, never
-      Q4-OT, behind by 4-10, 49 or less yards from the goal, 3 or less to go, own timeouts 3, after short gain or first down or loss or fresh possession or timeout: 92 real, never
-      Q4-OT, 0:45 or less left in the half, behind by 4 or more, 49 or less yards from the goal, 4-7 to go: 59 real, never
-      Q1-Q3, 0:23 or more left in the half, behind by 8 or more, 7-49 yards from the goal, 3 or less to go: 49 real, never
-      1:39 or less left in the half, lead +0 or more, 53-65 yards from the goal, 13 or more to go: 48 real, never
-      Q4-OT, behind by 3 or more, 50-52 yards from the goal, 5 or more to go: 45 real, never
-      Q4-OT, behind by 11 or more, 49 or less yards from the goal, 3 or less to go, own timeouts 3, after nothing gained: 33 real, never
-      Q4-OT, 0:46 or more left in the half, behind by 4 or more, 49 or less yards from the goal, 4-7 to go, the other side's timeouts 2 or fewer: 32 real, never
+      52 or more yards from the goal: 4,461 real, 6 of them (0.1%)
+        who did: AF020150926 LEO Q4 0:42 +18; AF021180926 FENRIR Q4 2:47 +4; AF053050926 HEADHUNTER Q3 3:00 0; AF064240826 MINDFLAYER Q2 0:06 +4; AF071270826 HEADHUNTER Q2 1:28 0; AF073260826 IMPERIAL Q2 1:39 0
+      55 or more yards from the goal, the other side's timeouts 3: 3,614 real, never
+      66 or more yards from the goal, the other side's timeouts 2 or fewer: 329 real, never
+      50-54 yards from the goal, 4 or less to go: 206 real, never
+      0:43 or more left in the half, 55-65 yards from the goal, the other side's timeouts 2 or fewer: 119 real, never
+      Q4-OT, 3:23 or less left in the half, behind by 4 or more, 7 or less yards from the goal, 3 or less to go: 100 real, never
+      1:40 or more left in the half, lead -2 or more, 53-54 yards from the goal, 5 or more to go: 54 real, never
+      0:42 or less left in the half, lead +3 or less, 55-65 yards from the goal, the other side's timeouts 2 or fewer: 41 real, never
     punt: never or all but never in
       39 or less yards from the goal: 4,704 real, 1 of them (0.0%)
         who did: AF077101026 ACE Q2 0:21 0
-      Q4-OT, 2:52 or less left in the half, behind by 1 or more, 46 or more yards from the goal, 6-14 to go: 299 real, 1 of them (0.3%)
-        who did: AF082021026 MIMIC Q4 1:03 -7
-      40-42 yards from the goal, 5 or less to go: 161 real, never
-      lead +2 or less, 46-51 yards from the goal, 2 or less to go: 109 real, never
+      Q4-OT, 2:53 or less left in the half, behind by 1 or more, 46 or more yards from the goal, 6 or more to go, own timeouts 2 or fewer: 201 real, never
+      4:42 or less left in the half, 40-41 yards from the goal: 187 real, 1 of them (0.5%)
+        who did: AF057300826 LIZARD Q4 3:40 +4
+      Q4-OT, 2:00 or less left in the half, behind by 1 or more, 46 or more yards from the goal, 5 or less to go: 163 real, never
       Q1-Q3, 3:58 or more left in the half, 46 or more yards from the goal, 6 or more to go, after fresh possession or timeout: 103 real, never
-      Q4-OT, 3:12 or less left in the half, behind by 1 or more, 66 or more yards from the goal, 5 or less to go: 83 real, never
-      Q4-OT, 1:52 or less left in the half, behind by 1-17, 46 or more yards from the goal, 15 or more to go: 82 real, never
-      behind by 8 or more, 52-65 yards from the goal, 2 or less to go: 80 real, never
-      5:21 or more left in the half, 43-45 yards from the goal: 66 real, never
-      Q4-OT, 2:00 or less left in the half, lead +2 or less, 46-65 yards from the goal, 3-5 to go: 56 real, never
-      40-42 yards from the goal, 6 or more to go, after first down or loss or fresh possession or timeout: 42 real, never
-      5:20 or less left in the half, 43-45 yards from the goal, 1 or less to go: 37 real, never
-      5:20 or less left in the half, behind by 11 or more, 43-45 yards from the goal, 2 or more to go: 31 real, never
+      Q1-Q3, 3:59 or more left in the half, 49 or more yards from the goal, 4 or more to go, after fresh possession or timeout: 103 real, never
+      behind by 11 or more, 42-48 yards from the goal, 2 or more to go: 75 real, never
+      lead -10 to +15, 42-44 yards from the goal, 2-4 to go: 72 real, never
+      1:10-3:54 left in the half, lead +9 or less, 44-45 yards from the goal, 7 or more to go: 55 real, never
+      Q4-OT, behind by 1-10, 45-48 yards from the goal, 2 or more to go: 44 real, never
 
   a field goal on downs 1-3, in range (by the offense): 83,408 real
-    kick: never or all but never in (the 25 largest of 33; all in the CSV)
-      1:39 or more left in the half, down 1-2, the other side's timeouts 3: 43,769 real, 1 of them (0.0%)
-        who did: AF046300926 ENFORCER Q3 2:22 +11
-      0:32-1:37 left in the half, 17 or more yards from the goal, down 1-2, the other side's timeouts 3: 6,797 real, never
+    kick: never or all but never in
+      0:38 or more left in the half, down 1-2, the other side's timeouts 3: 52,489 real, 3 of them (0.0%)
+        who did: AF019101026 MEMENTO Q4 0:57 +7; AF046300926 ENFORCER Q3 2:22 +11; AF062090926 MERLIN Q4 1:38 -10
+      1:39 or more left in the half, lead +10 or less, the other side's timeouts 3: 49,080 real, 2 of them (0.0%)
+        who did: AF073240926 HERMES Q2 1:59 -7; AF093300826 ROCKET Q4 2:45 0
+      0:40-1:37 left in the half, lead +6 or less, the other side's timeouts 3: 8,539 real, 1 of them (0.0%)
+        who did: AF071030926 SHURIKEN Q2 1:13 -7
       2:46 or more left in the half, down 3-4, the other side's timeouts 3: 6,033 real, never
-      0:38-2:44 left in the half, lead +7 or less, down 3-4, the other side's timeouts 3: 3,385 real, 2 of them (0.1%)
-        who did: AF071030926 SHURIKEN Q2 1:13 -7; AF073240926 HERMES Q2 1:59 -7
-      Q4-OT, 1:03 or more left in the half, lead -2 or more, own timeouts 3, the other side's timeouts 2 or fewer: 3,302 real, 11 of them (0.3%)
-        who did: AF002060926 PHOENIX Q4 1:50 +7; AF007060926 MEMENTO Q4 1:22 +7; AF030220926 SPARK Q4 1:12 0; AF033310826 FENRIR Q4 1:33 +8; AF039140926 MIRAGE Q4 1:06 +3; AF052240926 MERCURY Q4 1:46 +16
-      Q1-Q3, 0:32 or more left in the half, the other side's timeouts 2 or fewer, after short gain or first down or loss or fresh possession or timeout: 2,787 real, never
-      0:32-1:37 left in the half, 16 or less yards from the goal, 10 or less to go, down 1-2, the other side's timeouts 3: 2,729 real, 1 of them (0.0%)
-        who did: AF019101026 MEMENTO Q4 0:57 +7
-      Q4-OT, 0:32 or more left in the half, behind by 3 or more, the other side's timeouts 2 or fewer: 1,440 real, never
-      Q1-Q2, 0:08-0:31 left in the half, lead -2 to +6, 2 or more to go, own timeouts 2 or more: 1,333 real, 5 of them (0.4%)
-        who did: AF004280826 CLASH Q2 0:28 0; AF005071026 CLASH Q2 0:17 0; AF068310826 RICOCHET Q2 0:12 0; AF095030926 SUMMIT Q2 0:08 +3; AF103270826 JUDGEMENT Q2 0:17 0
-      0:13-0:31 left in the half, behind by 3-10, 22 or less yards from the goal, the other side's timeouts 3: 970 real, 2 of them (0.2%)
-        who did: AF018011026 STRIDER Q2 0:23 -4; AF091270826 PSYCHIC Q2 0:23 -7
-      0:13-0:31 left in the half, behind by 3 or more, the other side's timeouts 2 or fewer: 899 real, never
-      0:13-0:31 left in the half, behind by 11 or more, the other side's timeouts 3: 657 real, never
-      0:17-0:31 left in the half, behind by 3-10, 23 or more yards from the goal, the other side's timeouts 3: 603 real, 3 of them (0.5%)
-        who did: AF034090926 ROMAN Q2 0:30 -3; AF059290926 NIGHTMARE Q2 0:29 -7; AF068011026 ASTRONAUT Q2 0:28 -7
-      Q4-OT, 0:32-1:02 left in the half, lead -2 or more, own timeouts 3, the other side's timeouts 2: 469 real, 2 of them (0.4%)
-        who did: AF010101026 IMPERIAL Q4 0:56 +4; AF023021026 SHURIKEN Q4 0:41 0
-      Q1-Q3, 0:32 or more left in the half, the other side's timeouts 2, after nothing gained: 459 real, never
-      Q3-OT, 0:08-0:31 left in the half, ahead by 1 or more, after short gain or first down or loss or fresh possession or timeout: 450 real, never
-      Q1-Q2, 0:08-0:31 left in the half, ahead by 7-9, 24 or less yards from the goal, own timeouts 2 or more: 313 real, 1 of them (0.3%)
-        who did: AF091280926 NIGHTMARE Q2 0:31 +7
-      0:08-0:12 left in the half, behind by 3 or more, 10 or more to go, own timeouts 2 or more: 223 real, 1 of them (0.4%)
-        who did: AF056310826 ENFORCER Q2 0:09 -3
-      0:08-0:12 left in the half, behind by 3 or more, 7 or less to go, own timeouts 2 or more: 196 real, never
-      0:01 or less left in the half: 195 real, never
-      Q4-OT, 0:32 or more left in the half, lead -2 or more, 37 or more yards from the goal, own timeouts 2 or fewer, the other side's timeouts 2 or fewer: 175 real, 1 of them (0.6%)
-        who did: AF047090926 CLOCKWORK Q4 0:38 +1
-      0:32-2:45 left in the half, ahead by 8 or more, 21 or more yards from the goal, 4 or more to go, down 3-4, the other side's timeouts 3: 124 real, 1 of them (0.8%)
+      Q1-Q3, 0:38 or more left in the half, the other side's timeouts 2 or fewer: 3,026 real, 1 of them (0.0%)
+        who did: AF089100926 SENTRY Q2 0:50 -3
+      0:40 or more left in the half, ahead by 11 or more, the other side's timeouts 3, after nothing gained or short gain or first down: 2,138 real, 1 of them (0.0%)
         who did: AF054290826 MISSILE Q4 1:18 +24
-      0:32-0:37 left in the half, behind by 1 or more, down 3-4, the other side's timeouts 3: 112 real, never
-      Q1-Q2, 0:24-0:31 left in the half, lead -2 or more, own timeouts 1 or fewer: 104 real, never
-      0:32-2:45 left in the half, ahead by 8 or more, 3 or less to go, down 3-4, the other side's timeouts 3: 101 real, never
+      Q4-OT, 0:38 or more left in the half, behind by 1 or more, the other side's timeouts 2 or fewer: 1,485 real, 1 of them (0.1%)
+        who did: AF091300826 MEMENTO Q4 0:38 -1
+      Q4, 1:51 or more left in the half, lead +0 or more, the other side's timeouts 2 or fewer: 1,483 real, 1 of them (0.1%)
+        who did: AF054090926 MERLIN Q4 1:53 +7
+      Q1-Q4, 1:00 or more left in the half, down 1-2, own timeouts 2 or more, the other side's timeouts 1 or fewer: 1,141 real, never
 
   kick-off (by the kicker): 26,880 real
     touchback: never or all but never in
-      Q2-OT, 7:53 or more left in the half: 3,708 real, never
-      Q3-OT, 0:39-1:36 left in the half, behind by 1 or more: 411 real, never
-      Q1, 5:38-7:40 left in the half, lead -3 to +3: 183 real, never
-      Q3-OT, 1:42-2:28 left in the half, behind by 1-7: 178 real, never
-      1:00-1:10 left in the half, lead +0 to +6, the other side's timeouts 2 or more: 131 real, never
-      Q2-Q4, 2:29-2:32 left in the half, lead -3 or more: 128 real, 1 of them (0.8%)
-        who did: AF033040926 FUSE Q4 2:29 0
-      Q3-OT, 0:13-0:27 left in the half, behind by 1 or more: 122 real, never
-      1:10-1:39 left in the half, lead +0 or more, the other side's timeouts 1: 113 real, 1 of them (0.9%)
-        who did: AF042110926 SCHOLAR Q4 1:32 +11
-      Q3-OT, 0:12 or less left in the half, behind by 1 or more: 107 real, never
-      Q1, 2:29-4:08 left in the half, ahead by 4 or more, the other side's timeouts 3: 106 real, 1 of them (0.9%)
-        who did: AF057220926 FENRIR Q1 0:01 +7
-      OT, 2:29-7:15 left in the half, lead -3 or more: 89 real, never
-      Q1, 7:49 or more left in the half, ahead by 4 or more, the other side's timeouts 3: 63 real, never
-      Q3-OT, 0:39-2:28 left in the half, ahead by 21-26, the other side's timeouts 2 or more: 62 real, never
-      Q1, 4:27-4:30 left in the half, ahead by 4 or more, the other side's timeouts 3: 62 real, never
-      Q1, 2:29 or more left in the half, behind by 6 or more: 58 real, never
-      Q2-OT, 2:29-2:38 left in the half, behind by 4 or more: 56 real, never
-      0:31-0:37 left in the half, ahead by 7-9, own timeouts 3: 50 real, never
-      Q3-OT, 0:28-0:38 left in the half, behind by 3-12: 48 real, never
-      Q1-Q2, 0:51-1:10 left in the half, behind by 5 or more: 41 real, never
-      Q3-OT, 2:09-2:28 left in the half, behind by 8 or more: 38 real, never
-      1:50-2:28 left in the half, ahead by 14 or more, the other side's timeouts 1 or fewer: 35 real, never
-      Q1-Q2, 0:30-0:38 left in the half, behind by 1 or more, own timeouts 3: 31 real, never
-      Q2-OT, 7:16-7:45 left in the half, ahead by 12 or more: 30 real, never
+      Q2-OT, 7:50 or more left in the half, the other side's timeouts 2 or more: 3,731 real, 3 of them (0.1%)
+        who did: AF023011026 MERLIN Q3 3:52 0; AF031061026 NIGHTMARE Q3 3:50 +11; AF034060926 KRAKEN Q3 3:50 +10
+      Q2-OT, 7:53 or more left in the half, lead -5 to +28: 2,980 real, never
+      Q3-OT, 0:39-1:36 left in the half, behind by 1 or more, the other side's timeouts 2 or more: 404 real, never
+      Q3-OT, 0:25 or less left in the half, behind by 1 or more: 219 real, never
     no landing zone: never or all but never in
       7:50 or more left in the half: 7,479 real, never
-      4:00 left in the half, lead -2 to +7: 276 real, never
-      0:51-1:15 left in the half, behind by 3 or more: 233 real, never
-      Q3-OT, 0:45 or less left in the half, behind by 1-5: 185 real, never
-      Q3-OT, 0:15-0:45 left in the half, behind by 6 or more: 126 real, 1 of them (0.8%)
-        who did: AF044030926 LIZARD Q4 0:40 -14
-      Q1-Q2, 1:16-2:12 left in the half, behind by 3 or more, the other side's timeouts 3: 121 real, never
-      0:02 or less left in the half, ahead by 8 or more: 96 real, never
-      0:46-7:49 left in the half, ahead by 8: 89 real, never
-      6:29-7:08 left in the half, behind by 3 or more: 78 real, never
-      0:12-0:15 left in the half, level: 74 real, never
-      3:21-3:22 left in the half, lead -2 to +7: 62 real, never
-      Q2-OT, 0:46-1:17 left in the half, ahead by 18 or more: 61 real, never
-      0:46-1:56 left in the half, behind by 1-2: 60 real, never
-      Q1-Q2, 0:03 or less left in the half, behind by 1 or more, the other side's timeouts 2 or fewer: 51 real, never
-      0:46-0:48 left in the half, behind by 3 or more: 46 real, never
-      Q3-OT, 2:19-3:20 left in the half, lead -2 to +7, the other side's timeouts 2 or fewer: 43 real, never
-      Q1-Q2, 0:05-0:45 left in the half, behind by 1 or more, the other side's timeouts 1 or fewer: 41 real, never
-      Q2-OT, 1:58 left in the half, ahead by 9 or more: 40 real, never
-      1:57-2:18 left in the half, lead -2 to +7, own timeouts 2 or fewer: 34 real, never
-      0:03-0:45 left in the half, ahead by 22 or more, own timeouts 1 or more: 31 real, never
     kept: never or all but never in
+      Q1-Q3, 7:50 or more left in the half: 7,479 real, 1 of them (0.0%)
+        who did: AF082240826 PINNACLE Q3 3:52 0
       7:53 or more left in the half: 7,416 real, never
-      Q1-Q2, 0:03-3:54 left in the half, lead -3 or more: 5,921 real, 19 of them (0.3%)
-        who did: AF001111026 OVERDRIVE Q2 2:46 +4; AF018270926 OVERDRIVE Q2 1:00 +7; AF019081026 MERCENARY Q2 2:51 +3; AF020250826 STRIDER Q2 0:31 0; AF027310826 MEMENTO Q2 1:57 +7; AF029210926 HEADHUNTER Q2 0:07 +3
-      Q1-Q2, 4:08-7:52 left in the half, lead -3 or more: 2,835 real, 17 of them (0.6%)
-        who did: AF007220926 LEGEND Q1 1:59 +7; AF010290826 OFFICER Q1 0:47 +7; AF013300926 MEMENTO Q1 3:49 +7; AF023170926 HEADHUNTER Q1 2:02 +3; AF030270926 MISSILE Q1 1:27 +7; AF035031026 FUSE Q1 2:39 +7
-      Q3-OT, 7:52 or less left in the half, lead +0 to +4: 2,666 real, 23 of them (0.9%)
-        who did: AF013080926 PINNACLE Q3 2:26 +4; AF021101026 MERLIN Q4 0:11 +4; AF022050926 MEMENTO Q3 3:48 +3; AF027180926 FENRIR Q3 0:54 0; AF028041026 MISSILE Q4 1:13 +3; AF030051026 ENFORCER Q3 0:25 0
-      Q3-OT, 5:28 or less left in the half, ahead by 12 or more: 1,450 real, 5 of them (0.3%)
-        who did: AF002071026 OFFICER Q4 3:20 +18; AF009260926 HERMES Q4 0:50 +14; AF038280926 LIZARD Q4 3:57 +14; AF051111026 FENRIR Q3 0:42 +14; AF053230926 SCHOLAR Q4 1:58 +24
-      Q1-Q2, 3:57-4:07 left in the half, lead -3 or more: 487 real, never
-      Q3-OT, 3:54-5:30 left in the half, behind by 1 or more: 475 real, never
-      Q1-Q2, 7:52 or less left in the half, behind by 7 or more: 409 real, never
-      Q1-Q2, 0:50 or less left in the half, behind by 4-6: 201 real, never
-      Q3-OT, 5:36-6:36 left in the half, behind by 1-12: 180 real, never
-      Q3-OT, 3:03-3:40 left in the half, behind by 1 or more: 161 real, never
-      Q3-OT, 7:52 or less left in the half, ahead by 6-11, the other side's timeouts 0: 153 real, never
-      Q3-OT, 6:59-7:52 left in the half, ahead by 6-11, the other side's timeouts 1 or more: 149 real, never
-      Q3-OT, 5:29-7:09 left in the half, ahead by 12-16: 131 real, 1 of them (0.8%)
-        who did: AF082280926 OFFICER Q3 1:29 +14
-      Q1-Q2, 1:00-2:39 left in the half, behind by 4-6: 94 real, never
-      Q3-OT, 7:10-7:52 left in the half, ahead by 12 or more: 82 real, never
-      Q3-OT, 0:22 or less left in the half, behind by 4-10: 70 real, never
-      Q3-OT, 2:01-2:11 left in the half, behind by 1 or more: 63 real, never
-      Q3-OT, 5:29-6:01 left in the half, ahead by 17 or more: 61 real, never
-      Q1-Q2, 3:55-3:56 left in the half, lead -3 to +6: 49 real, never
-      Q3-OT, 2:12-3:02 left in the half, behind by 7-8: 32 real, never
-      Q3-OT, 3:41-3:53 left in the half, behind by 6 or more: 32 real, never
 
   conversion (by the scorer): 16,118 real
     go for two: never or all but never in
@@ -166,116 +71,118 @@
         who did: AF050091026 CLOCKWORK Q2 1:55 +6; AF078041026 OVERDRIVE Q2 3:50 +12; AF084200926 HURRICANE Q2 0:59 +12
       Q1-Q2, 0:10 or more left in the half, lead -1 to +2: 2,022 real, 5 of them (0.2%)
         who did: AF007081026 OFFICER Q1 0:37 -1; AF007101026 MEMENTO Q2 0:24 -1; AF018280826 LAZARUS Q2 0:33 -1; AF056250926 MINDFLAYER Q2 3:41 -1; AF064200926 MAVERICK Q2 1:59 -1
-      Q3, ahead by 6-9: 673 real, never
+      Q1-Q2, 2:00 or more left in the half, lead -1 to +1: 989 real, 2 of them (0.2%)
+        who did: AF007081026 OFFICER Q1 0:37 -1; AF056250926 MINDFLAYER Q2 3:41 -1
+      Q3-OT, 3:07 or more left in the half, ahead by 6-9: 898 real, 1 of them (0.1%)
+        who did: AF030061026 SCHOLAR Q4 3:54 +6
+      Q3, ahead by 6-11: 828 real, 1 of them (0.1%)
+        who did: AF093010926 LEO Q3 0:49 +10
+      Q3-OT, 2:33 or more left in the half, ahead by 2-4: 635 real, 2 of them (0.3%)
+        who did: AF042250826 SCHOLAR Q4 3:14 +3; AF060040926 MERCURY Q4 3:51 +2
+      Q1-Q2, 0:34-1:56 left in the half, lead -1 to +1: 542 real, never
+      Q3-OT, 0:37 or more left in the half, ahead by 13: 473 real, 1 of them (0.2%)
+        who did: AF066190926 PURSUIT Q3 2:15 +13
       Q3, lead -1 to +0: 461 real, 2 of them (0.4%)
         who did: AF005051026 LEO Q3 0:01 -1; AF060250826 SCHOLAR Q3 2:14 -1
+      Q4-OT, 2:07 or less left in the half, ahead by 2-4, the other side's timeouts 2 or more: 404 real, 1 of them (0.2%)
+        who did: AF069250826 MERLIN Q4 0:37 +2
       Q4-OT, ahead by 9-10: 397 real, 1 of them (0.3%)
         who did: AF088190926 PURSUIT Q4 2:50 +9
+      Q3-OT, 2:49 or less left in the half, ahead by 9-11: 284 real, 1 of them (0.4%)
+        who did: AF028070926 PINNACLE Q4 1:35 +11
       Q3, ahead by 3-4: 269 real, never
-      Q3, ahead by 13: 255 real, 1 of them (0.4%)
-        who did: AF066190926 PURSUIT Q3 2:15 +13
-      Q4-OT, ahead by 13-14: 247 real, never
-      Q4-OT, 2:10 or less left in the half, ahead by 3-4, the other side's timeouts 2 or more: 226 real, never
-      Q1-Q2, 1:06 or more left in the half, ahead by 3-5: 212 real, 2 of them (0.9%)
-        who did: AF007081026 MERCENARY Q2 3:19 +5; AF018270826 PHOENIX Q2 1:48 +5
-      Q1-Q2, 0:10-0:40 left in the half, ahead by 3-5: 106 real, never
-      Q3, 4:50 or more left in the half, ahead by 10-11: 106 real, never
-      Q4-OT, 0:36 or less left in the half, ahead by 2, the other side's timeouts 2 or more: 95 real, never
-      Q1-Q2, 0:09 or less left in the half, lead +0 to +5: 80 real, never
-      Q4-OT, 1:24 or less left in the half, level: 62 real, never
-      Q4-OT, 2:33-3:13 left in the half, ahead by 2-4, the other side's timeouts 2 or more: 57 real, never
-      Q1-Q2, 0:47-1:20 left in the half, behind by 8 or more: 54 real, never
-      Q4-OT, 0:18 or less left in the half, ahead by 2-4, the other side's timeouts 1 or fewer: 50 real, never
-      Q1-Q2, 1:58-4:01 left in the half, behind by 8 or more: 47 real, never
-      Q1-Q2, 0:08-0:16 left in the half, behind by 8 or more: 44 real, never
-      Q3-OT, 6:32 or more left in the half, behind by 3-4: 44 real, never
-      Q1-Q2, 0:01 or less left in the half, behind by 1: 42 real, never
-      Q4-OT, 0:19-1:06 left in the half, ahead by 3-4, the other side's timeouts 1 or fewer: 38 real, never
-      Q1-Q2, 0:09-0:20 left in the half, behind by 2-7: 31 real, never
 
   defense's timeout before a running-clock snap (by the defense): 129,467 real
-    timeout: never or all but never in (the 25 largest of 45; all in the CSV)
-      Q1-Q3, 4:49 or more left in the half, lead -7 or more, 19 or less to go, down 1-3, after short gain or first down or loss or fresh possession or timeout: 35,453 real, 32 of them (0.1%)
-        who did: AF002011026 LUNA Q1 1:05 +3; AF003070926 ROCKET Q3 2:20 -7; AF004160926 SHROUD Q3 3:48 +7; AF017240926 LEO Q3 3:19 0; AF019270826 SAGE Q3 1:38 +10; AF023180926 KILLJOY Q1 3:11 0
-      Q1-Q3, 4:49 or more left in the half, after nothing gained: 8,759 real, never
-      2:44 or less left in the half, ahead by 1 or more, down 2-4, after nothing gained: 8,355 real, never
-      Q1-Q3, 3:02-4:48 left in the half, lead +0 or more, 58 or less yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout: 5,461 real, 21 of them (0.4%)
-        who did: AF002011026 LUNA Q2 3:20 +3; AF012011026 PSYCHIC Q2 3:44 0; AF022180926 CLOCKWORK Q3 0:10 +4; AF029180926 KILLJOY Q3 0:14 +24; AF030081026 DON Q3 0:48 0; AF032180926 CLOCKWORK Q1 0:47 +7
-      Q1-Q3, 2:45-4:48 left in the half, after nothing gained: 3,174 real, never
-      Q1-Q3, 3:02-4:48 left in the half, 59 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout: 2,479 real, 2 of them (0.1%)
-        who did: AF052060926 MIRAGE Q3 0:48 -13; AF056030926 MERLIN Q2 3:49 0
-      2:44 or less left in the half, ahead by 9 or more, 37 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout: 2,189 real, 5 of them (0.2%)
-        who did: AF013051026 OFFICER Q2 1:54 +14; AF046240826 MIRAGE Q2 2:22 +10; AF066050926 PURSUIT Q2 2:28 +14; AF088190926 PURSUIT Q4 2:08 +11; AF106010926 DESTINY Q2 1:39 +10
-      Q1-Q3, 4:53 or more left in the half, behind by 8 or more, 19 or less to go, down 1-3, after short gain or first down or loss or fresh possession or timeout: 2,114 real, 6 of them (0.3%)
-        who did: AF021100926 SABRE Q3 1:24 -11; AF031250926 SCHOLAR Q3 2:25 -11; AF055051026 NIGHTMARE Q3 1:51 -8; AF064260926 VALIANT Q3 2:07 -14; AF067010926 MINDFLAYER Q3 1:14 -17; AF071240926 LEGEND Q3 3:38 -14
-      2:44 or less left in the half, lead +0 or less, 54 or more yards from the goal, down 2-4, after nothing gained: 1,994 real, never
-      Q4-OT, 3:00 or more left in the half, lead +0 to +9, 35 or more yards from the goal, 20 or less to go: 1,803 real, 5 of them (0.3%)
-        who did: AF015011026 SABRE Q4 3:05 +1; AF029120926 HEADHUNTER Q4 3:36 +4; AF040220926 SPARK Q4 3:16 0; AF050150926 PURSUIT Q4 3:04 +3; AF098250826 MEMENTO Q4 3:45 0
-      Q1-Q2, 2:44 or less left in the half, lead +0 or less, 7-53 yards from the goal, down 2-4, after nothing gained: 1,686 real, never
-      1:09 or less left in the half, ahead by 3-8, 37 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout: 1,559 real, 7 of them (0.4%)
-        who did: AF013290826 OFFICER Q4 0:58 +4; AF017240826 OCTANE Q2 1:05 +7; AF032041026 MIRAGE Q4 0:04 +3; AF046170926 MERCURY Q2 0:17 +7; AF046250826 SPARK Q2 0:05 +4; AF050200926 NIRVANA Q4 0:53 +3
-      Q4-OT, 2:45 or more left in the half, ahead by 10 or more, 22 or less to go, down 2-4, own timeouts 3: 1,244 real, never
-      Q3-OT, 2:44 or less left in the half, ahead by 9-20, 19 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout: 1,205 real, 2 of them (0.2%)
+    timeout: never or all but never in (the 25 largest of 33; all in the CSV)
+      Q1-Q3, 4:51 or more left in the half, 16 or less to go, down 1-3, after short gain or first down or loss or fresh possession or timeout: 36,802 real, 38 of them (0.1%)
+        who did: AF002011026 LUNA Q1 1:05 +3; AF003070926 ROCKET Q3 2:20 -7; AF004160926 SHROUD Q3 3:48 +7; AF017240926 LEO Q3 3:19 0; AF019270826 SAGE Q3 1:38 +10; AF021100926 SABRE Q3 1:24 -11
+      Q1-Q3, 5:51 or more left in the half, 86 or less yards from the goal, down 1-3, own timeouts 3, after short gain or first down or loss or fresh possession or timeout: 26,185 real, 24 of them (0.1%)
+        who did: AF003070926 ROCKET Q3 2:20 -7; AF004160926 SHROUD Q3 3:48 +7; AF017240926 LEO Q3 3:19 0; AF023180926 KILLJOY Q1 3:11 0; AF024180926 MERCURY Q3 2:13 +11; AF031180926 MERLIN Q1 3:14 0
+      Q1-Q3, 2:51 or more left in the half, after nothing gained: 11,786 real, never
+      2:42 or less left in the half, down 2-4, own timeouts 3, after nothing gained: 9,899 real, 4 of them (0.0%)
+        who did: AF038300926 CLOCKWORK Q4 0:52 0; AF046041026 SHURIKEN Q4 0:18 -10; AF068040926 CLOCKWORK Q4 1:15 -13; AF080290926 RELIC Q4 1:03 -4
+      Q1-Q3, 4:51 or more left in the half, after nothing gained: 8,655 real, never
+      2:50 or less left in the half, ahead by 1 or more, down 2-4, after nothing gained: 8,513 real, never
+      Q1-Q3, 2:51-5:50 left in the half, 49 or more yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout: 7,820 real, 13 of them (0.2%)
+        who did: AF002011026 LUNA Q1 1:05 +3; AF025240826 OFFICER Q2 2:55 -7; AF028140926 RICOCHET Q1 1:40 +14; AF029180926 KILLJOY Q3 0:14 +24; AF032180926 CLOCKWORK Q1 0:47 +7; AF033041026 HEADHUNTER Q3 1:13 0
+      Q2-Q3, 2:51-5:50 left in the half, 44 or less yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout: 7,230 real, 37 of them (0.5%)
+        who did: AF002011026 LUNA Q2 3:20 +3; AF002300926 SABRE Q2 3:00 -7; AF012011026 PSYCHIC Q2 3:44 0; AF017220926 OFFICER Q2 3:17 -7; AF019270826 SAGE Q3 1:38 +10; AF021100926 SABRE Q3 1:24 -11
+      Q1-Q3, 2:59-4:50 left in the half, lead -2 or more, 60 or less yards from the goal, 16 or less to go, after short gain or first down or loss or fresh possession or timeout: 6,123 real, 25 of them (0.4%)
+        who did: AF002011026 LUNA Q2 3:20 +3; AF012011026 PSYCHIC Q2 3:44 0; AF022180926 CLOCKWORK Q3 0:10 +4; AF027240926 HEADHUNTER Q2 3:10 +7; AF030081026 DON Q3 0:48 0; AF031170926 LIZARD Q1 0:26 0
+      Q1, 2:51-5:50 left in the half, 48 or less yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout: 5,301 real, 5 of them (0.1%)
+        who did: AF031290926 FENRIR Q1 1:00 -7; AF040200926 SPARK Q1 1:32 +7; AF043040926 FENRIR Q1 1:14 +7; AF048250926 MERCURY Q1 1:00 0; AF070050926 SHURIKEN Q1 0:48 +7
+      Q3-OT, 2:42 or less left in the half, ahead by 8 or more, 19 or more yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout: 3,778 real, 7 of them (0.2%)
+        who did: AF033050926 HEADHUNTER Q4 1:34 +20; AF033050926 HEADHUNTER Q4 0:30 +24; AF037120926 HEADHUNTER Q4 1:45 +10; AF038240926 MERCURY Q4 2:02 +10; AF088190926 PURSUIT Q4 2:08 +11; AF093090926 ROCKET Q4 1:39 +11
+      Q1-Q3, 2:43-4:50 left in the half, after nothing gained: 3,321 real, never
+      1:16-2:50 left in the half, lead +0 or less, down 2-4, after nothing gained: 2,471 real, 2 of them (0.1%)
+        who did: AF066091026 SAGE Q4 1:56 -7; AF076280826 MEMENTO Q2 1:31 0
+      Q1-Q3, 2:43-4:50 left in the half, 61 or more yards from the goal, 17 or less to go, after short gain or first down or loss or fresh possession or timeout: 2,406 real, 4 of them (0.2%)
+        who did: AF045180926 FUSE Q2 2:48 -4; AF045180926 FUSE Q2 2:43 -4; AF052060926 MIRAGE Q3 0:48 -13; AF056030926 MERLIN Q2 3:49 0
+      Q4-OT, 2:51 or more left in the half, ahead by 5 or more, 26 or more yards from the goal, 21 or less to go: 2,224 real, 6 of them (0.3%)
+        who did: AF001120926 OFFICER Q4 2:58 +7; AF001120926 OFFICER Q4 2:52 +7; AF034070926 PURSUIT Q4 2:59 +7; AF038180926 MERCURY Q4 3:14 +7; AF038190926 ORIGINAL Q4 3:17 +9; AF041180926 FENRIR Q4 3:49 +21
+      Q4-OT, 2:43 or more left in the half, ahead by 10 or more, own timeouts 3: 2,137 real, 3 of them (0.1%)
+        who did: AF018070926 KATANA Q4 3:30 +14; AF037060926 HEADHUNTER Q4 2:49 +11; AF093010926 LEO Q4 3:17 +12
+      Q1-Q2, 1:08 or less left in the half, lead +0 or less, down 2-4, after nothing gained: 1,990 real, 1 of them (0.1%)
+        who did: AF074250926 LUNA Q2 0:15 0
+      2:42 or less left in the half, 39 or more yards from the goal, down 2-4, own timeouts 2 or fewer, after nothing gained: 1,801 real, 1 of them (0.1%)
+        who did: AF066230926 LUNA Q4 0:28 -10
+      Q3-OT, 2:50 or less left in the half, ahead by 9-20, 24 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout: 1,511 real, 2 of them (0.1%)
         who did: AF046260926 SHURIKEN Q4 1:25 +10; AF060090926 NIGHTMARE Q4 0:19 +10
-      Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 45 or more yards from the goal, down 2-4, after short gain or first down or loss or fresh possession or timeout: 1,120 real, 6 of them (0.5%)
-        who did: AF021081026 HEADHUNTER Q4 2:30 +10; AF033050926 HEADHUNTER Q4 0:30 +24; AF037120926 HEADHUNTER Q4 1:45 +10; AF037120926 HEADHUNTER Q4 1:35 +10; AF093061026 ORIGINAL Q4 0:12 +14; AF093090926 ROCKET Q4 1:39 +11
-      Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 20-36 yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout: 756 real, 2 of them (0.3%)
-        who did: AF038240926 MERCURY Q4 2:02 +10; AF095190926 PURSUIT Q4 2:39 +21
-      Q4-OT, 2:50 or more left in the half, ahead by 10 or more, 22 or less to go, down 1, own timeouts 3: 753 real, 1 of them (0.1%)
-        who did: AF018070926 KATANA Q4 3:30 +14
-      Q3-OT, 1:16-2:44 left in the half, lead +0 or less, 53 or less yards from the goal, down 2-4, after nothing gained: 698 real, 1 of them (0.1%)
+      Q3-OT, 2:50 or less left in the half, ahead by 8 or more, 25 or more yards from the goal, 13 or less to go, down 2-4, after short gain or first down or loss or fresh possession or timeout: 1,330 real, 5 of them (0.4%)
+        who did: AF020160926 HURRICANE Q4 0:14 +12; AF021081026 HEADHUNTER Q4 2:30 +10; AF022040926 LYNX Q4 0:29 +19; AF033050926 HEADHUNTER Q4 1:34 +20; AF093061026 ORIGINAL Q4 0:12 +14
+      Q4-OT, 3:00 or more left in the half, ahead by 2-9, 46 or more yards from the goal: 911 real, 2 of them (0.2%)
+        who did: AF049200926 FENRIR Q4 3:24 +4; AF050150926 PURSUIT Q4 3:04 +3
+      Q3-OT, 2:42 or less left in the half, ahead by 9-20, 6-18 yards from the goal, after short gain or first down or loss or fresh possession or timeout: 771 real, never
+      2:42 or less left in the half, ahead by 1 or more, 38 or less yards from the goal, down 2-4, own timeouts 2 or fewer, after nothing gained: 691 real, never
+      2:42 or less left in the half, lead +0 or less, 7-37 yards from the goal, down 2-4, own timeouts 2 or fewer, after nothing gained: 679 real, 1 of them (0.1%)
         who did: AF066091026 SAGE Q4 1:56 -7
-      Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 20-44 yards from the goal, down 2-4, after short gain or first down or loss or fresh possession or timeout: 623 real, 4 of them (0.6%)
-        who did: AF020160926 HURRICANE Q4 0:14 +12; AF022040926 LYNX Q4 0:29 +19; AF033050926 HEADHUNTER Q4 1:34 +20; AF072240826 VALIANT Q4 1:08 +18
-      Q4-OT, 2:45 or more left in the half, behind by 1 or more, own timeouts 3, after nothing gained: 344 real, never
-      Q1-Q2, 2:11-2:44 left in the half, lead +2 or less, 41 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout: 333 real, never
-      Q4-OT, 3:00 or more left in the half, behind by 1 or more, 57 or more yards from the goal, own timeouts 3, after short gain or first down: 328 real, 2 of them (0.6%)
-        who did: AF069180926 LYNX Q4 3:16 -4; AF076240926 SABRE Q4 3:18 -7
-      Q1-Q3, 2:45-3:01 left in the half, 29 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout: 309 real, never
-      Q2-Q3, 4:49 or more left in the half, 20 or more to go, down 1-3, after short gain or first down or loss or fresh possession or timeout: 277 real, never
-      Q3-OT, 1:15 or less left in the half, lead +0 or less, 53 or less yards from the goal, down 2-4, own timeouts 2 or fewer, after nothing gained: 266 real, 2 of them (0.8%)
-        who did: AF058021026 DON Q4 1:02 -21; AF066230926 LUNA Q4 0:28 -10
+      Q4-OT, 2:43 or more left in the half, lead +1 or less, after nothing gained: 624 real, 1 of them (0.2%)
+        who did: AF077091026 PRECISION Q4 3:14 +1
 
   offense's timeout before a running-clock snap (by the offense): 120,552 real
-    timeout: never or all but never in (the 25 largest of 34; all in the CSV)
-      Q1-Q3, 1:43 or more left in the half, 26 or more yards from the goal, after short gain or first down: 37,775 real, 45 of them (0.1%)
-        who did: AF004180926 SAGE Q3 1:57 -7; AF004250826 LEGEND Q1 3:44 -7; AF005280826 PSYCHIC Q3 0:50 -7; AF008031026 GENIUS Q2 2:23 0; AF011270826 ROMAN Q1 1:20 -3; AF012051026 SHROUD Q3 2:23 -10
-      Q1-Q3, 1:43 or more left in the half, 4 or more to go, after nothing gained: 12,431 real, 1 of them (0.0%)
-        who did: AF005021026 KEVLAR Q3 1:09 +6
-      Q1-Q3, 1:43 or more left in the half, 25 or less yards from the goal, down 1-2, after short gain or first down: 10,753 real, 28 of them (0.3%)
-        who did: AF001290926 OFFICER Q3 1:31 0; AF004011026 ROCKET Q2 2:04 0; AF006300926 RELIC Q3 2:37 +10; AF010140926 IMPERIAL Q3 0:08 -14; AF015091026 SHROUD Q3 2:00 -7; AF016071026 LEO Q3 0:11 -16
-      Q4-OT, 1:50-3:02 left in the half, lead -8 or more, down 1-2, after short gain or first down or loss or fresh possession or timeout: 4,864 real, 17 of them (0.3%)
-        who did: AF005051026 OFFICER Q4 2:10 +2; AF008250826 STRIDER Q4 2:32 +3; AF027031026 MERLIN Q4 2:23 +21; AF029150926 MIRAGE Q4 2:58 -7; AF034050926 SHURIKEN Q4 3:01 +3; AF034051026 MINDFLAYER Q4 3:00 0
-      Q1-Q3, 1:43 or more left in the half, lead +9 or less, down 1-2, the other side's timeouts 3, after loss or fresh possession or timeout: 4,284 real, 8 of them (0.2%)
-        who did: AF041270926 FENRIR Q2 2:22 -7; AF053280926 NIGHTMARE Q1 3:03 -7; AF054071026 CLOCKWORK Q2 2:42 0; AF054260826 DREAD Q1 2:31 -7; AF060090926 KILLJOY Q1 0:17 -14; AF063021026 RELIC Q1 1:15 0
-      0:59 or less left in the half, 8-15 to go, down 2-4, after nothing gained: 4,033 real, never
+    timeout: never or all but never in (the 25 largest of 26; all in the CSV)
+      Q1-Q3, 1:43-7:36 left in the half, 11 or more yards from the goal, after nothing gained or short gain or first down: 51,313 real, 63 of them (0.1%)
+        who did: AF004180926 SAGE Q3 1:57 -7; AF005021026 KEVLAR Q3 1:09 +6; AF005280826 PSYCHIC Q3 0:50 -7; AF006300926 RELIC Q3 2:37 +10; AF008031026 GENIUS Q2 2:23 0; AF011270826 ROMAN Q1 1:20 -3
+      Q2-OT, 3:02 or more left in the half, 14 or less to go, down 1-2, after short gain or first down or loss or fresh possession or timeout: 25,953 real, 43 of them (0.2%)
+        who did: AF001290926 OFFICER Q3 1:31 0; AF005280826 PSYCHIC Q3 0:50 -7; AF006300926 RELIC Q3 2:37 +10; AF008290926 PSYCHIC Q4 3:17 -7; AF010140926 IMPERIAL Q3 0:08 -14; AF012051026 SHROUD Q3 2:23 -10
+      Q1, 3:02 or more left in the half, 86 or less yards from the goal, 14 or less to go, down 1-2, after short gain or first down or loss or fresh possession or timeout: 17,868 real, 17 of them (0.1%)
+        who did: AF004250826 LEGEND Q1 3:44 -7; AF011270826 ROMAN Q1 1:20 -3; AF021051026 SHROUD Q1 2:07 -7; AF029230926 SHURIKEN Q1 1:27 0; AF045030926 MIRAGE Q1 3:36 0; AF046130926 MIRAGE Q1 2:58 -7
+      3:02 or more left in the half, 14 or less to go, own timeouts 3, after nothing gained: 12,408 real, 3 of them (0.0%)
+        who did: AF005021026 KEVLAR Q3 1:09 +6; AF018270826 PHOENIX Q3 2:18 +7; AF040100926 ORIGINAL Q1 1:18 0
+      1:51-2:57 left in the half, lead -8 or more, down 1-2, after short gain or first down or loss or fresh possession or timeout: 10,485 real, 20 of them (0.2%)
+        who did: AF004011026 ROCKET Q2 2:04 0; AF005051026 OFFICER Q4 2:10 +2; AF008031026 GENIUS Q2 2:23 0; AF008250826 STRIDER Q4 2:32 +3; AF027031026 MERLIN Q4 2:23 +21; AF039011026 MERLIN Q4 1:54 -3
+      Q1-Q3, 7:45 or more left in the half, 11 or more yards from the goal, after nothing gained or short gain or first down: 6,005 real, 2 of them (0.0%)
+        who did: AF024011026 DON Q3 3:50 0; AF044070926 MIRAGE Q3 3:48 -3
+      1:45-3:01 left in the half, after nothing gained: 4,664 real, never
+      0:50 or less left in the half, lead -13 or more, 18 or less to go, down 2-4, after nothing gained: 4,233 real, 5 of them (0.1%)
+        who did: AF016260826 LEGEND Q4 0:50 -1; AF044240926 ORIGINAL Q2 0:14 0; AF052101026 MERCURY Q2 0:10 -4; AF065030926 MIRAGE Q2 0:15 -3; AF074260826 SAGE Q4 0:22 -3
+      0:59 or less left in the half, 82 or less yards from the goal, 8 or more to go, down 2-4, after nothing gained: 4,053 real, 1 of them (0.0%)
+        who did: AF084080926 SAGE Q2 0:10 -4
+      Q4-OT, 3:02 or more left in the half, 4-15 to go, after short gain or first down or loss or fresh possession or timeout: 3,930 real, 3 of them (0.1%)
+        who did: AF008290926 PSYCHIC Q4 3:17 -7; AF036240826 MIRAGE Q4 3:17 +3; AF043230926 SCHOLAR Q4 3:32 -7
       Q4-OT, 1:43 or more left in the half, after nothing gained: 3,861 real, 1 of them (0.0%)
         who did: AF004160926 SHROUD Q4 3:29 0
-      Q4-OT, 3:03 or more left in the half, 4-15 to go, after short gain or first down or loss or fresh possession or timeout: 3,856 real, 3 of them (0.1%)
-        who did: AF008290926 PSYCHIC Q4 3:17 -7; AF036240826 MIRAGE Q4 3:17 +3; AF043230926 SCHOLAR Q4 3:32 -7
+      0:51-1:44 left in the half, after nothing gained: 3,853 real, 1 of them (0.0%)
+        who did: AF004021026 OVERDRIVE Q4 0:53 -7
+      Q4-OT, 1:43-2:35 left in the half, lead -7 or more, 66 or less yards from the goal, down 1-2, after short gain or first down or loss or fresh possession or timeout: 3,600 real, 14 of them (0.4%)
+        who did: AF002140926 IMPERIAL Q4 1:49 0; AF008250826 STRIDER Q4 2:32 +3; AF025280926 DON Q4 1:49 -7; AF034130926 SPARK Q4 1:48 +3; AF039011026 MERLIN Q4 1:54 -3; AF043190926 FENRIR Q4 2:14 -4
       1:00-1:42 left in the half, after nothing gained: 3,056 real, never
-      Q1-Q3, 1:43 or more left in the half, 14 or less to go, down 3-4, after loss or fresh possession or timeout: 1,490 real, 10 of them (0.7%)
-        who did: AF002300826 RELIC Q1 0:50 0; AF009111026 RELIC Q3 2:15 +4; AF022240926 MINDFLAYER Q2 3:05 +14; AF025150926 MIRAGE Q1 0:26 +7; AF030041026 MISSILE Q1 0:41 0; AF041010926 SPARK Q1 2:52 0
-      Q1-Q3, 1:43 or more left in the half, 59 or less yards from the goal, 3 or less to go, after nothing gained: 1,038 real, never
-      0:16-0:59 left in the half, 7 or less to go, down 2-4, after nothing gained: 1,001 real, 1 of them (0.1%)
-        who did: AF016260826 LEGEND Q4 0:50 -1
-      1:10-1:42 left in the half, ahead by 5 or more, 65 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout: 869 real, 3 of them (0.3%)
-        who did: AF008020926 STRIDER Q2 1:21 +7; AF058070926 PURSUIT Q4 1:35 +14; AF088110926 AVATAR Q2 1:21 +7
-      Q4-OT, 1:43-3:02 left in the half, lead -8 or more, 36 or less yards from the goal, down 3-4, after short gain or first down or loss or fresh possession or timeout: 672 real, 3 of them (0.4%)
-        who did: AF009020926 SABRE Q4 2:35 +3; AF025200926 HURRICANE Q4 1:48 +7; AF040120926 DREAD Q4 2:03 +4
-      Q4-OT, 3:03 or more left in the half, 38 or less yards from the goal, 3 or less to go, after short gain or first down or loss or fresh possession or timeout: 452 real, never
-      Q1-Q3, 1:43 or more left in the half, behind by 4 or more, 25 or less yards from the goal, down 3-4, after short gain or first down: 379 real, never
-      0:13 or less left in the half, 7 or less to go, down 2-4, after nothing gained: 338 real, 1 of them (0.3%)
-        who did: AF052101026 MERCURY Q2 0:10 -4
-      1:00-1:06 left in the half, lead -2 or more, 32 or less yards from the goal, 13 or less to go, after short gain or first down or loss or fresh possession or timeout: 327 real, 3 of them (0.9%)
-        who did: AF032091026 CLOCKWORK Q2 1:03 0; AF044200926 SPARK Q4 1:02 0; AF073290826 SHROUD Q4 1:03 0
-      Q4-OT, 2:48-3:02 left in the half, behind by 9 or more, 4 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout: 320 real, never
-      Q1-Q3, 1:43 or more left in the half, 63 or more yards from the goal, 3 or less to go, after nothing gained: 302 real, never
-      Q1-Q2, 1:43 or more left in the half, 15-20 to go, down 3-4, after loss or fresh possession or timeout: 238 real, 1 of them (0.4%)
-        who did: AF050190926 PURSUIT Q2 1:53 -7
-      Q1-Q3, 1:43 or more left in the half, ahead by 12 or more, down 1-2, the other side's timeouts 3, after loss or fresh possession or timeout: 138 real, never
-      0:59 or less left in the half, 16 or more to go, down 2-4, own timeouts 2 or fewer, after nothing gained: 108 real, never
-      1:28-1:42 left in the half, lead -2 or more, 66 or more yards from the goal, 8 or more to go, after short gain or first down or loss or fresh possession or timeout: 74 real, never
-      Q3-OT, 0:43-0:59 left in the half, ahead by 8 or more, 23 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout: 68 real, never
+      Q2-Q3, 1:43 or more left in the half, lead +10 or less, down 1-2, after loss or fresh possession or timeout: 2,751 real, 6 of them (0.2%)
+        who did: AF041270926 FENRIR Q2 2:22 -7; AF046130926 PRISMATIC Q2 3:16 +4; AF054071026 CLOCKWORK Q2 2:42 0; AF063240926 KEVLAR Q2 1:45 -7; AF065240926 HERMES Q3 2:24 +10; AF083200926 AVATAR Q2 1:50 -7
+      Q1-Q2, 2:05-7:03 left in the half, 10 or less yards from the goal, after nothing gained or short gain or first down: 2,736 real, 1 of them (0.0%)
+        who did: AF049220926 MERLIN Q1 2:31 0
+      Q3, 4:15 or more left in the half, 10 or less yards from the goal, after nothing gained or short gain or first down: 2,027 real, 7 of them (0.3%)
+        who did: AF001290926 OFFICER Q3 1:31 0; AF015091026 SHROUD Q3 2:00 -7; AF026081026 DON Q3 0:21 -3; AF056160926 KILLJOY Q3 0:50 -10; AF063060926 NIGHTMARE Q3 1:46 0; AF068290926 SAGE Q3 0:40 -3
+      3:02 or more left in the half, ahead by 1 or more, 14 or less to go, down 3-4, after short gain or first down or loss or fresh possession or timeout: 1,522 real, 3 of them (0.2%)
+        who did: AF009111026 RELIC Q3 2:15 +4; AF022240926 MINDFLAYER Q2 3:05 +14; AF025150926 MIRAGE Q1 0:26 +7
+      Q1-Q3, 7:37-7:44 left in the half, 17 or more yards from the goal, after nothing gained or short gain or first down: 888 real, 2 of them (0.2%)
+        who did: AF004250826 LEGEND Q1 3:44 -7; AF045300826 FENRIR Q1 3:37 0
+      0:59 or less left in the half, behind by 5 or more, 7 or less to go, down 2-4, after nothing gained: 623 real, 1 of them (0.2%)
+        who did: AF048270926 SHURIKEN Q2 0:15 -14
+      Q1, 1:43 or more left in the half, 11 or less to go, down 1-2, after loss or fresh possession or timeout: 613 real, never
+      0:50 or less left in the half, behind by 14 or more, 6-18 to go, down 2-4, after nothing gained: 492 real, never
+      0:16-0:59 left in the half, lead -4 or more, 7 or less to go, down 2-3, after nothing gained: 428 real, never
+      Q1, 7:04 or more left in the half, 12 or more to go, down 1-2, after loss or fresh possession or timeout: 340 real, never
+      3:02 or more left in the half, 15 or more to go, down 3-4, after nothing gained: 283 real, never
 
   (left: seconds left in the half -- in overtime, in the period; lead: the deciding side's; timeouts unknown where the export has none. v21-build learns the same off its own matches and strikes these options out there for every gamer)

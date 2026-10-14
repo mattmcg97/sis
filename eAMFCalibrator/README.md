@@ -2654,6 +2654,124 @@ The tables are, in order:
 Writes `out/bets_favourite.csv` (one row per bet, with its prod price, favourite, state and side)
 and `out/bets_favourite.txt`.
 
+### Every gamer's h2hggl stats from our own data: `player-stats`
+
+```bash
+python -m eAMFCalibrator player-stats --since 2026-08-01 --check scrapes/h2hggl_api/<time>/players.csv
+python -m eAMFCalibrator player-stats                       # every match, all of SCOUTING_FULL
+```
+
+This rebuilds the player stats h2hggl.com shows (see `analysis/h2hggl_api.py`)
+from our own data. They are meant as inputs to a pre-match model, and are
+checked against the site's own numbers.
+
+- **From the match history, all time:** matches played, won, lost and drawn,
+  win %, the longest and current winning streaks, the last ten results, and
+  points for and against.
+- **From SCOUTING_FULL, match by match:**
+  - **How plays are read:** the PLAY_OVER snapshots are taken in pairs, as
+    the models read them. A snapshot's offence, down, distance and field
+    position are the snap. The next snapshot's play kind and spot are what
+    that snap became.
+  - **The stats:** scrimmage plays, yards and yards per play, 3rd and 4th
+    downs converted, red-zone trips and how they ended (touchdown or field
+    goal), turnovers on downs, time of possession (game clock), punts and
+    their net yards, touchdowns, two-point tries, and fouls. A side's yards
+    conceded are its opponent's yards.
+  - **The detail gap:** field position, down and distance were missing for a
+    while (about 23 Sep – 9 Oct 2026). Those matches count only towards the
+    stats that need no spot.
+
+One row per match and side goes to `out/player_match_stats.csv`. It is kept
+between runs, so a rerun reads only the matches it lacks, and it is the input
+for pre-match features. The per-player totals go to `out/player_stats.csv`.
+
+With `--check`, each stat is set against the site's figures (the site's are
+career totals):
+- **Exact matches:** played, won, lost, win % and the form.
+- **Level and rank across the players:** the rest.
+- **Both readings, where a stat has two:** red zone as touchdowns only or
+  any score; fouls by the team on the message or the other side; yards with
+  or without plays that had a foul. The comparison shows which reading the
+  site uses.
+
+Writes `out/player_stats.txt` and `out/player_stats_check.csv`.
+
+### The matches the book loses on the moneyline: `bets ml-losers`
+
+```bash
+python -m eAMFCalibrator bets ml-losers --since "2026-10-01 00:00:00"
+python -m eAMFCalibrator bets ml-losers --since "2026-10-01 00:00:00" --candidate v9
+```
+
+A sweep of the moneyline over every settled match of the window. It asks
+what kind of match is targeted, how the losing ones played out, and whether
+there is any situation in which the money piles on. It reads every moneyline
+bet against prod's probability of its selection where it was priced (bet time
+less the operator's lag) and the game at that moment off SCOUTING_FULL.
+
+**The residual** is won less prod's probability, bet by bet. It averages 0
+wherever prod's price is right. A situation where it sits away from 0 is one
+prod misprices. Its 2se is clustered by match, since one result settles every
+bet of a match. With `--candidate`, each model's own residual sits beside
+prod's. A model that already prices the situation brings it back to 0.
+
+Picking out the losing matches picks on the result: the money was on the
+winner. So the losing against the rest table says what those matches looked
+like. The residual tables, read over every match, say whether a situation is
+one to target.
+
+The sections, in order:
+1. **Where the money goes:** every bet by when it was struck against the feed
+   (the phases the checks leave out are starred), then by phase, temperature,
+   operator, and phase with the side's pre-match standing.
+2. **The losing matches against the rest:** the worst 10% by the book's
+   moneyline result, every losing match, and the winning ones, feature by
+   feature (z: losing less winning over its se). The features are:
+   - the money: stake, customers, in play, restricted, VIP, the biggest
+     customer's share, pile-ons, the share on the eventual winner and the
+     price it was backed at;
+   - prod's prices: pre-match favourite, the winner's probability through
+     the match;
+   - the result: upset, comeback, lead changes, overtime, close or blowout,
+     the final total against prod's closing line;
+   - how Q1 and the first half were played: plays, real seconds between
+     plays, clock and yards per play;
+   - the gamers: a walk-forward Elo of every gamer's wins (slow: the long
+     run; fast: recent form) against prod, and their places in their
+     sessions.
+
+   The same table then compares the most-bet fifth of matches with the rest
+   (what the money targets, the result aside). Then the matches by class,
+   stake, favourite, total against the line, winner, comeback, match of the
+   session, kick-off hour and stream.
+3. **In play, by situation:**
+   - quarter and the backed side's lead, and prod's probability;
+   - who had the ball, where, and the down and distance (off the latest
+     PLAY_OVER at bet time);
+   - the feed's moment, and the points against prod's pre-match total so far
+     (is a low scorer read early?);
+   - prod's move over the 60s before and after the bet, and who scored next
+     and how soon;
+   - the gamers' sessions, temperature, stake and the price's age;
+   - restricted and VIP alone.
+4. **In play, the features ranked:** every numeric feature cut in quintiles,
+   ranked by how far the residual moves from the bottom bin to the top, with
+   the top eight shown bin by bin.
+5. **Pre-match**, the same.
+6. **Pile-ons:** a run is the moneyline bets on one side of a match, none
+   more than 45s after the last. A pile-on is a run with 3+ bets and its stake
+   in the top 5% of runs. This section gives:
+   - the situation at a pile-on's first bet against all the in-play money
+     (lift);
+   - what came next;
+   - the 40 biggest, one by one.
+7. **Gamers and teams:** backed and opposed, costliest to the book first.
+   Then the 20 customers who took the most, and how they bet.
+
+Writes `out/bets_ml_losers.txt`, `out/bets_ml_losers.csv` (one row per bet),
+`out/bets_ml_matches.csv` (one row per match) and `out/bets_ml_pileons.csv`.
+
 ### Where the money goes through a session: `bets sessions`
 
 ```bash

@@ -5,3 +5,4 @@ __pycache__/
 venv/
 eAMFCalibrator/out/
 glmer/out/
+scrapes/

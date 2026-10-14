@@ -575,15 +575,17 @@ def check_models(streams):
                 snowflake_io.build_dir(version))
 
 
-def fetch_checks(cur, matches, prod_rows):
+def fetch_checks(cur, matches, prod_rows, keep=None):
     """bet_checks.Checks off SCOUTING_FULL, the scores and the models' PLAY_OVER snapshots (the
-    ones v4-v6 read) for these matches, on prod's clock."""
+    ones v4-v6 read) for these matches, on prod's clock. `keep` (a dict) collects the scouting and
+    score rows read and the snapshots."""
     from . import bet_checks
     prod_by = defaultdict(list)
     for r in prod_rows:
         prod_by[r[0]].append(r)
-    keep = {}
+    keep = {} if keep is None else keep
     snapshots, _ = snowflake_io._play_over_snapshots(cur, matches, prod_by_match=prod_by, keep=keep)
+    keep["snapshots"] = snapshots
     diag = {}
     books, guessed, reasons = bet_checks.model_books(snapshots, diag)
     diag["side_why"], diag["side_near"] = bet_checks.side_diagnosis(

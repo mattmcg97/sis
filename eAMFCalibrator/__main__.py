@@ -185,6 +185,21 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_player_stats(args):
+    """Every gamer's h2hggl stats off our history and SCOUTING_FULL, and the check against the site."""
+    from . import player_stats
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            path = player_stats.run(cur, args.out or DEFAULT_OUT, since=args.since, check=args.check,
+                                    refresh=args.refresh)
+    finally:
+        conn.close()
+    print(f"\n  -> {path}, player_stats.csv, {player_stats.CACHE}"
+          + (" and player_stats_check.csv" if args.check else ""))
+    return 0
+
+
 def cmd_scouting_check(args):
     """Is SCOUTING_FULL complete? Each day and match from --since to --until (default today),
     against a baseline of the days before --break."""
@@ -351,6 +366,10 @@ def cmd_bets(args):
             elif args.action == "sessions":
                 from . import bet_sessions
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
+            elif args.action == "ml-losers":
+                from . import bet_losers
+                path = bet_losers.run(cur, out_dir)
+                print(f"\n  -> {path}, bets_ml_losers.csv, bets_ml_matches.csv and bets_ml_pileons.csv")
             elif args.action == "favourite":
                 from . import bet_favourite
                 path = bet_favourite.run(cur, out_dir, min_bets=args.min_bets)
@@ -1096,13 +1115,19 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite"],
+                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
                                   "placed before kick-off, each model version priced off its kick-off "
                                   "alone (cheap over many weeks), margins week by week and each "
                                   "candidate against the first with a bootstrap interval "
                                   "(out/bets_prematch.txt); "
+                                  "ml-losers: the matches the book loses on the moneyline against "
+                                  "the rest (what is targeted, how they played out), every moneyline "
+                                  "bet's residual (won less prod's p) by the game at the bet (lead, ball, "
+                                  "down and distance, pace, session, form), the features ranked, the "
+                                  "pile-ons, gamers, teams and the customers who win; --candidate adds "
+                                  "each model's residual (out/bets_ml_losers.txt); "
                                   "favourite: every bet split by the pre-match favourite, the score "
                                   "when it was struck and the side it backs, by temperature: where "
                                   "the stake goes and the book's margin against what prod's price "
@@ -1219,6 +1244,19 @@ def build_parser():
                            help="table name, or DATABASE.SCHEMA.TABLE")
     ck_parser.add_argument("--break", dest="break_day", default="2026-09-23", metavar="DATE",
                            help="the first day after the baseline (default 2026-09-23)")
+
+    ps_parser = sub.add_parser(
+        "player-stats", parents=[shared],
+        help="every gamer's stats as h2hggl.com shows them, rebuilt from the match history (played, "
+             "won, lost, form, points) and SCOUTING_FULL (touchdowns, red zone, 3rd and 4th downs, "
+             "yards, time of possession, two-point tries, punts, fouls, turnovers on downs), one row "
+             "per match and side kept in out/player_match_stats.csv (a rerun reads only new matches); "
+             "--check sets them against the site's (-> player_stats.txt/csv, player_stats_check.csv). "
+             "--since limits the matches read (default: every one)")
+    ps_parser.add_argument("--check", metavar="CSV",
+                           help="the site's players.csv (analysis/h2hggl_api.py) to check against")
+    ps_parser.add_argument("--refresh", action="store_true", help="read every match again")
+    ps_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     to_parser = sub.add_parser(
         "timeouts", parents=[shared],
@@ -1343,6 +1381,8 @@ def main(argv=None):
         return cmd_timeouts(args)
     if args.command == "scouting-check":
         return cmd_scouting_check(args)
+    if args.command == "player-stats":
+        return cmd_player_stats(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
