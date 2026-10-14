@@ -1,0 +1,233 @@
+decision,option,situation,real,taken,share,who_did
+4th down,go for it,"Q1-Q3, behind by 1 or more, 90 or more yards from the goal, 12 or more to go, after nothing gained or short gain or first down or loss",32,0,0.0,
+4th down,go for it,"0:09 or less left in the half, lead +0 or more, 42 or less yards from the goal, 5-10 to go, after nothing gained or short gain or first down or loss",34,0,0.0,
+4th down,go for it,"6:40 or less left in the half, lead +0 to +10, 20-30 yards from the goal, 11 or more to go, after nothing gained or short gain or first down or loss",122,1,0.0082,AF065250926 HERMES Q2 3:24 0
+4th down,go for it,"6:40 or less left in the half, ahead by 8 or more, 64 or more yards from the goal, 11 or more to go, after nothing gained or short gain or first down or loss",56,0,0.0,
+4th down,go for it,"6:41-7:11 left in the half, lead +0 or more, 11 or more to go, after nothing gained or short gain or first down or loss",69,0,0.0,
+4th down,field goal,"Q1-Q3, 0:23 or more left in the half, behind by 8 or more, 7-49 yards from the goal, 3 or less to go",49,0,0.0,
+4th down,field goal,"Q4-OT, behind by 4 or more, 49 or less yards from the goal, 3 or less to go, own timeouts 2 or fewer",107,0,0.0,
+4th down,field goal,"Q4-OT, behind by 11 or more, 49 or less yards from the goal, 3 or less to go, own timeouts 3, after nothing gained",33,0,0.0,
+4th down,field goal,"Q4-OT, behind by 4-10, 49 or less yards from the goal, 3 or less to go, own timeouts 3, after short gain or first down or loss or fresh possession or timeout",92,0,0.0,
+4th down,field goal,"Q4-OT, 0:45 or less left in the half, behind by 4 or more, 49 or less yards from the goal, 4-7 to go",59,0,0.0,
+4th down,field goal,"Q4-OT, 0:46 or more left in the half, behind by 4 or more, 49 or less yards from the goal, 4-7 to go, the other side's timeouts 2 or fewer",32,0,0.0,
+4th down,field goal,"50-52 yards from the goal, 4 or less to go",127,0,0.0,
+4th down,field goal,"Q4-OT, behind by 3 or more, 50-52 yards from the goal, 5 or more to go",45,0,0.0,
+4th down,field goal,"1:39 or less left in the half, behind by 1 or more, 53-65 yards from the goal",262,0,0.0,
+4th down,field goal,"1:39 or less left in the half, lead +0 or more, 53-65 yards from the goal, 9 or less to go",113,0,0.0,
+4th down,field goal,"1:39 or less left in the half, lead +0 or more, 53-65 yards from the goal, 13 or more to go",48,0,0.0,
+4th down,field goal,"1:39 or less left in the half, 66 or more yards from the goal",686,0,0.0,
+4th down,field goal,"1:40 or more left in the half, 53 or more yards from the goal",3213,0,0.0,
+4th down,punt,39 or less yards from the goal,4704,1,0.0002,AF077101026 ACE Q2 0:21 0
+4th down,punt,"40-42 yards from the goal, 5 or less to go",161,0,0.0,
+4th down,punt,"40-42 yards from the goal, 6 or more to go, after first down or loss or fresh possession or timeout",42,0,0.0,
+4th down,punt,"5:20 or less left in the half, 43-45 yards from the goal, 1 or less to go",37,0,0.0,
+4th down,punt,"5:20 or less left in the half, behind by 11 or more, 43-45 yards from the goal, 2 or more to go",31,0,0.0,
+4th down,punt,"5:21 or more left in the half, 43-45 yards from the goal",66,0,0.0,
+4th down,punt,"lead +2 or less, 46-51 yards from the goal, 2 or less to go",109,0,0.0,
+4th down,punt,"behind by 8 or more, 52-65 yards from the goal, 2 or less to go",80,0,0.0,
+4th down,punt,"Q4-OT, 2:00 or less left in the half, lead +2 or less, 46-65 yards from the goal, 3-5 to go",56,0,0.0,
+4th down,punt,"Q4-OT, 3:12 or less left in the half, behind by 1 or more, 66 or more yards from the goal, 5 or less to go",83,0,0.0,
+4th down,punt,"Q1-Q3, 3:58 or more left in the half, 46 or more yards from the goal, 6 or more to go, after fresh possession or timeout",103,0,0.0,
+4th down,punt,"Q4-OT, 2:52 or less left in the half, behind by 1 or more, 46 or more yards from the goal, 6-14 to go",299,1,0.0033,AF082021026 MIMIC Q4 1:03 -7
+4th down,punt,"Q4-OT, 1:52 or less left in the half, behind by 1-17, 46 or more yards from the goal, 15 or more to go",82,0,0.0,
+"a field goal on downs 1-3, in range",kick,0:01 or less left in the half,195,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q3-OT, 0:02-0:05 left in the half, behind by 3 or more, 10 or less yards from the goal, 2 or more to go",42,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q3-OT, 0:02-0:05 left in the half, behind by 4-10, 11 or more yards from the goal",46,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:06-0:07 left in the half, behind by 2 or more, 5 or less yards from the goal",74,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:08-0:12 left in the half, behind by 9 or more, 16 or less to go, own timeouts 1 or fewer, after nothing gained or short gain",73,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:08-0:12 left in the half, behind by 3 or more, 7 or less to go, own timeouts 2 or more",196,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:08-0:12 left in the half, behind by 3 or more, 10 or more to go, own timeouts 2 or more",223,1,0.0045,AF056310826 ENFORCER Q2 0:09 -3
+"a field goal on downs 1-3, in range",kick,"0:13-0:31 left in the half, behind by 3 or more, the other side's timeouts 2 or fewer",899,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:13-0:31 left in the half, behind by 11 or more, the other side's timeouts 3",657,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:13-0:31 left in the half, behind by 3-10, 22 or less yards from the goal, the other side's timeouts 3",970,2,0.0021,AF018011026 STRIDER Q2 0:23 -4; AF091270826 PSYCHIC Q2 0:23 -7
+"a field goal on downs 1-3, in range",kick,"0:17-0:31 left in the half, behind by 3-10, 23 or more yards from the goal, the other side's timeouts 3",603,3,0.005,AF034090926 ROMAN Q2 0:30 -3; AF059290926 NIGHTMARE Q2 0:29 -7; AF068011026 ASTRONAUT Q2 0:28 -7
+"a field goal on downs 1-3, in range",kick,"Q1-Q2, 0:13-0:23 left in the half, lead -2 or more, own timeouts 1 or fewer, after nothing gained",81,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q1-Q2, 0:24-0:31 left in the half, lead -2 or more, own timeouts 1 or fewer",104,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q1-Q2, 0:08-0:31 left in the half, lead -2 to +6, 2 or more to go, own timeouts 2 or more",1333,5,0.0038,AF004280826 CLASH Q2 0:28 0; AF005071026 CLASH Q2 0:17 0; AF068310826 RICOCHET Q2 0:12 0; AF095030926 SUMMIT Q2 0:08 +3; AF103270826 JUDGEMENT Q2 0:17 0
+"a field goal on downs 1-3, in range",kick,"Q1-Q2, 0:08-0:31 left in the half, ahead by 7-9, 24 or less yards from the goal, own timeouts 2 or more",313,1,0.0032,AF091280926 NIGHTMARE Q2 0:31 +7
+"a field goal on downs 1-3, in range",kick,"Q1-Q2, 0:23-0:31 left in the half, ahead by 10 or more, own timeouts 2 or more",72,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q3-OT, 0:08-0:31 left in the half, ahead by 1 or more, after short gain or first down or loss or fresh possession or timeout",450,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q1-Q3, 0:32 or more left in the half, 8 or more yards from the goal, the other side's timeouts 1 or fewer, after nothing gained",84,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q1-Q3, 0:32 or more left in the half, the other side's timeouts 2, after nothing gained",459,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q1-Q3, 0:32 or more left in the half, the other side's timeouts 2 or fewer, after short gain or first down or loss or fresh possession or timeout",2787,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q4-OT, 0:32 or more left in the half, behind by 3 or more, the other side's timeouts 2 or fewer",1440,0,0.0,
+"a field goal on downs 1-3, in range",kick,"Q4-OT, 0:32 or more left in the half, lead -2 or more, 37 or more yards from the goal, own timeouts 2 or fewer, the other side's timeouts 2 or fewer",175,1,0.0057,AF047090926 CLOCKWORK Q4 0:38 +1
+"a field goal on downs 1-3, in range",kick,"Q4-OT, 0:32-1:02 left in the half, lead -2 or more, own timeouts 3, the other side's timeouts 2",469,2,0.0043,AF010101026 IMPERIAL Q4 0:56 +4; AF023021026 SHURIKEN Q4 0:41 0
+"a field goal on downs 1-3, in range",kick,"Q4-OT, 1:03 or more left in the half, lead -2 or more, own timeouts 3, the other side's timeouts 2 or fewer",3302,11,0.0033,AF002060926 PHOENIX Q4 1:50 +7; AF007060926 MEMENTO Q4 1:22 +7; AF030220926 SPARK Q4 1:12 0; AF033310826 FENRIR Q4 1:33 +8; AF039140926 MIRAGE Q4 1:06 +3; AF052240926 MERCURY Q4 1:46 +16
+"a field goal on downs 1-3, in range",kick,"0:32-1:37 left in the half, 16 or less yards from the goal, 10 or less to go, down 1-2, the other side's timeouts 3",2729,1,0.0004,AF019101026 MEMENTO Q4 0:57 +7
+"a field goal on downs 1-3, in range",kick,"0:32-1:37 left in the half, 17 or more yards from the goal, down 1-2, the other side's timeouts 3",6797,0,0.0,
+"a field goal on downs 1-3, in range",kick,"1:38 left in the half, lead -9 or more, down 1-2, the other side's timeouts 3",64,0,0.0,
+"a field goal on downs 1-3, in range",kick,"1:39 or more left in the half, down 1-2, the other side's timeouts 3",43769,1,0.0,AF046300926 ENFORCER Q3 2:22 +11
+"a field goal on downs 1-3, in range",kick,"0:32-0:37 left in the half, behind by 1 or more, down 3-4, the other side's timeouts 3",112,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:38-2:44 left in the half, lead +7 or less, down 3-4, the other side's timeouts 3",3385,2,0.0006,AF071030926 SHURIKEN Q2 1:13 -7; AF073240926 HERMES Q2 1:59 -7
+"a field goal on downs 1-3, in range",kick,"0:32-2:45 left in the half, ahead by 8 or more, 3 or less to go, down 3-4, the other side's timeouts 3",101,0,0.0,
+"a field goal on downs 1-3, in range",kick,"0:32-2:45 left in the half, ahead by 8 or more, 21 or more yards from the goal, 4 or more to go, down 3-4, the other side's timeouts 3",124,1,0.0081,AF054290826 MISSILE Q4 1:18 +24
+"a field goal on downs 1-3, in range",kick,"2:46 or more left in the half, down 3-4, the other side's timeouts 3",6033,0,0.0,
+kick-off,touchback,"Q3-OT, 0:12 or less left in the half, behind by 1 or more",107,0,0.0,
+kick-off,touchback,"Q1-Q2, 0:30-0:38 left in the half, behind by 1 or more, own timeouts 3",31,0,0.0,
+kick-off,touchback,"Q3-OT, 0:13-0:27 left in the half, behind by 1 or more",122,0,0.0,
+kick-off,touchback,"Q3-OT, 0:28-0:38 left in the half, behind by 3-12",48,0,0.0,
+kick-off,touchback,"0:31-0:37 left in the half, ahead by 7-9, own timeouts 3",50,0,0.0,
+kick-off,touchback,"Q1-Q2, 0:51-1:10 left in the half, behind by 5 or more",41,0,0.0,
+kick-off,touchback,"Q3-OT, 0:39-1:36 left in the half, behind by 1 or more",411,0,0.0,
+kick-off,touchback,"Q3-OT, 2:09-2:28 left in the half, behind by 8 or more",38,0,0.0,
+kick-off,touchback,"Q3-OT, 1:42-2:28 left in the half, behind by 1-7",178,0,0.0,
+kick-off,touchback,"1:10-1:39 left in the half, lead +0 or more, the other side's timeouts 1",113,1,0.0088,AF042110926 SCHOLAR Q4 1:32 +11
+kick-off,touchback,"1:50-2:28 left in the half, ahead by 14 or more, the other side's timeouts 1 or fewer",35,0,0.0,
+kick-off,touchback,"1:00-1:10 left in the half, lead +0 to +6, the other side's timeouts 2 or more",131,0,0.0,
+kick-off,touchback,"Q3-OT, 0:39-2:28 left in the half, ahead by 21-26, the other side's timeouts 2 or more",62,0,0.0,
+kick-off,touchback,"Q1, 2:29 or more left in the half, behind by 6 or more",58,0,0.0,
+kick-off,touchback,"Q1, 5:38-7:40 left in the half, lead -3 to +3",183,0,0.0,
+kick-off,touchback,"Q1, 2:29-4:08 left in the half, ahead by 4 or more, the other side's timeouts 3",106,1,0.0094,AF057220926 FENRIR Q1 0:01 +7
+kick-off,touchback,"Q1, 4:27-4:30 left in the half, ahead by 4 or more, the other side's timeouts 3",62,0,0.0,
+kick-off,touchback,"Q1, 7:49 or more left in the half, ahead by 4 or more, the other side's timeouts 3",63,0,0.0,
+kick-off,touchback,"Q2-OT, 2:29-2:38 left in the half, behind by 4 or more",56,0,0.0,
+kick-off,touchback,"Q2-Q4, 2:29-2:32 left in the half, lead -3 or more",128,1,0.0078,AF033040926 FUSE Q4 2:29 0
+kick-off,touchback,"OT, 2:29-7:15 left in the half, lead -3 or more",89,0,0.0,
+kick-off,touchback,"Q2-OT, 7:16-7:45 left in the half, ahead by 12 or more",30,0,0.0,
+kick-off,touchback,"Q2-OT, 7:53 or more left in the half",3708,0,0.0,
+kick-off,no landing zone,"Q1-Q2, 0:03 or less left in the half, behind by 1 or more, the other side's timeouts 2 or fewer",51,0,0.0,
+kick-off,no landing zone,"Q1-Q2, 0:05-0:45 left in the half, behind by 1 or more, the other side's timeouts 1 or fewer",41,0,0.0,
+kick-off,no landing zone,"Q3-OT, 0:15-0:45 left in the half, behind by 6 or more",126,1,0.0079,AF044030926 LIZARD Q4 0:40 -14
+kick-off,no landing zone,"Q3-OT, 0:45 or less left in the half, behind by 1-5",185,0,0.0,
+kick-off,no landing zone,"0:12-0:15 left in the half, level",74,0,0.0,
+kick-off,no landing zone,"0:02 or less left in the half, ahead by 8 or more",96,0,0.0,
+kick-off,no landing zone,"0:03-0:45 left in the half, ahead by 22 or more, own timeouts 1 or more",31,0,0.0,
+kick-off,no landing zone,"0:46-0:48 left in the half, behind by 3 or more",46,0,0.0,
+kick-off,no landing zone,"0:51-1:15 left in the half, behind by 3 or more",233,0,0.0,
+kick-off,no landing zone,"Q1-Q2, 1:16-2:12 left in the half, behind by 3 or more, the other side's timeouts 3",121,0,0.0,
+kick-off,no landing zone,"6:29-7:08 left in the half, behind by 3 or more",78,0,0.0,
+kick-off,no landing zone,"0:46-1:56 left in the half, behind by 1-2",60,0,0.0,
+kick-off,no landing zone,"1:57-2:18 left in the half, lead -2 to +7, own timeouts 2 or fewer",34,0,0.0,
+kick-off,no landing zone,"Q3-OT, 2:19-3:20 left in the half, lead -2 to +7, the other side's timeouts 2 or fewer",43,0,0.0,
+kick-off,no landing zone,"3:21-3:22 left in the half, lead -2 to +7",62,0,0.0,
+kick-off,no landing zone,"4:00 left in the half, lead -2 to +7",276,0,0.0,
+kick-off,no landing zone,"0:46-7:49 left in the half, ahead by 8",89,0,0.0,
+kick-off,no landing zone,"Q2-OT, 0:46-1:17 left in the half, ahead by 18 or more",61,0,0.0,
+kick-off,no landing zone,"Q2-OT, 1:58 left in the half, ahead by 9 or more",40,0,0.0,
+kick-off,no landing zone,7:50 or more left in the half,7479,0,0.0,
+kick-off,kept,"Q1-Q2, 7:52 or less left in the half, behind by 7 or more",409,0,0.0,
+kick-off,kept,"Q1-Q2, 0:50 or less left in the half, behind by 4-6",201,0,0.0,
+kick-off,kept,"Q1-Q2, 1:00-2:39 left in the half, behind by 4-6",94,0,0.0,
+kick-off,kept,"Q1-Q2, 0:03-3:54 left in the half, lead -3 or more",5921,19,0.0032,AF001111026 OVERDRIVE Q2 2:46 +4; AF018270926 OVERDRIVE Q2 1:00 +7; AF019081026 MERCENARY Q2 2:51 +3; AF020250826 STRIDER Q2 0:31 0; AF027310826 MEMENTO Q2 1:57 +7; AF029210926 HEADHUNTER Q2 0:07 +3
+kick-off,kept,"Q1-Q2, 3:55-3:56 left in the half, lead -3 to +6",49,0,0.0,
+kick-off,kept,"Q1-Q2, 3:57-4:07 left in the half, lead -3 or more",487,0,0.0,
+kick-off,kept,"Q1-Q2, 4:08-7:52 left in the half, lead -3 or more",2835,17,0.006,AF007220926 LEGEND Q1 1:59 +7; AF010290826 OFFICER Q1 0:47 +7; AF013300926 MEMENTO Q1 3:49 +7; AF023170926 HEADHUNTER Q1 2:02 +3; AF030270926 MISSILE Q1 1:27 +7; AF035031026 FUSE Q1 2:39 +7
+kick-off,kept,"Q3-OT, 0:22 or less left in the half, behind by 4-10",70,0,0.0,
+kick-off,kept,"Q3-OT, 2:01-2:11 left in the half, behind by 1 or more",63,0,0.0,
+kick-off,kept,"Q3-OT, 2:12-3:02 left in the half, behind by 7-8",32,0,0.0,
+kick-off,kept,"Q3-OT, 3:03-3:40 left in the half, behind by 1 or more",161,0,0.0,
+kick-off,kept,"Q3-OT, 3:41-3:53 left in the half, behind by 6 or more",32,0,0.0,
+kick-off,kept,"Q3-OT, 3:54-5:30 left in the half, behind by 1 or more",475,0,0.0,
+kick-off,kept,"Q3-OT, 5:36-6:36 left in the half, behind by 1-12",180,0,0.0,
+kick-off,kept,"Q3-OT, 7:52 or less left in the half, lead +0 to +4",2666,23,0.0086,AF013080926 PINNACLE Q3 2:26 +4; AF021101026 MERLIN Q4 0:11 +4; AF022050926 MEMENTO Q3 3:48 +3; AF027180926 FENRIR Q3 0:54 0; AF028041026 MISSILE Q4 1:13 +3; AF030051026 ENFORCER Q3 0:25 0
+kick-off,kept,"Q3-OT, 7:52 or less left in the half, ahead by 6-11, the other side's timeouts 0",153,0,0.0,
+kick-off,kept,"Q3-OT, 6:59-7:52 left in the half, ahead by 6-11, the other side's timeouts 1 or more",149,0,0.0,
+kick-off,kept,"Q3-OT, 5:28 or less left in the half, ahead by 12 or more",1450,5,0.0034,AF002071026 OFFICER Q4 3:20 +18; AF009260926 HERMES Q4 0:50 +14; AF038280926 LIZARD Q4 3:57 +14; AF051111026 FENRIR Q3 0:42 +14; AF053230926 SCHOLAR Q4 1:58 +24
+kick-off,kept,"Q3-OT, 5:29-7:09 left in the half, ahead by 12-16",131,1,0.0076,AF082280926 OFFICER Q3 1:29 +14
+kick-off,kept,"Q3-OT, 5:29-6:01 left in the half, ahead by 17 or more",61,0,0.0,
+kick-off,kept,"Q3-OT, 7:10-7:52 left in the half, ahead by 12 or more",82,0,0.0,
+kick-off,kept,7:53 or more left in the half,7416,0,0.0,
+conversion,go for two,"Q1-Q2, 0:08-0:16 left in the half, behind by 8 or more",44,0,0.0,
+conversion,go for two,"Q1-Q2, 0:47-1:20 left in the half, behind by 8 or more",54,0,0.0,
+conversion,go for two,"Q1-Q2, 1:58-4:01 left in the half, behind by 8 or more",47,0,0.0,
+conversion,go for two,"Q1-Q2, 0:09-0:20 left in the half, behind by 2-7",31,0,0.0,
+conversion,go for two,"Q3-OT, 6:32 or more left in the half, behind by 3-4",44,0,0.0,
+conversion,go for two,"Q1-Q2, 0:01 or less left in the half, behind by 1",42,0,0.0,
+conversion,go for two,"Q1-Q2, 0:09 or less left in the half, lead +0 to +5",80,0,0.0,
+conversion,go for two,"Q1-Q2, 0:10 or more left in the half, lead -1 to +2",2022,5,0.0025,AF007081026 OFFICER Q1 0:37 -1; AF007101026 MEMENTO Q2 0:24 -1; AF018280826 LAZARUS Q2 0:33 -1; AF056250926 MINDFLAYER Q2 3:41 -1; AF064200926 MAVERICK Q2 1:59 -1
+conversion,go for two,"Q1-Q2, 0:10-0:40 left in the half, ahead by 3-5",106,0,0.0,
+conversion,go for two,"Q1-Q2, 1:06 or more left in the half, ahead by 3-5",212,2,0.0094,AF007081026 MERCENARY Q2 3:19 +5; AF018270826 PHOENIX Q2 1:48 +5
+conversion,go for two,"Q1-Q2, ahead by 6 or more",5522,3,0.0005,AF050091026 CLOCKWORK Q2 1:55 +6; AF078041026 OVERDRIVE Q2 3:50 +12; AF084200926 HURRICANE Q2 0:59 +12
+conversion,go for two,"Q3, lead -1 to +0",461,2,0.0043,AF005051026 LEO Q3 0:01 -1; AF060250826 SCHOLAR Q3 2:14 -1
+conversion,go for two,"Q3, ahead by 3-4",269,0,0.0,
+conversion,go for two,"Q3, ahead by 6-9",673,0,0.0,
+conversion,go for two,"Q3, 4:50 or more left in the half, ahead by 10-11",106,0,0.0,
+conversion,go for two,"Q3, ahead by 13",255,1,0.0039,AF066190926 PURSUIT Q3 2:15 +13
+conversion,go for two,"Q4-OT, 1:24 or less left in the half, level",62,0,0.0,
+conversion,go for two,"Q4-OT, 0:18 or less left in the half, ahead by 2-4, the other side's timeouts 1 or fewer",50,0,0.0,
+conversion,go for two,"Q4-OT, 0:19-1:06 left in the half, ahead by 3-4, the other side's timeouts 1 or fewer",38,0,0.0,
+conversion,go for two,"Q4-OT, 0:36 or less left in the half, ahead by 2, the other side's timeouts 2 or more",95,0,0.0,
+conversion,go for two,"Q4-OT, 2:10 or less left in the half, ahead by 3-4, the other side's timeouts 2 or more",226,0,0.0,
+conversion,go for two,"Q4-OT, 2:33-3:13 left in the half, ahead by 2-4, the other side's timeouts 2 or more",57,0,0.0,
+conversion,go for two,"Q4-OT, ahead by 9-10",397,1,0.0025,AF088190926 PURSUIT Q4 2:50 +9
+conversion,go for two,"Q4-OT, ahead by 13-14",247,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 0:54 or less left in the half, 6 or more yards from the goal, down 1, after nothing gained",41,0,0.0,
+defense's timeout before a running-clock snap,timeout,"0:55-2:44 left in the half, 6 or more yards from the goal, down 1, after nothing gained",122,1,0.0082,AF082280926 LYNX Q2 2:07 +7
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 2:44 or less left in the half, lead +0 or less, 4 or less yards from the goal, down 2-4, after nothing gained",198,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 2:44 or less left in the half, lead +0 or less, 7-53 yards from the goal, down 2-4, after nothing gained",1686,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 1:15 or less left in the half, lead +0 or less, 53 or less yards from the goal, down 2-4, own timeouts 2 or fewer, after nothing gained",266,2,0.0075,AF058021026 DON Q4 1:02 -21; AF066230926 LUNA Q4 0:28 -10
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 1:16-2:44 left in the half, lead +0 or less, 53 or less yards from the goal, down 2-4, after nothing gained",698,1,0.0014,AF066091026 SAGE Q4 1:56 -7
+defense's timeout before a running-clock snap,timeout,"2:44 or less left in the half, lead +0 or less, 54 or more yards from the goal, down 2-4, after nothing gained",1994,0,0.0,
+defense's timeout before a running-clock snap,timeout,"2:44 or less left in the half, ahead by 1 or more, down 2-4, after nothing gained",8355,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 0:23 or less left in the half, lead +2 or less, 5-14 yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",223,1,0.0045,AF061130926 LIZARD Q2 0:06 0
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 2:11-2:44 left in the half, lead +2 or less, 41 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",333,0,0.0,
+defense's timeout before a running-clock snap,timeout,"OT, 1:58-2:44 left in the half, lead +2 or less, after short gain or first down or loss or fresh possession or timeout",89,0,0.0,
+defense's timeout before a running-clock snap,timeout,"0:18 or less left in the half, ahead by 3-8, 12-19 yards from the goal, after short gain or first down or loss or fresh possession or timeout",179,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q2, 0:13 or less left in the half, ahead by 9 or more, 19 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout",82,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 2:44 or less left in the half, ahead by 9-20, 19 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout",1205,2,0.0017,AF046260926 SHURIKEN Q4 1:25 +10; AF060090926 NIGHTMARE Q4 0:19 +10
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 2:44 or less left in the half, ahead by 21 or more, 8-19 yards from the goal, after short gain or first down or loss or fresh possession or timeout",114,1,0.0088,AF026130926 SHURIKEN Q4 1:16 +21
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 20-36 yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",756,2,0.0026,AF038240926 MERCURY Q4 2:02 +10; AF095190926 PURSUIT Q4 2:39 +21
+defense's timeout before a running-clock snap,timeout,"1:09 or less left in the half, ahead by 3-8, 37 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",1559,7,0.0045,AF013290826 OFFICER Q4 0:58 +4; AF017240826 OCTANE Q2 1:05 +7; AF032041026 MIRAGE Q4 0:04 +3; AF046170926 MERCURY Q2 0:17 +7; AF046250826 SPARK Q2 0:05 +4; AF050200926 NIRVANA Q4 0:53 +3
+defense's timeout before a running-clock snap,timeout,"2:44 or less left in the half, ahead by 9 or more, 37 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",2189,5,0.0023,AF013051026 OFFICER Q2 1:54 +14; AF046240826 MIRAGE Q2 2:22 +10; AF066050926 PURSUIT Q2 2:28 +14; AF088190926 PURSUIT Q4 2:08 +11; AF106010926 DESTINY Q2 1:39 +10
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 20-44 yards from the goal, down 2-4, after short gain or first down or loss or fresh possession or timeout",623,4,0.0064,AF020160926 HURRICANE Q4 0:14 +12; AF022040926 LYNX Q4 0:29 +19; AF033050926 HEADHUNTER Q4 1:34 +20; AF072240826 VALIANT Q4 1:08 +18
+defense's timeout before a running-clock snap,timeout,"Q3-OT, 2:44 or less left in the half, ahead by 8 or more, 45 or more yards from the goal, down 2-4, after short gain or first down or loss or fresh possession or timeout",1120,6,0.0054,AF021081026 HEADHUNTER Q4 2:30 +10; AF033050926 HEADHUNTER Q4 0:30 +24; AF037120926 HEADHUNTER Q4 1:45 +10; AF037120926 HEADHUNTER Q4 1:35 +10; AF093061026 ORIGINAL Q4 0:12 +14; AF093090926 ROCKET Q4 1:39 +11
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 2:45-4:48 left in the half, after nothing gained",3174,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 2:45-2:48 left in the half, 28 or less yards from the goal, 6 or less to go, after short gain or first down or loss or fresh possession or timeout",84,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 2:45-3:01 left in the half, 29 or more yards from the goal, down 1, after short gain or first down or loss or fresh possession or timeout",309,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 2:45-3:01 left in the half, 29 or more yards from the goal, down 3-4, after short gain or first down or loss or fresh possession or timeout",107,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:42-4:48 left in the half, behind by 1 or more, 58 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout",213,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 3:02-4:48 left in the half, lead +0 or more, 58 or less yards from the goal, down 1-3, after short gain or first down or loss or fresh possession or timeout",5461,21,0.0038,AF002011026 LUNA Q2 3:20 +3; AF012011026 PSYCHIC Q2 3:44 0; AF022180926 CLOCKWORK Q3 0:10 +4; AF029180926 KILLJOY Q3 0:14 +24; AF030081026 DON Q3 0:48 0; AF032180926 CLOCKWORK Q1 0:47 +7
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 3:02-4:48 left in the half, 59 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout",2479,2,0.0008,AF052060926 MIRAGE Q3 0:48 -13; AF056030926 MERLIN Q2 3:49 0
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:49 or more left in the half, after nothing gained",8759,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:53 or more left in the half, behind by 8 or more, 19 or less to go, down 1-3, after short gain or first down or loss or fresh possession or timeout",2114,6,0.0028,AF021100926 SABRE Q3 1:24 -11; AF031250926 SCHOLAR Q3 2:25 -11; AF055051026 NIGHTMARE Q3 1:51 -8; AF064260926 VALIANT Q3 2:07 -14; AF067010926 MINDFLAYER Q3 1:14 -17; AF071240926 LEGEND Q3 3:38 -14
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:49 or more left in the half, lead -7 or more, 19 or less to go, down 1-3, after short gain or first down or loss or fresh possession or timeout",35453,32,0.0009,AF002011026 LUNA Q1 1:05 +3; AF003070926 ROCKET Q3 2:20 -7; AF004160926 SHROUD Q3 3:48 +7; AF017240926 LEO Q3 3:19 0; AF019270826 SAGE Q3 1:38 +10; AF023180926 KILLJOY Q1 3:11 0
+defense's timeout before a running-clock snap,timeout,"Q2-Q3, 4:49 or more left in the half, 20 or more to go, down 1-3, after short gain or first down or loss or fresh possession or timeout",277,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1, 4:49 or more left in the half, 1 or less to go, down 4, after short gain or first down or loss or fresh possession or timeout",95,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:49 or more left in the half, lead +11 or less, 55 or less yards from the goal, 2 or more to go, down 4, after short gain or first down or loss or fresh possession or timeout",165,1,0.0061,AF037250826 MERLIN Q1 2:22 0
+defense's timeout before a running-clock snap,timeout,"Q1-Q3, 4:49 or more left in the half, 56 or more yards from the goal, 2 or more to go, down 4, after short gain or first down or loss or fresh possession or timeout",165,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45 or more left in the half, behind by 1 or more, own timeouts 2 or fewer, after nothing gained",45,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45 or more left in the half, behind by 1 or more, own timeouts 3, after nothing gained",344,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 3:00 or more left in the half, behind by 1 or more, 57 or more yards from the goal, own timeouts 3, after short gain or first down",328,2,0.0061,AF069180926 LYNX Q4 3:16 -4; AF076240926 SABRE Q4 3:18 -7
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 3:19 or more left in the half, behind by 1 or more, 52 or more yards from the goal, own timeouts 3, after loss or fresh possession or timeout",43,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45-2:59 left in the half, ahead by 1-9, 24 or less yards from the goal",64,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45-2:59 left in the half, lead +0 to +9, 58 or more yards from the goal",137,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 3:00 or more left in the half, lead +0 to +9, 34 or less yards from the goal, 20 or less to go, after nothing gained",140,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 3:00 or more left in the half, lead +0 to +9, 35 or more yards from the goal, 20 or less to go",1803,5,0.0028,AF015011026 SABRE Q4 3:05 +1; AF029120926 HEADHUNTER Q4 3:36 +4; AF040220926 SPARK Q4 3:16 0; AF050150926 PURSUIT Q4 3:04 +3; AF098250826 MEMENTO Q4 3:45 0
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45-3:39 left in the half, ahead by 10 or more, 22 or less to go, own timeouts 2 or fewer",49,0,0.0,
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:50 or more left in the half, ahead by 10 or more, 22 or less to go, down 1, own timeouts 3",753,1,0.0013,AF018070926 KATANA Q4 3:30 +14
+defense's timeout before a running-clock snap,timeout,"Q4-OT, 2:45 or more left in the half, ahead by 10 or more, 22 or less to go, down 2-4, own timeouts 3",1244,0,0.0,
+offense's timeout before a running-clock snap,timeout,"0:13 or less left in the half, 7 or less to go, down 2-4, after nothing gained",338,1,0.003,AF052101026 MERCURY Q2 0:10 -4
+offense's timeout before a running-clock snap,timeout,"0:14-0:15 left in the half, 4 or less to go, down 2-4, after nothing gained",33,0,0.0,
+offense's timeout before a running-clock snap,timeout,"0:16-0:59 left in the half, 7 or less to go, down 2-4, after nothing gained",1001,1,0.001,AF016260826 LEGEND Q4 0:50 -1
+offense's timeout before a running-clock snap,timeout,"0:59 or less left in the half, 8-15 to go, down 2-4, after nothing gained",4033,0,0.0,
+offense's timeout before a running-clock snap,timeout,"0:59 or less left in the half, 16 or more to go, down 2-4, own timeouts 2 or fewer, after nothing gained",108,0,0.0,
+offense's timeout before a running-clock snap,timeout,"0:23-0:59 left in the half, 16 or more to go, down 2-4, own timeouts 3, after nothing gained",34,0,0.0,
+offense's timeout before a running-clock snap,timeout,"0:43-0:59 left in the half, lead +7 or less, 23 or more yards from the goal, 2 or less to go, own timeouts 1 or fewer, after short gain or first down or loss or fresh possession or timeout",30,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q2, 0:43-0:59 left in the half, ahead by 8 or more, 23 or more yards from the goal, 9 or less to go, after short gain or first down or loss or fresh possession or timeout",32,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q3-OT, 0:43-0:59 left in the half, ahead by 8 or more, 23 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout",68,0,0.0,
+offense's timeout before a running-clock snap,timeout,"1:00-1:42 left in the half, after nothing gained",3056,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q2, 1:00-1:07 left in the half, behind by 3 or more, 6 or less yards from the goal, 15 or less to go, after short gain or first down or loss or fresh possession or timeout",33,0,0.0,
+offense's timeout before a running-clock snap,timeout,"1:00-1:06 left in the half, lead -2 or more, 32 or less yards from the goal, 13 or less to go, after short gain or first down or loss or fresh possession or timeout",327,3,0.0092,AF032091026 CLOCKWORK Q2 1:03 0; AF044200926 SPARK Q4 1:02 0; AF073290826 SHROUD Q4 1:03 0
+offense's timeout before a running-clock snap,timeout,"1:10-1:42 left in the half, ahead by 5 or more, 65 or less yards from the goal, after short gain or first down or loss or fresh possession or timeout",869,3,0.0035,AF008020926 STRIDER Q2 1:21 +7; AF058070926 PURSUIT Q4 1:35 +14; AF088110926 AVATAR Q2 1:21 +7
+offense's timeout before a running-clock snap,timeout,"1:10-1:27 left in the half, ahead by 8 or more, 66 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout",32,0,0.0,
+offense's timeout before a running-clock snap,timeout,"1:28-1:42 left in the half, lead -2 or more, 66 or more yards from the goal, 8 or more to go, after short gain or first down or loss or fresh possession or timeout",74,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 59 or less yards from the goal, 3 or less to go, after nothing gained",1038,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 63 or more yards from the goal, 3 or less to go, after nothing gained",302,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 4 or more to go, after nothing gained",12431,1,0.0001,AF005021026 KEVLAR Q3 1:09 +6
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 25 or less yards from the goal, down 1-2, after short gain or first down",10753,28,0.0026,AF001290926 OFFICER Q3 1:31 0; AF004011026 ROCKET Q2 2:04 0; AF006300926 RELIC Q3 2:37 +10; AF010140926 IMPERIAL Q3 0:08 -14; AF015091026 SHROUD Q3 2:00 -7; AF016071026 LEO Q3 0:11 -16
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, behind by 4 or more, 25 or less yards from the goal, down 3-4, after short gain or first down",379,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 26 or more yards from the goal, after short gain or first down",37775,45,0.0012,AF004180926 SAGE Q3 1:57 -7; AF004250826 LEGEND Q1 3:44 -7; AF005280826 PSYCHIC Q3 0:50 -7; AF008031026 GENIUS Q2 2:23 0; AF011270826 ROMAN Q1 1:20 -3; AF012051026 SHROUD Q3 2:23 -10
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 13 or more to go, down 1-2, the other side's timeouts 2 or fewer, after loss or fresh possession or timeout",45,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, lead +9 or less, down 1-2, the other side's timeouts 3, after loss or fresh possession or timeout",4284,8,0.0019,AF041270926 FENRIR Q2 2:22 -7; AF053280926 NIGHTMARE Q1 3:03 -7; AF054071026 CLOCKWORK Q2 2:42 0; AF054260826 DREAD Q1 2:31 -7; AF060090926 KILLJOY Q1 0:17 -14; AF063021026 RELIC Q1 1:15 0
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, ahead by 12 or more, down 1-2, the other side's timeouts 3, after loss or fresh possession or timeout",138,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q1-Q3, 1:43 or more left in the half, 14 or less to go, down 3-4, after loss or fresh possession or timeout",1490,10,0.0067,AF002300826 RELIC Q1 0:50 0; AF009111026 RELIC Q3 2:15 +4; AF022240926 MINDFLAYER Q2 3:05 +14; AF025150926 MIRAGE Q1 0:26 +7; AF030041026 MISSILE Q1 0:41 0; AF041010926 SPARK Q1 2:52 0
+offense's timeout before a running-clock snap,timeout,"Q1-Q2, 1:43 or more left in the half, 15-20 to go, down 3-4, after loss or fresh possession or timeout",238,1,0.0042,AF050190926 PURSUIT Q2 1:53 -7
+offense's timeout before a running-clock snap,timeout,"Q3, 1:43 or more left in the half, behind by 14 or more, 15 or more to go, down 3-4, after loss or fresh possession or timeout",40,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 1:43 or more left in the half, after nothing gained",3861,1,0.0003,AF004160926 SHROUD Q4 3:29 0
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 2:48-3:02 left in the half, behind by 9 or more, 4 or more yards from the goal, after short gain or first down or loss or fresh possession or timeout",320,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 1:50-3:02 left in the half, lead -8 or more, down 1-2, after short gain or first down or loss or fresh possession or timeout",4864,17,0.0035,AF005051026 OFFICER Q4 2:10 +2; AF008250826 STRIDER Q4 2:32 +3; AF027031026 MERLIN Q4 2:23 +21; AF029150926 MIRAGE Q4 2:58 -7; AF034050926 SHURIKEN Q4 3:01 +3; AF034051026 MINDFLAYER Q4 3:00 0
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 1:43-3:02 left in the half, lead -8 or more, 36 or less yards from the goal, down 3-4, after short gain or first down or loss or fresh possession or timeout",672,3,0.0045,AF009020926 SABRE Q4 2:35 +3; AF025200926 HURRICANE Q4 1:48 +7; AF040120926 DREAD Q4 2:03 +4
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 3:03 or more left in the half, 38 or less yards from the goal, 3 or less to go, after short gain or first down or loss or fresh possession or timeout",452,0,0.0,
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 3:03 or more left in the half, 4-15 to go, after short gain or first down or loss or fresh possession or timeout",3856,3,0.0008,AF008290926 PSYCHIC Q4 3:17 -7; AF036240826 MIRAGE Q4 3:17 +3; AF043230926 SCHOLAR Q4 3:32 -7
+offense's timeout before a running-clock snap,timeout,"Q4-OT, 3:03 or more left in the half, behind by 13 or more, 16 or more to go, after short gain or first down or loss or fresh possession or timeout",47,0,0.0,
