@@ -354,6 +354,10 @@ def cmd_bets(args):
             elif args.action == "sessions":
                 from . import bet_sessions
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
+            elif args.action == "rematches":
+                from . import bet_rematches
+                path = bet_rematches.run(cur, out_dir)
+                print(f"\n  -> {path} and bets_rematches.csv")
             elif args.action == "ml-losers":
                 from . import bet_losers
                 path = bet_losers.run(cur, out_dir)
@@ -1072,13 +1076,19 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers"],
+                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers",
+                                      "rematches"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
                                   "placed before kick-off, each model version priced off its kick-off "
                                   "alone (cheap over many weeks), margins week by week and each "
                                   "candidate against the first with a bootstrap interval "
                                   "(out/bets_prematch.txt); "
+                                  "rematches: two gamers meeting again the same day (their session): the "
+                                  "money by meeting (1st, 2nd, 3rd, 4th+) and teams (the same as the first "
+                                  "meeting, swapped, changed), and where the moneyline, handicap and total "
+                                  "money goes against the first meeting's winner and margin, with prod's "
+                                  "price of him then and now (out/bets_rematches.txt); "
                                   "ml-losers: the matches the book loses on the moneyline against "
                                   "the rest (what is targeted, how they played out), every moneyline "
                                   "bet's residual (won less prod's p) by the game at the bet (lead, ball, "
