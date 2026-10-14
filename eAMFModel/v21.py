@@ -15,9 +15,10 @@ Each scrimmage snap is two draws, both from real snaps:
              (a running clock) and the play itself. Drawn from the real times of snaps alike in
              TIME_FEATURES: what the play before did to the clock (PREV: nothing gained -- mostly an
              incomplete pass --, a short gain, a first down, a loss, a fresh possession, a timeout),
-             the part of the game (PHASES), the offense's lead, down, distance, field zone, the snaps
-             played so far and the snaps left in the half. Bimodal by nature: a stopped clock gives a
-             play's own 5-8 seconds, a running one 25-40, and the play before sets the split.
+             the part of the game (SPLIT: the half and the two-minute warning), the offense's lead,
+             down, distance, field zone, the snaps played so far and the snaps left in the half.
+             Bimodal by nature: a stopped clock gives a play's own 5-8 seconds, a running one 25-40,
+             and the play before sets the split.
   distance   what came of the snap -- yards gained, a turnover, a defensive touchdown -- drawn from
              the real snaps alike in DIST_FEATURES, the first of them the time drawn (TIME_BUCKETS):
              a snap over in 5 seconds can only have gone so far.
@@ -102,16 +103,25 @@ MARGIN_EDGES = np.array([-8.5, -3.5, -0.5, 0.5, 3.5, 8.5])
 DIST_EDGES = np.array([1.5, 3.5, 6.5, 10.5])
 ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 89.5, 95.5])     # the last two: the 10 to the 5, inside the 5
 ELAPSED_EDGES = np.array([30.5, 60.5, 90.5])
-REMAIN_EDGES = np.array([1.5, 2.5, 4.5, 7.5, 12.5])         # snaps left in the half: 0-1, 2, 3-4, 5-7, 8-12, 13+
+REMAIN_EDGES = np.array([1.5, 2.5, 4.5, 7.5, 12.5, 17.5])   # snaps left in the half: 0-1, 2, 3-4, 5-7, 8-12, 13-17, 18+
+REMAIN_NAMES = ("0-1", "2", "3-4", "5-7", "8-12", "13-17", "18+")
 TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
-SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=6, tb=6,
-             lead3=3, tb2=2, dist3=3, zone3=3, endgame=29, endgame3=13)  # the last seven: coarse ones (derive)
+SIZES = dict(prev=6, phase=7, part=5, half=3, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=7, tb=6,
+             lead3=3, tb2=2, dist3=3, zone3=3, endgame=50, endgame3=22)  # part and the last six: derive's
+# The draws' part of the game (SPLIT): "snaps" -- the half and the two-minute warning (part: the first
+# half before its 2:00, its last 2:00, the same of the second, overtime), the snaps left in the half
+# telling the rest (Q1 from Q2, the start of a half from its middle); "time" -- the seven parts (phase).
+# The half stays: Q2's end is not the game's (a level side attacks before the half, plays for the kick
+# at the end of the game), and so does the warning: the clock's rules change there.
+SPLIT = "snaps"
+SPLITS = ("snaps", "time")
+PART_OF = np.array([0, 0, 1, 2, 2, 3, 4])                  # phase -> part
 TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
 DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
 TIME_FEATURES = TIME_BASE + ("lead3", "endgame3")       # the fine features, then the coarse ones the fallbacks read
-DIST_FEATURES = DIST_BASE + ("lead3", "zone3", "endgame3", "dist3", "tb2")
+DIST_FEATURES = DIST_BASE + ("lead3", "zone3", "endgame3", "dist3", "tb2", "half")
 
 
 def _drop(features, *names):
@@ -139,7 +149,7 @@ TIME_LEVELS = (TIME_BASE,
 DIST_LEVELS = (DIST_BASE,
                _drop(DIST_BASE, "elapsed"),
                ("tb", "down", "dist", "zone", "lead3", "phase", "remain"),
-               ("tb", "down", "dist", "zone", "lead3", "remain"),
+               ("tb", "down", "dist", "zone", "lead3", "half", "remain"),
                ("tb", "down", "dist", "zone", "endgame3"),
                ("tb", "down", "dist3", "zone", "endgame3"),
                ("tb2", "down", "dist3", "zone3", "endgame3"),
@@ -954,6 +964,7 @@ class Model:
 
     def __init__(self):
         self.mode = "full"
+        self.split = SPLIT
         self.time = self.dist = None
         self.own = {}                      # full: {(who, role, "time"|"dist"): Bins}
         self.gamers, self.teams = {}, {}
@@ -1011,32 +1022,34 @@ def late_of(period, clock):
     return np.select([period >= 5, end & (clock <= 30), end & (clock <= LATE)], [3, 2, 1], 0).astype(np.int64)
 
 
-def endgame_of(phase, remain, margin):
-    """The end of a half apart from the rest: 0 the bulk of the game (before the half's 2:00, 5+ snaps
-    left); 1-21 the half's last 2:00 or under 5 snaps left, by the snaps left (0-1, 2-4, 5+) and the
-    lead (MARGIN_NAMES: a side 1-3 ahead plays it out apart from one 9+ ahead); 22-28 overtime by the
-    lead. `remain` is the snaps-left bucket (remain_b), `margin` the lead's (margin_b)."""
+def endgame_of(phase, remain, margin, k=7):
+    """The end of a half apart from the rest, and the first half's from the second's: 0 the bulk of the
+    game (before the half's 2:00, 5+ snaps left); then the half's last 2:00 or under 5 snaps left, by
+    the half, the snaps left (0-1, 2-4, 5+) and the lead (k of them: margin_b's 7, so a side 1-3 ahead
+    plays it out apart from one 9+ ahead, or lead3's 3); then overtime by the lead. `remain` is the
+    snaps-left bucket (remain_b). A level side at the end of Q2 attacks; at the end of Q4 it plays for
+    the kick."""
     phase, remain, margin = np.asarray(phase), np.asarray(remain), np.asarray(margin)
     r3 = np.select([remain == 0, remain <= 2], [0, 1], 2)
     end = (phase == 2) | (phase == 5) | (remain <= 2)
-    return np.where(phase == 6, 22 + margin, np.where(end, 1 + 7 * r3 + margin, 0)).astype(np.int64)
+    h = (phase >= 3).astype(np.int64)
+    return np.where(phase == 6, 1 + 6 * k + margin, np.where(end, 1 + 3 * k * h + k * r3 + margin, 0)).astype(np.int64)
 
 
 def endgame3_of(phase, remain, lead3):
-    """endgame_of with the lead behind / level / ahead: 0 the bulk, 1-9 the end of a half by the snaps
-    left (0-1, 2-4, 5+) and the lead, 10-12 overtime by the lead (the league draws' fallbacks)."""
-    phase, remain, lead3 = np.asarray(phase), np.asarray(remain), np.asarray(lead3)
-    r3 = np.select([remain == 0, remain <= 2], [0, 1], 2)
-    end = (phase == 2) | (phase == 5) | (remain <= 2)
-    return np.where(phase == 6, 10 + lead3, np.where(end, 1 + 3 * r3 + lead3, 0)).astype(np.int64)
+    """endgame_of with the lead behind / level / ahead (the league draws' fallbacks)."""
+    return endgame_of(phase, remain, lead3, k=3)
 
 
 def derive(f):
     """The coarse features off the fine ones: the lead (lead3: behind, level, ahead), the clock (tb2:
-    stopped, running), the distance (dist3: 1-3, 4-6, 7+), the field (zone3) and the end of a half
-    (endgame_of)."""
+    stopped, running), the distance (dist3: 1-3, 4-6, 7+), the field (zone3), the part of the game
+    (part: the half and the two-minute warning; half) and the end of a half (endgame_of)."""
     if "margin" in f:
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
+    if "phase" in f:
+        f["part"] = PART_OF[np.asarray(f["phase"])]
+        f["half"] = np.select([np.asarray(f["phase"]) <= 2, np.asarray(f["phase"]) <= 5], [0, 1], 2).astype(np.int64)
     if "remain" in f and "phase" in f and "margin" in f:
         f["endgame"] = endgame_of(f["phase"], f["remain"], f["margin"])
         f["endgame3"] = endgame3_of(f["phase"], f["remain"], f["lead3"])
@@ -1086,14 +1099,16 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0, gamer_decisions=True, rules=True):
+          seed=0, gamer_decisions=True, rules=True, split=SPLIT):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
-    global rules, the real shares alone."""
+    global rules, the real shares alone; split: the draws' part of the game (SPLIT)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
+    draw_spec(split)
     m = Model()
     m.mode = mode
+    m.split = split
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -1195,7 +1210,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.two_good = (sum(two) + 5) / (len(two) + 10)
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
     run = dec["to_def"]
-    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, timeouts=bool(run),
+    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
         for r_ in range(REFINE_ROUNDS):
@@ -1210,16 +1225,30 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     return m
 
 
+def draw_spec(split=SPLIT):
+    """The draws' features and fallbacks for a split (SPLIT): "snaps" reads part where "time" reads
+    phase."""
+    if split not in SPLITS:
+        raise ValueError(f"split must be one of {', '.join(SPLITS)}")
+    sub = (lambda t: tuple("part" if x == "phase" else x for x in t)) if split == "snaps" else tuple
+    subs = lambda levels: tuple(sub(lv) for lv in levels)
+    return dict(time=(sub(TIME_FEATURES), subs(TIME_LEVELS)), dist=(sub(DIST_FEATURES), subs(DIST_LEVELS)),
+                gamer_time=(sub(GAMER_TIME_FEATURES), subs(GAMER_TIME_LEVELS)),
+                gamer_dist=(sub(GAMER_DIST_FEATURES), subs(GAMER_DIST_LEVELS)))
+
+
 def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     """The time and distance draws (and the gamers' and teams' own or their tilts) on the model's
     current table of snaps left in the half."""
+    spec = draw_spec(getattr(m, "split", "time"))
+    (time_f, time_l), (dist_f, dist_l) = spec["time"], spec["dist"]
     feats = _features(recs, m)
     seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
     cut = np.array([r["cut"] for r in recs], bool)
     time_pay = {"seconds": seconds.astype(np.float32), "cut": cut}       # compact: a record sits in a group
                                                                            # at every level that draws on it
-    m.time = Bins.build(TIME_FEATURES, [SIZES[f] for f in TIME_FEATURES], TIME_LEVELS,
-                        _cols(feats, TIME_FEATURES), seconds, time_pay, min_records)
+    m.time = Bins.build(time_f, [SIZES[f] for f in time_f], time_l, _cols(feats, time_f), seconds, time_pay,
+                        min_records)
     kind = np.array([r["kind"] for r in recs])
     gain = np.array([r["gain"] for r in recs], np.int64)
     field = np.array([r["field"] for r in recs], np.int64)
@@ -1229,8 +1258,8 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     dist_pay = {"made": made, "rdist": np.array([r["distance"] for r in recs], np.int16),
                 "kind": kind.astype(np.int8), "gain": gain.astype(np.int16), "shift": shift.astype(np.int16),
                 "td": (kind == GAIN) & (gain >= 100 - field), "value": dvalue.astype(np.float32)}
-    m.dist = Bins.build(DIST_FEATURES, [SIZES[f] for f in DIST_FEATURES], DIST_LEVELS,
-                        _cols(feats, DIST_FEATURES), dvalue, dist_pay, min_records)
+    m.dist = Bins.build(dist_f, [SIZES[f] for f in dist_f], dist_l, _cols(feats, dist_f), dvalue, dist_pay,
+                        min_records)
 
     who = dict(gamer_off=np.array([m.gamer_index(r["gamer"][0]) for r in recs]),
                gamer_def=np.array([m.gamer_index(r["gamer"][1]) for r in recs]),
@@ -1244,14 +1273,14 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
             kind_, role = name.split("_")
             f = dict(feats, who=ids)
             for draw, features, levels, value, pay in (
-                    ("time", GAMER_TIME_FEATURES, GAMER_TIME_LEVELS, seconds, time_pay),
-                    ("dist", GAMER_DIST_FEATURES, GAMER_DIST_LEVELS, dvalue, dist_pay)):
+                    ("time", *spec["gamer_time"], seconds, time_pay),
+                    ("dist", *spec["gamer_dist"], dvalue, dist_pay)):
                 m.own[(kind_, role, draw)] = Bins.build(
                     features, [sizes[name]] + [SIZES[x] for x in features[1:]], levels, _cols(f, features),
                     value, pay, MIN_GAMER_RECORDS, strict=True)
     else:
         timed = ~cut
-        b_time = m.time.bin_of({f: feats[f][timed] for f in TIME_FEATURES})
+        b_time = m.time.bin_of({f: feats[f][timed] for f in time_f})
         m.tilt["time"] = fit_tilts(m.time, m.time.payload["seconds"], b_time, seconds[timed],
                                    {k: v[timed] for k, v in who.items()}, sizes)
         m.tilt["dist"] = fit_tilts(m.dist, m.dist.payload["value"], m.dist.bin_of(feats), dvalue, who, sizes)
@@ -1326,6 +1355,8 @@ def report_build(m, recs=None):
                     print(f"  {kind_} tilt by {k.replace('_', ' ')}: sd {np.std(v[:-1]):.3f}, from {v[:-1].min():+.2f}"
                           f" to {v[:-1].max():+.2f}")
     print(f"  timeouts: {'fitted from the export' if m.meta.get('timeouts') else 'none (no timeout columns)'}")
+    print(f"  the draws' part of the game: " + ("the half and the two-minute warning, the snaps left the rest"
+                                               if getattr(m, "split", "time") == "snaps" else "the seven parts"))
     for line in remain_lines(m):
         print(line)
     if recs is not None:
@@ -1368,8 +1399,8 @@ REMAIN_SHOWN = (("Q2 2:00, clock stopped, 3 timeouts each", 2, 120.0, 0, 3, 3),
 
 def remain_lines(m):
     """The snaps-left table at REMAIN_SHOWN's states, behind / level / ahead."""
-    out = ["  snaps left in the half at a few states (behind / level / ahead; buckets"
-           " 0-1, 2, 3-4, 5-7, 8-12, 13+):"]
+    out = ["  snaps left in the half at a few states (behind / level / ahead; buckets "
+           + ", ".join(REMAIN_NAMES) + "):"]
     for label, p, c, run, own_, opp_ in REMAIN_SHOWN:
         v = [float(m.remain_at(p, c, run, own_, opp_, l3)) for l3 in range(3)]
         out.append(f"    {label}: " + " / ".join(f"{x:.1f}" for x in v))

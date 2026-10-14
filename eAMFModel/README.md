@@ -1986,9 +1986,16 @@ missing something. Nothing is ever fitted to close those gaps.
   wait for the snap and the play itself. It is drawn from real snaps alike in:
   - the play before: nothing gained, a short gain, a first down, a loss, a fresh possession or a
     timeout;
-  - the part of the game, with Q2 and Q4 split at 2:00;
+  - the half (first, second, overtime) and whether the two-minute warning has passed;
   - the offense's lead, down, distance and field zone;
   - the snaps played so far and the snaps left in the half (below).
+
+  Snaps left stands in for the time left (`--split snaps`, the default): it tells Q1 from Q2 and the
+  start of a half from its middle. Two things it can't tell stay in. The half: at the end of Q2 a
+  level side attacks, at the end of Q4 it plays for the kick. The audit showed this when a fallback
+  mixed the two: level sides in Q4's last 2:00 scored a touchdown on 15% of the sim's snaps against
+  5% real. The two-minute warning: the clock's rules change there. `--split time` keeps the seven
+  parts of the game (Q1, Q2 and Q4 each side of 2:00, Q3, overtime) for comparison.
 
   This draw is where the bimodal split lives. A stopped clock gives a play's own 5–8 seconds, a
   running one 25–40, and the play before (from the action log) sets the mix. So from any point in
@@ -2000,12 +2007,12 @@ missing something. Nothing is ever fitted to close those gaps.
 - **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
   draw falls back level by level to fewer features. The build prints how deep the real states fall.
   The fallbacks keep the situation to the end: the down, the distance, the field and the snaps left
-  in the half, plus coarsely the part of the game and the lead. So a 3rd down is never drawn from
+  in the half, plus coarsely the half and the lead. So a 3rd down is never drawn from
   1st downs, and a side with time for one snap never from one with time for ten, while there are
   real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
   At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
-  distance, the field and the time before it lets the lead go. It keeps the snaps left (0–1, 2–4,
-  5+) and behind / level / ahead. The audit showed why: level sides in Q4's last 2:00 scored a
+  distance, the field and the time before it lets the lead go. It keeps the half, the snaps left
+  (0–1, 2–4, 5+) and behind / level / ahead. The audit showed why: level sides in Q4's last 2:00 scored a
   touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
   sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
   prints how deep real states fall, for the rest of the game and the end of a half apart.
@@ -2015,7 +2022,7 @@ missing something. Nothing is ever fitted to close those gaps.
     defending gamer, else its team, allowed. "Alike" always means the same down. For the time it
     also means the same play before, part of the game and (at least coarsely) lead; for the
     distance, the same time drawn, distance and field, at least coarsely. The end of a half stands
-    apart in both: the half's last 2:00, or under 5 snaps left, split by snaps left
+    apart in both: the half's last 2:00, or under 5 snaps left, split by the half, snaps left
     (0–1, 2–4, 5+) and lead (the 7 lead buckets, so 1–3 ahead apart from 9+ ahead), with
     overtime by lead. There a side's own snaps come from its own ends
     of halves, else the league's draw, which keeps the full situation. The build prints how often
@@ -2051,8 +2058,8 @@ missing something. Nothing is ever fitted to close those gaps.
   Each cell is shrunk toward its slice's figure for that clock, and that toward the slice's alone,
   by 20 snaps. Real snaps and sim states read the table the same way. The real games' counts come
   first. Then, 3 times over, the build plays 6,000 games from kick-off, replaces the table with the
-  sim's own counts and rebuilds the draws on it. The draws bucket it as 0–1, 2, 3–4, 5–7, 8–12 and
-  13+. The build prints the table at a few late states.
+  sim's own counts and rebuilds the draws on it. The draws bucket it as 0–1, 2, 3–4, 5–7, 8–12,
+  13–17 and 18+. The build prints the table at a few late states.
 - **First downs come from the next row's down.** Spots are whole yards and a distance of inches
   reads as 1, so a sneak for inches shows as a 0-yard gain that moves the chains, and a gain of the
   yards to go can be spotted short. The build prints how often each happens by distance. The sim

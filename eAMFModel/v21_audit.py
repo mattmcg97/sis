@@ -53,7 +53,7 @@ def outcome_of(kind, gain, dist, field, conv=None):
                      [0, TD, FIRST, 3, 2], 1).astype(np.int64)
 
 
-REMAINS = ("0-1 snaps left", "2", "3-4", "5-7", "8-12", "13+")
+REMAINS = ("0-1 snaps left",) + v21.REMAIN_NAMES[1:]
 LEADS3 = ("behind", "level", "ahead")
 RESULTS = ("won", "overtime", "lost")
 

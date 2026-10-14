@@ -328,7 +328,7 @@ def cmd_v21_build(args):
         print(f"  building on {len(data):,} matches before {cut}")
     history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
-                      gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules)
+                      gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
@@ -781,6 +781,9 @@ def build_parser():
     p.add_argument("--min-records", type=int, default=40, help="real snaps a draw's group needs (default 40)")
     p.add_argument("--no-refine", action="store_true",
                    help="keep the real games' snaps left in the half (no simulated pass)")
+    p.add_argument("--split", choices=["snaps", "time"], default="snaps",
+                   help="the draws' part of the game: snaps -- the half and the two-minute warning, the snaps "
+                        "left in the half the rest; time -- the seven parts of the game (default snaps)")
     p.add_argument("--no-gamer-decisions", action="store_true",
                    help="every gamer decides (4th downs, early kicks, kick-offs, conversions, timeouts) as the "
                         "league does in the same state: no gamer's own lean")

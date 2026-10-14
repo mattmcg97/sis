@@ -269,15 +269,38 @@ class TestBuild(unittest.TestCase):
     def test_the_end_of_a_half_stands_apart_in_the_own_draws(self):
         # phase: 0 Q1, 2 Q2's last 2:00, 6 OT; remain: the snaps-left bucket (0-1, 2, 3-4, 5-7, 8-12, 13+);
         # margin: the lead's bucket (3 level, 4 1-3 ahead, 6 9+ ahead)
-        f = v21.derive(dict(phase=np.array([0, 0, 0, 2, 2, 2, 6, 0, 2]), remain=np.array([5, 2, 0, 5, 1, 0, 4, 3, 1]),
-                            margin=np.array([3, 3, 0, 6, 3, 3, 0, 6, 4])))
-        self.assertEqual(list(f["endgame"]), [0, 1 + 7 + 3, 1 + 0, 1 + 14 + 6, 1 + 7 + 3, 1 + 3, 22, 0, 1 + 7 + 4])
+        # the second half's end apart from the first's (5: Q4's last 2:00)
+        f = v21.derive(dict(phase=np.array([0, 0, 0, 2, 2, 2, 6, 0, 2, 5]),
+                            remain=np.array([5, 2, 0, 5, 1, 0, 4, 3, 1, 1]),
+                            margin=np.array([3, 3, 0, 6, 3, 3, 0, 6, 4, 3])))
+        self.assertEqual(list(f["endgame"]), [0, 1 + 7 + 3, 1 + 0, 1 + 14 + 6, 1 + 7 + 3, 1 + 3, 43, 0, 1 + 7 + 4,
+                                              1 + 21 + 7 + 3])
+        self.assertEqual(list(f["endgame3"]), [0, 1 + 3 + 1, 1 + 0, 1 + 6 + 2, 1 + 3 + 1, 1 + 1, 19, 0, 1 + 3 + 2,
+                                               1 + 9 + 3 + 1])
+        self.assertEqual(list(f["part"]), [0, 0, 0, 1, 1, 1, 4, 0, 1, 3])
         self.assertLess(int(v21.endgame_of(6, 0, 6)), v21.SIZES["endgame"])
+        self.assertLess(int(v21.endgame3_of(6, 0, 2)), v21.SIZES["endgame3"])
+        self.assertEqual(list(v21.remain_b([1, 2, 4, 7, 12, 17, 18])), list(range(7)))
         for levels in (v21.GAMER_TIME_LEVELS, v21.GAMER_DIST_LEVELS):
             for lv in levels:
                 self.assertIn("endgame", lv)
                 self.assertIn("down", lv)
         self.assertEqual(list(v21.remain_b([0, 1, 2, 3, 4, 5, 7, 8, 12, 13])), [0, 0, 1, 2, 2, 3, 3, 4, 4, 5])
+
+    def test_the_split_reads_the_half_or_the_seven_parts(self):
+        snaps, time_ = v21.draw_spec("snaps"), v21.draw_spec("time")
+        for k in snaps:
+            self.assertNotIn("phase", snaps[k][0])
+            self.assertEqual(tuple(x.replace("part", "phase") for x in snaps[k][0]), time_[k][0])
+        m = built()
+        self.assertEqual(m.split, "snaps")
+        self.assertIn("part", m.time.features)
+        old = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, split="time")
+        self.assertIn("phase", old.time.features)
+        h, a = v21.simulate(old, v21.kickoff_start(old), 20)
+        self.assertEqual(h.shape, (2, 20))
+        with self.assertRaises(ValueError):
+            v21.build(MATCHES, HISTORY, verbose=False, split="other")
 
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
