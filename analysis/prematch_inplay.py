@@ -106,6 +106,7 @@ def main():
 
     pre = defaultdict(lambda: defaultdict(lambda: [0.0, 0.0, 0.0, 0]))      # match -> side -> stake, rev, prob*stake, won
     live = defaultdict(list)
+    pre_n = defaultdict(int)
     with open(args.bets, newline="", encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
             if r.get("market") != "moneyline" or _true(r.get("excluded")):
@@ -116,6 +117,7 @@ def main():
             else:
                 c = pre[r["match_code"]][r.get("selection")]
                 c[0] += stake
+                pre_n[r["match_code"]] += 1
                 c[1] += rev
                 c[2] += stake * _num(r.get("stream_prob") or r.get("implied_prob"))
                 c[3] = 1 if r.get("result") == "won" else 0
@@ -162,12 +164,15 @@ def main():
                "pre_side_won": p[side][3] if side else ""}
         for way in ("with", "against", "no side"):
             row[f"live_{way}_stake"] = row[f"live_{way}_revenue"] = 0.0
+            row[f"live_{way}_bets"] = 0
+        row["pre_bets"] = pre_n.get(code, 0)
         for q in ("1", "2", "3", "4", "OT"):
             row[f"q{q}_with_stake"] = row[f"q{q}_against_stake"] = 0.0
         for r in live.get(code, []):
             stake, rev = _num(r.get("stake")), _num(r.get("revenue"))
             way = "no side" if side is None else ("with" if r.get("selection") == side else "against")
             row[f"live_{way}_stake"] += stake
+            row[f"live_{way}_bets"] += 1
             row[f"live_{way}_revenue"] += rev
             tot[f"in play, {way} the pre-match side" if side else "in play, no pre-match side"][0] += stake
             tot[f"in play, {way} the pre-match side" if side else "in play, no pre-match side"][1] += rev
@@ -261,11 +266,16 @@ def main():
 
     rows.sort(key=lambda r: r["live_revenue"])
     print(f"\n  the {args.top} matches where the book lost most in play")
-    print(f"  {'lost':>9s} {'pre side':8s} {'chance':>6s} {'won':>3s} {'with':>9s} {'against':>9s}  {'in play':8s}"
-          f" {'start (UTC)':16s} {'final':7s} matchup")
+    print("  (bets: pre-match / in play with the pre-match side / against it; avg: in-play stake a bet)")
+    print(f"  {'lost':>9s} {'pre side':8s} {'chance':>6s} {'won':>3s} {'with':>9s} {'against':>9s} {'bets':>15s}"
+          f" {'avg':>6s}  {'in play':8s} {'start (UTC)':16s} {'final':7s} matchup")
     for r in rows[:args.top]:
+        nb = r["live_with_bets"] + r["live_against_bets"] + r["live_no side_bets"]
+        st = r["live_with_stake"] + r["live_against_stake"] + r["live_no side_stake"]
+        bets = f"{r['pre_bets']}/{r['live_with_bets']}/{r['live_against_bets']}"
         print(f"  {-r['live_revenue']:>9,.0f} {str(r['pre_side'])[:8]:8s} {str(r['pre_side_chance']):>6s}"
               f" {str(r['pre_side_won']):>3s} {r['live_with_stake']:>9,.0f} {r['live_against_stake']:>9,.0f}"
+              f" {bets:>15s} {st / nb if nb else 0:>6,.0f}"
               f"  {r['live_follows']:8s} {r['event_start_utc']:16s} {r['final']:7s} {r['matchup']}")
 
     path = os.path.join(os.path.dirname(args.bets) or ".", "prematch_inplay_matches.csv")
