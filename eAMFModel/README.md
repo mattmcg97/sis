@@ -2085,18 +2085,33 @@ state:
 - both sides' timeouts left;
 - the play before.
 
-It splits so as to separate where the option was taken from where it wasn't. The situations it
-lists are the largest boxes of the state that meet all of these:
-- 30 or more real decisions (`--min-region`);
-- the option taken by 1% of them or fewer (`--rare`);
-- every part of the box alike.
+It splits so as to separate where the option was taken from where it wasn't. A tree searches many
+splits and reports the cleanest, so pure chance can look like "never" (0 of 74 happens 10% of the
+time for something taken 3% of the time). So the search is honest:
+- The matches are split at random in two, and a tree grows on each half.
+- On its half, a situation needs 20 or more real decisions with the option taken by 1% of them or
+  fewer, and by a tenth or less of its overall rate, every part of the situation alike.
+- It is kept only where the other half bears it out: as rare there, and so few that chance at the
+  option's overall rate would give that with p ≤ 0.005.
+- Both halves together need 30 or more decisions (`--min-region`).
+
+On pure-noise data this finds no situations, and it finds a planted late-game never-situation
+(Q4, the last 0:45, 4+ behind, in range) most of the time. A small one inside lots of noise can
+still be missed.
 
 For example: "Q4, 0:41 or less left in the half, behind by 4 or more, 8-35 yards from the goal:
 233 real, never".
 
 Where a few real sides took the option anyway, it lists who: the match, the gamer, the quarter,
 the clock and the lead, so each can be judged as a real choice or a mistake. It also checks the
-game's own end: how many real states met it, and whether play ever went on after one.
+game's own end: what came after every real state it covers. There are five outcomes:
+- no more snaps;
+- only the same side's kneel-like losses;
+- other snaps;
+- the other side got the ball;
+- points scored.
+
+These are split by whether the two-minute warning was still to come.
 
 It writes `v21_sweep.txt` and `v21_sweep.csv`. `v21-build` learns the same situations from its own
 matches. For early kicks it learns them only from the half's last minute, where its sim decides.

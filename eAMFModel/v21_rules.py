@@ -20,6 +20,7 @@ The sweep also checks the game's own end (v21.auto_end): the side ahead in Q4 wh
 """
 
 import csv
+import math
 
 import numpy as np
 
@@ -35,6 +36,9 @@ SWEEP_FEATURES = {
 }
 MIN_REGION = 30
 RARE = 0.01
+REL = 0.1                     # and a tenth or less of how often the option is taken overall
+GROW_MIN = 20                 # decisions a situation needs in the half of the matches it's found in
+ALPHA = 0.005                 # and so few in the other half, by chance at the overall rate, no likelier than this
 MAX_DEPTH = 8
 EXAMPLES = 6
 SHOWN = 25                    # situations listed for each option in the text (the CSV has them all)
@@ -96,32 +100,78 @@ def _grow(F, y, idx, box, depth, min_leaf, max_depth):
     return node
 
 
-def find_regions(F, y, min_region=MIN_REGION, rare=RARE, max_depth=MAX_DEPTH):
-    """[(box, rows)] the largest boxes of the state ({column: (lo, hi)}, None unbounded) holding
-    min_region or more decisions, the option (y) taken by `rare` of them or fewer, every part of the
-    box alike; rows: the decisions inside."""
+def binom_cdf(k, n, p):
+    """P(X <= k) for X ~ Binomial(n, p)."""
+    if p <= 0:
+        return 1.0
+    if p >= 1:
+        return 1.0 if k >= n else 0.0
+    lp, lq = math.log(p), math.log1p(-p)
+    terms = [math.lgamma(n + 1) - math.lgamma(i + 1) - math.lgamma(n - i + 1) + i * lp + (n - i) * lq
+             for i in range(int(k) + 1)]
+    top = max(terms)
+    return min(1.0, math.exp(top) * sum(math.exp(t - top) for t in terms))
+
+
+def in_box(F, box):
+    """Which rows of F (decisions by columns) lie in the box."""
+    inside = np.ones(len(F), bool)
+    for j, (lo, hi) in box.items():
+        if lo is not None:
+            inside &= F[:, j] >= lo
+        if hi is not None:
+            inside &= F[:, j] <= hi
+    return inside
+
+
+def find_regions(F, y, min_region=MIN_REGION, rare=RARE, max_depth=MAX_DEPTH, rel=REL, alpha=ALPHA, groups=None,
+                 seed=0, grow_min=GROW_MIN):
+    """[(box, rows)] the largest boxes of the state ({column: (lo, hi)}, None unbounded) where the
+    option (y) is all but never taken. The matches (groups; each decision its own without) are split at
+    random in two; a tree grown on each half finds boxes of grow_min or more decisions there, the option
+    taken by `rare` of them or fewer and by `rel` times its overall share or less, every part of the box
+    alike; a box is kept where the other half bears it out -- as rare, and so few that chance at the
+    overall share would give it with probability `alpha` or less -- and both halves together hold
+    min_region or more, as rare. rows: the decisions inside, both halves."""
     F, y = np.asarray(F, np.int64), np.asarray(y, bool)
     if len(y) < min_region:
         return []
-    root = _grow(F, y, np.arange(len(y)), {}, 0, max(5, min_region // 2), max_depth)
+    base = y.mean()
+    if base == 0:
+        return [({}, np.arange(len(y)))]                  # never taken anywhere
+    limit = min(rare, rel * base)
+    groups = np.arange(len(y)) if groups is None else np.asarray(groups)
+    _, inv = np.unique(groups, return_inverse=True)
+    half = (np.random.default_rng(seed).random(inv.max() + 1) < 0.5)[inv]
 
-    def clean(node):                       # no part of min_region or more takes the option more than rarely
-        if node["n"] >= min_region and node["k"] > rare * node["n"]:
+    def clean(node):                       # no part of grow_min or more takes the option more than that
+        if node["n"] >= grow_min and node["k"] > limit * node["n"]:
             return False
         return node["kids"] is None or all(clean(c) for c in node["kids"])
 
-    def ok(node):
-        return node["n"] >= min_region and clean(node)
+    out, seen = [], set()
+    for grow in (half, ~half):
+        found = []
 
-    out = []
-
-    def collect(node):
-        if ok(node):
-            out.append((node["box"], node["idx"]))
-        elif node["kids"] is not None:
-            for c in node["kids"]:
-                collect(c)
-    collect(root)
+        def collect(node):
+            if node["n"] >= grow_min and clean(node):
+                found.append(node["box"])
+            elif node["kids"] is not None:
+                for c in node["kids"]:
+                    collect(c)
+        collect(_grow(F, y, np.flatnonzero(grow), {}, 0, max(5, grow_min // 2), max_depth))
+        for box in found:
+            key = tuple(sorted(box.items()))
+            if key in seen:
+                continue
+            inside = in_box(F, box)
+            test = inside & ~grow
+            n, k = int(test.sum()), int((y & test).sum())
+            n_all, k_all = int(inside.sum()), int((y & inside).sum())
+            if n and k <= limit * n and binom_cdf(k, n, base) <= alpha and n_all >= min_region \
+                    and k_all <= limit * n_all:
+                seen.add(key)
+                out.append((box, np.flatnonzero(inside)))
     return out
 
 
@@ -138,8 +188,9 @@ def learn(points, min_region=MIN_REGION, rare=RARE):
         feats = SWEEP_FEATURES[name]
         F = np.stack([cols[f] for f in feats], axis=1)
         chosen = np.array([q["choice"] for q in pts])
+        groups = [q.get("code", i) for i, q in enumerate(pts)]
         for opt in range(len(spec["options"])):
-            for box, _ in find_regions(F, chosen == opt, min_region, rare):
+            for box, _ in find_regions(F, chosen == opt, min_region, rare, groups=groups):
                 if box:                                   # a box with no bounds would strike the option out altogether
                     rules.setdefault(name, []).append((opt, {feats[j]: b for j, b in box.items()}))
     return rules
@@ -249,14 +300,20 @@ def sweep_points(matches, history=None):
     return out
 
 
+AFTER = ("no more snaps", "only the same side's snaps, every one a loss of 1-4 (kneels)",
+         "other snaps by the same side", "the other side got the ball", "points scored after")
+
+
 def auto_end_check(matches):
-    """The real states the game's own end (v21.auto_end) covers: (states, play carried on after it --
-    another snap in Q4 with time on the clock --, the state's matches where it did)."""
-    n = went = 0
-    where = []
+    """The real states the game's own end (v21.auto_end) covers and what came after each, by whether
+    the two-minute warning was still to come: {(clock above 2:00): counts by AFTER}, and examples of
+    the last three kinds."""
+    out = {False: np.zeros(len(AFTER), np.int64), True: np.zeros(len(AFTER), np.int64)}
+    where = {k: [] for k in range(2, len(AFTER))}
     for code, rows in matches.items():
         rows = v21._with_side(rows)
-        for a, b in zip(rows, rows[1:]):
+        recs = {r["start"]: r for r in v21.match_snaps(rows)}
+        for i, a in enumerate(rows):
             if a["play_kind"] not in s14.SNAP_KINDS or a.get("period") != "4" or a.get("offense") not in v21.TEAMS \
                     or not a.get("down") or not a.get("clock_seconds"):
                 continue
@@ -265,12 +322,32 @@ def auto_end_check(matches):
             c = s14._f(a["clock_seconds"])
             if m is None or opp != 0 or c <= 0 or not v21.auto_end(4, c, m, s14._i(a["down"]), 0):
                 continue
-            n += 1
-            if b.get("period") == "4" and b["play_kind"] in ("SCRIMMAGE", "TOUCHDOWN", "TURNOVER_ON_DOWNS", "FIELD_GOAL",
-                                                             "PUNT") and (s14._f(b.get("clock_seconds")) or 0) > 0:
-                went += 1
-                where.append((code, a["message"], c, m))
-    return n, went, where
+            later = [r for r in rows[i + 1:] if r.get("period") == "4"]
+            last = rows[-1]
+            scored = (s14._i(last.get("score_p1")), s14._i(last.get("score_p2"))) != \
+                (s14._i(a.get("score_p1")), s14._i(a.get("score_p2")))
+            snaps, msg, mine = [], s14._i(a["message"]), True
+            while msg in recs:
+                r = recs[msg]
+                snaps.append(r)
+                mine &= r["offense"] == a["offense"]
+                msg = r["message"]
+            other = any(r.get("offense") not in (a["offense"], None, "") and r["play_kind"] in s14.SNAP_KINDS
+                        for r in later)
+            if scored:
+                kind = 4
+            elif other:
+                kind = 3
+            elif not snaps:
+                kind = 0
+            elif mine and all(r["kind"] == v21.GAIN and -4 <= r["gain"] <= -1 for r in snaps):
+                kind = 1
+            else:
+                kind = 2
+            out[c > v21.LATE][kind] += 1
+            if kind >= 2 and len(where[kind]) < 8:
+                where[kind].append((code, a["message"], c, m))
+    return out, where
 
 
 def sweep(matches, history=None, min_region=MIN_REGION, rare=RARE):
@@ -287,8 +364,9 @@ def sweep(matches, history=None, min_region=MIN_REGION, rare=RARE):
         F = np.stack([cols[f] for f in feats], axis=1)
         chosen = np.array([q["choice"] for q in got])
         rows = []
+        groups = [q["code"] for q in got]
         for opt in range(len(spec["options"])):
-            for box, idx in find_regions(F, chosen == opt, min_region, rare):
+            for box, idx in find_regions(F, chosen == opt, min_region, rare, groups=groups):
                 hit = idx[chosen[idx] == opt]                 # an empty box: never or all but never anywhere
                 rows.append((opt, {feats[j]: b for j, b in box.items()}, len(idx), len(hit),
                              [got[i] for i in hit[:EXAMPLES]]))
@@ -303,12 +381,21 @@ def _example(q):
 
 
 def report(found, auto, counts, min_region=MIN_REGION, rare=RARE):
-    lines = [f"  v2.1 sweep: where each decision's options never happen, or all but never ({min_region}+ real"
-             f" decisions, the option {100 * rare:.0f}% of them or fewer; every part of the situation alike)", ""]
-    n, went, where = auto
-    lines.append(f"  the game's own end -- the side ahead in Q4, its downs left x 40s more than the clock, the"
-                 f" defense out of timeouts: {n:,} real states, play went on after {went:,}"
-                 + (": " + ", ".join(f"{c} #{m} {_mmss(t)} +{d}" for c, m, t, d in where[:10]) if went else ""))
+    lines = [f"  v2.1 sweep: where each decision's options never happen, or all but never. The matches split at"
+             f" random in two; found on one half -- {GROW_MIN}+ real decisions, the option taken by {100 * rare:.0f}% of"
+             f" them or fewer and by a tenth or less of its overall rate, every part of the situation alike -- and kept"
+             f" where the other half bears it out, too few to be chance at the overall rate (p {ALPHA} or less), with"
+             f" {min_region}+ in all. Counts: both halves.", ""]
+    counts_, where = auto
+    lines.append("  the game's own end -- the side ahead in Q4, its downs left x 40s more than the clock, the defense"
+                 " out of timeouts. What came after the real states it covers:")
+    for above in (False, True):
+        got = counts_[above]
+        lines.append(f"    {'2:00 still to come' if above else 'at 2:00 or less'}: {int(got.sum()):,} states -- "
+                     + ", ".join(f"{label} {int(k):,}" for label, k in zip(AFTER, got)))
+    for kind, ex in where.items():
+        if ex:
+            lines.append(f"    {AFTER[kind]}: " + ", ".join(f"{c} #{m} {_mmss(t)} +{d}" for c, m, t, d in ex))
     for name, spec in v21.DECISIONS.items():
         title = LABELS.get(name, spec["label"])
         if name not in found:

@@ -402,6 +402,13 @@ class TestRules(unittest.TestCase):
         self.assertLessEqual(box[1][1], -3)                                     # lead: 4 or more behind
         self.assertLessEqual(y[idx].mean(), 0.01)
         self.assertEqual(v21_rules.find_regions(np.stack([left, lead], axis=1), rng.random(n) < 0.5), [])
+        rare_opt = rng.random(n) < 0.03                                         # 3% anywhere: 0 of 40 is chance
+        rare_opt[(left <= 40) & (lead <= -4)] = False
+        small = np.flatnonzero((left <= 40) & (lead <= -4))[:40]
+        F2 = np.stack([left, lead], axis=1)
+        keep = np.r_[np.flatnonzero(~((left <= 40) & (lead <= -4))), small]
+        self.assertEqual(v21_rules.find_regions(F2[keep], rare_opt[keep], min_region=30), [])
+        self.assertAlmostEqual(v21_rules.binom_cdf(0, 100, 0.03), 0.97 ** 100)
 
     def test_learned_rules_strike_the_option_out(self):
         rules = {"fourth": [(v21.FG, {"period": (4, 4), "left": (None, 40), "lead": (None, -4)})]}

@@ -528,10 +528,24 @@ class Choice:
             keep = allowed[np.arange(len(chosen)), chosen]
             ruled, broke = int(under.sum()), int((~keep).sum())
         lean = np.zeros((n_who, K))
+        mine = bins.bin_of(cols)
         if gamers and keep.any():
-            base = cls._masked(shares[bins.bin_of(cols)], None if allowed is None or allowed.all() else allowed)[keep]
+            base = cls._masked(shares[mine], None if allowed is None or allowed.all() else allowed)[keep]
             lean = fit_leans(np.log(np.maximum(base, 1e-9)), chosen[keep], who[keep], n_who, prior)
-        return cls(name, bins, shares, lean, league, len(chosen), counts, ruled, broke)
+        out = cls(name, bins, shares, lean, league, len(chosen), counts, ruled, broke)
+        out.real_bins = mine.astype(np.int32)              # the real decisions' groups, for gamer_rate
+        return out
+
+    def gamer_rate(self, g, opt):
+        """How often gamer g would take the option over every real decision's state (their lean on the
+        league's shares there)."""
+        bins = getattr(self, "real_bins", None)
+        if bins is None or self.bins is None:
+            return float(self.league[opt])
+        z = np.log(np.maximum(self.shares[bins], 1e-12)) + self.lean[g]
+        z -= z.max(1, keepdims=True)
+        p = np.exp(z)
+        return float((p[:, opt] / p.sum(1)).mean())
 
     def probs(self, cols, who, allowed=None):
         base = self.shares[self.bins.bin_of(cols)] if self.bins is not None else np.tile(self.shares[0], (len(who), 1))
@@ -906,7 +920,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         recs += mine
         got = decision_points(rows, mine)
         for name in DECISIONS:
-            dec[name] += [dict(q, gamer=pair[q["side"]]) for q, k in zip(got[name], in_draw_window(name, got[name])) if k]
+            dec[name] += [dict(q, gamer=pair[q["side"]], code=code)
+                          for q, k in zip(got[name], in_draw_window(name, got[name])) if k]
         for name in ("kick_pool", "fg_clock", "conv"):
             dec[name] += got[name]
         kick_dec += s14.kick_decisions(rows)
@@ -1122,11 +1137,12 @@ def report_build(m, recs=None):
                   f" (left out of the gamers' leans)")
         n_g = ch.counts.sum(1)
         ok = np.flatnonzero(n_g[:-1] >= need)
-        if len(ok) and ch.lean[:, opt].any() and ch.league[opt] > 0:
-            order = ok[np.argsort(ch.lean[ok, opt])]
-            show = lambda ids: ", ".join(f"{names[i]} x{np.exp(ch.lean[i, opt]):.2f} ({int(n_g[i])})" for i in ids)
-            print(f"    {spec['options'][opt]}: each gamer's odds against the league's in the same states,"
-                  f" {len(ok)} gamers with {need}+ (sd of the log {ch.lean[ok, opt].std():.2f}):"
+        if len(ok) and ch.lean[ok].any() and ch.league[opt] > 0:
+            rate = {i: ch.gamer_rate(i, opt) for i in ok}
+            order = sorted(ok, key=lambda i: rate[i])
+            show = lambda ids: ", ".join(f"{names[i]} {100 * rate[i]:.1f}% ({int(n_g[i])})" for i in ids)
+            print(f"    {spec['options'][opt]}: each gamer's rate over every real state (the league's"
+                  f" {100 * ch.gamer_rate(len(m.gamers), opt):.1f}%), {len(ok)} gamers with {need}+:"
                   f" least {show(order[:3])}; most {show(order[::-1][:3])}")
 
 
