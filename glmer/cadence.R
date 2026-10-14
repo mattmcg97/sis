@@ -59,7 +59,8 @@ DEFAULTS <- list(
   trim_nagq = "0",      # the trimmed fits' nAGQ (0: quickest; README's Speed)
   result_lag = "36",    # minutes from kick-off until a result is in (eAMFModel's stream)
   margin_sd = "9.35",
-  cores = ""            # "" = all but one
+  cores = "",           # "" = all but one
+  progress = "50"       # a line from each stretch every this many fits; "0" = none
 )
 
 .here <- local({
@@ -121,6 +122,7 @@ names(arm_specs) <- arms
 if (anyDuplicated(arms)) stop("--arms: an arm twice")
 lag <- as.numeric(args$result_lag) * 60
 trim_nagq <- as.integer(args$trim_nagq)
+progress_every <- as.integer(args$progress)
 
 history_path <- resolve_history(args$history, repo_root)
 matches <- load_matches(history_path)
@@ -166,7 +168,10 @@ run_chunk <- function(task) {
   start <- NULL
   preds <- list()
   fits <- list()
+  t_task <- Sys.time()
+  where <- sprintf("%s %d/%d", spec$label, task$part, task$parts)
   for (i in seq_len(nrow(sched))) {
+    if (progress_every > 0 && i > 1 && (i - 1) %% progress_every == 0) progress_line(where, i - 1, nrow(sched), fits, t_task)
     cut <- sched$cut[i]
     train <- long[!is.na(long$Score) & long$Time + lag <= cut, ]
     rows <- floor_experience(test[test$Time >= sched$first[i] & test$Time < sched$last[i], ])
@@ -193,7 +198,16 @@ run_chunk <- function(task) {
                                            theta = paste(sprintf("%s=%.4f", sub("\\.\\(Intercept\\)$", "", names(start)), start),
                                                          collapse = " "))
   }
+  if (progress_every > 0) progress_line(where, nrow(sched), nrow(sched), fits, t_task)
   list(preds = do.call(rbind, preds), fits = do.call(rbind, fits))
+}
+
+# How far a stretch has got: fits done, the mean seconds a fit and, going on that, the time left.
+progress_line <- function(where, done, n, fits, t0) {
+  mins <- as.numeric(difftime(Sys.time(), t0, units = "mins"))
+  secs <- if (length(fits)) mean(vapply(fits, function(f) f$seconds, 0)) else NA
+  if (done >= n) log_line("%s: done, %d fits in %.1f min (%.1f s a fit)", where, n, mins, secs)
+  else log_line("%s: %d/%d fits, %.1f s a fit, ~%.0f min left", where, done, n, secs, mins / done * (n - done))
 }
 
 cores <- if (nzchar(args$cores)) as.integer(args$cores) else max(1L, parallel::detectCores() - 1L)
@@ -204,8 +218,9 @@ for (spec in arm_specs) {
   s <- schedule(spec$cadence)
   parts <- if (spec$cadence == "game") cores else ceiling(nrow(s) / 14)
   parts <- max(1L, min(parts, nrow(s)))
-  for (idx in split(seq_len(nrow(s)), ceiling(seq_len(nrow(s)) * parts / nrow(s)))) {
-    tasks[[length(tasks) + 1]] <- list(spec = spec, sched = s[idx, ])
+  stretches <- split(seq_len(nrow(s)), ceiling(seq_len(nrow(s)) * parts / nrow(s)))
+  for (j in seq_along(stretches)) {
+    tasks[[length(tasks) + 1]] <- list(spec = spec, sched = s[stretches[[j]], ], part = j, parts = length(stretches))
   }
   log_line("%s: %d fits in %d stretch(es)", spec$label, nrow(s), parts)
 }
@@ -218,7 +233,8 @@ results <- if (cores > 1 && length(tasks) > 1) {
   cl <- parallel::makeCluster(min(cores, length(tasks)), outfile = "")
   parallel::clusterExport(cl, c(".here"), envir = environment())
   parallel::clusterEvalQ(cl, { source(file.path(.here, "config.R")); source(file.path(.here, "common.R")); NULL })
-  parallel::clusterExport(cl, c("long", "test", "lag", "MODELS", "weighting_spec", "trim_nagq", "run_chunk"),
+  parallel::clusterExport(cl, c("long", "test", "lag", "MODELS", "weighting_spec", "trim_nagq", "run_chunk",
+                                "progress_every", "progress_line"),
                           envir = environment())
   res <- parallel::parLapplyLB(cl, tasks, function(task) run_chunk(task))
   parallel::stopCluster(cl)
