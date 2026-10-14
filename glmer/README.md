@@ -493,9 +493,17 @@ It's fitted with nAGQ 0, each fit warm-started from the one before. Every arm pr
 features and the experience floor. The moneyline is a normal around the expected margin (sd 9.35).
 
 ```bash
-Rscript glmer/cadence.R --days=14 --cores=4                                # all three arms
-Rscript glmer/cadence.R --days=28 --arms=trim_daily,trim_game --cores=4    # just the trimmed pair
+Rscript glmer/cadence.R --days=14 --cores=4                                     # full, trim, trim:game
+Rscript glmer/cadence.R --days=28 --arms=trim:hl60:daily,trim:hl60:game --cores=4
 ```
+
+Each arm is `MODEL[:WEIGHTING][:CADENCE]`, and the first arm is the baseline every other is compared
+with:
+- **Models:** `full` (production, daily only), `trim`, `trim_pair` (+ gamer v gamer),
+  `trim_team` (+ each gamer with the team they play as) and `trim_both`.
+- **Weightings:** any name in `WEIGHTINGS`, or `hl<days>`, `m<matches>`, `win<days>` or `flat`,
+  each optionally `_x<scalar>`.
+- **Cadences:** `daily` or `game`.
 
 The last 14 full days of `nb2/AMFELO.csv` (27 Aug – 9 Sep, 1,238 matches):
 
@@ -530,6 +538,59 @@ So the trimmed model costs nothing measurable, and refitting it after every resu
 moneyline gain. That gain appears where it should, later in the day, but at t −1.9 over 14 days
 it isn't settled. It needs a longer window (the match history up to today) before it's worth
 building. A refit takes about 4 seconds, so live per-result refits would be cheap.
+
+### The trimmed model's weighting and matchups (14 Oct 2026)
+
+Every row is weighted by its age in days, 2^(−days ago / 60), and then normalised to a mean of 1.
+That's separate from form, which is an average of a gamer's last matches with a half-life of 10
+matches. This run tests other weightings and the matchup terms on the trimmed model.
+
+The test is 8 weeks of daily refits on `nb2/AMFELO.csv` (16 Jul – 9 Sep, 5,140 matches). Each arm
+is set against `trim:hl60`, match by match. "Days" counts the days it was better on log loss.
+
+| arm | s a fit | log loss vs hl60 (t, days) | margin sq err (t) | total sq err (t) |
+|---|---|---|---|---|
+| `hl14` | 6 | +0.0046 (+3.6, 19/56) | +0.99 (+3.4) | +1.20 (+2.4) |
+| `hl30` | 7 | +0.0009 (+1.7, 23/56) | +0.13 (+1.1) | +0.17 (+0.9) |
+| `hl120` | 7 | +0.0002 (+0.5, 26/56) | +0.18 (+2.0) | +0.04 (+0.3) |
+| `hl60_x0.5` | 6 | +0.0001 (+0.8, 25/56) | −0.03 (−0.9) | **−0.09 (−3.1)** |
+| `hl60_x0.25` | 6 | +0.0007 (+1.6, 24/56) | +0.00 (+0.0) | **−0.23 (−2.9)** |
+| `hl30_x0.25` | 7 | +0.0020 (+2.8, 21/56) | +0.22 (+1.4) | −0.06 (−0.3) |
+| `hl120_x0.25` | 6 | +0.0004 (+0.8, 25/56) | +0.05 (+0.4) | −0.18 (−1.2) |
+| `m150` (each gamer's own matches) | 7 | +0.0011 (+2.7, 19/56) | +0.28 (+3.1) | −0.15 (−1.2) |
+| `m300` | 7 | +0.0007 (+1.6, 24/56) | +0.31 (+3.0) | +0.00 (+0.0) |
+| `win60` (last 60 days, flat) | 1 | +0.0047 (+4.0, 18/56) | +1.11 (+4.2) | +1.14 (+2.6) |
+| `trim_pair:hl60` | 17 | +0.0110 (+4.1, 20/56) | +3.69 (+6.1) | +7.45 (+7.2) |
+| `trim_pair:hl60_x0.25` | 11 | +0.0005 (+0.5, 28/56) | +0.02 (+0.1) | +0.18 (+0.5) |
+| `trim_team:hl60` | 57 | +0.0132 (+5.9, 16/56) | +3.36 (+6.6) | +3.70 (+4.3) |
+| `trim_team:hl60_x0.25` | 41 | +0.0026 (+3.0, 19/56) | +0.39 (+2.0) | −0.20 (−0.6) |
+
+- **The 60-day half-life in days stays.**
+  - 120 days is level.
+  - 30 days is a little worse, and 14 days clearly so.
+  - A flat 60-day window throws away too much.
+  - Counting each gamer's own matches (`m150`, `m300`) instead of days is worse on the moneyline
+    and the margin.
+- **The scalar helps the totals.** The trimmed model has no per-row noise term, so Poisson treats
+  each score as about three times more informative than it is (real scores vary well beyond
+  Poisson). Counting the data at half (`_x0.5`) is level on the moneyline and better on totals
+  (t −3.1). At a quarter, totals improve more but the moneyline slips (t +1.6). `hl60_x0.5` is
+  the best of these.
+- **Matchups soak up noise.**
+  - **At full weight, both hurt badly.** Gamer v gamer fits an sd of 0.13 on the log scale (the
+    full model, with its noise term, gave 0.06), and log loss rises by 0.011.
+  - **Gamer v gamer at a quarter's weight is level** (+0.0005, t +0.5).
+  - **Gamer with team at a quarter's weight is still worse** (+0.0026, t +3.0).
+
+  As in the full model ("Gamer-v-gamer and team-v-team matchups"), neither earns a place.
+- **What the matchups cost to refit after every result.** Warm-started, at a quarter's weight,
+  the median fit takes:
+  - trim: 5 s;
+  - + gamer v gamer: 9 s;
+  - + gamer with team: 33 s;
+  - both: 77 s.
+
+  Cold, the first fit takes 15 s, 35 s, 207 s and 396 s.
 
 ## Speed
 
