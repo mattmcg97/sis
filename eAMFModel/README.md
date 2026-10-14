@@ -2006,9 +2006,13 @@ missing something. Nothing is ever fitted to close those gaps.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
-    defending gamer, else its team, allowed. "Alike" always means the same down and, at least
-    coarsely, the same distance, field, clock (stopped or running), part of the game, snaps left
-    (0–2, 3–4, 5+) and lead. A
+    defending gamer, else its team, allowed. "Alike" always means the same down. For the time it
+    also means the same play before, part of the game and (at least coarsely) lead; for the
+    distance, the same time drawn, distance and field, at least coarsely. The end of a half stands
+    apart in both: the half's last 2:00, or under 5 snaps left, split by snaps left
+    (0–1, 2–4, 5+) and lead, with overtime by lead. There a side's own snaps come from its own ends
+    of halves, else the league's draw, which keeps the full situation. The build prints how often
+    real snaps find enough of their own, for the rest of the game and the end of a half. A
     gamer's own draw gives way to the league's rather than drop the situation. Before the down
     audit, it fell back to all the gamer's snaps with that time, whatever the down, so 3rd downs
     played like 1st downs.

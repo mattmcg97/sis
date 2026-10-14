@@ -122,13 +122,13 @@ class TestBins(unittest.TestCase):
         # gamer 0: 300 1st downs, 5 3rd downs of their own -- a 3rd down is the league's, not their 1st downs
         rows = [(0, 3, 0, 4, 2)] * 300 + [(0, 3, 2, 1, 2)] * 5
         f = {k: np.array([r[i] for r in rows]) for i, k in enumerate(("who", "tb", "down", "dist", "zone"))}
-        f = v21.derive(dict(f))
+        f = v21.derive(dict(f, endgame=np.zeros(len(rows), np.int64)))
         X = np.stack([f[k] for k in v21.GAMER_DIST_FEATURES], axis=1)
         sizes = [3] + [v21.SIZES[k] for k in v21.GAMER_DIST_FEATURES[1:]]
         b = v21.Bins.build(v21.GAMER_DIST_FEATURES, sizes, v21.GAMER_DIST_LEVELS, X, np.zeros(len(X)),
                            {"v": np.zeros(len(X))}, 30, strict=True)
         q = v21.derive(dict(who=np.array([0, 0]), tb=np.array([3, 3]), down=np.array([0, 2]), dist=np.array([4, 1]),
-                            zone=np.array([2, 2])))
+                            zone=np.array([2, 2]), endgame=np.zeros(2, np.int64)))
         got = b.bin_of(q)
         self.assertGreaterEqual(got[0], 0)
         self.assertEqual(got[1], -1)
@@ -266,9 +266,15 @@ class TestBuild(unittest.TestCase):
         self.assertLess(late_stopped, m.remain_at(4, 600.0, 0, 3, 3, 1))
         self.assertEqual(len(v21.remain_lines(m)), len(v21.REMAIN_SHOWN) + 1)
 
-    def test_rem3_reads_the_snaps_left_bucket(self):
-        f = v21.derive(dict(remain=np.arange(6)))
-        self.assertEqual(list(f["rem3"]), [0, 0, 0, 1, 1, 2])
+    def test_the_end_of_a_half_stands_apart_in_the_own_draws(self):
+        # phase: 0 Q1, 2 Q2's last 2:00, 6 OT; remain: the snaps-left bucket (0-1, 2, 3-4, 5-7, 8-12, 13+)
+        f = v21.derive(dict(phase=np.array([0, 0, 0, 2, 2, 2, 6, 0]), remain=np.array([5, 2, 0, 5, 1, 0, 4, 3]),
+                            margin=np.array([3, 3, 0, 6, 3, 3, 0, 6])))
+        self.assertEqual(list(f["endgame"]), [0, 1 + 3 + 1, 1 + 0, 1 + 6 + 2, 1 + 3 + 1, 1 + 1, 10, 0])
+        for levels in (v21.GAMER_TIME_LEVELS, v21.GAMER_DIST_LEVELS):
+            for lv in levels:
+                self.assertIn("endgame", lv)
+                self.assertIn("down", lv)
         self.assertEqual(list(v21.remain_b([0, 1, 2, 3, 4, 5, 7, 8, 12, 13])), [0, 0, 1, 2, 2, 3, 3, 4, 4, 5])
 
     def test_unknown_mode(self):

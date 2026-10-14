@@ -107,7 +107,7 @@ TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
 SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=6, tb=6,
-             lead3=3, tb2=2, dist3=3, zone3=3, rem3=3)                   # the last five: coarse ones (derive)
+             lead3=3, tb2=2, dist3=3, zone3=3, endgame=13)               # the last five: coarse ones (derive)
 TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
 DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
 TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
@@ -144,11 +144,12 @@ DIST_LEVELS = (DIST_BASE,
                ("tb",),
                ())
 # a gamer's or team's own snaps: alike in the situation, or the league's draw -- never their snaps of
-# every down and distance
-GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "rem3", "lead3")
-GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone", "tb2", "dist3", "zone3")
-GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "rem3", "lead3"))
-GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone"), ("who", "tb2", "down", "dist3", "zone3"))
+# every down and distance, nor of every part of the game: the end of a half (endgame) apart, by the
+# snaps left and the lead, so a side's own snaps there come from its own ends of halves or the league's
+GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "endgame", "lead3")
+GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone", "endgame", "tb2", "dist3", "zone3")
+GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down", "endgame"), ("who", "prev", "endgame", "lead3", "down"))
+GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone", "endgame"), ("who", "tb2", "down", "dist3", "zone3", "endgame"))
 MIN_RECORDS = 40
 MIN_GAMER_RECORDS = 30
 DEF_SHARE = 0.5                                           # full: the share of draws from what the defense allowed
@@ -1003,13 +1004,24 @@ def late_of(period, clock):
     return np.select([period >= 5, end & (clock <= 30), end & (clock <= LATE)], [3, 2, 1], 0).astype(np.int64)
 
 
+def endgame_of(phase, remain, lead3):
+    """The end of a half apart from the rest: 0 the bulk of the game (before the half's 2:00, 5+ snaps
+    left); 1-9 the half's last 2:00 or under 5 snaps left, by the snaps left (0-1, 2-4, 5+) and the
+    lead; 10-12 overtime by the lead. `remain` is the snaps-left bucket (remain_b)."""
+    phase, remain, lead3 = np.asarray(phase), np.asarray(remain), np.asarray(lead3)
+    r3 = np.select([remain == 0, remain <= 2], [0, 1], 2)
+    end = (phase == 2) | (phase == 5) | (remain <= 2)
+    return np.where(phase == 6, 10 + lead3, np.where(end, 1 + 3 * r3 + lead3, 0)).astype(np.int64)
+
+
 def derive(f):
     """The coarse features off the fine ones: the lead (lead3: behind, level, ahead), the clock (tb2:
-    stopped, running), the distance (dist3: 1-3, 4-6, 7+) and the field (zone3)."""
+    stopped, running), the distance (dist3: 1-3, 4-6, 7+), the field (zone3) and the end of a half
+    (endgame_of)."""
     if "margin" in f:
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
-    if "remain" in f:
-        f["rem3"] = np.select([np.asarray(f["remain"]) <= 2, np.asarray(f["remain"]) <= 4], [0, 1], 2).astype(np.int64)
+    if "remain" in f and "phase" in f and "lead3" in f:
+        f["endgame"] = endgame_of(f["phase"], f["remain"], f["lead3"])
     if "tb" in f:
         f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
     if "dist" in f:
@@ -1261,12 +1273,25 @@ def report_build(m, recs=None):
         print(f"  {name} draw: {len(b.count):,} groups; real snaps' states by the features they draw on: "
               + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
     if m.mode == "full":
+        feats = _features(recs, m) if recs else None
         for kind_ in ("gamer", "team"):
             for role in ("off", "def"):
                 t, d = m.own.get((kind_, role, "time")), m.own.get((kind_, role, "dist"))
-                if t is not None:
-                    print(f"  {kind_}s' own ({'offense' if role == 'off' else 'allowed'}): {len(t.count):,} time groups,"
-                          f" {len(d.count):,} distance groups")
+                if t is None:
+                    continue
+                line = (f"  {kind_}s' own ({'offense' if role == 'off' else 'allowed'}): {len(t.count):,} time groups,"
+                        f" {len(d.count):,} distance groups")
+                if feats is not None:
+                    k = 0 if role == "off" else 1
+                    ids = np.array([m.gamer_index(r["gamer"][k]) if kind_ == "gamer" else m.team_index(r["team"][k])
+                                    for r in recs])
+                    f = dict(feats, who=ids)
+                    ht, hd = t.bin_of(f) >= 0, d.bin_of(f) >= 0
+                    end = feats["endgame"] > 0
+                    pc = lambda h, w: f"{100 * h[w].mean():.0f}%" if w.any() else "-"
+                    line += (f"; real snaps alike enough to draw from their own (time / distance): the rest of the"
+                             f" game {pc(ht, ~end)} / {pc(hd, ~end)}, the end of a half {pc(ht, end)} / {pc(hd, end)}")
+                print(line)
     else:
         for kind_ in ("time", "dist"):
             for k, v in m.tilt[kind_].items():
@@ -1664,8 +1689,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         return secs
 
     def draw_play(ix, secs, clk, rem):
-        """What came of each snap, off the state at the snap (clk: the clock then): (kind, gain, shift,
-        a new set of downs, the down played again)."""
+        """What came of each snap, off the state before it (clk: the clock at the play before's end):
+        (kind, gain, shift, a new set of downs, the down played again)."""
         off = team[ix]
         f = derive(dict(tb=time_b(secs), down=down_b(down[ix]), dist=dist_b(dist[ix]), zone=zone_b(y[ix]),
                         margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clk),
@@ -1736,12 +1761,14 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if warn.any():
             w = ix[warn]
             clock[w] = LATE
-            rem[warn] = remain_of(w, np.full(len(w), TIMEOUT), tos0[warn])    # the warning stops the clock
-            secs[warn] = draw_time(w, prv[warn], rem[warn], stopped=True)
+            # the play from 2:00: the stopped part of the draw at 2:00, the clock stopped
+            rem_w = remain_of(w, np.full(len(w), TIMEOUT), tos0[warn])
+            secs[warn] = draw_time(w, prv[warn], rem_w, stopped=True)
             tally("two_minute", len(w))
-        snap_clock = clock[ix].copy()
         clock[ix] = np.maximum(0.0, clock[ix] - secs)
-        kind, gain, shift, conv, replay = draw_play(ix, secs, snap_clock, rem)
+        # the rest as a real snap reads: off the state at the play before's end (a snap after the
+        # two-minute warning is filed under its clock before it), the time its play took
+        kind, gain, shift, conv, replay = draw_play(ix, secs, start_clock, rem)
         off = team[ix]
         elapsed[ix] += 1
         if st is not None:                    # logged as a real snap reads: PLAY_OVER to PLAY_OVER
