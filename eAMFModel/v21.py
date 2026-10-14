@@ -91,43 +91,54 @@ PREV_NAMES = ("nothing gained", "short gain", "first down", "loss", "fresh posse
 PHASES = ("Q1", "Q2", "Q2 2:00", "Q3", "Q4", "Q4 2:00", "OT")
 MARGIN_EDGES = np.array([-8.5, -3.5, -0.5, 0.5, 3.5, 8.5])
 DIST_EDGES = np.array([1.5, 3.5, 6.5, 10.5])
-ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 89.5])
+ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 89.5, 95.5])     # the last two: the 10 to the 5, inside the 5
 ELAPSED_EDGES = np.array([30.5, 60.5, 90.5])
 REMAIN_EDGES = np.array([2.5, 6.5, 12.5])
 TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
-SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=6, elapsed=4, remain=4, tb=6)
-TIME_FEATURES = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
-DIST_FEATURES = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
+SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=4, tb=6,
+             lead3=3, late3=3, tb2=2, dist3=3, zone3=3)                  # the last five: coarse ones (derive)
+TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
+DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
+TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
+DIST_FEATURES = DIST_BASE + ("lead3", "late3", "zone3")
 
 
 def _drop(features, *names):
     return tuple(f for f in features if f not in names)
 
 
-TIME_LEVELS = (TIME_FEATURES,
-               _drop(TIME_FEATURES, "remain"),
-               _drop(TIME_FEATURES, "remain", "elapsed"),
-               _drop(TIME_FEATURES, "remain", "elapsed", "zone"),
+# The fallbacks keep the situation -- the down, the distance, the field and (coarsely) the part of the
+# game and the lead -- to the end: a 3rd down is never drawn from 1st downs, the end of a half never
+# from the rest of it, while there are real snaps alike enough to draw from.
+TIME_LEVELS = (TIME_BASE,
+               _drop(TIME_BASE, "remain"),
+               _drop(TIME_BASE, "remain", "elapsed"),
+               _drop(TIME_BASE, "remain", "elapsed", "zone"),
                ("prev", "phase", "margin", "down"),
-               ("prev", "phase", "margin"),
+               ("prev", "phase", "lead3", "down"),
+               ("prev", "phase", "down"),
                ("prev", "phase"),
                ("prev",),
                ())
-DIST_LEVELS = (DIST_FEATURES,
-               _drop(DIST_FEATURES, "remain"),
-               _drop(DIST_FEATURES, "remain", "elapsed"),
-               ("tb", "down", "dist", "zone", "margin"),
+DIST_LEVELS = (DIST_BASE,
+               _drop(DIST_BASE, "remain"),
+               _drop(DIST_BASE, "remain", "elapsed"),
+               ("tb", "down", "dist", "zone", "lead3", "late3"),
+               ("tb", "down", "dist", "zone", "late3"),
                ("tb", "down", "dist", "zone"),
-               ("tb", "dist", "zone"),
-               ("tb", "zone"),
+               ("tb", "down", "dist", "zone3"),
+               ("tb", "down", "dist"),
+               ("tb", "down"),
                ("tb",),
                ())
-GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down")
-GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone")
-GAMER_TIME_LEVELS = (GAMER_TIME_FEATURES, ("who", "prev", "phase"), ("who", "prev"))
-GAMER_DIST_LEVELS = (GAMER_DIST_FEATURES, ("who", "tb", "dist", "zone"), ("who", "tb"))
+# a gamer's or team's own snaps: alike in the situation, or the league's draw -- never their snaps of
+# every down and distance
+GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "late3", "lead3")
+GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone", "tb2", "dist3", "zone3")
+GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "late3", "lead3", "down"))
+GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone"), ("who", "tb2", "down", "dist3", "zone3"))
 MIN_RECORDS = 40
 MIN_GAMER_RECORDS = 30
 DEF_SHARE = 0.5                                           # full: the share of draws from what the defense allowed
@@ -158,9 +169,10 @@ DECISION_MIN = 25
 DECISION_PRIOR = 3.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
-                   features=("togo10", "dist", "margin", "phase", "left"), sizes=(10, 5, 7, 7, 6),
-                   levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "margin", "left"),
-                           ("togo10", "dist", "left"), ("togo10", "dist"), ("togo10",), ())),
+                   features=("togo10", "dist", "margin", "phase", "left", "lead3"), sizes=(10, 5, 7, 7, 6, 3),
+                   levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "lead3", "phase", "left"),
+                           ("togo10", "dist", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
+                           ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
                      who="offense", features=("left", "range", "down", "margin", "half"), sizes=(6, 4, 3, 7, 3),
                      levels=(("left", "range", "down", "margin", "half"), ("left", "range", "margin", "half"),
@@ -352,14 +364,20 @@ def combine(*masks):
 # ---------------------------------------------------------------- the draws
 
 class Bins:
-    """Real records grouped for drawing: every combination of the features (sizes) points at the
-    first level whose group holds `min_records` (with `strict`, none if no level does), and each
-    group's records are kept sorted by their value, so a draw (and a tilt) runs from the bottom of
-    the group to the top."""
+    """Real records grouped for drawing: a group for every combination of each level's features that
+    holds `min_records` (every level but the last, (); with `strict` that one too), each group's records
+    sorted by their value, so a draw (and a tilt) runs from the bottom of the group to the top. A draw's
+    group is the first level, finest first, whose group for its features is there (strict: none if no
+    level's is)."""
 
-    def __init__(self, features, sizes, levels, lookup, start, count, level_of, payload):
+    def __init__(self, features, sizes, levels, codes, start, count, level_of, payload):
         self.features, self.sizes, self.levels = tuple(features), tuple(sizes), tuple(levels)
-        self.lookup, self.start, self.count, self.level_of, self.payload = lookup, start, count, level_of, payload
+        self.codes = codes                 # per level: (its groups' codes, sorted; the first group's index)
+        self.start, self.count, self.level_of, self.payload = start, count, level_of, payload
+
+    def _dims(self, lv):
+        pos = {f: i for i, f in enumerate(self.features)}
+        return tuple(self.sizes[pos[f]] for f in lv)
 
     @classmethod
     def build(cls, features, sizes, levels, X, value, payload, min_records, strict=False):
@@ -368,54 +386,50 @@ class Bins:
         value = np.asarray(value, float)
         n = len(X)
         sizes = tuple(int(x) for x in sizes)
-        M = int(np.prod(sizes))
-        combos = np.stack(np.unravel_index(np.arange(M), sizes), axis=1)
         pos = {f: i for i, f in enumerate(features)}
-        chosen_level = np.full(M, -1, np.int64)
-        chosen_code = np.zeros(M, np.int64)
-        rec_codes = []
+        codes, start, count, level_of, take = [], [], [], [], []
+        total = 0
         for li, lv in enumerate(levels):
             cols = [pos[f] for f in lv]
             dims = tuple(sizes[c] for c in cols)
-            rc = np.ravel_multi_index(tuple(X[:, c] for c in cols), dims) if cols else np.zeros(n, np.int64)
-            cc = np.ravel_multi_index(tuple(combos[:, c] for c in cols), dims) if cols else np.zeros(M, np.int64)
-            rec_codes.append(rc)
-            uniq, counts = np.unique(rc, return_counts=True)
-            if not len(uniq):
-                continue
-            k = np.clip(np.searchsorted(uniq, cc), 0, len(uniq) - 1)
-            cnt = np.where(uniq[k] == cc, counts[k], 0)
+            rc = np.ravel_multi_index(tuple(np.clip(X[:, c], 0, sizes[c] - 1) for c in cols), dims) if cols \
+                else np.zeros(n, np.int64)
             need = min_records if (strict or lv) else 1
-            take = (chosen_level < 0) & (cnt >= need)
-            chosen_level[take], chosen_code[take] = li, cc[take]
-        key = np.where(chosen_level >= 0, chosen_level * (1 << 40) + chosen_code, -1)
-        uniq, inv = np.unique(key, return_inverse=True)
-        lookup = np.where(key >= 0, inv - int(uniq[0] < 0), -1).astype(np.int32)
-        bins = uniq[uniq >= 0]
-        order_by_level = {}
-        start, count, level_of, take_idx = [], [], [], []
-        total = 0
-        for b in bins:
-            li, code = int(b) >> 40, int(b) & ((1 << 40) - 1)
-            if li not in order_by_level:
-                o = np.lexsort((value, rec_codes[li]))
-                order_by_level[li] = (o, rec_codes[li][o])
-            o, sorted_codes = order_by_level[li]
-            lo, hi = np.searchsorted(sorted_codes, code), np.searchsorted(sorted_codes, code, side="right")
-            idx = o[lo:hi]                                    # already sorted by value within the code
-            start.append(total)
-            count.append(len(idx))
-            level_of.append(li)
-            take_idx.append(idx)
-            total += len(idx)
-        idx = np.concatenate(take_idx) if take_idx else np.zeros(0, np.int64)
-        return cls(features, sizes, levels, lookup, np.array(start, np.int64), np.array(count, np.int64),
+            o = np.lexsort((value, rc))
+            sc = rc[o]
+            uniq, first, cnt = np.unique(sc, return_index=True, return_counts=True)
+            ok = cnt >= need
+            codes.append((uniq[ok], len(start)))
+            for u0, f0, c0 in zip(uniq[ok], first[ok], cnt[ok]):
+                start.append(total)
+                count.append(int(c0))
+                level_of.append(li)
+                take.append(o[f0:f0 + c0])                # sorted by value within the group
+                total += int(c0)
+        idx = np.concatenate(take) if take else np.zeros(0, np.int64)
+        return cls(features, sizes, levels, codes, np.array(start, np.int64), np.array(count, np.int64),
                    np.array(level_of, np.int64), {k: np.asarray(v)[idx] for k, v in payload.items()})
 
     def bin_of(self, cols):
         """The group each row of features (a dict of arrays) draws from (-1: none)."""
-        return self.lookup[np.ravel_multi_index(tuple(np.asarray(cols[f], np.int64) for f in self.features),
-                                                self.sizes, mode="clip")]
+        n = len(np.asarray(cols[self.features[0]]))
+        out = np.full(n, -1, np.int64)
+        for li, lv in enumerate(self.levels):
+            elig, first = self.codes[li]
+            todo = np.flatnonzero(out < 0)
+            if not len(todo):
+                break
+            if not len(elig):
+                continue
+            if lv:
+                dims = self._dims(lv)
+                rc = np.ravel_multi_index(tuple(np.asarray(cols[f], np.int64)[todo] for f in lv), dims, mode="clip")
+            else:
+                rc = np.zeros(len(todo), np.int64)
+            k = np.minimum(np.searchsorted(elig, rc), len(elig) - 1)
+            hit = elig[k] == rc
+            out[todo[hit]] = first + k[hit]
+        return out
 
     def draw(self, b, u, k=None):
         """The record each draw lands on: u uniform, leaned toward the top of its group by k."""
@@ -750,8 +764,9 @@ def decision_features(name, pts):
         return np.zeros((0, len(DECISIONS[name]["features"])), np.int64)
     g = lambda k: np.array([q[k] for q in pts])
     if name == "fourth":
-        cols = [togo10(100 - g("togo")), dist_b(g("dist")), margin_b(g("lead")), phase_of(g("period"), g("clock")),
-                left_b(g("left"))]
+        mb = margin_b(g("lead"))
+        cols = [togo10(100 - g("togo")), dist_b(g("dist")), mb, phase_of(g("period"), g("clock")),
+                left_b(g("left")), derive(dict(margin=mb))["lead3"]]
     elif name == "early_fg":
         p = g("period")
         cols = [early_b(g("left")), range_b(g("togo") + 17), g("down") - 1, margin_b(g("lead")),
@@ -875,14 +890,34 @@ class Model:
 MODEL_FILE = "v21model.pkl"
 
 
+ZONE3 = np.array([0, 0, 0, 1, 1, 2, 2])                  # own half, the other half outside the 10, inside the 10
+
+
+def derive(f):
+    """The coarse features off the fine ones: the lead (behind, level, ahead), the part of the game
+    (lead3; late3: the rest, a half's last 2:00, overtime), the clock (tb2: stopped, running), the
+    distance (dist3: 1-3, 4-6, 7+) and the field (zone3)."""
+    if "margin" in f:
+        f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
+    if "phase" in f:
+        f["late3"] = np.select([np.isin(f["phase"], (2, 5)), f["phase"] == 6], [1, 2], 0).astype(np.int64)
+    if "tb" in f:
+        f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
+    if "dist" in f:
+        f["dist3"] = np.minimum(2, np.maximum(0, np.asarray(f["dist"]) - 1)).astype(np.int64)
+    if "zone" in f:
+        f["zone3"] = ZONE3[np.asarray(f["zone"])]
+    return f
+
+
 def _features(recs, model):
     """{feature: array} for real snaps (snaps left in the half off the model's table)."""
     get = lambda k: np.array([r[k] for r in recs])
     period, clock = get("period"), get("clock").astype(float)
-    return dict(prev=get("prev_cls"), phase=phase_of(period, clock), margin=margin_b(get("margin")),
-                down=down_b(get("down")), dist=dist_b(get("distance")), zone=zone_b(get("field")),
-                elapsed=elapsed_b(get("elapsed")), remain=remain_b(model.remain_at(period, clock)),
-                tb=time_b(get("play_seconds")))
+    return derive(dict(prev=get("prev_cls"), phase=phase_of(period, clock), margin=margin_b(get("margin")),
+                       down=down_b(get("down")), dist=dist_b(get("distance")), zone=zone_b(get("field")),
+                       elapsed=elapsed_b(get("elapsed")), remain=remain_b(model.remain_at(period, clock)),
+                       tb=time_b(get("play_seconds"))))
 
 
 def _cols(feats, names):
@@ -1104,7 +1139,7 @@ def report_build(m, recs=None):
     """The build's lines: the draws' groups and how deep the real snaps' own states fall back."""
     real = getattr(m, "_real_bins", None)
     for i, (name, b) in enumerate((("time", m.time), ("distance", m.dist))):
-        share = b.level_shares(real[i]) if real is not None else b.level_shares(b.lookup)
+        share = b.level_shares(real[i]) if real is not None else np.bincount(b.level_of, minlength=len(b.levels)) / max(1, len(b.level_of))
         print(f"  {name} draw: {len(b.count):,} groups; real snaps' states by the features they draw on: "
               + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
     if m.mode == "full":
@@ -1376,8 +1411,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
 
     def fourth(ix):
         off = team[ix]
-        cols = dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
-                    phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix])))
+        cols = derive(dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
+                           phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix]))))
+        cols = {k: v for k, v in cols.items() if k in DECISIONS["fourth"]["features"]}
         lead = score[ix, off] - score[ix, 1 - off]
         must = (period[ix] >= 5) & ot_done[ix, 1 - off] & (lead < 0)
         choice = decide("fourth", cols, gamer[ix, off], fine=state(ix, off),
@@ -1430,9 +1466,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         """Each snap's time; `stopped`: from the stopped-clock part of the same draw (the snap after
         the two-minute warning)."""
         off = team[ix]
-        f = dict(prev=prv, phase=phase_of(period[ix], clock[ix]),
-                 margin=margin_b(score[ix, off] - score[ix, 1 - off]), down=down_b(down[ix]), dist=dist_b(dist[ix]),
-                 zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]), remain=remain_b(model.remain_at(period[ix], clock[ix])))
+        f = derive(dict(prev=prv, phase=phase_of(period[ix], clock[ix]),
+                        margin=margin_b(score[ix, off] - score[ix, 1 - off]), down=down_b(down[ix]),
+                        dist=dist_b(dist[ix]), zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]),
+                        remain=remain_b(model.remain_at(period[ix], clock[ix]))))
         u = rng.random(len(ix))
         k = k_time[ix, off] if k_time is not None else None
         b = model.time.bin_of(f)
@@ -1458,9 +1495,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
 
     def draw_play(ix, secs):
         off = team[ix]
-        f = dict(tb=time_b(secs), down=down_b(down[ix]), dist=dist_b(dist[ix]), zone=zone_b(y[ix]),
-                 margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clock[ix]),
-                 elapsed=elapsed_b(elapsed[ix]), remain=remain_b(model.remain_at(period[ix], clock[ix])))
+        f = derive(dict(tb=time_b(secs), down=down_b(down[ix]), dist=dist_b(dist[ix]), zone=zone_b(y[ix]),
+                        margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clock[ix]),
+                        elapsed=elapsed_b(elapsed[ix]), remain=remain_b(model.remain_at(period[ix], clock[ix]))))
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
         j = model.dist.draw(model.dist.bin_of(f), u, k)

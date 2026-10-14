@@ -114,6 +114,21 @@ class TestBins(unittest.TestCase):
             self.assertAlmostEqual(E[g, 0], self.bins.payload["v"][s:s + n].mean())
             self.assertGreater(E[g, 1], E[g, 0])
 
+    def test_a_gamer_s_own_draw_keeps_the_down(self):
+        # gamer 0: 300 1st downs, 5 3rd downs of their own -- a 3rd down is the league's, not their 1st downs
+        rows = [(0, 3, 0, 4, 2)] * 300 + [(0, 3, 2, 1, 2)] * 5
+        f = {k: np.array([r[i] for r in rows]) for i, k in enumerate(("who", "tb", "down", "dist", "zone"))}
+        f = v21.derive(dict(f))
+        X = np.stack([f[k] for k in v21.GAMER_DIST_FEATURES], axis=1)
+        sizes = [3] + [v21.SIZES[k] for k in v21.GAMER_DIST_FEATURES[1:]]
+        b = v21.Bins.build(v21.GAMER_DIST_FEATURES, sizes, v21.GAMER_DIST_LEVELS, X, np.zeros(len(X)),
+                           {"v": np.zeros(len(X))}, 30, strict=True)
+        q = v21.derive(dict(who=np.array([0, 0]), tb=np.array([3, 3]), down=np.array([0, 2]), dist=np.array([4, 1]),
+                            zone=np.array([2, 2])))
+        got = b.bin_of(q)
+        self.assertGreaterEqual(got[0], 0)
+        self.assertEqual(got[1], -1)
+
     def test_strict_has_no_fallback(self):
         X = np.array([[0, 0]] * 50 + [[1, 0]] * 5)
         b = v21.Bins.build(("a", "b"), (3, 2), (("a", "b"),), X, self.value, {"v": self.value}, 10, strict=True)
@@ -311,8 +326,9 @@ class TestDecisions(unittest.TestCase):
         who = np.repeat([0, 1, 2], n)
         rate = np.array([0.6, 0.1, 0.3])[who]
         chosen = np.where(rng.random(3 * n) < rate, v21.GO, v21.PUNT)
-        X = np.zeros((3 * n, 5), np.int64)
-        few = np.zeros((5, 5), np.int64)
+        K = len(v21.DECISIONS["fourth"]["features"])
+        X = np.zeros((3 * n, K), np.int64)
+        few = np.zeros((5, K), np.int64)
         X, who, chosen = np.r_[X, few], np.r_[who, np.full(5, 3)], np.r_[chosen, np.full(5, v21.GO)]
         ch = v21.Choice.build("fourth", X, chosen, who, 5)
         cols = {f: np.zeros(4, np.int64) for f in v21.DECISIONS["fourth"]["features"]}
@@ -374,7 +390,7 @@ class TestDecisions(unittest.TestCase):
         rng = np.random.default_rng(1)
         who = np.repeat([0, 1], 200)
         chosen = np.where(rng.random(400) < np.where(who == 0, 0.8, 0.05), v21.GO, v21.PUNT)
-        X = rng.integers(0, 3, (400, 5))
+        X = rng.integers(0, 3, (400, len(v21.DECISIONS["fourth"]["features"])))
         m.choices["fourth"] = v21.Choice.build("fourth", X, chosen, who, n_who)
         m.rules = {}
         st = {}

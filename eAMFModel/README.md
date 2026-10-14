@@ -1999,10 +1999,18 @@ missing something. Nothing is ever fitted to close those gaps.
   5 seconds can only have gone so far.
 - **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
   draw falls back level by level to fewer features. The build prints how deep the real states fall.
+  The fallbacks keep the situation to the end: the down, the distance and the field, plus coarsely the
+  part of the game and the lead. So a 3rd down is never drawn from 1st downs, and the end of a half
+  never from the rest of it, while there are real snaps alike enough to draw from. (Before the down
+  audit, the part of the game went first.)
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
-    defending gamer, else its team, allowed.
+    defending gamer, else its team, allowed. "Alike" always means the same down and, at least
+    coarsely, the same distance, field, clock (stopped or running), part of the game and lead. A
+    gamer's own draw gives way to the league's rather than drop the situation. Before the down
+    audit, it fell back to all the gamer's snaps with that time, whatever the down, so 3rd downs
+    played like 1st downs.
   - `adjusted`, the league's draws for everyone, then leaned. Each draw is pushed toward its longer
     or shorter end by a tilt for each of: the offense's gamer, the defense's gamer and both teams.
     The tilts are fitted on their real snaps against what the league's draws gave the same states,
