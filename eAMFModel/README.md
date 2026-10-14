@@ -2020,17 +2020,41 @@ missing something. Nothing is ever fitted to close those gaps.
     safety.
   - A real touchdown drawn from further back runs on with the real chance that a gain that long
     goes further.
-- **Timeouts** come before a running-clock snap, with the defense's and the offense's real call
-  rates by part of the game and lead. They move only the time draw.
 - **Snaps left in the half** start as the real games' average by the time left. The build then
   replaces them with the sim's own counts from kick-off and rebuilds the draws on them.
-- **Everything else is drawn from real data too:**
-  - 4th downs (go, field goal or punt) by field, distance, lead and part of the game;
-  - field goals made by distance;
+- **The decisions**, each made by the gamer whose call it is:
+
+  | decision | options | drawn from real decisions alike in |
+  |---|---|---|
+  | 4th down (the offense) | go for it, field goal, punt | yards to the goal, distance, lead, part of the game, time left in the half |
+  | downs 1-3 in the half's last minute, in range (the offense) | play on, kick now | time left, the kick's length, down, lead, which half |
+  | kick-off (the kicker) | returned, touchback, no landing zone, kept (onside) | behind late in Q4, the half's last 2:00, lead |
+  | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six |
+  | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half |
+
+  Each is drawn in two steps:
+  - **The league's share of each option** among real decisions in similar states. Like the snap
+    draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
+  - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
+    real decisions against what the league chose in the same states. It is shrunk toward none, so a
+    gamer with a handful of decisions decides almost as the league does. This is how earlier
+    versions handled 4th-down aggression and kickers' touchback rates. A gamer's lean applies in
+    every state, even ones where they have no decisions of their own.
+
+  `--no-gamer-decisions` builds without the leans, so every gamer decides as the league does, for
+  comparison.
+
+  The build prints each decision's real shares and the gamers who lean furthest each way.
+
+  What follows a decision is real data too:
+  - a returned or kept kick-off's field and clock, from real kicks in the same situation;
+  - touchbacks at the 20 and no landing zone at the 35, with no clock;
+  - field goals made by distance, and the clock they take. A kick with 40 seconds or less left in the
+    half takes it as the real ones did, so one that ran the clock out runs it out;
   - punts' net yards;
-  - kick-offs, with onside kicks when trailing late;
-  - going for two, in v14's cells;
   - safety free kicks.
+
+  A timeout moves only the time draw.
 
   Overtime is played as in v14.
 
@@ -2065,6 +2089,11 @@ sections:
   - events per game and points by quarter;
   - the time draw, as time buckets after each kind of play;
   - the distance draw, as snap classes within each time bucket.
+- **The decisions.** Each decision's choices, real against the sim, per game and by slice of the
+  state. For example, 4th downs are sliced by how far out and how far to go, and early kicks by the
+  time left. For the gamers with enough real decisions, it shows each one's real and simulated share
+  of the option that shows their lean (going for it, touchbacks, kicking early, going for two,
+  calling timeouts), and how well the two correlate.
 
 `--out` also writes `v21_matches.csv` (a row per match) and `v21_states.csv` (a row per real state).
 

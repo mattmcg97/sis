@@ -46,13 +46,16 @@ with the real chance a gain that long goes further (gain_surv).
 Snaps left in the half (REMAIN) is a table by the time left in the half: the real games' average
 first, then the sim's own from kick-off (refine_remaining), and the draws are rebuilt on it.
 
-The rest is drawn from real data too: 4th downs (go, field goal, punt by field, distance, lead and
-part of the game), field goals made by distance, punts' net yards, kick-offs (onside when trailing
-late), conversions (going for two by v14's cells and the lead), safety free kicks and timeouts (the
-defense's and the offense's calls before a running-clock snap by part of the game and lead; a timeout
-moves only the time draw). Overtime is v14's: over once both sides have had the ball and one leads, a
-touchdown that puts the second side ahead ends it at once, and a period's end decides it only when the
-side behind has had the ball.
+The decisions (DECISIONS) are each the deciding gamer's: 4th downs (go, field goal, punt), a kick on
+downs 1-3 in the half's last minute, kick-offs (returned, touchback, no landing zone, kept), going for
+two and the timeouts before a running-clock snap (the defense's, then the offense's). Each is drawn
+from the league's shares among real decisions alike in its features, leaned by the gamer's own
+log-odds shift for each option (Choice, fit_leans): fitted on their real decisions against the
+league's in the same states and shrunk toward none, so it carries into every state. What follows is
+real data too: the kicks' fields and clock, field goals made by distance, punts' net yards and safety
+free kicks; a timeout moves only the time draw. Overtime is v14's: over once both sides have had the
+ball and one leads, a touchdown that puts the second side ahead ends it at once, and a period's end
+decides it only when the side behind has had the ball.
 """
 
 import datetime as dt
@@ -131,12 +134,56 @@ TO_VALUE, DEF_TD_VALUE = -20.0, -40.0                     # a turnover's place a
 SMOOTH_YARDS = 0                                          # +-yards a drawn gain is spread over (0: as drawn)
 EFFECTS = ("gamer_off", "gamer_def", "team_off", "team_def")
 
-FOURTH_FEATURES = ("togo10", "dist", "margin", "phase")
-FOURTH_SIZES = dict(togo10=10, dist=5, margin=7, phase=7)
-FOURTH_LEVELS = (FOURTH_FEATURES, ("togo10", "dist", "margin"), ("togo10", "dist"), ("togo10",), ())
 GO, FG, PUNT = 0, 1, 2
 FG_MAX = 65                   # longest kick tried (yards)
 CONV_CELLS, CONV_MARGIN, CONV_CLOCK = s14.CONV_CELLS, s14.CONV_MARGIN, s14.CONV_CLOCK
+RETURN, TOUCHBACK, NO_LANDING, KEPT = range(4)
+KICK_TOUCHBACK, KICK_NO_LANDING = s14.KICK_TOUCHBACK, s14.KICK_NO_LANDING
+LEFT_EDGES = np.array([10.5, 30.5, 60.5, 120.5, 240.5])     # seconds left in the half
+EARLY_LEFT = 60.0                                            # early kicks: downs 1-3 in the half's last minute
+EARLY_EDGES = np.array([5.5, 10.5, 20.5, 30.5, 45.5])
+RANGE_EDGES = np.array([35.5, 45.5, 55.5])                   # the kick's length
+FG_NEAR = 40.0                # a kick with this little left in the half takes its clock as the real ones did
+KICK_POOL_MIN = 20
+
+# The decisions. Each is drawn from the real ones in states alike (Bins over its features, falling back
+# level by level below DECISION_MIN), and leaned by the deciding gamer's own log-odds shift for each
+# option against the first (fitted on their real decisions, shrunk by DECISION_PRIOR).
+DECISION_MIN = 25
+DECISION_PRIOR = 3.0
+DECISIONS = {
+    "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
+                   features=("togo10", "dist", "margin", "phase", "left"), sizes=(10, 5, 7, 7, 6),
+                   levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "margin", "left"),
+                           ("togo10", "dist", "left"), ("togo10", "dist"), ("togo10",), ())),
+    "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
+                     who="offense", features=("left", "range", "down", "margin", "half"), sizes=(6, 4, 3, 7, 3),
+                     levels=(("left", "range", "down", "margin", "half"), ("left", "range", "margin", "half"),
+                             ("left", "range", "half"), ("left", "half"), ("left",), ())),
+    "kickoff": dict(label="kick-off", options=("return", "touchback", "no landing zone", "kept"), who="kicker",
+                    features=("desperate", "late", "lead"), sizes=(2, 2, 3),
+                    levels=(("desperate", "late", "lead"), ("desperate", "late"), ("desperate",), ())),
+    "two": dict(label="conversion", options=("kick", "go for two"), who="scorer", features=("cell", "lead"),
+                sizes=(CONV_CELLS, 2 * CONV_MARGIN + 1), levels=(("cell", "lead"), ("lead",), ())),
+    "to_def": dict(label="defense's timeout before a running-clock snap", options=("none", "timeout"),
+                   who="defense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
+                   levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
+    "to_off": dict(label="offense's timeout before a running-clock snap", options=("none", "timeout"),
+                   who="offense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
+                   levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
+}
+MARGIN_NAMES = ("9+ behind", "4-8 behind", "1-3 behind", "level", "1-3 ahead", "4-8 ahead", "9+ ahead")
+SLICE_NAMES = {
+    "fourth": ("inside the 20, 1-3 to go", "inside the 20, 4+ to go", "20-39 out, 1-3 to go", "20-39 out, 4+ to go",
+               "40-59 out, 1-3 to go", "40-59 out, 4+ to go", "60+ out, 1-3 to go", "60+ out, 4+ to go"),
+    "early_fg": ("0:05 or less left", "0:06-0:10", "0:11-0:20", "0:21-0:30", "0:31-0:45", "0:46-1:00"),
+    "kickoff": ("ordinary", "the half's last 2:00", "behind late in Q4"),
+    "two": tuple(f"{m} after the six" for m in MARGIN_NAMES),
+    "to_def": PHASES, "to_off": PHASES,
+}
+# the option each gamer's lean is shown for, and the real decisions a gamer needs to be shown
+LEAN_SHOWN = {"fourth": (GO, 20), "early_fg": (1, 10), "kickoff": (TOUCHBACK, 20), "two": (1, 10),
+              "to_def": (1, 40), "to_off": (1, 40)}
 REMAIN_SLICE = 20.0           # snaps left in the half, by 20-second slice of the time left in it
 REMAIN_SLICES = int(2 * QUARTER // REMAIN_SLICE) + 1
 REFINE_REMAINING = True
@@ -180,6 +227,41 @@ def remain_b(r):
 
 def time_b(s):
     return _cut(s, TIME_EDGES)
+
+
+def left_b(s):
+    return _cut(s, LEFT_EDGES)
+
+
+def early_b(s):
+    return _cut(s, EARLY_EDGES)
+
+
+def range_b(k):
+    return _cut(k, RANGE_EDGES)
+
+
+def lead3(m):
+    m = np.asarray(m)
+    return np.where(m < 0, 0, np.where(m == 0, 1, 2)).astype(np.int64)
+
+
+def togo10(y):
+    return np.clip((100 - np.asarray(y)) // 10, 0, 9).astype(np.int64)
+
+
+def decision_slice(name, c):
+    """The report's slice (SLICE_NAMES) of each decision, off its features."""
+    if name == "fourth":
+        band = np.select([c["togo10"] <= 1, c["togo10"] <= 3, c["togo10"] <= 5], [0, 1, 2], 3)
+        return (band * 2 + (np.asarray(c["dist"]) >= 2)).astype(np.int64)
+    if name == "early_fg":
+        return np.asarray(c["left"], np.int64)
+    if name == "kickoff":
+        return np.where(np.asarray(c["desperate"]) == 1, 2, np.asarray(c["late"])).astype(np.int64)
+    if name == "two":
+        return margin_b(np.asarray(c["lead"]) - CONV_MARGIN)
+    return np.asarray(c["phase"], np.int64)
 
 
 def down_b(d):
@@ -324,6 +406,71 @@ class Bins:
         return lv / max(1, lv.sum())
 
 
+def fit_leans(base, chosen, who, n_who, prior=DECISION_PRIOR, steps=8):
+    """(n_who, options) each gamer's log-odds shift of each option against the first: Newton steps on
+    their real decisions' likelihood around the league's shares (base: each decision's log shares),
+    with a normal prior of precision `prior` pulling every shift toward none."""
+    K = base.shape[1]
+    S = np.zeros((n_who, K))
+    Y = np.eye(K)[chosen]
+    for _ in range(steps):
+        z = base + S[who]
+        z -= z.max(1, keepdims=True)
+        p = np.exp(z)
+        p /= p.sum(1, keepdims=True)
+        for k in range(1, K):
+            g = np.bincount(who, Y[:, k] - p[:, k], minlength=n_who) - prior * S[:, k]
+            h = np.bincount(who, p[:, k] * (1 - p[:, k]), minlength=n_who) + prior
+            S[:, k] += g / h
+        S[-1] = 0.0                                       # the unknown gamer: none
+    return S
+
+
+class Choice:
+    """A decision drawn from real ones: the league's share of each option among the real decisions in
+    states alike (Bins over its features), leaned by the deciding gamer's log-odds shift (lean)."""
+
+    def __init__(self, name, bins, shares, lean, league, n, counts):
+        self.name, self.bins, self.shares, self.lean, self.league, self.n = name, bins, shares, lean, league, n
+        self.counts = counts                              # real decisions by gamer and option
+
+    @classmethod
+    def build(cls, name, X, chosen, who, n_who, min_records=DECISION_MIN, prior=DECISION_PRIOR, gamers=True):
+        spec = DECISIONS[name]
+        K = len(spec["options"])
+        chosen, who = np.asarray(chosen, np.int64), np.asarray(who, np.int64)
+        counts = np.zeros((n_who, K))
+        np.add.at(counts, (who, chosen), 1)
+        if not len(chosen):
+            league = np.eye(K)[0]
+            return cls(name, None, league[None], np.zeros((n_who, K)), league, 0, counts)
+        league = np.bincount(chosen, minlength=K) / len(chosen)
+        X = np.asarray(X, np.int64).reshape(len(chosen), -1)
+        bins = Bins.build(spec["features"], spec["sizes"], spec["levels"], X, chosen.astype(float),
+                          {"choice": chosen}, min_records)
+        group = np.repeat(np.arange(len(bins.count)), bins.count)
+        got = np.zeros((len(bins.count), K))
+        np.add.at(got, (group, bins.payload["choice"]), 1)
+        shares = (got + league) / (bins.count[:, None] + 1.0)
+        bins.payload = {}
+        lean = np.zeros((n_who, K))
+        if gamers:
+            mine = bins.bin_of({f: X[:, i] for i, f in enumerate(spec["features"])})
+            lean = fit_leans(np.log(np.maximum(shares[mine], 1e-9)), chosen, who, n_who, prior)
+        return cls(name, bins, shares, lean, league, len(chosen), counts)
+
+    def probs(self, cols, who):
+        base = self.shares[self.bins.bin_of(cols)] if self.bins is not None else np.tile(self.shares[0], (len(who), 1))
+        z = np.log(np.maximum(base, 1e-9)) + self.lean[who]
+        z -= z.max(1, keepdims=True)
+        p = np.exp(z)
+        return p / p.sum(1, keepdims=True)
+
+    def draw(self, cols, who, u):
+        c = np.cumsum(self.probs(cols, who), 1)
+        return np.minimum((u[:, None] > c).sum(1), c.shape[1] - 1)
+
+
 # ---------------------------------------------------------------- the real snaps
 
 def _side_of(team, a_home):
@@ -364,19 +511,108 @@ def match_snaps(rows, pair=None, teams=None):
     return recs
 
 
-def _fourth_downs(rows):
-    """(period, clock, margin, field, distance, choice) for every real 4th down."""
-    out = []
+TEAMS = ("TEAM_A", "TEAM_B")
+
+
+def match_decisions(rows, recs=None):
+    """A match's real decisions: {name: [(deciding side: 0 home 1 away, choice, *features)]} for every
+    name in DECISIONS, with "kick_pool" (choice, desperate, late, field, seconds) for every kick-off,
+    "fg_clock" (seconds left in the half, seconds used) for every field goal and "conv" (two, good) for
+    every conversion. `recs`: the match's match_snaps, for the timeouts."""
+    rows = _with_side(rows)
+    out = {k: [] for k in DECISIONS}
+    out.update(kick_pool=[], fg_clock=[], conv=[])
+    if not rows:
+        return out
+    a_home = rows[0]["team_a_side"] != "away"
+    _i, _f = s14._i, s14._f
     for a, b in zip(rows, rows[1:]):
-        if a.get("down") != "4" or a["play_kind"] not in s14.SNAP_KINDS or not a["field_position"] \
-                or not a["distance"] or not a["period"] or a["period"] != b["period"] or not a["clock_seconds"]:
+        if a["play_kind"] not in s14.SNAP_KINDS or a.get("offense") not in TEAMS or not a.get("field_position") \
+                or not a.get("down") or not a.get("period") or not a.get("clock_seconds"):
             continue
+        p, c, y, d = _i(a["period"]), _f(a["clock_seconds"]), _i(a["field_position"]), _i(a["down"])
         m = s14._margin(a, a["offense"])
+        if c <= 0 or m is None:
+            continue
+        side, left, same = _side_of(a["offense"], a_home), float(half_left(p, c)), a["period"] == b["period"]
+        if b["play_kind"] == "FIELD_GOAL" and same and b.get("clock_seconds"):
+            out["fg_clock"].append((left, c - _f(b["clock_seconds"])))
+        if d == 4 and same and a.get("distance"):
+            choice = PUNT if b["play_kind"] == "PUNT" else FG if b["play_kind"] == "FIELD_GOAL" else GO
+            out["fourth"].append((side, choice, int(togo10(y)), int(dist_b(max(1, _i(a["distance"])))),
+                                  int(margin_b(m)), int(phase_of(p, c)), int(left_b(left))))
+        elif d in (1, 2, 3) and (p == 2 or p >= 4) and left <= EARLY_LEFT and 100 - y + 17 <= FG_MAX \
+                and (same or p in (2, 4)):
+            # a half that ran out before the next row is a side that did not kick
+            out["early_fg"].append((side, int(b["play_kind"] == "FIELD_GOAL" and same), int(early_b(left)),
+                                    int(range_b(100 - y + 17)), d - 1, int(margin_b(m)),
+                                    0 if p == 2 else 1 if p == 4 else 2))
+    # kick-offs: after a conversion or a field goal (a touchdown straight after: returned or run in), and
+    # each half's opening kick
+    prev = None
+    for r in rows:
+        kind_r, got = r["play_kind"], None
+        after = prev is not None and prev["period"] == r["period"] and prev["play_kind"] in ("CONVERSION", "FIELD_GOAL") \
+            and bool(prev.get("clock_seconds")) and prev.get("offense") in TEAMS
+        if r.get("period") and r.get("clock_seconds"):
+            if after and kind_r == "TOUCHDOWN":
+                kicker = prev["offense"]
+                scorer = s14._scorer(r, "TOUCHDOWN_TEAM") or r["offense"]
+                got = (kicker, _f(prev["clock_seconds"]), s14._margin(prev, kicker), 100,
+                       KEPT if scorer == kicker else RETURN)
+            elif kind_r == "KICKOFF" and r.get("field_position") and r.get("offense") in TEAMS:
+                if after:
+                    kicker, start = prev["offense"], _f(prev["clock_seconds"])
+                    lead = s14._margin(prev, kicker)
+                elif prev is None or prev["period"] != r["period"]:
+                    kicker, start = ("TEAM_B" if r["offense"] == "TEAM_A" else "TEAM_A"), QUARTER
+                    lead = s14._margin(r, kicker)
+                else:
+                    kicker = None
+                if kicker:
+                    field, secs = _i(r["field_position"]), start - _f(r["clock_seconds"])
+                    choice = KEPT if r["offense"] == kicker else TOUCHBACK if (field == KICK_TOUCHBACK and secs == 0) \
+                        else NO_LANDING if (field == KICK_NO_LANDING and secs == 0) else RETURN
+                    if s14._scorer(r, "TOUCHDOWN_TEAM") is not None:
+                        field = 100                       # run in from the kick
+                    got = (kicker, start, lead, field, choice)
+        if got is not None and got[2] is not None:
+            kicker, start, lead, field, choice = got
+            p, secs = _i(r["period"]), start - _f(r["clock_seconds"])
+            if 0 <= secs <= 60:
+                desperate = int(after and p >= 4 and lead < 0 and float(half_left(p, start)) <= 180)
+                late = int(p in (2, 4) and start <= LATE)
+                out["kickoff"].append((_side_of(kicker, a_home), choice, desperate, late, int(lead3(lead))))
+                out["kick_pool"].append((choice, desperate, late, field, secs))
+        prev = r
+    # conversions: who scored, the lead after the six, whether they went for two and made it
+    for a, b in zip(rows, rows[1:]):
+        if a["play_kind"] != "TOUCHDOWN" or b["play_kind"] != "CONVERSION" or not a.get("period"):
+            continue
+        msgs = [x for x in (b.get("play_messages") or "").split("|") if "POINT" in x and x[-6:] in TEAMS]
+        if not msgs:
+            continue
+        scorer = msgs[-1][-6:]
+        two = any("TWO_POINT" in x for x in msgs)
+        good = msgs[-1].startswith(("EXTRA_POINT_GOOD", "TWO_POINT_CONVERSION_SUCCESSFUL"))
+        m = s14._margin(a, scorer)
         if m is None:
             continue
-        choice = PUNT if b["play_kind"] == "PUNT" else FG if b["play_kind"] == "FIELD_GOAL" else GO
-        out.append((s14._i(a["period"]), s14._f(a["clock_seconds"]), m, s14._i(a["field_position"]),
-                    max(1, s14._i(a["distance"])), choice))
+        cell = s14.conversion_cell(_i(a["period"]), _f(a.get("clock_seconds")) or 0.0)
+        out["two"].append((_side_of(scorer, a_home), int(two), cell, int(np.clip(m, -CONV_MARGIN, CONV_MARGIN)) + CONV_MARGIN))
+        out["conv"].append((two, good))
+    # timeouts before a running-clock snap, with a timeout left to call: the defense's first, then
+    # (the defense not calling) the offense's
+    for r in (recs if recs is not None else match_snaps(rows)):
+        if r["prev_raw"] > LOSS or not r.get("timeouts_left"):
+            continue
+        f = (int(phase_of(r["period"], r["clock"])), int(margin_b(r["margin"])),
+             int(left_b(half_left(r["period"], r["clock"]))))
+        role = r.get("timeout_role")
+        if r["timeouts_left"][1] > 0:
+            out["to_def"].append((1 - r["side"], int(role == s14.DEFENCE)) + f)
+        if r["timeouts_left"][0] > 0 and role != s14.DEFENCE:
+            out["to_off"].append((r["side"], int(role == s14.OFFENCE)) + f)
     return out
 
 
@@ -427,16 +663,14 @@ class Model:
         self.gamers, self.teams = {}, {}
         self.tilt = {}                     # adjusted: {"time"|"dist": {effect: arr}}
         self.gain_surv = np.ones(101)      # P(a positive gain reaches x yards)
-        self.fourth = None
-        self.fg_make = None                # P(make) by 5-yard kick distance from 15
-        self.fg_seconds = np.array([5.0])
+        self.choices = {}                  # the decisions: {name in DECISIONS: Choice}
+        self.fg_make = np.array([0.8])     # P(make) by 5-yard kick distance from 15
+        self.fg_near = np.array([[5.0, 5.0]])   # (seconds left, seconds used) of real kicks FG_NEAR or less from the end
+        self.fg_far = np.array([5.0])      # seconds used by the rest
         self.punts = None                  # Bins over (ybin,) payload net, seconds
-        self.kicks = {}                    # desperate -> (kept, field, seconds)
+        self.kick_pool = {}                # (RETURN | KEPT, desperate, late) -> (field, seconds)
         self.safety_fields = np.array([35])
-        self.two_p = np.zeros((CONV_CELLS, 2 * CONV_MARGIN + 1))
         self.two_good, self.kick_good = 0.5, 0.97
-        self.to_def = np.zeros((7, 7))
-        self.to_off = np.zeros((7, 7))
         self.remain = np.zeros((3, REMAIN_SLICES))
         self.share = np.linspace(1, 0, SHARE_SLICES)
         self.meta = {}
@@ -449,7 +683,10 @@ class Model:
     def load(cls, path):
         m = cls()
         with open(path, "rb") as fh:
-            m.__dict__.update(pickle.load(fh))
+            got = pickle.load(fh)
+        if "choices" not in got:
+            raise SystemExit(f"{path} was built before v2.1's decisions: build it again with v21-build")
+        m.__dict__.update(got)
         return m
 
     def gamer_index(self, handle):
@@ -491,22 +728,28 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0):
-    """The model off the export's matches ({code: rows}) and the history (gamers and teams)."""
+          seed=0, gamer_decisions=True):
+    """The model off the export's matches ({code: rows}) and the history (gamers and teams).
+    gamer_decisions=False: every gamer decides as the league does in the same state."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     m = Model()
     m.mode = mode
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
-    recs, fourths, kicks, decisions, convs, safeties = [], [], [], [], [], []
+    recs, kick_dec, safeties = [], [], []
+    dec = {k: [] for k in DECISIONS}
+    dec.update(kick_pool=[], fg_clock=[], conv=[])
     for code, rows in matches.items():
         rows = _with_side(rows)
         pair, teams = match_people(code, rows, hist)
-        recs += match_snaps(rows, pair, teams)
-        fourths += _fourth_downs(rows)
-        kicks += s14.kick_records(rows)
-        decisions += s14.kick_decisions(rows)
-        convs += s14.conversions(rows)
+        mine = match_snaps(rows, pair, teams)
+        recs += mine
+        got = match_decisions(rows, mine)
+        for name in DECISIONS:
+            dec[name] += [(pair[r[0]],) + tuple(r[1:]) for r in got[name]]
+        for name in ("kick_pool", "fg_clock", "conv"):
+            dec[name] += got[name]
+        kick_dec += s14.kick_decisions(rows)
         safeties += s14.safety_kicks(rows)
     recs = [r for r in recs if r["period"] <= 4 + MAX_OT]
     if not recs:
@@ -542,16 +785,28 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
 
     _build_draws(m, recs, min_records, verbose)
 
-    # 4th downs
-    if fourths:
-        f = np.array(fourths, float)
-        p, c = f[:, 0].astype(int), f[:, 1]
-        X = np.stack([np.clip(((100 - f[:, 3]) // 10).astype(int), 0, 9), dist_b(f[:, 4]), margin_b(f[:, 2]),
-                      phase_of(p, c)], axis=1)
-        m.fourth = Bins.build(FOURTH_FEATURES, [FOURTH_SIZES[x] for x in FOURTH_FEATURES], FOURTH_LEVELS, X,
-                              f[:, 5], {"choice": f[:, 5].astype(np.int64)}, 20)
-    # field goals: made by distance, the clock they take
-    fgs = [d for d in decisions if d[0] == "fg"]
+    # the decisions, each gamer's lean on top of the league's choices in the same states
+    n_who = len(m.gamers) + 1
+    for name, spec in DECISIONS.items():
+        got = dec[name]
+        who = np.array([m.gamer_index(r[0]) for r in got], np.int64)
+        chosen = np.array([r[1] for r in got], np.int64)
+        X = np.array([r[2:] for r in got], np.int64).reshape(len(got), len(spec["features"]))
+        m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions)
+    # kick-offs' outcomes: the field and clock of the returned and the kept ones, by desperate and late
+    pool = np.array(dec["kick_pool"], float).reshape(-1, 5)
+    for kind in (RETURN, KEPT):
+        for desperate in (0, 1):
+            for late in (0, 1):
+                wants = [(pool[:, 0] == kind) & (pool[:, 1] == desperate) & (pool[:, 2] == late),
+                         (pool[:, 0] == kind) & (pool[:, 1] == desperate), pool[:, 0] == kind]
+                pick = next((w for w in wants if w.sum() >= KICK_POOL_MIN), None)
+                if pick is None:
+                    pick = next((w for w in wants if w.any()), None)
+                m.kick_pool[(kind, desperate, late)] = (pool[pick, 3].astype(np.int64), pool[pick, 4]) \
+                    if pick is not None else (np.array([25 if kind == RETURN else 45]), np.array([5.0]))
+    # field goals: made by distance, and the clock they take
+    fgs = [d for d in kick_dec if d[0] == "fg"]
     dist_fg = np.arange(15, FG_MAX + 5, 5)
     made, tried = np.zeros(len(dist_fg)), np.zeros(len(dist_fg))
     for _, y, ok, secs, _ in fgs:
@@ -560,48 +815,26 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         tried[k] += 1
     league = made.sum() / max(1, tried.sum())
     m.fg_make = (made + 10 * league) / (tried + 10)
-    if fgs:
-        m.fg_seconds = np.array([d[3] for d in fgs], float)
-    punts = [d for d in decisions if d[0] == "punt"]
+    clock_used = np.array(dec["fg_clock"], float).reshape(-1, 2)
+    near = clock_used[:, 0] <= FG_NEAR
+    if near.any():
+        m.fg_near = clock_used[near]
+    if (~near).any():
+        m.fg_far = clock_used[~near, 1]
+    punts = [d for d in kick_dec if d[0] == "punt"]
     if punts:
         P = np.array([(d[1], d[2], d[3]) for d in punts], float)
         m.punts = Bins.build(("ybin",), (5,), (("ybin",), ()), np.clip((P[:, 0] // 20).astype(int), 0, 4)[:, None],
                              P[:, 1], {"net": P[:, 1].astype(np.int64), "seconds": P[:, 2]}, 20)
-    for desperate in (False, True):
-        ks = [k for k in kicks if k[0] == desperate]
-        if ks:
-            m.kicks[desperate] = (np.array([k[1] for k in ks], bool), np.array([k[2] for k in ks], np.int64),
-                                  np.array([k[3] for k in ks], float))
     if safeties:
         m.safety_fields = np.array(safeties, np.int64)
-    # conversions, in v14's cells
-    if convs:
-        num, den = np.zeros(m.two_p.shape), np.zeros(m.two_p.shape)
-        two_n = two_good = kick_n = kick_good = 0
-        for cell, margin, two, good in convs:
-            num[cell, int(margin) + CONV_MARGIN] += two
-            den[cell, int(margin) + CONV_MARGIN] += 1
-            if two:
-                two_n, two_good = two_n + 1, two_good + good
-            else:
-                kick_n, kick_good = kick_n + 1, kick_good + good
-        base = num.sum(1, keepdims=True) / np.maximum(den.sum(1, keepdims=True), 1)
-        m.two_p = (num + 5 * base) / (den + 5)
-        m.two_good = (two_good + 5) / (two_n + 10)
-        m.kick_good = (kick_good + 9) / (kick_n + 10)
-    # timeouts before a running-clock snap: the defense's call, then the offense's
-    run = [r for r in recs if r["prev_raw"] <= LOSS and r.get("timeouts_left")]
-    if run:
-        ph = phase_of(np.array([r["period"] for r in run]), np.array([r["clock"] for r in run], float))
-        mb = margin_b(np.array([r["margin"] for r in run]))
-        for name, role, left in (("to_def", s14.DEFENCE, 1), ("to_off", s14.OFFENCE, 0)):
-            ok = np.array([r["timeouts_left"][left] > 0 for r in run])
-            called = np.array([r.get("timeout_role") == role for r in run], float)
-            num, den = np.zeros((7, 7)), np.zeros((7, 7))
-            np.add.at(num, (ph[ok], mb[ok]), called[ok])
-            np.add.at(den, (ph[ok], mb[ok]), 1)
-            base = num.sum(1, keepdims=True) / np.maximum(den.sum(1, keepdims=True), 1)
-            setattr(m, name, (num + 20 * base) / (den + 20))
+    conv = dec["conv"]
+    if conv:
+        two = [g for t, g in conv if t]
+        kick = [g for t, g in conv if not t]
+        m.two_good = (sum(two) + 5) / (len(two) + 10)
+        m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
+    run = dec["to_def"]
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
@@ -709,6 +942,20 @@ def report_build(m, recs=None):
                     print(f"  {kind_} tilt by {k.replace('_', ' ')}: sd {np.std(v[:-1]):.3f}, from {v[:-1].min():+.2f}"
                           f" to {v[:-1].max():+.2f}")
     print(f"  timeouts: {'fitted from the export' if m.meta.get('timeouts') else 'none (no timeout columns)'}")
+    names = {i: g for g, i in m.gamers.items()}
+    for name, ch in m.choices.items():
+        spec = DECISIONS[name]
+        opt, need = LEAN_SHOWN[name]
+        print(f"  {spec['label']}: {ch.n:,} real, "
+              + ", ".join(f"{o} {100 * p:.1f}%" for o, p in zip(spec["options"], ch.league)))
+        n_g = ch.counts.sum(1)
+        ok = np.flatnonzero(n_g[:-1] >= need)
+        if len(ok) and ch.lean[:, opt].any() and ch.league[opt] > 0:
+            order = ok[np.argsort(ch.lean[ok, opt])]
+            show = lambda ids: ", ".join(f"{names[i]} x{np.exp(ch.lean[i, opt]):.2f} ({int(n_g[i])})" for i in ids)
+            print(f"    {spec['options'][opt]}: each gamer's odds against the league's in the same states,"
+                  f" {len(ok)} gamers with {need}+ (sd of the log {ch.lean[ok, opt].std():.2f}):"
+                  f" least {show(order[:3])}; most {show(order[::-1][:3])}")
 
 
 # ---------------------------------------------------------------- the starts
@@ -819,32 +1066,51 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     tally = (lambda k, v: st.__setitem__(k, st.get(k, 0) + int(v))) if st is not None else (lambda k, v: None)
     if st is not None:
         st.setdefault("_snaps", [])
+        st.setdefault("_dec", [])
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
 
+    def decide(name, cols, who):
+        """A decision for each path: drawn from the real ones in the state, leaned by the gamer deciding."""
+        k = model.choices[name].draw(cols, who, rng.random(len(who)))
+        if st is not None:
+            st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols)))
+        return k
+
     def kickoff(ix):
-        kicker = 1 - team[ix]
-        desperate = (period[ix] >= 4) & (score[ix, kicker] < score[ix, 1 - kicker]) \
-            & (half_left(period[ix], clock[ix]) <= 180)
-        for d in (False, True):
-            sel = ix[desperate == d]
-            pool = model.kicks.get(d) or model.kicks.get(False)
-            if not len(sel):
+        recv = team[ix]
+        kicker = 1 - recv
+        lead = score[ix, kicker] - score[ix, recv]
+        desperate = ((period[ix] >= 4) & (lead < 0) & (half_left(period[ix], clock[ix]) <= 180)).astype(np.int64)
+        late = (((period[ix] == 2) | (period[ix] == 4)) & (clock[ix] <= LATE)).astype(np.int64)
+        kind = decide("kickoff", dict(desperate=desperate, late=late, lead=lead3(lead)), gamer[ix, kicker])
+        tally("kickoffs", len(ix))
+        for k_, spot in ((TOUCHBACK, KICK_TOUCHBACK), (NO_LANDING, KICK_NO_LANDING)):
+            sel = kind == k_
+            if sel.any():
+                set_ball(ix[sel], recv[sel], np.full(int(sel.sum()), spot))
+        for k_ in (RETURN, KEPT):
+            s_ = np.flatnonzero(kind == k_)
+            if not len(s_):
                 continue
-            if pool is None:
-                set_ball(sel, team[sel], np.full(len(sel), 25))
-                continue
-            j = rng.integers(0, len(pool[0]), len(sel))
-            kept, field, secs = pool[0][j], pool[1][j], pool[2][j]
+            field, secs = np.empty(len(s_), np.int64), np.empty(len(s_))
+            for d in (0, 1):
+                for l_ in (0, 1):
+                    q = (desperate[s_] == d) & (late[s_] == l_)
+                    if q.any():
+                        pf, ps = model.kick_pool[(k_, d, l_)]
+                        j = rng.integers(0, len(pf), int(q.sum()))
+                        field[q], secs[q] = pf[j], ps[j]
+            sel = ix[s_]
             clock[sel] = np.maximum(0.0, clock[sel] - secs)
-            off = np.where(kept, 1 - team[sel], team[sel])
-            tally("kickoffs", len(sel))
-            tally("onside_kept", kept.sum())
+            side = kicker[s_] if k_ == KEPT else recv[s_]
+            if k_ == KEPT:
+                tally("onside_kept", len(s_))
             td = field >= 100
             if td.any():
                 tally("kick_tds", td.sum())
-                touchdown(sel[td], off[td])
-            set_ball(sel[~td], off[~td], field[~td])
+                touchdown(sel[td], side[td])
+            set_ball(sel[~td], side[~td], field[~td])
 
     def set_ball(ix, side, field):
         team[ix] = side
@@ -872,7 +1138,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             cell = np.where(ot, CONV_CELLS - 1, cell)
             for i, edge in reversed(list(enumerate(CONV_CLOCK))):
                 cell = np.where((p == 4) & (c <= edge), 4 + i, cell)
-        two = rng.random(len(ix)) < model.two_p[cell, np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN]
+        two = decide("two", dict(cell=cell, lead=np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN),
+                     gamer[ix, side]) == 1
         two |= ot & ot_done[ix, 1 - side] & ((lead == -1) | (lead == -2))
         good = rng.random(len(ix)) < np.where(two, model.two_good, model.kick_good)
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
@@ -883,14 +1150,32 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         team[ix] = receiver
         phase[ix] = KICK
 
+    def field_goal(ix):
+        """A field goal try: made by its length; the clock it takes as the real kicks' did (a kick with
+        FG_NEAR or less left in the half from those, one that ran the clock out running this one out)."""
+        tally("field_goal_tries", len(ix))
+        kd = 100 - y[ix] + 17
+        made = rng.random(len(ix)) < model.fg_make[np.clip((kd - 15) // 5, 0, len(model.fg_make) - 1)]
+        near = half_left(period[ix], clock[ix]) <= FG_NEAR
+        used = np.empty(len(ix))
+        if near.any():
+            j = rng.integers(0, len(model.fg_near), int(near.sum()))
+            left0, used0 = model.fg_near[j, 0], model.fg_near[j, 1]
+            used[near] = np.where(used0 >= left0 - 0.5, np.inf, used0)
+        if (~near).any():
+            used[~near] = model.fg_far[rng.integers(0, len(model.fg_far), int((~near).sum()))]
+        clock[ix] = np.maximum(0.0, clock[ix] - used)
+        tally("field_goals", made.sum())
+        mk, ms = ix[made], ix[~made]
+        score[mk, team[mk]] += 3
+        kick_to(mk, 1 - team[mk])
+        set_ball(ms, 1 - team[ms], np.maximum(20, 100 - y[ms]))
+
     def fourth(ix):
         off = team[ix]
-        cols = dict(togo10=np.clip((100 - y[ix]) // 10, 0, 9), dist=dist_b(dist[ix]),
-                    margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clock[ix]))
-        if model.fourth is None:
-            choice = np.full(len(ix), PUNT)
-        else:
-            choice = model.fourth.payload["choice"][model.fourth.draw(model.fourth.bin_of(cols), rng.random(len(ix)))]
+        cols = dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
+                    phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix])))
+        choice = decide("fourth", cols, gamer[ix, off])
         choice = np.where((choice == FG) & (100 - y[ix] + 17 > FG_MAX), np.where(dist[ix] <= 2, GO, PUNT), choice)
         pu, fg = ix[choice == PUNT], ix[choice == FG]
         if len(pu):
@@ -904,15 +1189,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             land = y[pu] + net
             set_ball(pu, 1 - team[pu], np.where(land >= 100, 20, 100 - land))
         if len(fg):
-            tally("field_goal_tries", len(fg))
-            kd = 100 - y[fg] + 17
-            made = rng.random(len(fg)) < model.fg_make[np.clip((kd - 15) // 5, 0, len(model.fg_make) - 1)]
-            clock[fg] = np.maximum(0.0, clock[fg] - model.fg_seconds[rng.integers(0, len(model.fg_seconds), len(fg))])
-            tally("field_goals", made.sum())
-            mk, ms = fg[made], fg[~made]
-            score[mk, team[mk]] += 3
-            kick_to(mk, 1 - team[mk])
-            set_ball(ms, 1 - team[ms], np.maximum(20, 100 - y[ms]))
+            field_goal(fg)
         return ix[choice == GO]
 
     layers = [None] + sorted(model.own) if model.mode == "full" else [None]
@@ -1004,11 +1281,15 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         off = team[ix]
         # timeouts: only before a snap off a running clock, and they move only the time draw
         running = prev[ix] <= LOSS
-        ph = phase_of(period[ix], clock[ix])
-        mb = margin_b(score[ix, off] - score[ix, 1 - off])
-        u = rng.random(len(ix))
-        call_def = running & (tos[ix, 1 - off] > 0) & (u < model.to_def[ph, mb])
-        call_off = running & ~call_def & (tos[ix, off] > 0) & (u < model.to_def[ph, mb] + model.to_off[ph, mb])
+        cols = dict(phase=phase_of(period[ix], clock[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
+                    left=left_b(half_left(period[ix], clock[ix])))
+        call_def, call_off = np.zeros(len(ix), bool), np.zeros(len(ix), bool)
+        d_ = np.flatnonzero(running & (tos[ix, 1 - off] > 0))
+        if len(d_):
+            call_def[d_] = decide("to_def", {k: v[d_] for k, v in cols.items()}, gamer[ix[d_], 1 - off[d_]]) == 1
+        o_ = np.flatnonzero(running & ~call_def & (tos[ix, off] > 0))
+        if len(o_):
+            call_off[o_] = decide("to_off", {k: v[o_] for k, v in cols.items()}, gamer[ix[o_], off[o_]]) == 1
         prv = prev[ix].copy()
         tos[ix[call_def], 1 - off[call_def]] -= 1
         tos[ix[call_off], off[call_off]] -= 1
@@ -1146,6 +1427,21 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         sn = live[phase[live] == SNAP]
         sn = sn[~np.isin(sn, k)]
         if len(sn):
+            # downs 1-3 in range in the half's last minute: kick now or play on
+            left = half_left(period[sn], clock[sn])
+            kd = 100 - y[sn] + 17
+            can = (down[sn] < 4) & (kd <= FG_MAX) & (left <= EARLY_LEFT) & ((period[sn] == 2) | (period[sn] >= 4))
+            e = sn[can]
+            if len(e):
+                off = team[e]
+                cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1,
+                            margin=margin_b(score[e, off] - score[e, 1 - off]),
+                            half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)))
+                now = e[decide("early_fg", cols, gamer[e, off]) == 1]
+                if len(now):
+                    tally("early_field_goals", len(now))
+                    field_goal(now)
+                    sn = sn[~np.isin(sn, now)]
             on4 = sn[down[sn] >= 4]
             go = fourth(on4) if len(on4) else on4
             plays = np.concatenate([sn[down[sn] < 4], go])
@@ -1160,6 +1456,37 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st["q_points"] = q_points
         st["unfinished"] = st.get("unfinished", 0) + int((phase != DONE).sum())
     return score[:, 0].reshape(S, n_paths), score[:, 1].reshape(S, n_paths)
+
+
+def decision_census(stats, n_who):
+    """{name: {"slices": (slices, options), "who": (gamers + 1, options)}} counts of a sim's decisions."""
+    out = {}
+    for name, who, k, sl in stats.get("_dec") or []:
+        K, S_ = len(DECISIONS[name]["options"]), len(SLICE_NAMES[name])
+        c = out.setdefault(name, {"slices": np.zeros((S_, K)), "who": np.zeros((n_who, K))})
+        np.add.at(c["slices"], (sl, k), 1)
+        np.add.at(c["who"], (who, k), 1)
+    return out
+
+
+def real_decision_census(matches, model, history=None):
+    """decision_census's counts for the real decisions of these matches ({code: rows})."""
+    hist = {r["MATCH_CODE"]: r for r in (history or [])}
+    n_who = len(model.gamers) + 1
+    out = {name: {"slices": np.zeros((len(SLICE_NAMES[name]), len(spec["options"]))),
+                  "who": np.zeros((n_who, len(spec["options"])))} for name, spec in DECISIONS.items()}
+    for code, rows in matches.items():
+        pair, _ = match_people(code, rows, hist)
+        got = match_decisions(rows)
+        for name, spec in DECISIONS.items():
+            if not got[name]:
+                continue
+            a = np.array([r[1:] for r in got[name]], np.int64)
+            who = np.array([model.gamer_index(pair[r[0]]) for r in got[name]], np.int64)
+            sl = decision_slice(name, {f: a[:, 1 + i] for i, f in enumerate(spec["features"])})
+            np.add.at(out[name]["slices"], (sl, a[:, 0]), 1)
+            np.add.at(out[name]["who"], (who, a[:, 0]), 1)
+    return out
 
 
 def snap_log(stats):

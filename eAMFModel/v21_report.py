@@ -51,10 +51,11 @@ def _seed(code):
     return zlib.crc32(str(code).encode())
 
 
-def _census(stats):
-    """A sim's snaps and events counted as the report reads them."""
+def _census(stats, n_who=1):
+    """A sim's snaps, events and decisions counted as the report reads them."""
     log = v21.snap_log(stats)
     out = {"games": stats.get("games", 0), "events": {k: stats.get(k, 0) for k in EVENTS},
+           "dec": v21.decision_census(stats, n_who),
            "q_points": stats["q_points"].sum(0) if "q_points" in stats else np.zeros(5),
            "time": np.zeros((6, 6)), "cls": np.zeros((6, s14.N_CLASSES)), "secs": np.zeros((6, 2))}
     if len(log["path"]):
@@ -73,11 +74,16 @@ def _add(a, b):
         return b
     out = {k: a[k] + b[k] for k in ("games", "q_points", "time", "cls", "secs")}
     out["events"] = {k: a["events"][k] + b["events"][k] for k in EVENTS}
+    out["dec"] = {}
+    for name in set(a.get("dec", {})) | set(b.get("dec", {})):
+        x, y = a.get("dec", {}).get(name), b.get("dec", {}).get(name)
+        out["dec"][name] = y if x is None else x if y is None else {k: x[k] + y[k] for k in x}
     return out
 
 
-def real_census(matches):
-    """The real games' snaps and events, counted as _census counts the sim's."""
+def real_census(matches, model=None, history=None):
+    """The real games' snaps, events and (with the model, for its gamers) decisions, counted as
+    _census counts the sim's."""
     out = {"games": 0, "events": {k: 0 for k in EVENTS}, "q_points": np.zeros(5), "time": np.zeros((6, 6)),
            "cls": np.zeros((6, s14.N_CLASSES)), "secs": np.zeros((6, 2))}
     for rows in matches.values():
@@ -118,6 +124,7 @@ def real_census(matches):
         np.add.at(out["cls"], (v21.time_b([r["play_seconds"] for r in recs]), cls), 1)
         np.add.at(out["secs"], (prev, 0), [r["seconds"] for r in recs])
         np.add.at(out["secs"], (prev, 1), 1)
+    out["dec"] = v21.real_decision_census(matches, model, history) if model is not None else {}
     return out
 
 
@@ -130,7 +137,7 @@ def _worker(job):
         st = {}
         h, a = v21.simulate(model, v21.kickoff_start(model, pair, teams), n_paths, seed=_seed(code), stats=st)
         h, a = h.ravel(), a.ravel()
-        census = _add(census, _census(st))
+        census = _add(census, _census(st, len(model.gamers) + 1))
         got = dict(kick=(float(h.mean()), float(a.mean())), book=v13._distributions(h, a),
                    p_home=float(((h > a).sum() + 0.5 * (h == a).sum()) / len(h)), states=[])
         starts = v21.match_starts(model, rows, pair, teams, every=every) if state_paths else []
@@ -178,8 +185,8 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
         r = hist[c]
         results.append(dict(code=c, row=r, finals=_finals(r), means=tuple(means[c]), people=v21.match_people(c, matches[c], hist),
                             prior_book=(prior_books or {}).get(c), **sims[c]))
-    return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}),
-                share=model.share, mode=model.mode, since=since, until=until, every=every,
+    return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}, model, history),
+                gamer_names={i: g for g, i in model.gamers.items()}, share=model.share, mode=model.mode, since=since, until=until, every=every,
                 n_paths=n_paths, state_paths=state_paths)
 
 
@@ -406,6 +413,45 @@ def census_lines(census, real):
     return lines
 
 
+def decision_lines(census, real, names=None):
+    """Each decision's choices, real against the sim's kick-off games, by slice of the state; and for
+    the gamers with enough real decisions, their own share of the option LEAN_SHOWN names."""
+    if census is None or not real.get("dec"):
+        return []
+    names = names or {}
+    g_s, g_r = max(1, census["games"]), max(1, real["games"])
+    lines = ["", "  THE DECISIONS: share of each choice, real / sim (the sim's kick-off games)"]
+    for name, spec in v21.DECISIONS.items():
+        r, s_ = real["dec"].get(name), census["dec"].get(name)
+        if r is None or not r["slices"].sum():
+            continue
+        s_ = s_ or {"slices": np.zeros_like(r["slices"]), "who": np.zeros_like(r["who"])}
+        lines += ["", f"  {spec['label']} (by the {spec['who']}): {r['slices'].sum() / g_r:.2f} a game real,"
+                      f" {s_['slices'].sum() / g_s:.2f} sim",
+                  f"  {'':28s}{'n real':>8s}" + "".join(f"{o[:15]:>16s}" for o in spec["options"])]
+        for i, label in enumerate(v21.SLICE_NAMES[name]):
+            rr, ss = r["slices"][i], s_["slices"][i]
+            if not rr.sum() and not ss.sum():
+                continue
+            lines.append(f"  {label[:28]:28s}{int(rr.sum()):>8d}" + "".join(
+                f"{100 * rr[k] / max(1, rr.sum()):>9.1f}/{100 * ss[k] / max(1, ss.sum()):<6.1f}"
+                for k in range(len(spec["options"]))))
+        opt, need = v21.LEAN_SHOWN[name]
+        n_r = r["who"].sum(1)
+        ok = [i for i in np.flatnonzero(n_r >= need) if i in names and s_["who"][i].sum()]
+        if len(ok) >= 3:
+            share_r = np.array([r["who"][i, opt] / n_r[i] for i in ok])
+            share_s = np.array([s_["who"][i, opt] / s_["who"][i].sum() for i in ok])
+            order = np.argsort(-share_r)
+            pick = list(order[:6]) + list(order[-6:]) if len(order) > 12 else list(order)
+            corr = np.corrcoef(share_r, share_s)[0, 1] if share_r.std() > 0 and share_s.std() > 0 else float("nan")
+            lines.append(f"  {spec['options'][opt]}, by gamer ({need}+ real; {len(ok)} gamers; real and sim shares"
+                         f" correlate {corr:.2f}):")
+            lines.append("    " + ", ".join(f"{names[ok[j]]} {100 * share_r[j]:.0f}/{100 * share_s[j]:.0f}"
+                                            f" ({int(n_r[ok[j]])})" for j in pick))
+    return lines
+
+
 def report(out):
     res = out["results"]
     lines = [f"  v2.1 ({out['mode']}) on {len(res):,} settled matches {out['since']} to {out['until']}:"
@@ -417,6 +463,7 @@ def report(out):
     lines += people_lines(res, "team", top=10, min_matches=MIN_GAMER_MATCHES)
     lines += step_lines(res, out["share"])
     lines += census_lines(out["census"], out["real"])
+    lines += decision_lines(out["census"], out["real"], out.get("gamer_names"))
     lines += ["", "  (input: the pre-match expected points; nothing here is fitted back into v2.1 -- the gaps show"
                   " where its draws miss)"]
     return lines

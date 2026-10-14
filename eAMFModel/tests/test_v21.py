@@ -44,12 +44,19 @@ def _row(msg, period, clock, kind, off, down, dist, y, a=0, b=0, messages=""):
                 score_p2=str(b), play_messages=messages, team_a_side="home", opening_offense="TEAM_A")
 
 
-def _state(model, period=1, clock=240.0, team=0, down=1, dist=10, y=25, prev=v21.FRESH, home=0, away=0):
+def _state(model, period=1, clock=240.0, team=0, down=1, dist=10, y=25, prev=v21.FRESH, home=0, away=0, gamers=None):
     return dict(period=np.array([period]), clock=np.array([clock]), team=np.array([team]),
                 phase=np.array([v21.SNAP]), down=np.array([down]), dist=np.array([dist]), y=np.array([y]),
                 home=np.array([home]), away=np.array([away]), prev=np.array([prev]), elapsed=np.array([0]),
-                tos=np.array([[3, 3]]), kick2=np.array([1]), gamer=np.array([[len(model.gamers)] * 2]),
+                tos=np.array([[3, 3]]), kick2=np.array([1]),
+                gamer=np.array([list(gamers) if gamers else [len(model.gamers)] * 2]),
                 team_ix=np.array([[len(model.teams)] * 2]))
+
+
+def _always(name, option, n_who):
+    """A decision that always takes this option."""
+    K = len(v21.DECISIONS[name]["features"])
+    return v21.Choice.build(name, np.zeros((50, K), np.int64), np.full(50, option), np.full(50, n_who - 1), n_who)
 
 
 def _fixed_time(model, seconds):
@@ -280,14 +287,101 @@ class TestSimulate(unittest.TestCase):
         _fixed_time(m, 7.0)
         _fixed_play(m, 99, True)                                           # every snap a touchdown
         m.gain_surv = np.ones(101)
-        m.two_p[:] = 0.0
+        n_who = len(m.gamers) + 1
+        m.choices["two"] = v21.Choice.build("two", np.zeros((0, 2)), [], [], n_who)         # always the kick
+        m.choices["kickoff"] = v21.Choice.build("kickoff", np.zeros((0, 3)), [], [], n_who)  # always returned
+        m.kick_pool = {k: (np.array([25]), np.array([4.0])) for k in m.kick_pool}
         m.two_good = m.kick_good = 1.0
-        m.kicks = {False: (np.array([False]), np.array([25]), np.array([4.0]))}
         st = {}
         h, a = v21.simulate(m, _state(m, period=5, clock=240.0, team=0, y=50, home=14, away=14), 20, stats=st)
         np.testing.assert_array_equal(h, 21)                               # 6 and the kick
         np.testing.assert_array_equal(a, 22)                               # 6 and the forced two
         self.assertEqual(st["unfinished"], 0)
+
+
+def _r(msg, period, clock, kind, off, down=1, dist=10, y=25, a=0, b=0, messages=""):
+    return _row(msg, period, clock, kind, off, down, dist, y, a, b, messages)
+
+
+class TestDecisions(unittest.TestCase):
+
+    def test_leans_recover_each_gamer_s_own_rate(self):
+        rng = np.random.default_rng(0)
+        n = 300
+        who = np.repeat([0, 1, 2], n)
+        rate = np.array([0.6, 0.1, 0.3])[who]
+        chosen = np.where(rng.random(3 * n) < rate, v21.GO, v21.PUNT)
+        X = np.zeros((3 * n, 5), np.int64)
+        few = np.zeros((5, 5), np.int64)
+        X, who, chosen = np.r_[X, few], np.r_[who, np.full(5, 3)], np.r_[chosen, np.full(5, v21.GO)]
+        ch = v21.Choice.build("fourth", X, chosen, who, 5)
+        cols = {f: np.zeros(4, np.int64) for f in v21.DECISIONS["fourth"]["features"]}
+        p = ch.probs(cols, np.array([0, 1, 2, 4]))[:, v21.GO]
+        np.testing.assert_allclose(p[:3], [0.6, 0.1, 0.3], atol=0.07)
+        self.assertAlmostEqual(p[3], ch.league[v21.GO], places=6)          # the unknown gamer: the league's
+        few_go = ch.probs(cols, np.array([3]))[0, v21.GO]
+        self.assertLess(few_go, 0.75)                                        # 5 of 5: shrunk well short of all
+        self.assertGreater(few_go, ch.league[v21.GO])
+        flat = v21.Choice.build("fourth", X, chosen, who, 5, gamers=False)
+        np.testing.assert_allclose(flat.probs(cols, np.array([0, 1, 2, 3]))[:, v21.GO], ch.league[v21.GO], atol=1e-9)
+
+    def test_match_decisions_reads_the_real_choices(self):
+        rows = [_r(7, 1, 236, "KICKOFF", "TEAM_A", y=25),                            # the opening kick, returned
+                _r(14, 1, 200, "SCRIMMAGE", "TEAM_A", 4, 2, 40),                    # 4th and 2: punted
+                _r(21, 1, 190, "PUNT", "TEAM_B", 1, 10, 20),
+                _r(28, 2, 20, "SCRIMMAGE", "TEAM_B", 2, 6, 75),                     # 0:20 left, in range: kicked
+                _r(35, 2, 15, "FIELD_GOAL", "TEAM_B", b=3, messages="FIELD_GOAL_GOOD_TEAM_B"),
+                _r(42, 2, 15, "KICKOFF", "TEAM_A", y=20, b=3),                      # a touchback
+                _r(49, 2, 3, "SCRIMMAGE", "TEAM_A", 1, 10, 70, b=3),                # in range, the half runs out
+                _r(56, 3, 236, "KICKOFF", "TEAM_B", y=30, b=3),
+                _r(63, 4, 100, "TOUCHDOWN", "TEAM_A", a=6, b=3, messages="TOUCHDOWN_TEAM_A"),
+                _r(70, 4, 100, "CONVERSION", "TEAM_A", a=8, b=3, messages="TWO_POINT_CONVERSION_SUCCESSFUL_TEAM_A"),
+                _r(77, 4, 98, "KICKOFF", "TEAM_A", y=45, a=8, b=3)]                 # recovered by the kicker
+        got = v21.match_decisions(rows)
+        self.assertEqual([r[:2] for r in got["fourth"]], [(0, v21.PUNT)])
+        self.assertEqual(sorted(r[:2] for r in got["early_fg"]), [(0, 0), (1, 1)])
+        kicks = [(r[0], r[1], r[2], r[3]) for r in got["kickoff"]]
+        self.assertEqual(kicks, [(1, v21.RETURN, 0, 0), (1, v21.TOUCHBACK, 0, 1), (0, v21.RETURN, 0, 0),
+                                 (0, v21.KEPT, 0, 1)])
+        self.assertEqual(got["two"][0][:2], (0, 1))
+        self.assertEqual(got["two"][0][3], 3 + v21.CONV_MARGIN)                 # the lead with the six on the board
+        self.assertEqual(got["fg_clock"], [(20.0, 5.0)])
+        self.assertEqual(got["conv"], [(True, True)])
+
+    def test_a_touchback_puts_the_ball_at_the_20_with_no_clock(self):
+        m = built()
+        m.choices["kickoff"] = _always("kickoff", v21.TOUCHBACK, len(m.gamers) + 1)
+        st = {}
+        v21.simulate(m, v21.kickoff_start(m), 20, stats=st)
+        log = v21.snap_log(st)
+        first = [np.flatnonzero(log["path"] == p)[0] for p in range(40)]
+        self.assertTrue((log["field"][first] == v21.KICK_TOUCHBACK).all())
+        self.assertTrue((log["clock"][first] == v21.QUARTER).all())
+
+    def test_an_early_kick_comes_before_the_snap(self):
+        m = built()
+        m.choices["early_fg"] = _always("early_fg", 1, len(m.gamers) + 1)
+        st = {}
+        v21.simulate(m, _state(m, period=2, clock=30.0, down=1, y=80), 30, stats=st)
+        self.assertGreaterEqual(st["early_field_goals"], 30)
+        log = v21.snap_log(st)
+        first = log["path"] == 0
+        self.assertEqual(log["side"][first][0], 1)                          # the kick came first: the other side's ball
+
+    def test_a_gamer_s_lean_carries_into_the_sim(self):
+        m = built()
+        n_who = len(m.gamers) + 1
+        rng = np.random.default_rng(1)
+        who = np.repeat([0, 1], 200)
+        chosen = np.where(rng.random(400) < np.where(who == 0, 0.8, 0.05), v21.GO, v21.PUNT)
+        X = rng.integers(0, 3, (400, 5))
+        m.choices["fourth"] = v21.Choice.build("fourth", X, chosen, who, n_who)
+        st = {}
+        v21.simulate(m, _state(m, down=4, dist=5, y=50, gamers=(0, 1)), 200, stats=st)
+        c = v21.decision_census(st, n_who)["fourth"]["who"]
+        go = c[:, v21.GO] / np.maximum(1, c.sum(1))
+        self.assertGreater(go[0], 0.6)
+        self.assertLess(go[1], 0.2)
 
 
 class TestReport(unittest.TestCase):
@@ -312,7 +406,7 @@ class TestReport(unittest.TestCase):
         self.assertEqual(len(out["results"]), 12)
         self.assertEqual(len(states), sum(len(x["states"]) for x in out["results"]))
         lines = "\n".join(v21_report.report(out))
-        for part in ("KICK-OFF", "GRADED", "EACH STEP", "THE DRAWS", "by team"):
+        for part in ("KICK-OFF", "GRADED", "EACH STEP", "THE DRAWS", "by team", "THE DECISIONS", "4th down"):
             self.assertIn(part, lines)
         real = v21_report.real_census({c: MATCHES[c] for c in sorted(MATCHES)[:12]})
         self.assertEqual(real["events"]["snaps"], sum(len(v21.match_snaps(MATCHES[c])) for c in sorted(MATCHES)[:12]))
