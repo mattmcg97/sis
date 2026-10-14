@@ -2670,12 +2670,29 @@ and the over's price).
 **How each arm is graded:** each arm, prod included, is graded as it is
 and with the rematch layer on top. The layer is fitted walk-forward on that
 arm's own errors.
-- **An arm's moneyline** is the normal about its expected margin (sd
-  9.35).
-- **Its over** is the normal about its expected total (sd 12) at prod's
-  line.
-- **Prod with the layer** moves the margin its moneyline implies and the
+
+An arm's moneyline and over come from its two scores simulated together
+(`score_model.py`), so the covariance between them is in the price. Choose
+how with `#MODE` on the arm:
+
+| mode | the score model |
+|---|---|
+| `own` | the prior's own (the default where it has one). For NB2, each side is negative binomial with its gamers' dispersions, and the two share a gamma pace factor, which gives the covariance. This is read off NB2's prediction rows: a `rolling:` NB2 directory, or a CSV with `P1_Effective_Alpha`, `P2_Effective_Alpha` and `Shared_Gamma_Fraction`. For glmer, each side is Poisson about a log-normal mean with a shared match noise, read from a `rolling:` glmer directory. |
+| `fitted` | NB2's construction with one dispersion and shared fraction fitted to the arm's own errors by the method of moments, walk-forward. This is the default for a prior with no score model of its own, e.g. the trimmed glmer. |
+| `normal` | the normal about the expected margin (sd 9.35) and total (sd 12): no covariance, shape or ties. For comparison. |
+
+- **Ties:** a moneyline splits them half and half, as NB2 does; the over
+  leaves out pushes.
+- **The layer:** shifts the simulated margin and total, so it moves the
+  model's own price.
+- **Randomness:** every match draws from its own seed, so every arm and
+  variant of a match sees the same randomness. `--draws` sets the scorelines
+  per match (default 40,000).
+- **Prod with the layer:** moves the margin its moneyline implies and the
   mean its total implies.
+
+For example, to see what the score model alone is worth:
+`--arm "nb2=rolling:nb2_daily" --arm "nb2-normal=rolling:nb2_daily#normal"`.
 
 **What it reports**, on the matches every arm priced, after the layer's
 7-day burn-in:
