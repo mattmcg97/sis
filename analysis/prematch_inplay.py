@@ -10,6 +10,10 @@ least --lean of the pre-match stake). Every in-play moneyline bet is then "with"
   - pre-match: the book's margin, and how the pre-match sides did (won vs prod's implied chance)
   - in play, with and against the pre-match side: stake, margin, and the same by quarter
   - matches by what the pre-match side's backers' money did in play, and the result
+  - with the snapshot export (--snapshots), the game state at each in-play bet: whether the
+    pre-match side was ahead, level or behind when the money came in, and where it stood after Q1
+  - a check that the feed's "Home" moneyline is PLAYER_1 (the side listed first): settled Home bets
+    that won, against the final scores
 Writes prematch_inplay_matches.csv next to the bets file: one row a match with the matchup, start,
 final, pre-match side, its stake and chance, the in-play stake with and against it by quarter, and
 the book's revenue on each.
@@ -19,7 +23,55 @@ import argparse
 import csv
 import datetime as dt
 import os
+from bisect import bisect_right
 from collections import defaultdict
+
+
+def _time(v):
+    try:
+        return dt.datetime.fromisoformat(str(v)[:19].replace("T", " "))
+    except ValueError:
+        return None
+
+
+def load_scores(path, codes):
+    """{match: ([times], [(period, clock, player 1, player 2)])} off the snapshot export."""
+    by = defaultdict(list)
+    with open(path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            if r["match_code"] not in codes:
+                continue
+            t = _time(r.get("file_time") or r.get("publish_time"))
+            if t is None or r.get("score_p1") in ("", None):
+                continue
+            by[r["match_code"]].append((t, r.get("period") or "", r.get("clock_seconds") or "",
+                                        int(float(r["score_p1"])), int(float(r["score_p2"]))))
+    out = {}
+    for c, rows in by.items():
+        rows.sort()
+        out[c] = ([x[0] for x in rows], [x[1:] for x in rows])
+    return out
+
+
+def score_at(scores, code, t):
+    got = scores.get(code)
+    if not got or t is None:
+        return None
+    i = bisect_right(got[0], t) - 1
+    return got[1][i] if i >= 0 else None
+
+
+def lead_of(side, p1, p2):
+    lead = (p1 - p2) if str(side).lower() in ("home", "player 1") else (p2 - p1)
+    return "ahead" if lead > 0 else "level" if lead == 0 else "behind"
+
+
+def after_q1(scores, code):
+    got = scores.get(code)
+    if not got:
+        return None
+    q1 = [x for x in got[1] if str(x[0]) == "1"]
+    return q1[-1] if q1 else None
 
 
 def _num(v):
@@ -43,6 +95,8 @@ def main():
     ap.add_argument("--history", default=os.path.join("eAMFCalibrator", "out", "match_history.csv"))
     ap.add_argument("--lean", type=float, default=0.6, help="share of pre-match stake that makes a side 'the' side")
     ap.add_argument("--top", type=int, default=25, help="matches listed where the book lost most in play")
+    ap.add_argument("--snapshots", default=os.path.join("eAMFCalibrator", "out", "scouting_playover.csv"),
+                    help="the snapshot export, for the score at each bet ('' to skip)")
     args = ap.parse_args()
 
     games = {}
@@ -66,6 +120,20 @@ def main():
                 c[2] += stake * _num(r.get("stream_prob") or r.get("implied_prob"))
                 c[3] = 1 if r.get("result") == "won" else 0
 
+    # the feed's Home moneyline against the final score: settled Home bets that won
+    home_won = [0, 0]
+    for code, bets in live.items():
+        for r in bets:
+            if r.get("selection") == "Home" and r.get("result") == "won" and r.get("final_p1") not in ("", None):
+                home_won[0] += 1
+                home_won[1] += _num(r["final_p1"]) > _num(r["final_p2"])
+    scores = {}
+    if args.snapshots and os.path.exists(args.snapshots):
+        print(f"  reading the scores off {args.snapshots}", flush=True)
+        scores = load_scores(args.snapshots, set(live))
+    state = defaultdict(lambda: [0.0, 0.0])            # (way, ahead/level/behind) -> stake, revenue
+    q1_state = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0.0, 0])   # state after Q1 -> matches, with, with rev, against, against rev, won
+
     tot = defaultdict(lambda: [0.0, 0.0])
     by_q = defaultdict(lambda: [0.0, 0.0])
     sides = []                       # (implied chance, won) for each pre-match side
@@ -84,8 +152,8 @@ def main():
                 side = s
                 sides.append((c[2] / c[0] if c[0] else 0.0, c[3]))
         row = {"match_code": code,
-               "matchup": f"{g.get('PLAYER_1_HANDLE', '?')} ({g.get('PLAYER_1_TEAM', '')}) v "
-                          f"{g.get('PLAYER_2_HANDLE', '?')} ({g.get('PLAYER_2_TEAM', '')})",
+               "matchup": f"{g.get('PLAYER_1_HANDLE', '?')} ({g.get('PLAYER_1_TEAM', '')}) [home] v "
+                          f"{g.get('PLAYER_2_HANDLE', '?')} ({g.get('PLAYER_2_TEAM', '')}) [away]",
                "event_start_utc": str(g.get("SCHEDULED_START_TIME_UTC", ""))[:16],
                "final": f"{g.get('PLAYER_1_FINAL_SCORE', '')}-{g.get('PLAYER_2_FINAL_SCORE', '')}",
                "pre_side": side or "", "pre_stake": round(pre_stake, 2), "pre_revenue": round(pre_rev, 2),
@@ -105,10 +173,25 @@ def main():
             tot[f"in play, {way} the pre-match side" if side else "in play, no pre-match side"][1] += rev
             q = str(r.get("period") or "")
             q = q if q in ("1", "2", "3", "4") else "OT"
+            sc = score_at(scores, code, _time(r.get("bet_time"))) if side else None
+            if sc is not None:
+                st = state[(way, lead_of(side, sc[2], sc[3]))]
+                st[0] += stake
+                st[1] += rev
             if side:
                 row[f"q{q}_{way}_stake"] += stake
                 by_q[(q, way)][0] += stake
                 by_q[(q, way)][1] += rev
+        q1 = after_q1(scores, code) if side else None
+        row["pre_side_after_q1"] = lead_of(side, q1[2], q1[3]) if q1 else ""
+        if q1:
+            g1 = q1_state[row["pre_side_after_q1"]]
+            g1[0] += 1
+            g1[1] += row["live_with_stake"]
+            g1[2] += row["live_with_revenue"]
+            g1[3] += row["live_against_stake"]
+            g1[4] += row["live_against_revenue"]
+            g1[5] += p[side][3]
         live_rev = row["live_with_revenue"] + row["live_against_revenue"] + row["live_no side_revenue"]
         row["live_revenue"] = round(live_rev, 2)
         w, a = row["live_with_stake"], row["live_against_stake"]
@@ -138,6 +221,28 @@ def main():
             s, r = by_q[(q, way)]
             cells.append(f"{way} {s:>10,.0f} {_margin(r, s)}")
         print(f"    Q{q:3s}  " + "   ".join(cells))
+
+    if state:
+        print("\n  in play by the score when the bet came in, the pre-match side ahead / level / behind:")
+        for way in ("with", "against"):
+            cells = []
+            for st in ("ahead", "level", "behind"):
+                sk, rv = state[(way, st)]
+                cells.append(f"{st} {sk:>10,.0f} {_margin(rv, sk)}")
+            print(f"    {way:8s} " + "   ".join(cells))
+    if q1_state:
+        print("\n  matches by where the pre-match side stood after Q1: in-play stake and margin with and against it")
+        for st in ("ahead", "level", "behind"):
+            n, ws, wr, a_s, ar, won = q1_state[st]
+            if n:
+                print(f"    {st:7s} {n:>4,} matches   with {ws:>10,.0f} {_margin(wr, ws)}   against {a_s:>10,.0f}"
+                      f" {_margin(ar, a_s)}   pre-match side won {100 * won / n:.0f}%")
+    elif args.snapshots:
+        print(f"\n  (no scores read: {args.snapshots} not found or no match in it)")
+    if home_won[0]:
+        print(f"\n  check: of {home_won[0]:,} settled in-play Home moneyline bets that won, {100 * home_won[1] / home_won[0]:.1f}%"
+              " had player 1 (listed first) ahead at the end" + (" -- Home is the side listed first" if home_won[1] > 0.9 * home_won[0]
+              else " -- Home is NOT the side listed first: the matchup reads away v home"))
 
     groups = defaultdict(lambda: [0, 0.0, 0.0, 0])
     for r in rows:
