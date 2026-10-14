@@ -497,6 +497,10 @@ Rscript glmer/cadence.R --days=14 --cores=4                                     
 Rscript glmer/cadence.R --days=28 --arms=trim:hl60:daily,trim:hl60:game --cores=4
 ```
 
+The fits run in stretches, one per core for a per-game arm. Each stretch prints a line every 50
+fits (`--progress`, `0` for none): fits done, seconds a fit and the time left, e.g.
+`trim:hl60_x0.5:game 2/4: 150/678 fits, 4.1 s a fit, ~36 min left`.
+
 Each arm is `MODEL[:WEIGHTING][:CADENCE]`, and the first arm is the baseline every other is compared
 with:
 - **Models:** `full` (production, daily only), `trim`, `trim_pair` (+ gamer v gamer),
