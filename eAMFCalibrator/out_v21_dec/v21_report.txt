@@ -2,236 +2,236 @@
 
   KICK-OFF: each side's expected points (input) against the sim's mean and the real points
                               n    input      sim     real   sim-in  real-in
-  every side              1,494    17.64    17.29    17.79    -0.35    +0.15
-  match total               747    35.28    34.58    35.58    -0.69    +0.30
-  home margin               747     0.42     0.00     0.12    -0.41    -0.30
-  a point more expected is 0.21 more in the sim, 0.76 more in the real games (1: the input followed in full; the sim has no strength, so its gamers and teams carry it all)
+  every side              1,494    17.64    17.06    17.79    -0.58    +0.15
+  match total               747    35.28    34.12    35.58    -1.16    +0.30
+  home margin               747     0.42    -0.01     0.12    -0.43    -0.30
+  a point more expected is 0.22 more in the sim, 0.76 more in the real games (1: the input followed in full; the sim has no strength, so its gamers and teams carry it all)
 
   by the side's expected points
                               n    input      sim     real   sim-in  real-in
-  <15.1                     299    13.97    16.70    15.33    +2.73    +1.35
-  15.1-16.8                 299    15.95    16.84    16.32    +0.89    +0.37
-  16.8-18.3                 298    17.59    17.08    17.55    -0.51    -0.04
-  18.3-19.9                 299    19.09    17.57    18.50    -1.52    -0.60
-  19.9+                     299    21.58    18.26    21.25    -3.32    -0.34
+  <15.1                     299    13.97    16.46    15.33    +2.48    +1.35
+  15.1-16.8                 299    15.95    16.57    16.32    +0.62    +0.37
+  16.8-18.3                 298    17.59    16.83    17.55    -0.76    -0.04
+  18.3-19.9                 299    19.09    17.36    18.50    -1.73    -0.60
+  19.9+                     299    21.58    18.07    21.25    -3.51    -0.34
 
   by the expected home margin
                               n    input      sim     real   sim-in  real-in
-  <-1.0                     150    -2.22    -0.28    -3.04    +1.94    -0.82
-  -1.0-0.0                  149    -0.46    -0.01    -1.14    +0.45    -0.69
-  0.0-0.9                   149     0.42    -0.02     1.11    -0.44    +0.69
-  0.9-1.9                   149     1.35     0.06     2.32    -1.29    +0.97
-  1.9+                      150     3.00     0.27     1.37    -2.73    -1.63
+  <-1.0                     150    -2.22    -0.26    -3.04    +1.96    -0.82
+  -1.0-0.0                  149    -0.46    -0.02    -1.14    +0.44    -0.69
+  0.0-0.9                   149     0.42    -0.04     1.11    -0.46    +0.69
+  0.9-1.9                   149     1.35     0.02     2.32    -1.33    +0.97
+  1.9+                      150     3.00     0.26     1.37    -2.73    -1.63
 
   GRADED from kick-off (the prior's own score model on the inputs against the sim)
                                    prior   v21 sim
-  moneyline log loss              0.6804    0.6909
-  moneyline Brier                 0.2437    0.2489
-  margin RPS                       5.550     5.594
-  margin result less expected      -0.30     +0.12
-  margin inside central 80%        83.7%     83.3%
-  total RPS                        6.922     7.068
-  total result less expected       +0.30     +0.99
-  total inside central 80%         82.5%     79.7%
-  log loss, sim less prior: +0.0106 +/- 0.0052 (paired standard error)
+  moneyline log loss              0.6804    0.6916
+  moneyline Brier                 0.2437    0.2492
+  margin RPS                       5.550     5.603
+  margin result less expected      -0.30     +0.13
+  margin inside central 80%        83.7%     81.5%
+  total RPS                        6.922     7.083
+  total result less expected       +0.30     +1.46
+  total inside central 80%         82.5%     79.4%
+  log loss, sim less prior: +0.0112 +/- 0.0052 (paired standard error)
 
   by gamer (5+ matches): points for and against, the sim's and the real games' less the input; the sim furthest under its input first, then furthest over
   gamer               n  in for  sim-in real-in   in vs  sim-in real-in
-  LEO                28    22.5    -4.3    -1.3    23.6    -5.2    +1.4
-  OFFICER            36    22.1    -3.5    +1.0    20.6    -2.2    -2.1
-  AVATAR             21    21.3    -3.4    +0.6    19.5    -2.0    -1.6
-  SABRE              14    20.5    -3.3    +1.9    18.9    -1.2    +0.7
-  OVERDRIVE          40    19.1    -2.7    -2.4    18.9    -2.2    -1.3
-  MEMENTO            39    21.5    -2.7    +0.7    21.5    -3.4    -1.1
-  GADGET             20    19.7    -2.6    -3.0    19.7    -1.7    -2.0
-  RELIC              15    19.3    -2.5    +1.3    19.2    -2.5    -0.7
-  HERMES             53    19.7    -2.5    +1.8    20.0    -1.9    +0.2
-  FUSE               35    20.5    -2.2    -0.2    19.6    -1.2    -0.5
-  KEVLAR             20    19.5    -2.2    -0.4    18.9    -1.3    -0.8
-  JUDGEMENT           9    19.9    -1.9    +1.5    20.4    -2.5    +1.2
-  ACE                60    18.1    -1.7    +0.4    17.1    -0.7    +1.3
-  IMPERIAL           10    17.7    -1.6    +2.5    15.8    +0.5    -0.4
-  PRECISION          29    20.1    -1.6    +0.4    20.7    -3.0    +1.8
+  LEO                28    22.5    -4.5    -1.3    23.6    -5.3    +1.4
+  OFFICER            36    22.1    -3.6    +1.0    20.6    -2.3    -2.1
+  AVATAR             21    21.3    -3.5    +0.6    19.5    -2.1    -1.6
+  SABRE              14    20.5    -3.5    +1.9    18.9    -1.3    +0.7
+  OVERDRIVE          40    19.1    -2.9    -2.4    18.9    -2.5    -1.3
+  RELIC              15    19.3    -2.9    +1.3    19.2    -2.7    -0.7
+  MEMENTO            39    21.5    -2.8    +0.7    21.5    -3.4    -1.1
+  GADGET             20    19.7    -2.7    -3.0    19.7    -1.9    -2.0
+  HERMES             53    19.7    -2.6    +1.8    20.0    -2.2    +0.2
+  KEVLAR             20    19.5    -2.4    -0.4    18.9    -1.6    -0.8
+  FUSE               35    20.5    -2.3    -0.2    19.6    -1.3    -0.5
+  JUDGEMENT           9    19.9    -2.2    +1.5    20.4    -2.7    +1.2
+  ACE                60    18.1    -1.9    +0.4    17.1    -0.9    +1.3
+  IMPERIAL           10    17.7    -1.9    +2.5    15.8    +0.1    -0.4
+  PRECISION          29    20.1    -1.8    +0.4    20.7    -3.2    +1.8
   ...
-  MAVERICK           24    16.3    +1.1    +3.0    15.6    +2.1    +2.7
-  CLOCKWORK          36    16.6    +1.1    +1.2    15.8    +1.0    +0.5
-  NIRVANA            46    16.1    +1.1    +0.0    16.5    +0.8    +0.3
-  PINNACLE           13    16.4    +1.1    -5.2    17.5    +1.1    -1.9
-  SAGE               12    14.8    +1.3    +0.1    14.4    +1.9    +0.7
-  CLASH              18    16.1    +1.7    +0.3    15.7    +1.5    -3.2
-  SHURIKEN           57    15.8    +1.7    -0.2    14.3    +2.8    +1.1
-  KATANA              6    14.6    +1.9    +0.2    13.5    +2.4    +6.2
-  MINDFLAYER         32    14.1    +2.2    -1.0    14.5    +2.1    +1.4
-  PSYCHIC            19    13.6    +2.2    +1.2    15.7    +0.4    +3.6
-  MISSILE            35    15.1    +2.3    -1.0    17.7    -0.1    -1.0
-  ENFORCER           34    14.2    +2.4    +1.3    15.0    +1.4    +1.4
-  ORIGINAL           47    14.2    +2.8    +1.6    15.5    +1.5    +0.4
-  UNICORN            10    13.3    +3.2    -0.9    17.8    -1.0    -1.8
-  DON                41    13.8    +3.2    +0.3    13.4    +3.9    +2.6
-  spread of sim-in over 58 gamers: sd 1.77 (real-in sd 2.31)
+  PINNACLE           13    16.4    +0.8    -5.2    17.5    +1.0    -1.9
+  NIRVANA            46    16.1    +0.8    +0.0    16.5    +0.5    +0.3
+  MAVERICK           24    16.3    +0.8    +3.0    15.6    +1.7    +2.7
+  ROMAN               6    15.4    +0.9    +4.9    17.3    -1.4    -2.6
+  SAGE               12    14.8    +1.1    +0.1    14.4    +1.6    +0.7
+  SHURIKEN           57    15.8    +1.3    -0.2    14.3    +2.5    +1.1
+  CLASH              18    16.1    +1.5    +0.3    15.7    +1.2    -3.2
+  KATANA              6    14.6    +1.6    +0.2    13.5    +2.2    +6.2
+  MINDFLAYER         32    14.1    +2.0    -1.0    14.5    +1.9    +1.4
+  PSYCHIC            19    13.6    +2.0    +1.2    15.7    +0.2    +3.6
+  MISSILE            35    15.1    +2.1    -1.0    17.7    -0.3    -1.0
+  ENFORCER           34    14.2    +2.2    +1.3    15.0    +1.2    +1.4
+  ORIGINAL           47    14.2    +2.5    +1.6    15.5    +1.2    +0.4
+  UNICORN            10    13.3    +2.9    -0.9    17.8    -1.3    -1.8
+  DON                41    13.8    +3.0    +0.3    13.4    +3.5    +2.6
+  spread of sim-in over 58 gamers: sd 1.75 (real-in sd 2.31)
 
   by team (5+ matches): points for and against, the sim's and the real games' less the input; the sim furthest under its input first, then furthest over
   team                n  in for  sim-in real-in   in vs  sim-in real-in
-  San Francisco 49   64    19.2    -1.1    -0.2    18.0    -0.1    +0.7
-  Detroit Lions     171    17.9    -0.7    -0.6    18.4    -1.0    -0.4
-  Philadelphia Eag  173    17.8    -0.7    -0.2    18.2    -0.8    -0.6
-  Washington Comma  102    18.1    -0.5    +1.1    17.6    -0.3    +0.3
-  Kansas City Chie  164    17.8    -0.5    +0.4    17.6    -0.5    -0.4
-  Baltimore Ravens  180    17.9    -0.5    -1.0    17.6    -0.2    -0.4
-  Buffalo Bills     173    17.5    -0.4    +0.3    17.6    -0.1    +0.6
-  Denver Broncos    167    17.3    -0.2    +0.8    17.5    -0.3    +1.4
-  Cincinnati Benga  165    17.3    -0.0    +0.3    17.6    -0.4    +0.2
-  Minnesota Viking  135    16.5    +0.7    +1.1    16.1    +0.8    +0.7
+  San Francisco 49   64    19.2    -1.2    -0.2    18.0    -0.4    +0.7
+  Detroit Lions     171    17.9    -1.0    -0.6    18.4    -1.2    -0.4
+  Philadelphia Eag  173    17.8    -0.9    -0.2    18.2    -1.1    -0.6
+  Kansas City Chie  164    17.8    -0.7    +0.4    17.6    -0.8    -0.4
+  Washington Comma  102    18.1    -0.7    +1.1    17.6    -0.5    +0.3
+  Baltimore Ravens  180    17.9    -0.6    -1.0    17.6    -0.5    -0.4
+  Buffalo Bills     173    17.5    -0.6    +0.3    17.6    -0.4    +0.6
+  Denver Broncos    167    17.3    -0.4    +0.8    17.5    -0.4    +1.4
+  Cincinnati Benga  165    17.3    -0.2    +0.3    17.6    -0.7    +0.2
+  Minnesota Viking  135    16.5    +0.4    +1.1    16.1    +0.6    +0.7
   spread of sim-in over 10 teams: sd 0.44 (real-in sd 0.66)
 
   EACH STEP: from the real states, each side's points still to come -- the input's (expected points times the league's share still to come), the sim's and the real ones
                               n    input      sim     real   sim-in  real-in
-  Q1 to 2:00              2,852    17.35    16.97    17.44    -0.37    +0.10
-  Q1 last 2:00            1,566    16.06    15.30    15.79    -0.76    -0.27
-  Q2 to 2:00              1,944    14.04    13.62    13.72    -0.41    -0.32
-  Q2 last 2:00            3,892    11.48    10.95    10.87    -0.53    -0.61
-  Q3 to 2:00              2,258     7.96     8.29     7.69    +0.33    -0.27
-  Q3 last 2:00            1,892     6.21     6.59     5.84    +0.38    -0.37
-  Q4 to 2:00              2,146     4.16     4.69     3.60    +0.53    -0.56
-  Q4 last 2:00            2,948     2.00     2.36     1.74    +0.36    -0.26
-  OT                         38     0.88     3.91    -2.87    +3.03    -3.74
+  Q1 to 2:00              2,852    17.35    16.75    17.44    -0.60    +0.10
+  Q1 last 2:00            1,566    16.06    15.12    15.79    -0.94    -0.27
+  Q2 to 2:00              1,944    14.04    13.48    13.72    -0.56    -0.32
+  Q2 last 2:00            3,892    11.48    10.72    10.87    -0.77    -0.61
+  Q3 to 2:00              2,258     7.96     7.87     7.69    -0.09    -0.27
+  Q3 last 2:00            1,892     6.21     6.19     5.84    -0.02    -0.37
+  Q4 to 2:00              2,146     4.16     4.26     3.60    +0.11    -0.56
+  Q4 last 2:00            2,948     2.00     2.11     1.74    +0.11    -0.26
+  OT                         38     0.88     3.95    -2.87    +3.07    -3.74
 
   the favourite (the side with more expected points)
                               n    input      sim     real   sim-in  real-in
-  Q1 to 2:00              1,426    18.08    17.03    18.37    -1.05    +0.29
-  Q1 last 2:00              783    16.72    15.36    16.67    -1.37    -0.06
-  Q2 to 2:00                972    14.63    13.74    14.55    -0.89    -0.08
-  Q2 last 2:00            1,946    11.97    11.02    11.56    -0.95    -0.41
-  Q3 to 2:00              1,129     8.30     8.32     8.07    +0.03    -0.23
-  Q3 last 2:00              946     6.46     6.62     6.11    +0.15    -0.36
-  Q4 to 2:00              1,073     4.33     4.60     3.63    +0.27    -0.70
-  Q4 last 2:00            1,474     2.08     2.37     1.90    +0.29    -0.18
-  OT                         19     0.91     4.02    -3.58    +3.11    -4.49
+  Q1 to 2:00              1,426    18.08    16.82    18.37    -1.27    +0.29
+  Q1 last 2:00              783    16.72    15.17    16.67    -1.56    -0.06
+  Q2 to 2:00                972    14.63    13.61    14.55    -1.02    -0.08
+  Q2 last 2:00            1,946    11.97    10.78    11.56    -1.18    -0.41
+  Q3 to 2:00              1,129     8.30     7.88     8.07    -0.42    -0.23
+  Q3 last 2:00              946     6.46     6.18     6.11    -0.29    -0.36
+  Q4 to 2:00              1,073     4.33     4.15     3.63    -0.18    -0.70
+  Q4 last 2:00            1,474     2.08     2.11     1.90    +0.03    -0.18
+  OT                         19     0.91     4.13    -3.58    +3.22    -4.49
 
   the underdog
                               n    input      sim     real   sim-in  real-in
-  Q1 to 2:00              1,426    16.61    16.92    16.52    +0.31    -0.09
-  Q1 last 2:00              783    15.39    15.24    14.91    -0.15    -0.47
-  Q2 to 2:00                972    13.45    13.51    12.89    +0.06    -0.56
-  Q2 last 2:00            1,946    11.00    10.88    10.19    -0.12    -0.81
-  Q3 to 2:00              1,129     7.63     8.25     7.31    +0.63    -0.32
-  Q3 last 2:00              946     5.95     6.56     5.57    +0.62    -0.38
-  Q4 to 2:00              1,073     3.98     4.77     3.57    +0.79    -0.41
-  Q4 last 2:00            1,474     1.91     2.35     1.58    +0.43    -0.34
-  OT                         19     0.85     3.79    -2.16    +2.95    -3.00
+  Q1 to 2:00              1,426    16.61    16.68    16.52    +0.07    -0.09
+  Q1 last 2:00              783    15.39    15.07    14.91    -0.31    -0.47
+  Q2 to 2:00                972    13.45    13.34    12.89    -0.11    -0.56
+  Q2 last 2:00            1,946    11.00    10.65    10.19    -0.35    -0.81
+  Q3 to 2:00              1,129     7.63     7.87     7.31    +0.24    -0.32
+  Q3 last 2:00              946     5.95     6.19     5.57    +0.25    -0.38
+  Q4 to 2:00              1,073     3.98     4.37     3.57    +0.39    -0.41
+  Q4 last 2:00            1,474     1.91     2.11     1.58    +0.20    -0.34
+  OT                         19     0.85     3.76    -2.16    +2.92    -3.00
 
   by the side's lead at the time (Q2 on)
                               n    input      sim     real   sim-in  real-in
-  behind 9+               2,054     5.89     6.70     6.35    +0.81    +0.45
-  behind 1-8              4,096     7.89     8.66     8.24    +0.77    +0.35
-  level                   2,818     9.73    10.04     9.59    +0.32    -0.14
-  ahead 1-8               4,096     7.89     7.29     6.72    -0.61    -1.18
-  ahead 9+                2,054     6.03     4.90     4.30    -1.13    -1.73
+  behind 9+               2,054     5.89     6.55     6.35    +0.66    +0.45
+  behind 1-8              4,096     7.89     8.39     8.24    +0.50    +0.35
+  level                   2,818     9.73     9.79     9.59    +0.06    -0.14
+  ahead 1-8               4,096     7.89     6.92     6.72    -0.97    -1.18
+  ahead 9+                2,054     6.03     4.46     4.30    -1.56    -1.73
 
   THE DRAWS: the sim's kick-off games against the real games of the window
   a game                           real      sim
-  snaps                           46.77    49.02
-  touchdowns                       4.44     4.51
+  snaps                           46.77    48.71
+  touchdowns                       4.44     4.45
   field goal tries                 1.14     1.10
-  punts                            0.66     0.69
-  turnovers                        1.86     1.82
-  defensive tds                    0.21     0.22
+  punts                            0.66     0.70
+  turnovers                        1.86     1.81
+  defensive tds                    0.21     0.20
   safeties                         0.02     0.02
   kick tds                         0.05     0.06
-  timeouts                         3.97     4.09
+  timeouts                         3.97     4.03
   overtime                         0.01     0.05
-  points Q1                        5.90     5.26
-  points Q2                       13.17    12.05
-  points Q3                        7.05     5.60
-  points Q4                        9.28    11.23
-  points OT                        0.06     0.10
+  points Q1                        5.90     5.12
+  points Q2                       13.17    12.57
+  points Q3                        7.05     5.66
+  points Q4                        9.28    10.27
+  points OT                        0.06     0.11
 
   the time draw: share of snaps by time, after each kind of play before (real / sim)
                             snaps    mean secs         <=6s         7-9s       10-14s       15-24s       25-34s         35s+
-  nothing gained      15.7/16.3     9.7/9.9     53.7/46.0    25.0/31.2     7.0/8.9      2.5/2.6      5.6/5.6      6.2/5.7   
-  short gain          19.4/19.9    27.8/27.1     4.3/5.1      4.2/5.1     11.3/11.6    13.3/11.6    30.9/35.5    35.9/31.1  
-  first down          26.1/25.3    25.8/25.6     7.9/8.4      4.7/6.1     12.8/12.3    13.1/12.0    33.2/33.2    28.3/28.0  
-  loss                 5.9/6.6     28.8/27.8     4.9/4.9      4.1/5.1      9.5/8.6     11.0/13.1    30.2/33.8    40.3/34.4  
-  fresh possession    24.3/23.8    10.0/9.9     50.9/40.5    28.5/39.1     7.0/8.2      1.4/1.7      4.3/4.5      7.9/6.0   
-  timeout              8.5/8.2      8.0/7.3     61.1/60.5    23.2/26.9     7.2/6.3      2.8/2.8      2.4/1.5      3.4/2.0   
+  nothing gained      15.7/16.4     9.7/9.9     53.7/46.1    25.0/31.2     7.0/8.7      2.5/2.7      5.6/5.6      6.2/5.8   
+  short gain          19.4/19.9    27.8/27.3     4.3/5.0      4.2/5.0     11.3/11.4    13.3/11.6    30.9/35.3    35.9/31.6  
+  first down          26.1/25.1    25.8/25.8     7.9/8.1      4.7/6.1     12.8/12.1    13.1/12.0    33.2/33.1    28.3/28.7  
+  loss                 5.9/6.6     28.8/28.0     4.9/4.7      4.1/4.9      9.5/8.3     11.0/13.3    30.2/33.8    40.3/35.0  
+  fresh possession    24.3/23.9    10.0/10.2    50.9/40.3    28.5/38.5     7.0/8.2      1.4/1.7      4.3/4.9      7.9/6.4   
+  timeout              8.5/8.1      8.0/7.4     61.1/60.1    23.2/27.2     7.2/6.6      2.8/2.6      2.4/1.6      3.4/2.0   
 
   the distance draw: share of snaps by class, within each time bucket (real / sim)
                turnover         loss      no gain        short      1st <20        20-39          40+
-  <=6s       3.8/4.5     10.9/10.2    28.5/29.1    27.3/23.1    20.2/21.7     8.6/9.3      0.8/2.1   
-  7-9s       5.9/4.5      6.0/7.5      9.2/14.5    25.4/29.3    33.6/29.1    13.8/11.2     6.0/4.0   
-  10-14s     7.0/5.2      7.4/8.8     15.7/18.7    18.8/23.2    26.6/27.6    13.7/11.8    10.8/4.8   
-  15-24s     5.4/4.2      8.1/10.0    19.7/19.3    19.3/23.2    30.6/29.7    12.0/10.5     4.8/3.2   
-  25-34s     2.8/3.4     11.3/9.9     22.1/19.6    27.1/27.2    28.1/28.9     7.4/8.6      1.2/2.5   
-  35s+       4.2/3.6     10.0/9.7     13.2/15.3    24.5/26.0    32.4/31.4    11.5/10.5     4.2/3.7   
+  <=6s       3.8/4.5     10.9/10.3    28.5/28.2    27.3/23.4    20.2/21.9     8.6/9.5      0.8/2.3   
+  7-9s       5.9/4.5      6.0/7.7      9.2/16.2    25.4/28.9    33.6/27.9    13.8/11.1     6.0/3.7   
+  10-14s     7.0/4.6      7.4/8.8     15.7/20.4    18.8/23.0    26.6/27.4    13.7/11.3    10.8/4.6   
+  15-24s     5.4/4.3      8.1/10.4    19.7/18.1    19.3/24.4    30.6/29.5    12.0/10.3     4.8/3.1   
+  25-34s     2.8/3.4     11.3/10.2    22.1/19.3    27.1/27.0    28.1/28.7     7.4/8.8      1.2/2.6   
+  35s+       4.2/3.7     10.0/10.0    13.2/15.7    24.5/25.9    32.4/30.7    11.5/10.4     4.2/3.6   
 
   THE DECISIONS: share of each choice, real / sim (the sim's kick-off games)
 
-  4th down (by the offense): 2.90 a game real, 3.01 sim
+  4th down (by the offense): 2.90 a game real, 3.07 sim
                                 n real       go for it      field goal            punt
-  inside the 20, 1-3 to go         232     73.3/68.0       26.7/32.0        0.0/0.0   
-  inside the 20, 4+ to go          253     31.2/37.4       68.8/62.6        0.0/0.0   
+  inside the 20, 1-3 to go         232     73.3/69.0       26.7/31.0        0.0/0.0   
+  inside the 20, 4+ to go          253     31.2/36.2       68.8/63.8        0.0/0.0   
   20-39 out, 1-3 to go             161     73.9/71.6       25.5/28.4        0.6/0.0   
-  20-39 out, 4+ to go              311     25.1/28.2       74.9/71.8        0.0/0.0   
-  40-59 out, 1-3 to go             147     81.6/83.3        7.5/8.8        10.9/7.9   
-  40-59 out, 4+ to go              339     44.8/47.7       27.4/24.6       27.7/27.7  
-  60+ out, 1-3 to go               150     77.3/74.1        0.0/0.0        22.7/25.9  
-  60+ out, 4+ to go                568     41.0/43.4        0.0/0.0        59.0/56.6  
-  go for it, by gamer (20+ real; 41 gamers; real and sim shares correlate 0.73):
-    SCHOLAR 73/50 (26), MERCURY 73/70 (52), CLOCKWORK 72/56 (65), SHURIKEN 71/66 (96), LYNX 64/53 (28), PSYCHIC 63/54 (30), PRECISION 34/41 (35), MISSILE 29/41 (51), CLASH 28/42 (25), KILLJOY 24/35 (37), GADGET 24/37 (29), MERCENARY 22/43 (32)
+  20-39 out, 4+ to go              311     25.1/29.6       74.9/70.4        0.0/0.0   
+  40-59 out, 1-3 to go             147     81.6/84.8        7.5/8.3        10.9/6.9   
+  40-59 out, 4+ to go              339     44.8/46.9       27.4/24.4       27.7/28.7  
+  60+ out, 1-3 to go               150     77.3/74.4        0.0/0.0        22.7/25.6  
+  60+ out, 4+ to go                568     41.0/45.1        0.0/0.0        59.0/54.9  
+  go for it, by gamer (20+ real; 41 gamers; real and sim shares correlate 0.71):
+    SCHOLAR 73/51 (26), MERCURY 73/70 (52), CLOCKWORK 72/55 (65), SHURIKEN 71/66 (96), LYNX 64/54 (28), PSYCHIC 63/53 (30), PRECISION 34/41 (35), MISSILE 29/44 (51), CLASH 28/43 (25), KILLJOY 24/36 (37), GADGET 24/37 (29), MERCENARY 22/46 (32)
 
-  field goal on downs 1-3 in the half's last minute (by the offense): 4.84 a game real, 5.24 sim
+  field goal on downs 1-3 in the half's last minute (by the offense): 4.84 a game real, 5.01 sim
                                 n real         play on            kick
-  0:05 or less left                303     56.8/61.5       43.2/38.5  
-  0:06-0:10                        341     89.7/87.0       10.3/13.0  
-  0:11-0:20                        703     96.9/96.9        3.1/3.1   
-  0:21-0:30                        659     98.6/98.6        1.4/1.4   
+  0:05 or less left                303     56.8/61.3       43.2/38.7  
+  0:06-0:10                        341     89.7/86.3       10.3/13.7  
+  0:11-0:20                        703     96.9/96.7        3.1/3.3   
+  0:21-0:30                        659     98.6/98.8        1.4/1.2   
   0:31-0:45                        844     99.6/99.6        0.4/0.4   
   0:46-1:00                        761     99.3/100.0       0.7/0.0   
-  kick, by gamer (10+ real; 56 gamers; real and sim shares correlate 0.17):
-    KILLJOY 14/6 (65), MIMIC 12/5 (24), IMPERIAL 12/7 (26), RICOCHET 11/7 (18), SCHOLAR 11/5 (56), FUSE 10/7 (83), OVERDRIVE 1/4 (83), OFFICER 1/5 (100), SUMMIT 0/6 (24), WARRIOR 0/6 (17), ROMAN 0/7 (19), GENIUS 0/5 (25)
+  kick, by gamer (10+ real; 56 gamers; real and sim shares correlate 0.14):
+    KILLJOY 14/6 (65), MIMIC 12/4 (24), IMPERIAL 12/7 (26), RICOCHET 11/7 (18), SCHOLAR 11/5 (56), FUSE 10/7 (83), OVERDRIVE 1/5 (83), OFFICER 1/5 (100), SUMMIT 0/6 (24), WARRIOR 0/6 (17), ROMAN 0/7 (19), GENIUS 0/5 (25)
 
-  kick-off (by the kicker): 7.33 a game real, 7.14 sim
+  kick-off (by the kicker): 7.33 a game real, 7.09 sim
                                 n real          return       touchback no landing zone            kept
-  ordinary                        3748     94.2/94.9        3.2/3.0         2.1/1.8         0.5/0.4   
-  the half's last 2:00            1497     75.6/74.5       19.2/19.4        4.6/5.4         0.7/0.7   
-  behind late in Q4                221     91.9/90.2        1.4/0.8         3.2/2.1         3.6/6.9   
-  touchback, by gamer (20+ real; 55 gamers; real and sim shares correlate 0.35):
+  ordinary                        3748     94.2/94.9        3.2/3.0         2.1/1.7         0.5/0.4   
+  the half's last 2:00            1497     75.6/74.4       19.2/19.4        4.6/5.5         0.7/0.7   
+  behind late in Q4                221     91.9/90.1        1.4/0.9         3.2/2.2         3.6/6.8   
+  touchback, by gamer (20+ real; 55 gamers; real and sim shares correlate 0.36):
     FUSE 22/15 (140), MERLIN 22/14 (162), LIZARD 21/11 (61), KEVLAR 19/5 (78), AVATAR 15/4 (91), KILLJOY 15/6 (94), LUNA 2/3 (146), PSYCHIC 2/4 (60), ASTRONAUT 0/3 (36), GENIUS 0/7 (42), SUMMIT 0/5 (27), ROMAN 0/4 (24)
 
-  conversion (by the scorer): 4.42 a game real, 4.50 sim
+  conversion (by the scorer): 4.42 a game real, 4.43 sim
                                 n real            kick      go for two
-  9+ behind after the six          134     72.4/71.9       27.6/28.1  
-  4-8 behind after the six         329     68.1/65.4       31.9/34.6  
-  1-3 behind after the six         629     88.4/85.2       11.6/14.8  
+  9+ behind after the six          134     72.4/72.2       27.6/27.8  
+  4-8 behind after the six         329     68.1/66.3       31.9/33.7  
+  1-3 behind after the six         629     88.4/85.8       11.6/14.2  
   level after the six               34    100.0/99.9        0.0/0.1   
-  1-3 ahead after the six          385     97.7/96.7        2.3/3.3   
-  4-8 ahead after the six         1076     98.2/97.9        1.8/2.1   
-  9+ ahead after the six           709     97.7/97.8        2.3/2.2   
+  1-3 ahead after the six          385     97.7/96.8        2.3/3.2   
+  4-8 ahead after the six         1076     98.2/98.0        1.8/2.0   
+  9+ ahead after the six           709     97.7/98.0        2.3/2.0   
   go for two, by gamer (10+ real; 56 gamers; real and sim shares correlate 0.58):
-    RICOCHET 29/14 (21), SUMMIT 27/10 (15), LEO 22/17 (73), PSYCHIC 18/12 (38), HEADHUNTER 18/11 (49), PINNACLE 17/12 (18), RELIC 0/8 (40), KRAKEN 0/4 (54), UNICORN 0/9 (14), ASTRONAUT 0/9 (21), PHOENIX 0/9 (30), MIRAGE 0/7 (18)
+    RICOCHET 29/14 (21), SUMMIT 27/10 (15), LEO 22/17 (73), PSYCHIC 18/11 (38), HEADHUNTER 18/11 (49), PINNACLE 17/12 (18), RELIC 0/8 (40), KRAKEN 0/4 (54), UNICORN 0/9 (14), ASTRONAUT 0/9 (21), PHOENIX 0/8 (30), MIRAGE 0/7 (18)
 
-  defense's timeout before a running-clock snap (by the defense): 34.92 a game real, 38.57 sim
+  defense's timeout before a running-clock snap (by the defense): 34.92 a game real, 38.31 sim
                                 n real            none         timeout
   Q1                              5327     99.9/100.0       0.1/0.0   
   Q2                              2467     97.6/98.3        2.4/1.7   
-  Q2 2:00                         5552     92.1/91.4        7.9/8.6   
+  Q2 2:00                         5552     92.1/91.5        7.9/8.5   
   Q3                              5637     99.8/100.0       0.2/0.0   
   Q4                              2822     93.2/94.1        6.8/5.9   
-  Q4 2:00                         4187     79.7/80.2       20.3/19.8  
-  OT                                56    100.0/98.7        0.0/1.3   
+  Q4 2:00                         4187     79.7/79.0       20.3/21.0  
+  OT                                56    100.0/98.6        0.0/1.4   
   timeout, by gamer (40+ real; 59 gamers; real and sim shares correlate 0.52):
     LEGEND 16/8 (81), AVATAR 12/12 (355), PRECISION 11/7 (550), KATANA 11/6 (82), PSYCHIC 10/7 (323), NIRVANA 9/8 (789), KRAKEN 3/4 (399), ASTRONAUT 3/7 (179), RELIC 2/4 (297), WARRIOR 2/4 (162), IMPERIAL 1/3 (188), ROMAN 1/4 (106)
 
-  offense's timeout before a running-clock snap (by the offense): 32.61 a game real, 35.96 sim
+  offense's timeout before a running-clock snap (by the offense): 32.61 a game real, 35.72 sim
                                 n real            none         timeout
   Q1                              5324     99.9/100.0       0.1/0.0   
   Q2                              2413     99.7/100.0       0.3/0.0   
-  Q2 2:00                         5074     82.4/82.5       17.6/17.5  
+  Q2 2:00                         5074     82.4/82.6       17.6/17.4  
   Q3                              5625     99.7/100.0       0.3/0.0   
   Q4                              2636     99.4/99.6        0.6/0.4   
-  Q4 2:00                         3196     89.4/89.0       10.6/11.0  
+  Q4 2:00                         3196     89.4/89.9       10.6/10.1  
   OT                                56    100.0/99.3        0.0/0.7   
   timeout, by gamer (40+ real; 59 gamers; real and sim shares correlate 0.65):
-    IMPERIAL 11/8 (139), MIMIC 10/9 (151), KRAKEN 9/8 (372), RELIC 7/7 (233), DREAD 7/6 (168), PRECISION 7/5 (467), SABRE 3/4 (215), GADGET 3/3 (356), UNICORN 3/7 (167), AVATAR 3/3 (338), NIRVANA 3/3 (712), LEGEND 1/3 (81)
+    IMPERIAL 11/8 (139), MIMIC 10/9 (151), KRAKEN 9/7 (372), RELIC 7/7 (233), DREAD 7/6 (168), PRECISION 7/5 (467), SABRE 3/4 (215), GADGET 3/3 (356), UNICORN 3/7 (167), AVATAR 3/3 (338), NIRVANA 3/3 (712), LEGEND 1/3 (81)
 
   (input: the pre-match expected points; nothing here is fitted back into v2.1 -- the gaps show where its draws miss)
