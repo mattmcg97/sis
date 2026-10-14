@@ -468,6 +468,69 @@ match or two out. That is worth a fraction of a point, so its builds still price
 quote off the results in when it was published (`glmer_prior.ROUGH_CLOCK_TERMS`). `form_shift`
 stays an option.
 
+## Refitting after every result: `cadence.R` (14 Oct 2026)
+
+Form already follows every game without a refit. `FormFor` and `FormAgainst` are recomputed from
+every result before a match whenever it is priced. What a refit adds is fresh gamer and team
+effects and coefficients. Refitting the production model after every result isn't possible, because
+one fit takes minutes. So `cadence.R` trims the model to something that fits in seconds and
+compares three arms match by match:
+- **`full_daily`:** the production model (`form_clock`), refitted at each midnight.
+- **`trim_daily`:** the trimmed model, refitted at each midnight.
+- **`trim_game`:** the trimmed model, refitted before every kick-off on every result in by then
+  (36 minutes after a match's kick-off). A kick-off with no new result since the last fit reuses
+  that fit.
+
+The trimmed model is the production formula without the per-match and per-row noise terms, the
+stream and the time of day:
+
+```
+Score ~ IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +
+        SessLate + OppSessLate + (1|Player) + (1|OpponentPlayer) + (1|Team) + (1|OpponentTeam)
+```
+
+It's fitted with nAGQ 0, each fit warm-started from the one before. Every arm prices with the same
+features and the experience floor. The moneyline is a normal around the expected margin (sd 9.35).
+
+```bash
+Rscript glmer/cadence.R --days=14 --cores=4                                # all three arms
+Rscript glmer/cadence.R --days=28 --arms=trim_daily,trim_game --cores=4    # just the trimmed pair
+```
+
+The last 14 full days of `nb2/AMFELO.csv` (27 Aug – 9 Sep, 1,238 matches):
+
+| | full_daily | trim_daily | trim_game |
+|---|---|---|---|
+| fits | 14 | 14 | 962 |
+| seconds a fit (4 busy cores) | 1,147 | 6.7 | 3.8 |
+| moneyline log loss | 0.6659 | 0.6670 | 0.6662 |
+| moneyline Brier | 0.2370 | 0.2374 | 0.2371 |
+| margin RMSE | 9.537 | 9.511 | 9.512 |
+| total RMSE | 12.166 | 12.139 | 12.147 |
+
+Paired, match by match:
+- **What trimming costs (`trim_daily` − `full_daily`): nothing measurable.** Log loss +0.0011
+  (t +0.7, better on 6 of 14 days). Margin and total squared errors are slightly better (t −1.4,
+  −1.0).
+- **What refitting after every result gains (`trim_game` − `trim_daily`).** Log loss −0.0008
+  (t −1.9, better on 8 of 14 days) and Brier −0.0004 (t −1.9, better on 9 of 14). There's no gain
+  on the margin (t +0.2), and the total is a touch worse (t +1.3).
+  - The gain grows with how stale the day's fit has become. By the later gamer's game of the day,
+    the log-loss change is:
+    - games 1–2: +0.0002 (284 matches);
+    - games 3–5: −0.0011 (463);
+    - games 6–8: −0.0013 (328);
+    - games 9+: −0.0007 (163).
+  - Per-game refits move a price only a little: the expected margin by 0.12 points on average (95%
+    within 0.35), the total by 0.14.
+- **The trimmed model refitted after every result, against production daily: level.** Log loss
+  +0.0003 (t +0.2). Margin and total errors are slightly better (n.s.).
+
+So the trimmed model costs nothing measurable, and refitting it after every result buys a small
+moneyline gain. That gain appears where it should, later in the day, but at t −1.9 over 14 days
+it isn't settled. It needs a longer window (the match history up to today) before it's worth
+building. A refit takes about 4 seconds, so live per-result refits would be cheap.
+
 ## Speed
 
 The global model is the slow part: two very large random effects,
