@@ -197,14 +197,18 @@ DECISION_MIN = 25
 DECISION_PRIOR = 3.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
-                   features=("togo10", "dist", "margin", "phase", "left", "lead3"), sizes=(10, 5, 7, 7, 6, 3),
+                   features=("togo10", "dist", "margin", "phase", "left", "lead3", "dist3"),
+                   sizes=(10, 5, 7, 7, 6, 3, 3),
                    levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "lead3", "phase", "left"),
-                           ("togo10", "dist", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
+                           ("togo10", "dist3", "lead3", "phase", "left"), ("togo10", "dist", "lead3", "phase"),
+                           ("togo10", "dist3", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
                            ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
-                     who="offense", features=("left", "range", "down", "margin", "half"), sizes=(6, 4, 3, 7, 3),
+                     who="offense", features=("left", "range", "down", "margin", "half", "lead3"),
+                     sizes=(6, 4, 3, 7, 3, 3),
                      levels=(("left", "range", "down", "margin", "half"), ("left", "range", "margin", "half"),
-                             ("left", "range", "half"), ("left", "half"), ("left",), ())),
+                             ("left", "range", "lead3", "half"), ("left", "range", "half"), ("left", "lead3", "half"),
+                             ("left", "half"), ("left",), ())),
     "kickoff": dict(label="kick-off", options=("return", "touchback", "no landing zone", "kept"), who="kicker",
                     features=("desperate", "late", "lead"), sizes=(2, 2, 3),
                     levels=(("desperate", "late", "lead"), ("desperate", "late"), ("desperate",), ())),
@@ -887,11 +891,12 @@ def decision_features(name, pts):
     if name == "fourth":
         mb = margin_b(g("lead"))
         cols = [togo10(100 - g("togo")), dist_b(g("dist")), mb, phase_of(g("period"), g("clock")),
-                left_b(g("left")), derive(dict(margin=mb))["lead3"]]
+                left_b(g("left")), derive(dict(margin=mb))["lead3"], derive(dict(dist=dist_b(g("dist"))))["dist3"]]
     elif name == "early_fg":
         p = g("period")
-        cols = [early_b(g("left")), range_b(g("togo") + 17), g("down") - 1, margin_b(g("lead")),
-                np.where(p == 2, 0, np.where(p == 4, 1, 2))]
+        mb = margin_b(g("lead"))
+        cols = [early_b(g("left")), range_b(g("togo") + 17), g("down") - 1, mb,
+                np.where(p == 2, 0, np.where(p == 4, 1, 2)), derive(dict(margin=mb))["lead3"]]
     elif name == "kickoff":
         cols = [g("desperate"), g("late"), lead3(g("lead"))]
     elif name == "two":
@@ -1956,9 +1961,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             e = sn[can]
             if len(e):
                 off = team[e]
-                cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1,
-                            margin=margin_b(score[e, off] - score[e, 1 - off]),
-                            half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)))
+                mb = margin_b(score[e, off] - score[e, 1 - off])
+                cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1, margin=mb,
+                            half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)),
+                            lead3=derive(dict(margin=mb))["lead3"])
                 lead = score[e, off] - score[e, 1 - off]
                 must = (period[e] >= 5) & ot_done[e, 1 - off] & (lead < 0)
                 now = e[decide("early_fg", cols, gamer[e, off], fine=state(e, off),

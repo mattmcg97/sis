@@ -2087,6 +2087,10 @@ missing something. Nothing is ever fitted to close those gaps.
     punt or kick a field goal 4+ behind, and after a touchdown 1 or 2 behind it goes for two.
   - **The league's share of each option** among real decisions in similar states. Like the snap
     draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
+    The 4th down and the early kick coarsen the distance before they let the lead go (behind /
+    level / ahead). In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
+    the sim, and a side behind went for it on 90% against 73%, because thin late cells had fallen
+    back to every lead.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
     real decisions against what the league chose in the same states. It is shrunk toward none, so a
     gamer with a handful of decisions decides almost as the league does. This is how earlier
