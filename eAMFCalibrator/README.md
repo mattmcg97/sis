@@ -2647,6 +2647,49 @@ career totals):
 
 Writes `out/player_stats.txt` and `out/player_stats_check.csv`.
 
+### Pre-match priors against prod, with and without the rematch layer: `prior-backtest`
+
+```bash
+python -m eAMFCalibrator prior-backtest --since 2026-09-01 --until 2026-10-14 \
+    --arm "glmer-trim=glmer/out/cadence/cadence_matches.csv@trim:hl60:game" \
+    --arm "nb2=rolling:nb2_daily"
+```
+
+An arm is `NAME=SOURCE`: its expected points per side for every match, as of
+the match's kick-off. The sources are:
+
+| source | what it reads |
+|---|---|
+| `PATH@PREFIX` | `glmer/cadence.R`'s `cadence_matches.csv`, columns `PREFIX\|1` and `PREFIX\|2` (e.g. the trimmed model refitted after every result, `trim:hl60:game`) |
+| `PATH` | a CSV of `MATCH_CODE` (or `MatchId`) and `Pred_P1_Points` / `Pred_P2_Points` (`NB2_schedule_predict.py`, `glmer/predict.R`), `raw_home` / `raw_away` (eAMFModel `prior-vs-sim`'s CSV) or `exp_p1` / `exp_p2` |
+| `rolling:DIR` | eAMFModel `prior-daily`'s directory of daily fits (NB2 or glmer): each match priced by its own day's fit, as live |
+
+Prod is always included: its last pre-match moneyline and total (the line
+and the over's price).
+
+**How each arm is graded:** each arm, prod included, is graded as it is
+and with the rematch layer on top. The layer is fitted walk-forward on that
+arm's own errors.
+- **An arm's moneyline** is the normal about its expected margin (sd
+  9.35).
+- **Its over** is the normal about its expected total (sd 12) at prod's
+  line.
+- **Prod with the layer** moves the margin its moneyline implies and the
+  mean its total implies.
+
+**What it reports**, on the matches every arm priced, after the layer's
+7-day burn-in:
+- **moneyline:** log loss and Brier;
+- **total:** the expected total's RMSE and bias, and the log loss of the
+  over at prod's line;
+- **each against prod, match by match:** the difference, its t, and the
+  fortnights the arm beat prod.
+
+These are given for every match, the rematches, the 2nd meetings, the 3rd+
+and the first meetings, followed by each layer's last fit. Writes
+`out/prior_backtest.txt` and `out/prior_backtest.csv` (every match, every
+arm's moneyline, total and over).
+
 ### Rematches the same day: `bets rematches`
 
 ```bash
@@ -2679,7 +2722,36 @@ The report has these parts:
    against in play, and for restricted and VIP accounts.
 3. **The handicap and the total:** the handicap money on the first winner,
    and the over and under money by the first meeting's total and margin.
-4. **The 25 rematches with the most moneyline stake.**
+4. **Prod's total line in rematches:** the line at the first meeting and at
+   the rematch, and how far each total landed from it (its miss). This is
+   shown by the first meeting's total and by the first meeting's miss.
+5. **The fits: how far to move a rematch.** Each slope is the points per
+   point of the earlier miss:
+   - the rematch's total miss on the first meeting's (and, from the 3rd
+     meeting on, the previous meeting's);
+   - the first winner's margin miss on the first meeting's margin surprise.
+     Prod's moneyline is read as a margin, with `MARGIN_SD` 9.35;
+   - a logistic of the first winner winning again on prod's price (as an
+     offset) and the first meeting's margin surprise.
+6. **The rematch layer on prod's prices, walk-forward:** what
+   `rematch_layer.py` moves, and the log loss, Brier and total RMSE of prod
+   with and without it. These are compared match by match on rematches, by
+   meeting and by teams.
+7. **The 25 rematches with the most moneyline stake.**
+
+**The rematch layer** (`rematch_layer.py`) works on any pre-match price:
+expected points per side, or a moneyline and a total line.
+- **The model:** each meeting's error against the price (margin and total)
+  is the pair's effect that day plus noise. Two meetings the same day share
+  the effect, so the covariance of their errors is its variance.
+- **What is estimated:** that variance separately for meetings with the
+  same teams and with teams changed. The rest of an error's variance is the
+  noise.
+- **What it does at a rematch:** the margin and the total move by the
+  effect's best guess from the day's earlier errors (the posterior mean).
+- **How it is fitted:** walk-forward, refitted each UTC day on the days
+  before it, with every error centred on the price's own mean error. Nothing
+  a match is priced with comes after its kick-off.
 
 Writes `out/bets_rematches.txt` and `out/bets_rematches.csv` (one row per
 match).

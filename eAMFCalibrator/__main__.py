@@ -185,6 +185,25 @@ def cmd_scouting(args):
     return 0
 
 
+def cmd_prior_backtest(args):
+    """Pre-match priors against prod, each with and without the rematch layer."""
+    from . import prior_backtest
+    arms = []
+    for spec in args.arm or []:
+        name, sep, source = spec.partition("=")
+        if not sep or not name or not source:
+            raise SystemExit(f"--arm {spec!r}: give it as NAME=SOURCE")
+        arms.append((name.strip(), source.strip()))
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            path = prior_backtest.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END)
+    finally:
+        conn.close()
+    print(f"\n  -> {path} and prior_backtest.csv")
+    return 0
+
+
 def cmd_player_stats(args):
     """Every gamer's h2hggl stats off our history and SCOUTING_FULL, and the check against the site."""
     from . import player_stats
@@ -1200,6 +1219,19 @@ def build_parser():
     ck_parser.add_argument("--break", dest="break_day", default="2026-09-23", metavar="DATE",
                            help="the first day after the baseline (default 2026-09-23)")
 
+    pb_parser = sub.add_parser(
+        "prior-backtest", parents=[shared],
+        help="pre-match priors against prod, each with and without the rematch layer (rematch_layer.py, "
+             "fitted walk-forward on its own errors): the moneyline's log loss and Brier, the total's "
+             "RMSE and the over at prod's line, match by match against prod, for every match, the "
+             "rematches and the first meetings (-> prior_backtest.txt/csv)")
+    pb_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE",
+                           help="a prior to test (repeatable): NAME=PATH@PREFIX (glmer/cadence.R's "
+                                "cadence_matches.csv, columns PREFIX|1 and |2), NAME=PATH (a CSV of "
+                                "MATCH_CODE and Pred_P1_Points / Pred_P2_Points, raw_home / raw_away or "
+                                "exp_p1 / exp_p2), or NAME=rolling:DIR (eAMFModel prior-daily's fits)")
+    pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     ps_parser = sub.add_parser(
         "player-stats", parents=[shared],
         help="every gamer's stats as h2hggl.com shows them, rebuilt from the match history (played, "
@@ -1334,6 +1366,8 @@ def main(argv=None):
         return cmd_scouting_check(args)
     if args.command == "player-stats":
         return cmd_player_stats(args)
+    if args.command == "prior-backtest":
+        return cmd_prior_backtest(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
