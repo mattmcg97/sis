@@ -98,11 +98,11 @@ TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
 SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=4, tb=6,
-             lead3=3, late3=3, tb2=2, dist3=3, zone3=3)                  # the last five: coarse ones (derive)
-TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
-DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
+             late=4, lead3=3, tb2=2, dist3=3, zone3=3)                   # late: late_of; the rest coarse (derive)
+TIME_BASE = ("prev", "phase", "late", "margin", "down", "dist", "zone", "elapsed", "remain")
+DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "late", "elapsed", "remain")
 TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
-DIST_FEATURES = DIST_BASE + ("lead3", "late3", "zone3")
+DIST_FEATURES = DIST_BASE + ("lead3", "zone3")
 
 
 def _drop(features, *names):
@@ -116,17 +116,17 @@ TIME_LEVELS = (TIME_BASE,
                _drop(TIME_BASE, "remain"),
                _drop(TIME_BASE, "remain", "elapsed"),
                _drop(TIME_BASE, "remain", "elapsed", "zone"),
-               ("prev", "phase", "margin", "down"),
-               ("prev", "phase", "lead3", "down"),
-               ("prev", "phase", "down"),
-               ("prev", "phase"),
+               ("prev", "phase", "late", "margin", "down"),
+               ("prev", "phase", "late", "lead3", "down"),
+               ("prev", "phase", "late", "down"),
+               ("prev", "phase", "late"),
                ("prev",),
                ())
 DIST_LEVELS = (DIST_BASE,
                _drop(DIST_BASE, "remain"),
                _drop(DIST_BASE, "remain", "elapsed"),
-               ("tb", "down", "dist", "zone", "lead3", "late3"),
-               ("tb", "down", "dist", "zone", "late3"),
+               ("tb", "down", "dist", "zone", "lead3", "late"),
+               ("tb", "down", "dist", "zone", "late"),
                ("tb", "down", "dist", "zone"),
                ("tb", "down", "dist", "zone3"),
                ("tb", "down", "dist"),
@@ -135,9 +135,9 @@ DIST_LEVELS = (DIST_BASE,
                ())
 # a gamer's or team's own snaps: alike in the situation, or the league's draw -- never their snaps of
 # every down and distance
-GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "late3", "lead3")
+GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "late", "lead3")
 GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone", "tb2", "dist3", "zone3")
-GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "late3", "lead3", "down"))
+GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "late", "lead3", "down"))
 GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone"), ("who", "tb2", "down", "dist3", "zone3"))
 MIN_RECORDS = 40
 MIN_GAMER_RECORDS = 30
@@ -893,14 +893,18 @@ MODEL_FILE = "v21model.pkl"
 ZONE3 = np.array([0, 0, 0, 1, 1, 2, 2])                  # own half, the other half outside the 10, inside the 10
 
 
+def late_of(period, clock):
+    """The end of a half: 0 the rest, 1 Q2's or Q4's 2:00 to 0:31, 2 their last 0:30, 3 overtime."""
+    period, clock = np.asarray(period), np.asarray(clock, float)
+    end = (period == 2) | (period == 4)
+    return np.select([period >= 5, end & (clock <= 30), end & (clock <= LATE)], [3, 2, 1], 0).astype(np.int64)
+
+
 def derive(f):
-    """The coarse features off the fine ones: the lead (behind, level, ahead), the part of the game
-    (lead3; late3: the rest, a half's last 2:00, overtime), the clock (tb2: stopped, running), the
-    distance (dist3: 1-3, 4-6, 7+) and the field (zone3)."""
+    """The coarse features off the fine ones: the lead (lead3: behind, level, ahead), the clock (tb2:
+    stopped, running), the distance (dist3: 1-3, 4-6, 7+) and the field (zone3)."""
     if "margin" in f:
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
-    if "phase" in f:
-        f["late3"] = np.select([np.isin(f["phase"], (2, 5)), f["phase"] == 6], [1, 2], 0).astype(np.int64)
     if "tb" in f:
         f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
     if "dist" in f:
@@ -914,7 +918,8 @@ def _features(recs, model):
     """{feature: array} for real snaps (snaps left in the half off the model's table)."""
     get = lambda k: np.array([r[k] for r in recs])
     period, clock = get("period"), get("clock").astype(float)
-    return derive(dict(prev=get("prev_cls"), phase=phase_of(period, clock), margin=margin_b(get("margin")),
+    return derive(dict(prev=get("prev_cls"), phase=phase_of(period, clock), late=late_of(period, clock),
+                       margin=margin_b(get("margin")),
                        down=down_b(get("down")), dist=dist_b(get("distance")), zone=zone_b(get("field")),
                        elapsed=elapsed_b(get("elapsed")), remain=remain_b(model.remain_at(period, clock)),
                        tb=time_b(get("play_seconds"))))
@@ -1466,7 +1471,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         """Each snap's time; `stopped`: from the stopped-clock part of the same draw (the snap after
         the two-minute warning)."""
         off = team[ix]
-        f = derive(dict(prev=prv, phase=phase_of(period[ix], clock[ix]),
+        f = derive(dict(prev=prv, phase=phase_of(period[ix], clock[ix]), late=late_of(period[ix], clock[ix]),
                         margin=margin_b(score[ix, off] - score[ix, 1 - off]), down=down_b(down[ix]),
                         dist=dist_b(dist[ix]), zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]),
                         remain=remain_b(model.remain_at(period[ix], clock[ix]))))
@@ -1497,7 +1502,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         off = team[ix]
         f = derive(dict(tb=time_b(secs), down=down_b(down[ix]), dist=dist_b(dist[ix]), zone=zone_b(y[ix]),
                         margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clock[ix]),
-                        elapsed=elapsed_b(elapsed[ix]), remain=remain_b(model.remain_at(period[ix], clock[ix]))))
+                        late=late_of(period[ix], clock[ix]), elapsed=elapsed_b(elapsed[ix]),
+                        remain=remain_b(model.remain_at(period[ix], clock[ix]))))
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
         j = model.dist.draw(model.dist.bin_of(f), u, k)
@@ -1707,6 +1713,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if len(ended):
             end_period(ended)
     if st is not None:
+        st["went_ot"] = (period >= 5)
         st["games"] = st.get("games", 0) + P
         st["final"] = score.copy()
         st["q_points"] = q_points

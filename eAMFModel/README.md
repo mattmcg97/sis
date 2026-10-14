@@ -2000,7 +2000,8 @@ missing something. Nothing is ever fitted to close those gaps.
 - **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
   draw falls back level by level to fewer features. The build prints how deep the real states fall.
   The fallbacks keep the situation to the end: the down, the distance and the field, plus coarsely the
-  part of the game and the lead. So a 3rd down is never drawn from 1st downs, and the end of a half
+  part of the game and the lead. Q2's and Q4's last 0:30 is its own part of the game, apart from
+  2:00 to 0:31. So a 3rd down is never drawn from 1st downs, and the end of a half
   never from the rest of it, while there are real snaps alike enough to draw from. (Before the down
   audit, the part of the game went first.)
 - **Gamers and teams, two ways (`--mode`):**
@@ -2097,7 +2098,9 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares two
   early-kick choices from the same states.
 
 It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
-standard errors of the real one.
+standard errors of the real one. It ends with overtime: how often a game goes there, from kick-off
+and from every real Q4 state, by the lead of the side with the ball and the time left, against
+whether the real game did.
 
 ### Where options never happen (`v21-sweep`)
 

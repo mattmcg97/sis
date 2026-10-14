@@ -129,6 +129,10 @@ class TestBins(unittest.TestCase):
         self.assertGreaterEqual(got[0], 0)
         self.assertEqual(got[1], -1)
 
+    def test_the_end_of_a_half(self):
+        self.assertEqual(list(v21.late_of([1, 2, 2, 2, 3, 4, 4, 5], [20, 121, 120, 30, 10, 31, 30, 200])),
+                         [0, 0, 1, 2, 0, 1, 2, 3])
+
     def test_strict_has_no_fallback(self):
         X = np.array([[0, 0]] * 50 + [[1, 0]] * 5)
         b = v21.Bins.build(("a", "b"), (3, 2), (("a", "b"),), X, self.value, {"v": self.value}, 10, strict=True)
@@ -551,7 +555,9 @@ class TestAudit(unittest.TestCase):
         self.assertGreater(real["fourth"].sum(), 0)
         np.testing.assert_allclose(step["fourth"].sum(), real["fourth"].sum(), rtol=0.01)
         lines = "\n".join(A.report(out))
-        for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS"):
+        self.assertGreater(real["ot_n"].sum(), 0)
+        np.testing.assert_allclose(step["ot_n"], real["ot_n"])
+        for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME"):
             self.assertIn(part, lines)
 
 

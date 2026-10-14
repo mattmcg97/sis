@@ -50,7 +50,12 @@ def outcome_of(kind, gain, dist, field):
 def tables():
     return dict(games=0.0, flow=np.zeros((D, S, O)), flow_yards=np.zeros((D, S)), flow_secs=np.zeros((D, S)),
                 step=np.zeros((D, S, B, O)), step_yards=np.zeros((D, S, B)), step_secs=np.zeros((D, S, B)),
-                fourth=np.zeros((S, 3)), early=np.zeros((S, 2)))
+                fourth=np.zeros((S, 3)), early=np.zeros((S, 2)), ot_games=0.0, ot=np.zeros((7, 4)),
+                ot_n=np.zeros((7, 4)))
+
+
+OT_LEADS = v21.MARGIN_NAMES
+OT_CLOCK = ("Q4 to 2:00", "Q4 2:00-1:01", "Q4 1:00-0:31", "Q4 last 0:30")
 
 
 def _add(a, b):
@@ -104,6 +109,8 @@ def _worker(job):
         st = {}
         v21.simulate(model, v21.kickoff_start(model, pair, teams), n_paths, seed=seed, stats=st)
         flow["games"] += st["games"]
+        flow["ot_games"] += float(st["went_ot"].sum())
+        real["ot_games"] += float(any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows))
         log = v21.snap_log(st)
         if len(log["path"]):
             c = _sim_cols(log)
@@ -148,6 +155,23 @@ def _worker(job):
                 np.add.at(step["fourth"], (first, k), 1.0 / state_paths)
             else:
                 np.add.at(step["early"], (first, k), 1.0 / state_paths)
+        # overtime: from every real Q4 state to the end, against whether the real game went to overtime
+        q4 = [(j, s) for j, (i, s) in enumerate(starts) if int(s["period"][0]) == 4]
+        if q4:
+            went_real = float(any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows))
+            st = {}
+            v21.simulate(model, v21.concat_starts([s for _, s in q4]), state_paths, seed=seed + 2, stats=st)
+            went = st["went_ot"].reshape(len(q4), state_paths).mean(1)
+            for (j, s), w in zip(q4, went):
+                side = int(s["team"][0])
+                lead = int(s["home"][0] - s["away"][0]) * (1 if side == 0 else -1)
+                c = float(s["clock"][0])
+                cs = 0 if c > 120 else 1 if c > 60 else 2 if c > 30 else 3
+                lb = int(v21.margin_b(lead))
+                real["ot"][lb, cs] += went_real
+                real["ot_n"][lb, cs] += 1
+                step["ot"][lb, cs] += w
+                step["ot_n"][lb, cs] += 1
     return real, flow, step
 
 
@@ -287,6 +311,28 @@ def gap_lines(real, flow, step, top=12, min_real=100):
         [f"  {z:+6.1f}  {text}" for z, text in rows[:top]]
 
 
+def ot_lines(real, flow, step):
+    g_r, g_s = max(1.0, real["games"]), max(1.0, flow["games"])
+    lines = ["", "  OVERTIME: how often a game goes to overtime (real / sim, %)",
+             f"  from kick-off: {100 * real['ot_games'] / g_r:.1f} / {100 * flow['ot_games'] / g_s:.1f}"
+             f" ({int(real['ot_games'])} real games of {int(real['games'])})",
+             "  from every real Q4 state, by the lead of the side with the ball and the time left",
+             f"  {'':14s}" + "".join(f"{c:>20s}" for c in OT_CLOCK)]
+    for lb, name in enumerate(OT_LEADS):
+        n = real["ot_n"][lb]
+        if not n.sum():
+            continue
+        cells = []
+        for cs in range(4):
+            if n[cs]:
+                cells.append(f"{100 * real['ot'][lb, cs] / n[cs]:5.1f}/{100 * step['ot'][lb, cs] / step['ot_n'][lb, cs]:5.1f}"
+                             f" ({int(n[cs])})")
+            else:
+                cells.append("-")
+        lines.append(f"  {name:14s}" + "".join(f"{c:>20s}" for c in cells))
+    return lines
+
+
 def report(out):
     lines = [f"  v2.1 audit on {out['matches']:,} matches {out['since'] or ''} to {out['until'] or ''}:"
              f" {2 * out['n_paths']:,} kick-off games each; the next snap {out['state_paths']} times from every"
@@ -295,6 +341,7 @@ def report(out):
     lines += [""] + flow_lines(out["real"], out["flow"])
     lines += step_lines(out["real"], out["step"])
     lines += choice_lines(out["real"], out["step"])
+    lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
                   " snaps that kept the ball, cut at the goal line; seconds: PLAY_OVER to PLAY_OVER)"]
     return lines
