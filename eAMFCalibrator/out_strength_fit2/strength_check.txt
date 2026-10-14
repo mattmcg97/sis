@@ -1,0 +1,99 @@
+  STRENGTH CHECK -- 2026-10-01 to 2026-10-12
+
+  A. FROM KICK-OFF: one side's expected points stepped, the other at 16 (league profiles, no strength draw)
+     its points and snaps a game, and how its snaps split (% of its snaps); each part alone has the other two off, at the same strengths
+   expected  strength                points    snaps turnover     loss  no gain    short  1st <20    20-39      40+
+         10     -2.30 as built         10.0     23.2      8.7     11.7     31.2     32.3      8.5      1.6      6.0
+                      tilt alone        6.9     24.6      8.2     11.7     29.8     25.0     19.5      5.1      0.7
+                      boom alone       31.1     20.8      4.9      8.6     22.4     27.2     13.1      4.3     19.6
+                      convert alone     10.7     23.5      4.4      6.9     19.5     46.8     15.1      3.1      4.3
+         13     -0.95 as built         13.1     23.8      6.0      9.3     25.3     35.8     14.8      3.3      5.5
+                      tilt alone       13.2     24.1      5.2      9.4     23.3     26.7     25.1      8.4      1.9
+                      boom alone       23.1     22.6      5.0      8.7     23.1     28.0     18.7      6.1     10.4
+                      convert alone     14.3     24.0      4.0      7.3     19.4     38.6     20.5      6.4      3.8
+         16     -0.37 as built         16.0     23.7      4.6      8.4     21.4     32.1     22.0      7.2      4.3
+                      tilt alone       16.3     23.6      4.3      8.5     20.6     27.0     26.9      9.8      2.8
+                      boom alone       20.3     23.9      4.2      8.1     20.2     27.0     25.2      9.9      5.3
+                      convert alone     16.7     23.4      3.9      7.6     19.3     31.6     24.6      9.2      3.7
+         19     +0.03 as built         19.2     23.3      3.7      7.7     18.9     26.7     28.1     11.3      3.5
+                      tilt alone       18.5     23.1      3.8      7.8     18.9     27.0     27.9     11.0      3.6
+                      boom alone       19.3     24.4      3.8      7.8     19.3     26.6     27.8     11.2      3.5
+                      convert alone     18.5     23.1      3.9      7.7     19.2     26.5     27.9     11.1      3.6
+         22     +0.38 as built         21.8     22.5      3.0      7.2     16.6     21.2     33.8     15.3      2.8
+                      tilt alone       20.3     22.3      3.4      7.3     17.6     26.7     28.4     12.1      4.4
+                      boom alone       18.7     24.8      3.7      7.8     18.7     26.1     29.2     12.1      2.4
+                      convert alone     20.0     22.5      3.8      7.9     19.0     21.5     31.0     13.2      3.5
+         25     +0.85 as built         25.1     21.1      2.4      6.4     14.3     13.6     40.4     20.6      2.3
+                      tilt alone       22.6     21.5      2.9      6.7     15.9     26.5     28.9     13.5      5.7
+                      boom alone       18.5     25.2      3.5      7.5     18.0     26.1     30.9     12.5      1.5
+                      convert alone     21.6     21.7      3.6      8.1     19.1     15.5     34.7     15.4      3.5
+
+  B. EVERY SIDE BY ITS EXPECTED POINTS: real against the sim as priced (the day's draw) and with fixed strengths
+           band  sides  prior          points    snaps turnover     loss  no gain    short  1st <20    20-39      40+
+       under 13     39   12.6   real     14.7     19.9      4.1     10.4     17.0     27.9     29.1      9.1      2.3
+                                draw     12.5     23.9      5.4      9.8     23.4     35.0     17.7      4.8      3.8
+                               fixed     12.4     23.9      5.4      9.8     23.4     35.0     17.8      4.8      3.8
+                           draw-real                       +1.3     -0.6     +6.4     +7.1    -11.4     -4.3     +1.5
+          13-15    215   14.2   real     15.3     21.8      4.9      8.8     19.6     26.8     27.8      9.2      2.9
+                                draw     14.2     23.6      4.8      9.3     21.7     32.0     21.5      7.2      3.5
+                               fixed     14.2     23.6      4.7      9.3     21.6     32.0     21.6      7.2      3.5
+                           draw-real                       -0.1     +0.5     +2.1     +5.2     -6.3     -2.0     +0.6
+          15-17    381   16.0   real     16.4     22.8      4.2      8.3     20.0     26.7     27.9     10.0      2.9
+                                draw     16.0     23.6      4.3      8.2     20.6     30.3     24.3      8.8      3.5
+                               fixed     16.0     23.5      4.3      8.2     20.5     30.3     24.4      8.8      3.5
+                           draw-real                       +0.2     -0.1     +0.6     +3.5     -3.5     -1.2     +0.6
+          17-19    406   18.0   real     17.8     23.3      4.5      8.3     20.7     24.9     26.9     11.2      3.5
+                                draw     18.1     23.6      4.0      8.4     19.6     27.1     26.6     10.7      3.7
+                               fixed     18.1     23.5      3.9      8.4     19.4     27.1     26.8     10.8      3.6
+                           draw-real                       -0.5     +0.1     -1.1     +2.2     -0.4     -0.4     +0.2
+          19-21    280   19.8   real     19.4     23.4      4.6      8.0     19.8     24.4     27.9     10.9      4.4
+                                draw     19.9     23.9      3.8      8.4     19.2     25.2     27.6     11.7      4.0
+                               fixed     19.9     23.8      3.7      8.4     19.0     25.1     27.9     11.9      3.9
+                           draw-real                       -0.8     +0.4     -0.6     +0.8     -0.3     +0.8     -0.3
+          21 up    173   22.2   real     22.1     24.0      4.5      7.5     19.2     23.7     28.8     11.7      4.8
+                                draw     22.1     23.8      3.7      7.4     18.8     23.5     29.1     12.7      4.7
+                               fixed     22.2     23.7      3.6      7.3     18.5     23.2     29.7     13.0      4.6
+                           draw-real                       -0.8     -0.1     -0.4     -0.2     +0.3     +1.1     -0.0
+
+  B. EVERY SIDE BY ITS EXPECTED MARGIN (its expected points less the other side's): real against the sim as priced (the day's draw) and with fixed strengths
+           band  sides  prior          points    snaps turnover     loss  no gain    short  1st <20    20-39      40+
+     -7 to -3.5     36   16.3   real     14.8     22.7      6.2      9.9     20.0     25.1     25.4     10.9      2.4
+                                draw     16.4     23.9      4.6      9.8     21.3     28.6     22.5      8.7      4.5
+                               fixed     16.3     23.9      4.6      9.7     21.2     28.7     22.6      8.8      4.4
+                           draw-real                       -1.6     -0.1     +1.2     +3.5     -2.9     -2.1     +2.0
+     -3.5 to -1    369   16.8   real     17.1     22.8      4.8      8.5     20.9     24.7     27.2     10.2      3.8
+                                draw     16.8     24.0      4.4      8.4     20.9     29.4     23.9      9.0      4.0
+                               fixed     16.7     24.0      4.4      8.4     20.8     29.4     24.0      9.0      3.9
+                           draw-real                       -0.3     -0.0     -0.0     +4.7     -3.3     -1.2     +0.2
+       -1 to +1    684   17.5   real     17.6     23.0      4.4      8.4     20.0     25.6     27.6     10.4      3.5
+                                draw     17.5     23.6      4.2      8.7     20.0     27.9     25.5     10.1      3.7
+                               fixed     17.5     23.6      4.1      8.6     19.9     27.9     25.7     10.2      3.7
+                           draw-real                       -0.3     +0.2     +0.0     +2.3     -2.1     -0.3     +0.2
+     +1 to +3.5    369   18.7   real     19.0     23.1      4.1      7.6     19.0     25.9     28.6     11.1      3.6
+                                draw     18.7     23.4      3.9      8.0     19.4     27.1     27.1     10.9      3.7
+                               fixed     18.7     23.4      3.8      7.9     19.2     27.0     27.4     11.0      3.7
+                           draw-real                       -0.2     +0.3     +0.3     +1.2     -1.5     -0.2     +0.1
+     +3.5 to +7     36   20.5   real     19.5     23.1      4.1      7.7     18.1     25.8     28.7     12.7      3.0
+                                draw     20.4     23.0      3.5      6.5     18.4     25.4     30.1     12.5      3.6
+                               fixed     20.4     23.0      3.4      6.5     18.1     25.0     30.7     12.8      3.4
+                           draw-real                       -0.6     -1.2     +0.4     -0.4     +1.4     -0.1     +0.5
+
+  C. THE DAY'S STRENGTH DRAW AGAINST FIXED STRENGTHS (747 matches, each priced as of its kick-off; fixed: the hold run without the draw)
+                                            draw       fixed
+  total less the prior's                   +0.02       +0.02
+  margin less the prior's                  +0.12       +0.12
+  margin sd in the sim                      9.44        9.06   (real: 9.88 RMS of the result less the prior's)
+  total sd in the sim                      12.09       11.83   (real: 12.27 RMS of the result less the prior's)
+  moneyline log loss                      0.6824      0.6820
+  moneyline Brier                         0.2447      0.2445
+  margin result less expected              -0.41       -0.42
+  margin RPS (lower better)                5.545       5.548
+  margin inside central 50%                52.3%       50.9%
+  margin inside central 80%                80.2%       78.7%
+  total result less expected               +0.27       +0.28
+  total RPS (lower better)                 6.871       6.869
+  total inside central 50%                 52.7%       51.5%
+  total inside central 80%                 81.9%       81.0%
+  log loss, fixed less draw              -0.0004 +/- 0.0014 (paired standard error)
+
+  snaps: scrimmage plays in regulation, kneels out; short: a gain short of the line; 1st <20: a first down under 20 yards; a sim snap is the play its draw landed on, cut at the goal line
