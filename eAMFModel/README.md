@@ -2015,7 +2015,10 @@ missing something. Nothing is ever fitted to close those gaps.
   (0–1, 2–4, 5+) and behind / level / ahead. The audit showed why: level sides in Q4's last 2:00 scored a
   touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
   sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
-  prints how deep real states fall, for the rest of the game and the end of a half apart.
+  prints how deep real states fall, for the rest of the game and the end of a half apart. It
+  also sets Q4's last 2:00, by the lead, against the league groups those real snaps draw from:
+  touchdowns, losses and seconds. A group that mixes situations shows up as a gap there, apart
+  from the game flow and the decisions.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
@@ -2087,8 +2090,9 @@ missing something. Nothing is ever fitted to close those gaps.
     punt or kick a field goal 4+ behind, and after a touchdown 1 or 2 behind it goes for two.
   - **The league's share of each option** among real decisions in similar states. Like the snap
     draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
-    The 4th down and the early kick coarsen the distance before they let the lead go (behind /
-    level / ahead). In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
+    The 4th down and the early kick coarsen the distance, and the 4th down the field too (inside
+    the 20, an easy kick, a long one, out of range), before they let the lead go (behind / level /
+    ahead). In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
     the sim, and a side behind went for it on 90% against 73%, because thin late cells had fallen
     back to every lead.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own

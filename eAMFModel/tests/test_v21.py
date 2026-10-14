@@ -302,6 +302,18 @@ class TestBuild(unittest.TestCase):
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, verbose=False, split="other")
 
+    def test_the_build_sets_late_q4_against_its_draw_groups(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            v21.build(MATCHES, HISTORY, min_records=20, verbose=True, refine=False)
+        text = out.getvalue()
+        self.assertIn("Q4's last 2:00 by the lead", text)
+        self.assertIn("the end of a half", text)
+        m = built()
+        rates = v21.group_rates(m.dist, m.dist.payload["td"])
+        self.assertEqual(len(rates), len(m.dist.count))
+        self.assertTrue(((rates >= 0) & (rates <= 1)).all())
+
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, mode="other", verbose=False)

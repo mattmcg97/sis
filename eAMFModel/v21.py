@@ -197,11 +197,12 @@ DECISION_MIN = 25
 DECISION_PRIOR = 3.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
-                   features=("togo10", "dist", "margin", "phase", "left", "lead3", "dist3"),
-                   sizes=(10, 5, 7, 7, 6, 3, 3),
+                   features=("togo10", "dist", "margin", "phase", "left", "lead3", "dist3", "togo4"),
+                   sizes=(10, 5, 7, 7, 6, 3, 3, 4),
                    levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "lead3", "phase", "left"),
-                           ("togo10", "dist3", "lead3", "phase", "left"), ("togo10", "dist", "lead3", "phase"),
-                           ("togo10", "dist3", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
+                           ("togo10", "dist3", "lead3", "phase", "left"), ("togo4", "dist3", "lead3", "phase", "left"),
+                           ("togo10", "dist", "lead3", "phase"), ("togo4", "dist3", "lead3", "phase"),
+                           ("togo4", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
                            ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
                      who="offense", features=("left", "range", "down", "margin", "half", "lead3"),
@@ -304,6 +305,12 @@ def range_b(k):
 def lead3(m):
     m = np.asarray(m)
     return np.where(m < 0, 0, np.where(m == 0, 1, 2)).astype(np.int64)
+
+
+def togo4(togo):
+    """The yards to the goal as a kicker reads them: inside the 20, 20-34 (an easy kick), 35-51 (a long
+    one) and further (no real side kicks from 52 or more, v21_rules)."""
+    return np.select([np.asarray(togo) <= 19, np.asarray(togo) <= 34, np.asarray(togo) <= 51], [0, 1, 2], 3).astype(np.int64)
 
 
 def togo10(y):
@@ -891,7 +898,8 @@ def decision_features(name, pts):
     if name == "fourth":
         mb = margin_b(g("lead"))
         cols = [togo10(100 - g("togo")), dist_b(g("dist")), mb, phase_of(g("period"), g("clock")),
-                left_b(g("left")), derive(dict(margin=mb))["lead3"], derive(dict(dist=dist_b(g("dist"))))["dist3"]]
+                left_b(g("left")), derive(dict(margin=mb))["lead3"], derive(dict(dist=dist_b(g("dist"))))["dist3"],
+                togo4(g("togo"))]
     elif name == "early_fg":
         p = g("period")
         mb = margin_b(g("lead"))
@@ -1367,6 +1375,8 @@ def report_build(m, recs=None):
     if recs is not None:
         for line in chains_lines(recs):
             print(line)
+        for line in late_lines(m, recs, real):
+            print(line)
     names = {i: g for g, i in m.gamers.items()}
     if m.use_rules:
         print(f"  rules learned off the real decisions (v21_rules: never or all but never taken): "
@@ -1409,6 +1419,46 @@ def remain_lines(m):
     for label, p, c, run, own_, opp_ in REMAIN_SHOWN:
         v = [float(m.remain_at(p, c, run, own_, opp_, l3)) for l3 in range(3)]
         out.append(f"    {label}: " + " / ".join(f"{x:.1f}" for x in v))
+    return out
+
+
+def group_rates(b, flag):
+    """Each group's share of its real records with `flag` (a payload-ordered bool array)."""
+    if not len(b.start):
+        return np.zeros(0)
+    return np.add.reduceat(np.asarray(flag, float), b.start) / np.maximum(1, b.count)
+
+
+def late_lines(m, recs, real=None):
+    """Q4's last 2:00, by the lead: the real snaps' touchdowns, losses and seconds against what the
+    league's draws give the same states (their groups' real snaps): a group that mixes the situation
+    parts from the real snaps it stands for."""
+    real = real if real is not None else getattr(m, "_real_bins", None)
+    if real is None or len(real[1]) != len(recs):
+        return []
+    g = lambda k: np.array([r[k] for r in recs])
+    on = (g("period") == 4) & (g("clock") <= LATE)
+    if not on.any():
+        return []
+    lead = np.sign(g("margin")).astype(np.int64) + 1
+    kind, gain, field = g("kind"), g("gain"), g("field")
+    td = (kind == GAIN) & (gain >= 100 - field)
+    loss = (kind == GAIN) & (gain < 0)
+    d_td = group_rates(m.dist, m.dist.payload["td"])
+    d_loss = group_rates(m.dist, (m.dist.payload["kind"] == GAIN) & (m.dist.payload["gain"] < 0))
+    t_mean = np.add.reduceat(m.time.payload["seconds"].astype(float), m.time.start) / np.maximum(1, m.time.count) \
+        if len(m.time.start) else np.zeros(0)
+    out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown %, loss %,"
+           " seconds; real / group)"]
+    for k, name in enumerate(("behind", "level", "ahead")):
+        w = on & (lead == k)
+        bd, bt = real[1][w], real[0][w]
+        if not w.any() or (bd < 0).all():
+            continue
+        okd, okt = bd >= 0, bt >= 0
+        out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * d_td[bd[okd]].mean():.1f},"
+                   f" loss {100 * loss[w].mean():.1f} / {100 * d_loss[bd[okd]].mean():.1f}, seconds"
+                   f" {g('seconds')[w].mean():.1f} / {t_mean[bt[okt]].mean() if okt.any() else float('nan'):.1f}")
     return out
 
 
@@ -1665,7 +1715,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     def fourth(ix):
         off = team[ix]
         cols = derive(dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
-                           phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix]))))
+                           phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix])),
+                           togo4=togo4(100 - y[ix])))
         cols = {k: v for k, v in cols.items() if k in DECISIONS["fourth"]["features"]}
         lead = score[ix, off] - score[ix, 1 - off]
         must = (period[ix] >= 5) & ot_done[ix, 1 - off] & (lead < 0)
