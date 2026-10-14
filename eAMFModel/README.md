@@ -2033,27 +2033,14 @@ missing something. Nothing is ever fitted to close those gaps.
   | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half |
 
   Each is drawn in three steps:
-  - **The global rules first**, the same for every gamer. Each rule strikes out an option that
-    can't help in that state:
+  - **The rules first**, the same for every gamer. They aren't written by hand: they are the
+    situations where real sides never take an option, or all but never, learned from the real
+    decisions (see `v21-sweep` below). In those situations the option is struck out. Real decisions
+    that took a struck-out option anyway are left out of the gamers' leans. `--no-rules` builds
+    without them.
 
-    | rule | what it does |
-    |---|---|
-    | 4+ behind late | no field goal in Q4's last 0:30, on 4th down or as an early kick (in overtime: once the other side has had the ball) |
-    | behind late | no punt in Q4's last 1:00 (in overtime: once the other side has had the ball) |
-    | 2 behind after a late touchdown | go for two in Q4's last 2:00 (in overtime: 1 or 2 behind once the other side has had the ball) |
-    | ahead late | no timeouts by the side ahead in Q4's last 2:00 or overtime |
-    | ahead late | no onside kick by the side ahead in a half's last 2:00 |
-    | kneel | the side ahead in Q4 kneels when kneeling on its downs left runs the clock out |
-
-    For the kneel, each kneel takes a real running kneel's time. Each of the defense's timeouts, a
-    stopped clock now and a two-minute warning on the way costs one kneel's worth. The snap is a
-    real kneel: its time and its yards.
-
-    The rest of the decision is drawn among what the rules leave. Real decisions that broke a rule
-    are left out of the gamers' leans. The build prints how many real decisions each decision had
-    under a rule and how many broke it. It also prints how often real sides knelt when kneeling
-    would have run the clock out, so the thresholds can be checked against how the game is really
-    played. `--no-rules` builds without them.
+    Overtime's own logic stays as a rule. Once the other side has had the ball, a side behind can't
+    punt or kick a field goal 4+ behind, and after a touchdown 1 or 2 behind it goes for two.
   - **The league's share of each option** among real decisions in similar states. Like the snap
     draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
@@ -2078,6 +2065,41 @@ missing something. Nothing is ever fitted to close those gaps.
   A timeout moves only the time draw.
 
   Overtime is played as in v14.
+- **The game's own end.** In Q4 the side ahead with the ball wins there and then when two things
+  hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
+  has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
+
+### Where options never happen (`v21-sweep`)
+
+```powershell
+python -m eAMFModel v21-sweep --out eAMFCalibrator/out_v21_sweep
+```
+
+The sweep goes through every real decision in the export, by default all of it (`--since` and
+`--until` narrow it). For each decision and each option, a tree splits the decisions on their full
+state:
+- the period and the seconds left in the half;
+- the deciding side's exact lead;
+- yards to the goal and yards to go;
+- the down;
+- both sides' timeouts left;
+- the play before.
+
+It splits so as to separate where the option was taken from where it wasn't. The situations it
+lists are the largest boxes of the state that meet all of these:
+- 30 or more real decisions (`--min-region`);
+- the option taken by 1% of them or fewer (`--rare`);
+- every part of the box alike.
+
+For example: "Q4, 0:41 or less left in the half, behind by 4 or more, 8-35 yards from the goal:
+233 real, never".
+
+Where a few real sides took the option anyway, it lists who: the match, the gamer, the quarter,
+the clock and the lead, so each can be judged as a real choice or a mistake. It also checks the
+game's own end: how many real states met it, and whether play ever went on after one.
+
+It writes `v21_sweep.txt` and `v21_sweep.csv`. `v21-build` learns the same situations from its own
+matches. For early kicks it learns them only from the half's last minute, where its sim decides.
 
 ```powershell
 python -m eAMFModel v21-build --until 2026-10-01 --out v21_full --mode full

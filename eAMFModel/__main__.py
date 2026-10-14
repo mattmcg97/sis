@@ -335,6 +335,35 @@ def cmd_v21_build(args):
     return 0
 
 
+def cmd_v21_sweep(args):
+    import datetime as dt
+    from . import nb2_prior, v21_rules
+    from .remaining import day
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts})")
+    else:
+        print("  no timeouts file: the timeouts' rules can't be swept, and the others don't see them")
+    if args.since:
+        data = {c: rows for c, rows in data.items() if day(c) >= dt.date.fromisoformat(args.since)}
+    if args.until:
+        data = {c: rows for c, rows in data.items() if day(c) < dt.date.fromisoformat(args.until)}
+    history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
+    print(f"  sweeping {len(data):,} matches", flush=True)
+    found, auto, counts = v21_rules.sweep(data, history, min_region=args.min_region, rare=args.rare)
+    lines = v21_rules.report(found, auto, counts, args.min_region, args.rare)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_sweep.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_rules.write_csv(os.path.join(args.out, "v21_sweep.csv"), found)
+        print(f"\n  -> {args.out}/v21_sweep.txt and v21_sweep.csv")
+    return 0
+
+
 def cmd_v21_report(args):
     import datetime as dt
     import time
@@ -727,10 +756,24 @@ def build_parser():
                    help="every gamer decides (4th downs, early kicks, kick-offs, conversions, timeouts) as the "
                         "league does in the same state: no gamer's own lean")
     p.add_argument("--no-rules", action="store_true",
-                   help="without the global decision rules (no field goal 4+ behind late, no punt behind late, "
-                        "two when 2 down late, no timeout by the side ahead late, no onside kick ahead late, "
-                        "kneel when it runs the clock out): the real shares alone")
+                   help="without the rules learned off the real decisions (options never or all but never taken "
+                        "in a situation, see v21-sweep): the real shares alone")
     p.set_defaults(func=cmd_v21_build)
+
+    p = sub.add_parser("v21-sweep", help="every real decision in the export swept for the situations where an "
+                                         "option never happens, or all but never (and who did it anyway)")
+    p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                   help=f"scouting_playover.csv (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers "
+                                                               f"(default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: every match)")
+    p.add_argument("--until", help="matches before this day only, YYYY-MM-DD")
+    p.add_argument("--min-region", type=int, default=30, help="real decisions a situation needs (default 30)")
+    p.add_argument("--rare", type=float, default=0.01,
+                   help="the most an option may be taken in a situation to count as all but never (default 0.01)")
+    p.add_argument("--out", help="also write v21_sweep.txt and v21_sweep.csv here")
+    p.set_defaults(func=cmd_v21_sweep)
 
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
                                           "every step of the real games, and its draws against the real snaps")
