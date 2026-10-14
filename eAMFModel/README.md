@@ -2003,6 +2003,12 @@ missing something. Nothing is ever fitted to close those gaps.
   in the half, plus coarsely the part of the game and the lead. So a 3rd down is never drawn from
   1st downs, and a side with time for one snap never from one with time for ten, while there are
   real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
+  At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
+  distance, the field and the time before it lets the lead go. It keeps the snaps left (0–1, 2–4,
+  5+) and behind / level / ahead. The audit showed why: level sides in Q4's last 2:00 scored a
+  touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
+  sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
+  prints how deep real states fall, for the rest of the game and the end of a half apart.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
@@ -2120,7 +2126,7 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   early-kick choices from the same states. A further table splits each down by the snaps left in
   the half, as the draws read them, and another splits Q4's last 2:00 by the lead. That one shows
   the real states the game's own end covers on their own row, since the sim ends the game there
-  with no snap.
+  with no snap. The 4th-down and early-kick choices in Q4's last 2:00 are split by the lead too.
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. Real states of one game share its result, so the real

@@ -64,7 +64,7 @@ def tables():
                 fourth=np.zeros((S, 3)), early=np.zeros((S, 2)), ot_games=0.0, ot=np.zeros((7, 4)),
                 ot_n=np.zeros((7, 4)), by_rem=np.zeros((D, len(REMAINS), O)),
                 late=np.zeros((4, O)), late_secs=np.zeros(4), pts_ball=np.zeros((7, 4)), pts_other=np.zeros((7, 4)),
-                level=np.zeros((4, 3)))
+                level=np.zeros((4, 3)), fourth_q4=np.zeros((3, 3)), early_q4=np.zeros((3, 2)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -169,6 +169,9 @@ def _worker(job):
         by_start = {r["start"]: r for r in recs}
         st_rows = [rows[i] for i, _ in starts]
         sl_start = slice_of([s["period"][0] for _, s in starts], [s["clock"][0] for _, s in starts])
+        # Q4's last 2:00 by the lead of the side with the ball (-1: elsewhere)
+        lead_q4 = np.array([int(np.sign(_side_lead(s)[2])) + 1 if int(s["period"][0]) == 4
+                            and float(s["clock"][0]) <= v21.LATE else -1 for _, s in starts])
         down_start = np.array([s["down"][0] for _, s in starts])
         mine = [by_start.get(v21.s14._i(r["message"])) for r in st_rows]
         pairs = [(r, s) for (_, s), r in zip(starts, mine) if r is not None]
@@ -190,11 +193,15 @@ def _worker(job):
                 continue
             p, clk, d = int(s["period"][0]), float(s["clock"][0]), int(s["down"][0])
             if d == 4:
-                real["fourth"][sl_start[j], v21.PUNT if b["play_kind"] == "PUNT"
-                               else v21.FG if b["play_kind"] == "FIELD_GOAL" else v21.GO] += 1
+                k = v21.PUNT if b["play_kind"] == "PUNT" else v21.FG if b["play_kind"] == "FIELD_GOAL" else v21.GO
+                real["fourth"][sl_start[j], k] += 1
+                if lead_q4[j] >= 0:
+                    real["fourth_q4"][lead_q4[j], k] += 1
             elif (p == 2 or p >= 4) and float(v21.half_left(p, clk)) <= v21.EARLY_LEFT \
                     and 100 - int(s["y"][0]) + 17 <= v21.FG_MAX:
                 real["early"][sl_start[j], int(b["play_kind"] == "FIELD_GOAL")] += 1
+                if lead_q4[j] >= 0:
+                    real["early_q4"][lead_q4[j], int(b["play_kind"] == "FIELD_GOAL")] += 1
         S_ = v21.concat_starts([s for _, s in starts])
         st = {}
         v21.simulate(model, S_, state_paths, seed=seed + 1, stats=st, max_steps=1)
@@ -207,11 +214,14 @@ def _worker(job):
         for name, who, k, sl, ix in st.get("_dec") or []:
             if ix is None or name not in ("fourth", "early_fg"):
                 continue
-            first = sl_start[ix // state_paths]
+            first, lq = sl_start[ix // state_paths], lead_q4[ix // state_paths]
+            on = lq >= 0
             if name == "fourth":
                 np.add.at(step["fourth"], (first, k), 1.0 / state_paths)
+                np.add.at(step["fourth_q4"], (lq[on], k[on]), 1.0 / state_paths)
             else:
                 np.add.at(step["early"], (first, k), 1.0 / state_paths)
+                np.add.at(step["early_q4"], (lq[on], k[on]), 1.0 / state_paths)
         # overtime: from every real Q4 state to the end, against whether the real game went to overtime
         q4 = [(j, s) for j, (i, s) in enumerate(starts) if int(s["period"][0]) == 4]
         if q4:
@@ -361,12 +371,23 @@ def choice_lines(real, step):
         if r.sum():
             lines.append(f"  {'all' if s_ is None else SLICES[s_]:16s}{int(r.sum()):>7d}"
                          + "".join(f"{_pair(_pct(r[k], r.sum()), _pct(m[k], m.sum())):>14s}" for k in range(3)))
+    lines += ["", "  4th DOWN in Q4's last 2:00, by the lead of the side with the ball (real / sim, %)",
+              f"  {'':16s}{'n real':>7s}" + "".join(f"{o:>14s}" for o in FOURTH)]
+    for k, name in enumerate(LEADS3):
+        r, m = real["fourth_q4"][k], step["fourth_q4"][k]
+        if r.sum():
+            lines.append(f"  {name:16s}{int(r.sum()):>7d}"
+                         + "".join(f"{_pair(_pct(r[o], r.sum()), _pct(m[o], m.sum())):>14s}" for o in range(3)))
     lines += ["", "  A KICK on downs 1-3 in range, the half's last minute, from the real states (real / sim, %)",
               f"  {'':16s}{'n real':>7s}{'kick':>14s}"]
     for s_ in range(S):
         r, m = real["early"][s_], step["early"][s_]
         if r.sum():
             lines.append(f"  {SLICES[s_]:16s}{int(r.sum()):>7d}{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
+    for k, name in enumerate(LEADS3):
+        r, m = real["early_q4"][k], step["early_q4"][k]
+        if r.sum():
+            lines.append(f"  {'Q4, ' + name:16s}{int(r.sum()):>7d}{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
     return lines
 
 

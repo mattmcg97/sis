@@ -107,11 +107,11 @@ TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
 SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=6, tb=6,
-             lead3=3, tb2=2, dist3=3, zone3=3, endgame=29)               # the last five: coarse ones (derive)
+             lead3=3, tb2=2, dist3=3, zone3=3, endgame=29, endgame3=13)  # the last seven: coarse ones (derive)
 TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
 DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
-TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
-DIST_FEATURES = DIST_BASE + ("lead3", "zone3")
+TIME_FEATURES = TIME_BASE + ("lead3", "endgame3")       # the fine features, then the coarse ones the fallbacks read
+DIST_FEATURES = DIST_BASE + ("lead3", "zone3", "endgame3", "dist3", "tb2")
 
 
 def _drop(features, *names):
@@ -122,12 +122,16 @@ def _drop(features, *names):
 # sim's own expected count for the clock, whether it's running, both sides' timeouts and the lead) and
 # coarsely the part of the game and the lead -- to the end: a 3rd down is never drawn from 1st downs,
 # a side with time for one snap never from one with time for ten, while there are real snaps alike.
+# At the end of a half (endgame3: the snaps left and the lead) the distance and field coarsen before
+# the lead goes: a level side in field-goal range late plays for the kick, a side ahead runs it out,
+# and neither is drawn from the snaps of every lead at that spot.
 TIME_LEVELS = (TIME_BASE,
                _drop(TIME_BASE, "elapsed"),
                _drop(TIME_BASE, "elapsed", "zone"),
                ("prev", "phase", "margin", "down", "remain"),
                ("prev", "phase", "lead3", "down", "remain"),
                ("prev", "phase", "lead3", "remain"),
+               ("prev", "phase", "endgame3"),
                ("prev", "phase", "remain"),
                ("prev", "remain"),
                ("prev",),
@@ -136,7 +140,10 @@ DIST_LEVELS = (DIST_BASE,
                _drop(DIST_BASE, "elapsed"),
                ("tb", "down", "dist", "zone", "lead3", "phase", "remain"),
                ("tb", "down", "dist", "zone", "lead3", "remain"),
-               ("tb", "down", "dist", "zone", "remain"),
+               ("tb", "down", "dist", "zone", "endgame3"),
+               ("tb", "down", "dist3", "zone", "endgame3"),
+               ("tb2", "down", "dist3", "zone3", "endgame3"),
+               ("tb2", "down", "zone3", "endgame3"),
                ("tb", "down", "dist", "zone"),
                ("tb", "down", "dist", "zone3"),
                ("tb", "down", "dist"),
@@ -1015,6 +1022,15 @@ def endgame_of(phase, remain, margin):
     return np.where(phase == 6, 22 + margin, np.where(end, 1 + 7 * r3 + margin, 0)).astype(np.int64)
 
 
+def endgame3_of(phase, remain, lead3):
+    """endgame_of with the lead behind / level / ahead: 0 the bulk, 1-9 the end of a half by the snaps
+    left (0-1, 2-4, 5+) and the lead, 10-12 overtime by the lead (the league draws' fallbacks)."""
+    phase, remain, lead3 = np.asarray(phase), np.asarray(remain), np.asarray(lead3)
+    r3 = np.select([remain == 0, remain <= 2], [0, 1], 2)
+    end = (phase == 2) | (phase == 5) | (remain <= 2)
+    return np.where(phase == 6, 10 + lead3, np.where(end, 1 + 3 * r3 + lead3, 0)).astype(np.int64)
+
+
 def derive(f):
     """The coarse features off the fine ones: the lead (lead3: behind, level, ahead), the clock (tb2:
     stopped, running), the distance (dist3: 1-3, 4-6, 7+), the field (zone3) and the end of a half
@@ -1023,6 +1039,7 @@ def derive(f):
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
     if "remain" in f and "phase" in f and "margin" in f:
         f["endgame"] = endgame_of(f["phase"], f["remain"], f["margin"])
+        f["endgame3"] = endgame3_of(f["phase"], f["remain"], f["lead3"])
     if "tb" in f:
         f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
     if "dist" in f:
@@ -1269,12 +1286,21 @@ def fit_tilts(bins, values, bin_ids, observed, who, sizes, grid=ADJUST_GRID, pri
 def report_build(m, recs=None):
     """The build's lines: the draws' groups and how deep the real snaps' own states fall back."""
     real = getattr(m, "_real_bins", None)
+    feats = _features(recs, m) if recs else None
+    end = feats["endgame"] > 0 if feats is not None else None
     for i, (name, b) in enumerate((("time", m.time), ("distance", m.dist))):
-        share = b.level_shares(real[i]) if real is not None else np.bincount(b.level_of, minlength=len(b.levels)) / max(1, len(b.level_of))
-        print(f"  {name} draw: {len(b.count):,} groups; real snaps' states by the features they draw on: "
-              + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
+        if real is None or end is None or len(real[i]) != len(end):
+            share = np.bincount(b.level_of, minlength=len(b.levels)) / max(1, len(b.level_of))
+            print(f"  {name} draw: {len(b.count):,} groups; by the features they draw on: "
+                  + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
+            continue
+        rest, late = b.level_shares(real[i][~end]), b.level_shares(real[i][end])
+        print(f"  {name} draw: {len(b.count):,} groups; real snaps' states by the features they draw on"
+              f" (the rest of the game / the end of a half):")
+        for k, lv in enumerate(b.levels):
+            if rest[k] >= 0.005 or late[k] >= 0.005:
+                print(f"    {'+'.join(lv) or 'all':52s}{100 * rest[k]:4.0f}% /{100 * late[k]:4.0f}%")
     if m.mode == "full":
-        feats = _features(recs, m) if recs else None
         for kind_ in ("gamer", "team"):
             for role in ("off", "def"):
                 t, d = m.own.get((kind_, role, "time")), m.own.get((kind_, role, "dist"))
