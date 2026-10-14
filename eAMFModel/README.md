@@ -2145,7 +2145,11 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   the real states the game's own end covers on their own row, since the sim ends the game there
   with no snap. The 4th-down and early-kick choices in Q4's last 2:00 are split by what a field
   goal does for the side with the ball, and conversions in Q4's last 3:00 by the lead after the
-  six (−1: a kick ties, two wins), the sim's own games against the real ones.
+  six (−1: a kick ties, two wins), the sim's own games against the real ones. Each choice also
+  shows the league's share in the sim's own cells, before the gamers' leans and the rules: where
+  the sim parts from the real choice, that says whether the cells or the leans move it. Q4's last
+  2:00 is split by the time each play took, too, and the sim's distance draws by where they came
+  from (the league's, a team's own, a gamer's own).
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. Real states of one game share its result, so the real

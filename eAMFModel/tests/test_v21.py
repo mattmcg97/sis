@@ -669,7 +669,8 @@ class TestAudit(unittest.TestCase):
         np.testing.assert_allclose(step["level"].sum(1), real["level"].sum(1))
         for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
                      "ONE SNAP by the snaps left", "ONE SNAP in Q4's last 2:00", "Q4 STATES", "Q4 STATES, level",
-                     "by what a field goal does", "CONVERSIONS in Q4's last 3:00"):
+                     "by what a field goal does", "CONVERSIONS in Q4's last 3:00", "by the time its play took",
+                     "the league's share in the sim's cells"):
             self.assertIn(part, lines)
 
 

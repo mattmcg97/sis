@@ -1578,7 +1578,7 @@ def _tilts(model, kind, gamer, team_ix):
 # a snap as the census reads it: its clock and the play before as at its PLAY_OVER, the clock it used to
 # the next (seconds) and the time its distance was drawn on (drawn)
 SNAP_LOG = ("path", "period", "clock", "prev", "seconds", "drawn", "kind", "gain", "dist", "field", "side", "down",
-            "lead", "conv", "rem", "to_own", "to_opp")
+            "lead", "conv", "rem", "to_own", "to_opp", "src", "tb")     # src: the distance draw's (0 league, 1 team, 2 gamer)
 
 
 def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
@@ -1624,9 +1624,12 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         k = model.choices[name].draw(cols, who, rng.random(len(who)), combine(learned, ot))
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
+            ch = model.choices[name]          # the league's shares in each decision's cell (no lean, no rule)
+            st.setdefault("_dec_base", []).append(
+                ch.shares[ch.bins.bin_of(cols)] if ch.bins is not None else np.tile(ch.shares[0], (len(who), 1)))
             if name == "two":                 # the audit's conversions: the clock's cell, the lead after the six
                 st.setdefault("_two", []).append((np.asarray(cols["cell"]).copy(), np.asarray(cols["lead"]) - CONV_MARGIN,
-                                                  k.copy()))
+                                                  k.copy(), st["_dec_base"][-1][:, 1].copy()))
         return k
 
     def kickoff(ix):
@@ -1847,7 +1850,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         # sneak for inches shows as 0 and moves the chains); else by the yards
         same = (made <= 1) & (rdist == dist[ix])
         conv = np.where(same, made == 1, gain >= dist[ix])
-        return kind, gain, shift, conv, made == 2
+        src = np.array([0] + [1 if lay[0] == "team" else 2 for lay in layers[1:]], np.int64)[out["_from"]]
+        return kind, gain, shift, conv, made == 2, src
 
     def play(ix):
         off = team[ix]
@@ -1896,7 +1900,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         clock[ix] = np.maximum(0.0, clock[ix] - secs)
         # the rest as a real snap reads: off the state at the play before's end (a snap after the
         # two-minute warning is filed under its clock before it), the time its play took
-        kind, gain, shift, conv, replay = draw_play(ix, secs, start_clock, rem)
+        kind, gain, shift, conv, replay, src = draw_play(ix, secs, start_clock, rem)
         off = team[ix]
         elapsed[ix] += 1
         if st is not None:                    # logged as a real snap reads: PLAY_OVER to PLAY_OVER
@@ -1904,7 +1908,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             st["_snaps"].append((ix.copy(), period[ix].copy(), start_clock, start_prv, start_clock - clock[ix],
                                  secs.copy(), kind.copy(), np.minimum(gain, 100 - y[ix]), dist[ix].copy(),
                                  y[ix].copy(), off.copy(), down[ix].copy(), score[ix, off] - score[ix, 1 - off],
-                                 got, rem.copy(), tos0[:, 0].copy(), tos0[:, 1].copy()))
+                                 got, rem.copy(), tos0[:, 0].copy(), tos0[:, 1].copy(), src, time_b(secs)))
         tally("snaps", len(ix))
         to = kind == TURNOVER
         if to.any():
