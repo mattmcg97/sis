@@ -364,6 +364,35 @@ def cmd_v21_sweep(args):
     return 0
 
 
+def cmd_v21_audit(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_audit
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  auditing {len(snaps):,} matches ({workers} processes)", flush=True)
+    out = v21_audit.run(args.model, snaps, history, n_paths=args.paths, state_paths=args.state_paths,
+                        every=args.every, workers=workers, since=since, until=until)
+    lines = v21_audit.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_audit.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"\n  -> {args.out}/v21_audit.txt")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
 def cmd_v21_report(args):
     import datetime as dt
     import time
@@ -774,6 +803,21 @@ def build_parser():
                    help="the most an option may be taken in a situation to count as all but never (default 0.01)")
     p.add_argument("--out", help="also write v21_sweep.txt and v21_sweep.csv here")
     p.set_defaults(func=cmd_v21_sweep)
+
+    p = sub.add_parser("v21-audit", help="v2.1 down by down and by the time left against the real games: its own "
+                                         "games from kick-off, and the next snap from every real state")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=500, help="kick-off games per receiving side (default 500)")
+    p.add_argument("--state-paths", type=int, default=50, help="next snaps drawn from each real state (default 50)")
+    p.add_argument("--every", type=int, default=1, help="every Nth real state (default 1: all)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_audit.txt here")
+    p.set_defaults(func=cmd_v21_audit)
 
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
                                           "every step of the real games, and its draws against the real snaps")

@@ -2069,6 +2069,28 @@ missing something. Nothing is ever fitted to close those gaps.
   hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
   has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
 
+### Down by down, by the time left (`v21-audit`)
+
+```powershell
+python -m eAMFModel v21-audit --model v21_dec --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_audit
+```
+
+The audit sets the sim against the window's real games, down by down. The parts of the game are
+Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares two ways:
+- **Game flow.** The sim's own games from kick-off (`--paths` per receiving side, each match with
+  its gamers and teams) against the real games. For each down and part of the game: snaps a game,
+  the share ending in a first down or touchdown, turnovers, yards and clock used. Where the sim
+  reaches a down more often than the real games, the drives part company there, compounding
+  included.
+- **One snap.** The next snap alone, drawn `--state-paths` times from every real state before a snap,
+  against what really came of it. This shows the draws with the game flow taken out. For each down,
+  by part of the game and by distance, it gives the share of each outcome: turnover, loss, no gain,
+  short of the line, first down, touchdown. It also gives the yards, the clock, and the 4th-down and
+  early-kick choices from the same states.
+
+It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
+standard errors of the real one.
+
 ### Where options never happen (`v21-sweep`)
 
 ```powershell

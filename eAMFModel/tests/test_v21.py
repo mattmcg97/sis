@@ -425,7 +425,7 @@ class TestRules(unittest.TestCase):
         m.rules = {"fourth": [(v21.FG, {"period": (4, 4), "left": (None, 40), "lead": (None, -4)})]}
         st = {}
         v21.simulate(m, _state(m, period=4, clock=20.0, down=4, dist=3, y=80, home=10, away=17), 50, stats=st)
-        name, who, k, sl = st["_dec"][0]
+        name, who, k, sl = st["_dec"][0][:4]
         self.assertEqual(name, "fourth")
         self.assertFalse((k == v21.FG).any())
         m.use_rules = False
@@ -507,6 +507,36 @@ class TestReport(unittest.TestCase):
 
     def test_steps(self):
         self.assertEqual(list(v21_report.step_of([1, 1, 2, 4, 5], [200, 100, 121, 120, 50])), [0, 1, 2, 7, 8])
+
+
+class TestAudit(unittest.TestCase):
+
+    def test_slices_and_outcomes(self):
+        from .. import v21_audit as A
+        self.assertEqual(list(A.slice_of([1, 2, 2, 2, 2, 3, 4, 4, 5], [200, 200, 100, 45, 20, 10, 121, 30, 100])),
+                         [0, 1, 2, 3, 4, 5, 6, 9, 10])
+        self.assertEqual(list(A.outcome_of([v21.TURNOVER, v21.GAIN, v21.GAIN, v21.GAIN, v21.GAIN, v21.GAIN],
+                                           [0, 30, 10, 3, 0, -2], [10, 10, 10, 10, 10, 10], [70, 70, 50, 50, 50, 50])),
+                         [0, A.TD, A.FIRST, 3, 2, 1])
+
+    def test_the_audit_sets_the_sim_against_the_real_downs(self):
+        from .. import v21_audit as A
+        model = built()
+        codes = sorted(MATCHES)[:8]
+        with tempfile.TemporaryDirectory() as d:
+            model.save(os.path.join(d, v21.MODEL_FILE))
+            out = A.run(d, {c: MATCHES[c] for c in codes}, HISTORY, n_paths=30, state_paths=5)
+        real, flow, step = out["real"], out["flow"], out["step"]
+        self.assertEqual(real["games"], 8)
+        self.assertEqual(flow["games"], 8 * 2 * 30)
+        n_real = sum(len([r for r in v21.match_snaps(MATCHES[c])]) for c in codes)
+        self.assertEqual(int(real["flow"].sum()), n_real)
+        self.assertGreater(step["step"].sum(), 0.5 * real["step"].sum())     # most states snap at once
+        self.assertGreater(real["fourth"].sum(), 0)
+        np.testing.assert_allclose(step["fourth"].sum(), real["fourth"].sum(), rtol=0.01)
+        lines = "\n".join(A.report(out))
+        for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS"):
+            self.assertIn(part, lines)
 
 
 class TestCli(unittest.TestCase):

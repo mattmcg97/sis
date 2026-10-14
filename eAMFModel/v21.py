@@ -1230,7 +1230,8 @@ def _tilts(model, kind, gamer, team_ix):
 
 # a snap as the census reads it: its clock and the play before as at its PLAY_OVER, the clock it used to
 # the next (seconds) and the time its distance was drawn on (drawn)
-SNAP_LOG = ("path", "period", "clock", "prev", "seconds", "drawn", "kind", "gain", "dist", "field", "side")
+SNAP_LOG = ("path", "period", "clock", "prev", "seconds", "drawn", "kind", "gain", "dist", "field", "side", "down",
+            "lead")
 
 
 def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
@@ -1267,14 +1268,14 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                     lead=score[ix, side] - score[ix, 1 - side], togo=100 - y[ix], dist=dist[ix], down=down[ix],
                     own_to=tos[ix, side], opp_to=tos[ix, 1 - side], prev=prev[ix])
 
-    def decide(name, cols, who, fine=None, ot=None):
+    def decide(name, cols, who, fine=None, ot=None, ix=None):
         """A decision for each path: the options the rules strike out in its full state (`fine`) and
         overtime's own (`ot`) taken away, the rest drawn from the real ones in the state, leaned by the
         gamer deciding."""
         learned = v21_rules.mask(model.rules, name, fine) if use_rules and fine is not None else None
         k = model.choices[name].draw(cols, who, rng.random(len(who)), combine(learned, ot))
         if st is not None:
-            st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols)))
+            st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
         return k
 
     def kickoff(ix):
@@ -1284,7 +1285,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         desperate = ((period[ix] >= 4) & (lead < 0) & (half_left(period[ix], clock[ix]) <= 180)).astype(np.int64)
         late = (((period[ix] == 2) | (period[ix] == 4)) & (clock[ix] <= LATE)).astype(np.int64)
         kind = decide("kickoff", dict(desperate=desperate, late=late, lead=lead3(lead)), gamer[ix, kicker],
-                      fine=state(ix, kicker))
+                      fine=state(ix, kicker), ix=ix)
         tally("kickoffs", len(ix))
         for k_, spot in ((TOUCHBACK, KICK_TOUCHBACK), (NO_LANDING, KICK_NO_LANDING)):
             sel = kind == k_
@@ -1341,7 +1342,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 cell = np.where((p == 4) & (c <= edge), 4 + i, cell)
         close = ot & ot_done[ix, 1 - side] & ((lead == -1) | (lead == -2))
         two = decide("two", dict(cell=cell, lead=np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN),
-                     gamer[ix, side], fine=state(ix, side), ot=ot_mask("two", len(ix), other_done_close=close)) == 1
+                     gamer[ix, side], fine=state(ix, side), ot=ot_mask("two", len(ix), other_done_close=close),
+                     ix=ix) == 1
         good = rng.random(len(ix)) < np.where(two, model.two_good, model.kick_good)
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
         tally("two_point_tries", two.sum())
@@ -1379,7 +1381,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         lead = score[ix, off] - score[ix, 1 - off]
         must = (period[ix] >= 5) & ot_done[ix, 1 - off] & (lead < 0)
         choice = decide("fourth", cols, gamer[ix, off], fine=state(ix, off),
-                        ot=ot_mask("fourth", len(ix), (must, lead <= -4)))
+                        ot=ot_mask("fourth", len(ix), (must, lead <= -4)), ix=ix)
         choice = np.where((choice == FG) & (100 - y[ix] + 17 > FG_MAX), np.where(dist[ix] <= 2, GO, PUNT), choice)
         pu, fg = ix[choice == PUNT], ix[choice == FG]
         if len(pu):
@@ -1491,11 +1493,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         d_ = np.flatnonzero(running & (tos[ix, 1 - off] > 0))
         if len(d_):
             call_def[d_] = decide("to_def", {k: v[d_] for k, v in cols.items()}, gamer[ix[d_], 1 - off[d_]],
-                                  fine=state(ix[d_], 1 - off[d_])) == 1
+                                  fine=state(ix[d_], 1 - off[d_]), ix=ix[d_]) == 1
         o_ = np.flatnonzero(running & ~call_def & (tos[ix, off] > 0))
         if len(o_):
             call_off[o_] = decide("to_off", {k: v[o_] for k, v in cols.items()}, gamer[ix[o_], off[o_]],
-                                  fine=state(ix[o_], off[o_])) == 1
+                                  fine=state(ix[o_], off[o_]), ix=ix[o_]) == 1
         prv = prev[ix].copy()
         tos[ix[call_def], 1 - off[call_def]] -= 1
         tos[ix[call_off], off[call_off]] -= 1
@@ -1528,7 +1530,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if st is not None:                    # logged as a real snap reads: PLAY_OVER to PLAY_OVER
             st["_snaps"].append((ix.copy(), period[ix].copy(), start_clock, start_prv, start_clock - clock[ix],
                                  secs.copy(), kind.copy(), np.minimum(gain, 100 - y[ix]), dist[ix].copy(),
-                                 y[ix].copy(), off.copy()))
+                                 y[ix].copy(), off.copy(), down[ix].copy(), score[ix, off] - score[ix, 1 - off]))
         tally("snaps", len(ix))
         to = kind == TURNOVER
         if to.any():
@@ -1654,7 +1656,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 lead = score[e, off] - score[e, 1 - off]
                 must = (period[e] >= 5) & ot_done[e, 1 - off] & (lead < 0)
                 now = e[decide("early_fg", cols, gamer[e, off], fine=state(e, off),
-                               ot=ot_mask("early_fg", len(e), (must, lead <= -4))) == 1]
+                               ot=ot_mask("early_fg", len(e), (must, lead <= -4)), ix=e) == 1]
                 if len(now):
                     tally("early_field_goals", len(now))
                     field_goal(now)
@@ -1678,7 +1680,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
 def decision_census(stats, n_who):
     """{name: {"slices": (slices, options), "who": (gamers + 1, options)}} counts of a sim's decisions."""
     out = {}
-    for name, who, k, sl in stats.get("_dec") or []:
+    for name, who, k, sl, *_ in stats.get("_dec") or []:
         K, S_ = len(DECISIONS[name]["options"]), len(SLICE_NAMES[name])
         c = out.setdefault(name, {"slices": np.zeros((S_, K)), "who": np.zeros((n_who, K))})
         np.add.at(c["slices"], (sl, k), 1)
