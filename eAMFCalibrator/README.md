@@ -2647,6 +2647,43 @@ career totals):
 
 Writes `out/player_stats.txt` and `out/player_stats_check.csv`.
 
+### Rematches the same day: `bets rematches`
+
+```bash
+python -m eAMFCalibrator bets rematches --since "2026-10-01 00:00:00"
+```
+
+This looks at what happens to the money when two gamers meet again the same
+day. A day is the gamers' session (no gap over `SESSION_BREAK_MINUTES`), so a
+night that runs past midnight UTC counts as one day. Each pair's meetings that
+day are numbered 1st, 2nd, 3rd, 4th+.
+
+Each rematch's teams are read against the day's first meeting:
+- **same teams:** each gamer on the team he had then (the exact matchup);
+- **swapped teams:** each gamer on the other's;
+- **teams changed:** anything else.
+
+The report has these parts:
+1. **Money per match by meeting, teams and the first margin:** stake per
+   match on the moneyline, handicap and total, and the book's margin. The
+   first meeting's margin of victory is banded draw, 1–3, 4–7, 8–13, 14–20
+   and 21+.
+2. **The moneyline in rematches, against the first meeting's winner:**
+   - prod's pre-match price for him at the first meeting and now (whether
+     prod moved after the result), and how often he won again;
+   - the share of the stake on him;
+   - the book's margin and the residual (won less prod's p at the bet) on
+     him and on his opponent.
+
+   This is shown by the first margin, by teams, by meeting, pre-match
+   against in play, and for restricted and VIP accounts.
+3. **The handicap and the total:** the handicap money on the first winner,
+   and the over and under money by the first meeting's total and margin.
+4. **The 25 rematches with the most moneyline stake.**
+
+Writes `out/bets_rematches.txt` and `out/bets_rematches.csv` (one row per
+match).
+
 ### The matches the book loses on the moneyline: `bets ml-losers`
 
 ```bash
