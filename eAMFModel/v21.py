@@ -197,18 +197,18 @@ DECISION_MIN = 25
 DECISION_PRIOR = 3.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
-                   features=("togo10", "dist", "margin", "phase", "left", "lead3", "dist3", "togo4"),
-                   sizes=(10, 5, 7, 7, 6, 3, 3, 4),
-                   levels=(("togo10", "dist", "margin", "phase", "left"), ("togo10", "dist", "lead3", "phase", "left"),
-                           ("togo10", "dist3", "lead3", "phase", "left"), ("togo4", "dist3", "lead3", "phase", "left"),
-                           ("togo10", "dist", "lead3", "phase"), ("togo4", "dist3", "lead3", "phase"),
-                           ("togo4", "lead3", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
+                   features=("togo10", "dist", "margin", "phase", "left", "fg4", "dist3", "togo4"),
+                   sizes=(10, 5, 7, 7, 6, 4, 3, 4),
+                   levels=(("togo10", "dist", "margin", "fg4", "phase", "left"), ("togo10", "dist", "fg4", "phase", "left"),
+                           ("togo10", "dist3", "fg4", "phase", "left"), ("togo4", "dist3", "fg4", "phase", "left"),
+                           ("togo10", "dist", "fg4", "phase"), ("togo4", "dist3", "fg4", "phase"),
+                           ("togo4", "fg4", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
                            ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
-                     who="offense", features=("left", "range", "down", "margin", "half", "lead3"),
-                     sizes=(6, 4, 3, 7, 3, 3),
-                     levels=(("left", "range", "down", "margin", "half"), ("left", "range", "margin", "half"),
-                             ("left", "range", "lead3", "half"), ("left", "range", "half"), ("left", "lead3", "half"),
+                     who="offense", features=("left", "range", "down", "margin", "half", "fg4"),
+                     sizes=(6, 4, 3, 7, 3, 4),
+                     levels=(("left", "range", "down", "margin", "fg4", "half"), ("left", "range", "margin", "fg4", "half"),
+                             ("left", "range", "fg4", "half"), ("left", "range", "half"), ("left", "fg4", "half"),
                              ("left", "half"), ("left",), ())),
     "kickoff": dict(label="kick-off", options=("return", "touchback", "no landing zone", "kept"), who="kicker",
                     features=("desperate", "late", "lead"), sizes=(2, 2, 3),
@@ -305,6 +305,16 @@ def range_b(k):
 def lead3(m):
     m = np.asarray(m)
     return np.where(m < 0, 0, np.where(m == 0, 1, 2)).astype(np.int64)
+
+
+FG4_NAMES = ("4+ behind", "3 behind", "1-2 behind or level", "ahead")
+
+
+def fg4_of(lead):
+    """The lead as a field goal reads it: not enough (4+ behind), a tie (3 behind: overtime, which real
+    sides go for a touchdown rather than settle for), the lead (1-2 behind or level), ahead."""
+    lead = np.asarray(lead)
+    return np.select([lead <= -4, lead == -3, lead <= 0], [0, 1, 2], 3).astype(np.int64)
 
 
 def togo4(togo):
@@ -898,13 +908,13 @@ def decision_features(name, pts):
     if name == "fourth":
         mb = margin_b(g("lead"))
         cols = [togo10(100 - g("togo")), dist_b(g("dist")), mb, phase_of(g("period"), g("clock")),
-                left_b(g("left")), derive(dict(margin=mb))["lead3"], derive(dict(dist=dist_b(g("dist"))))["dist3"],
+                left_b(g("left")), fg4_of(g("lead")), derive(dict(dist=dist_b(g("dist"))))["dist3"],
                 togo4(g("togo"))]
     elif name == "early_fg":
         p = g("period")
         mb = margin_b(g("lead"))
         cols = [early_b(g("left")), range_b(g("togo") + 17), g("down") - 1, mb,
-                np.where(p == 2, 0, np.where(p == 4, 1, 2)), derive(dict(margin=mb))["lead3"]]
+                np.where(p == 2, 0, np.where(p == 4, 1, 2)), fg4_of(g("lead"))]
     elif name == "kickoff":
         cols = [g("desperate"), g("late"), lead3(g("lead"))]
     elif name == "two":
@@ -1614,6 +1624,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         k = model.choices[name].draw(cols, who, rng.random(len(who)), combine(learned, ot))
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
+            if name == "two":                 # the audit's conversions: the clock's cell, the lead after the six
+                st.setdefault("_two", []).append((np.asarray(cols["cell"]).copy(), np.asarray(cols["lead"]) - CONV_MARGIN,
+                                                  k.copy()))
         return k
 
     def kickoff(ix):
@@ -1716,7 +1729,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         off = team[ix]
         cols = derive(dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
                            phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix])),
-                           togo4=togo4(100 - y[ix])))
+                           togo4=togo4(100 - y[ix]), fg4=fg4_of(score[ix, off] - score[ix, 1 - off])))
         cols = {k: v for k, v in cols.items() if k in DECISIONS["fourth"]["features"]}
         lead = score[ix, off] - score[ix, 1 - off]
         must = (period[ix] >= 5) & ot_done[ix, 1 - off] & (lead < 0)
@@ -2015,7 +2028,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 mb = margin_b(score[e, off] - score[e, 1 - off])
                 cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1, margin=mb,
                             half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)),
-                            lead3=derive(dict(margin=mb))["lead3"])
+                            fg4=fg4_of(score[e, off] - score[e, 1 - off]))
                 lead = score[e, off] - score[e, 1 - off]
                 must = (period[e] >= 5) & ot_done[e, 1 - off] & (lead < 0)
                 now = e[decide("early_fg", cols, gamer[e, off], fine=state(e, off),
