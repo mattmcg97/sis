@@ -2091,8 +2091,10 @@ missing something. Nothing is ever fitted to close those gaps.
   - **The league's share of each option** among real decisions in similar states. Like the snap
     draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
     The 4th down and the early kick coarsen the distance, and the 4th down the field too (inside
-    the 20, an easy kick, a long one, out of range), before they let the lead go (behind / level /
-    ahead). In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
+    the 20, an easy kick, a long one, out of range), before they let the lead go. The lead they
+    keep is what a field goal does: not enough (4+ behind), a tie (3 behind), the lead (1–2
+    behind or level), or more of it (ahead). Real sides avoid overtime: 3 behind late they go for
+    the touchdown, and level they kick to win. In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
     the sim, and a side behind went for it on 90% against 73%, because thin late cells had fallen
     back to every lead.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
@@ -2141,7 +2143,9 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   early-kick choices from the same states. A further table splits each down by the snaps left in
   the half, as the draws read them, and another splits Q4's last 2:00 by the lead. That one shows
   the real states the game's own end covers on their own row, since the sim ends the game there
-  with no snap. The 4th-down and early-kick choices in Q4's last 2:00 are split by the lead too.
+  with no snap. The 4th-down and early-kick choices in Q4's last 2:00 are split by what a field
+  goal does for the side with the ball, and conversions in Q4's last 3:00 by the lead after the
+  six (−1: a kick ties, two wins), the sim's own games against the real ones.
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. Real states of one game share its result, so the real

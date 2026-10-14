@@ -64,7 +64,8 @@ def tables():
                 fourth=np.zeros((S, 3)), early=np.zeros((S, 2)), ot_games=0.0, ot=np.zeros((7, 4)),
                 ot_n=np.zeros((7, 4)), by_rem=np.zeros((D, len(REMAINS), O)),
                 late=np.zeros((4, O)), late_secs=np.zeros(4), pts_ball=np.zeros((7, 4)), pts_other=np.zeros((7, 4)),
-                level=np.zeros((4, 3)), fourth_q4=np.zeros((3, 3)), early_q4=np.zeros((3, 2)))
+                level=np.zeros((4, 3)), fourth_q4=np.zeros((4, 3)), early_q4=np.zeros((4, 2)),
+                two_late=np.zeros((2 * v21.CONV_MARGIN + 1, 2)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -118,6 +119,12 @@ def _late(t, c, w, auto=None):
     np.add.at(t["late_secs"], row[on], c["secs"][on] * w)
 
 
+def _late_cell(cell):
+    """Conversion cells of Q4's last 3:00 (not overtime's)."""
+    cell = np.asarray(cell)
+    return (cell >= 3) & (cell <= v21.CONV_CELLS - 2)
+
+
 def _side_lead(s):
     side = int(s["team"][0])
     pts = (int(s["home"][0]), int(s["away"][0]))
@@ -162,6 +169,14 @@ def _worker(job):
         if len(log["path"]):
             c = _sim_cols(log)
             _put(flow, "flow", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0)
+        # conversions in Q4's last 3:00 by the lead after the six: the sim's games against the real one's
+        for cell, lead6, k in st.get("_two") or []:
+            on = _late_cell(cell)
+            np.add.at(flow["two_late"], (lead6[on] + v21.CONV_MARGIN, k[on]), 1.0)
+        for q in v21.decision_points(rows, recs)["two"]:
+            if _late_cell(q["cell"]):
+                real["two_late"][int(np.clip(q["lead"], -v21.CONV_MARGIN, v21.CONV_MARGIN)) + v21.CONV_MARGIN,
+                                  int(q["choice"])] += 1
         # the next snap from every real state, against what came of it
         starts = v21.match_starts(model, rows, pair, teams, every=every)
         if not starts or not state_paths:
@@ -169,8 +184,8 @@ def _worker(job):
         by_start = {r["start"]: r for r in recs}
         st_rows = [rows[i] for i, _ in starts]
         sl_start = slice_of([s["period"][0] for _, s in starts], [s["clock"][0] for _, s in starts])
-        # Q4's last 2:00 by the lead of the side with the ball (-1: elsewhere)
-        lead_q4 = np.array([int(np.sign(_side_lead(s)[2])) + 1 if int(s["period"][0]) == 4
+        # Q4's last 2:00 by what a field goal does for the side with the ball (v21.fg4_of; -1: elsewhere)
+        lead_q4 = np.array([int(v21.fg4_of(_side_lead(s)[2])) if int(s["period"][0]) == 4
                             and float(s["clock"][0]) <= v21.LATE else -1 for _, s in starts])
         down_start = np.array([s["down"][0] for _, s in starts])
         mine = [by_start.get(v21.s14._i(r["message"])) for r in st_rows]
@@ -371,12 +386,12 @@ def choice_lines(real, step):
         if r.sum():
             lines.append(f"  {'all' if s_ is None else SLICES[s_]:16s}{int(r.sum()):>7d}"
                          + "".join(f"{_pair(_pct(r[k], r.sum()), _pct(m[k], m.sum())):>14s}" for k in range(3)))
-    lines += ["", "  4th DOWN in Q4's last 2:00, by the lead of the side with the ball (real / sim, %)",
-              f"  {'':16s}{'n real':>7s}" + "".join(f"{o:>14s}" for o in FOURTH)]
-    for k, name in enumerate(LEADS3):
+    lines += ["", "  4th DOWN in Q4's last 2:00, by what a field goal does for the side with the ball (real / sim, %)",
+              f"  {'':20s}{'n real':>7s}" + "".join(f"{o:>14s}" for o in FOURTH)]
+    for k, name in enumerate(v21.FG4_NAMES):
         r, m = real["fourth_q4"][k], step["fourth_q4"][k]
         if r.sum():
-            lines.append(f"  {name:16s}{int(r.sum()):>7d}"
+            lines.append(f"  {name:20s}{int(r.sum()):>7d}"
                          + "".join(f"{_pair(_pct(r[o], r.sum()), _pct(m[o], m.sum())):>14s}" for o in range(3)))
     lines += ["", "  A KICK on downs 1-3 in range, the half's last minute, from the real states (real / sim, %)",
               f"  {'':16s}{'n real':>7s}{'kick':>14s}"]
@@ -384,10 +399,21 @@ def choice_lines(real, step):
         r, m = real["early"][s_], step["early"][s_]
         if r.sum():
             lines.append(f"  {SLICES[s_]:16s}{int(r.sum()):>7d}{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
-    for k, name in enumerate(LEADS3):
+    for k, name in enumerate(v21.FG4_NAMES):
         r, m = real["early_q4"][k], step["early_q4"][k]
         if r.sum():
-            lines.append(f"  {'Q4, ' + name:16s}{int(r.sum()):>7d}{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
+            lines.append(f"  {'Q4, ' + name:28s}{int(r.sum()):>7d}{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
+    return lines
+
+
+def two_lines(real, flow):
+    lines = ["", "  CONVERSIONS in Q4's last 3:00, by the lead after the six: go for two (real / the sim's own games,"
+                 " %; -1: a kick ties, two wins; -2: two ties)", f"  {'lead':>6s}{'n real':>8s}{'n sim':>10s}{'go for two':>14s}"]
+    for i in range(real["two_late"].shape[0]):
+        r, m = real["two_late"][i], flow["two_late"][i]
+        if r.sum() >= 3:
+            lines.append(f"  {i - v21.CONV_MARGIN:>+6d}{int(r.sum()):>8d}{int(m.sum()):>10d}"
+                         f"{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum())):>14s}")
     return lines
 
 
@@ -488,6 +514,7 @@ def report(out):
     lines += rem_lines(out["real"], out["step"])
     lines += late_lines(out["real"], out["step"])
     lines += choice_lines(out["real"], out["step"])
+    lines += two_lines(out["real"], out["flow"])
     lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += q4_lines(out["real"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
