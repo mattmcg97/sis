@@ -2010,7 +2010,8 @@ missing something. Nothing is ever fitted to close those gaps.
     also means the same play before, part of the game and (at least coarsely) lead; for the
     distance, the same time drawn, distance and field, at least coarsely. The end of a half stands
     apart in both: the half's last 2:00, or under 5 snaps left, split by snaps left
-    (0–1, 2–4, 5+) and lead, with overtime by lead. There a side's own snaps come from its own ends
+    (0–1, 2–4, 5+) and lead (the 7 lead buckets, so 1–3 ahead apart from 9+ ahead), with
+    overtime by lead. There a side's own snaps come from its own ends
     of halves, else the league's draw, which keeps the full situation. The build prints how often
     real snaps find enough of their own, for the rest of the game and the end of a half. A
     gamer's own draw gives way to the league's rather than drop the situation. Before the down
@@ -2106,7 +2107,7 @@ python -m eAMFModel v21-audit --model v21_dec --since 2026-10-01 --until 2026-10
 ```
 
 The audit sets the sim against the window's real games, down by down. The parts of the game are
-Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares two ways:
+Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares three ways:
 - **Game flow.** The sim's own games from kick-off (`--paths` per receiving side, each match with
   its gamers and teams) against the real games. For each down and part of the game: snaps a game,
   the share ending in a first down or touchdown, turnovers, yards and clock used. Where the sim
@@ -2116,8 +2117,14 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares two
   against what really came of it. This shows the draws with the game flow taken out. For each down,
   by part of the game and by distance, it gives the share of each outcome: turnover, loss, no gain,
   short of the line, first down, touchdown. It also gives the yards, the clock, and the 4th-down and
-  early-kick choices from the same states. A last table splits each down by the snaps left in the
-  half, as the draws read them.
+  early-kick choices from the same states. A further table splits each down by the snaps left in
+  the half, as the draws read them, and another splits Q4's last 2:00 by the lead. That one shows
+  the real states the game's own end covers on their own row, since the sim ends the game there
+  with no snap.
+- **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
+  each side's points still to come in regulation, and, from level, how often the side with the
+  ball won, went to overtime or lost. Real states of one game share its result, so the real
+  figures move in steps of whole games.
 
 It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
 standard errors of the real one. It ends with overtime: how often a game goes there, from kick-off

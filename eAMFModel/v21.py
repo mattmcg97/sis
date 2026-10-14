@@ -107,7 +107,7 @@ TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
 SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=6, tb=6,
-             lead3=3, tb2=2, dist3=3, zone3=3, endgame=13)               # the last five: coarse ones (derive)
+             lead3=3, tb2=2, dist3=3, zone3=3, endgame=29)               # the last five: coarse ones (derive)
 TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
 DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
 TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
@@ -1004,14 +1004,15 @@ def late_of(period, clock):
     return np.select([period >= 5, end & (clock <= 30), end & (clock <= LATE)], [3, 2, 1], 0).astype(np.int64)
 
 
-def endgame_of(phase, remain, lead3):
+def endgame_of(phase, remain, margin):
     """The end of a half apart from the rest: 0 the bulk of the game (before the half's 2:00, 5+ snaps
-    left); 1-9 the half's last 2:00 or under 5 snaps left, by the snaps left (0-1, 2-4, 5+) and the
-    lead; 10-12 overtime by the lead. `remain` is the snaps-left bucket (remain_b)."""
-    phase, remain, lead3 = np.asarray(phase), np.asarray(remain), np.asarray(lead3)
+    left); 1-21 the half's last 2:00 or under 5 snaps left, by the snaps left (0-1, 2-4, 5+) and the
+    lead (MARGIN_NAMES: a side 1-3 ahead plays it out apart from one 9+ ahead); 22-28 overtime by the
+    lead. `remain` is the snaps-left bucket (remain_b), `margin` the lead's (margin_b)."""
+    phase, remain, margin = np.asarray(phase), np.asarray(remain), np.asarray(margin)
     r3 = np.select([remain == 0, remain <= 2], [0, 1], 2)
     end = (phase == 2) | (phase == 5) | (remain <= 2)
-    return np.where(phase == 6, 10 + lead3, np.where(end, 1 + 3 * r3 + lead3, 0)).astype(np.int64)
+    return np.where(phase == 6, 22 + margin, np.where(end, 1 + 7 * r3 + margin, 0)).astype(np.int64)
 
 
 def derive(f):
@@ -1020,8 +1021,8 @@ def derive(f):
     (endgame_of)."""
     if "margin" in f:
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
-    if "remain" in f and "phase" in f and "lead3" in f:
-        f["endgame"] = endgame_of(f["phase"], f["remain"], f["lead3"])
+    if "remain" in f and "phase" in f and "margin" in f:
+        f["endgame"] = endgame_of(f["phase"], f["remain"], f["margin"])
     if "tb" in f:
         f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
     if "dist" in f:
@@ -1482,6 +1483,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st.setdefault("_dec", [])
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
+    reg_score = score.copy()                  # the score when regulation ended (a start in overtime: its own)
 
     from . import v21_rules
     use_rules = RULES and getattr(model, "use_rules", True)
@@ -1837,6 +1839,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         tos[h] = TIMEOUTS
         kick_to(h, kick2[h])
         reg = ix[p == 4]
+        reg_score[reg] = score[reg]
         level = score[reg, 0] == score[reg, 1]
         phase[reg[~level]] = DONE
         go = reg[level]
@@ -1919,6 +1922,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st["went_ot"] = (period >= 5)
         st["games"] = st.get("games", 0) + P
         st["final"] = score.copy()
+        st["regulation"] = reg_score.copy()
         st["q_points"] = q_points
         st["unfinished"] = st.get("unfinished", 0) + int((phase != DONE).sum())
     return score[:, 0].reshape(S, n_paths), score[:, 1].reshape(S, n_paths)

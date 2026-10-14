@@ -267,10 +267,12 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(len(v21.remain_lines(m)), len(v21.REMAIN_SHOWN) + 1)
 
     def test_the_end_of_a_half_stands_apart_in_the_own_draws(self):
-        # phase: 0 Q1, 2 Q2's last 2:00, 6 OT; remain: the snaps-left bucket (0-1, 2, 3-4, 5-7, 8-12, 13+)
-        f = v21.derive(dict(phase=np.array([0, 0, 0, 2, 2, 2, 6, 0]), remain=np.array([5, 2, 0, 5, 1, 0, 4, 3]),
-                            margin=np.array([3, 3, 0, 6, 3, 3, 0, 6])))
-        self.assertEqual(list(f["endgame"]), [0, 1 + 3 + 1, 1 + 0, 1 + 6 + 2, 1 + 3 + 1, 1 + 1, 10, 0])
+        # phase: 0 Q1, 2 Q2's last 2:00, 6 OT; remain: the snaps-left bucket (0-1, 2, 3-4, 5-7, 8-12, 13+);
+        # margin: the lead's bucket (3 level, 4 1-3 ahead, 6 9+ ahead)
+        f = v21.derive(dict(phase=np.array([0, 0, 0, 2, 2, 2, 6, 0, 2]), remain=np.array([5, 2, 0, 5, 1, 0, 4, 3, 1]),
+                            margin=np.array([3, 3, 0, 6, 3, 3, 0, 6, 4])))
+        self.assertEqual(list(f["endgame"]), [0, 1 + 7 + 3, 1 + 0, 1 + 14 + 6, 1 + 7 + 3, 1 + 3, 22, 0, 1 + 7 + 4])
+        self.assertLess(int(v21.endgame_of(6, 0, 6)), v21.SIZES["endgame"])
         for levels in (v21.GAMER_TIME_LEVELS, v21.GAMER_DIST_LEVELS):
             for lv in levels:
                 self.assertIn("endgame", lv)
@@ -624,8 +626,14 @@ class TestAudit(unittest.TestCase):
         np.testing.assert_allclose(step["ot_n"], real["ot_n"])
         np.testing.assert_allclose(step["by_rem"].sum(), step["step"].sum())     # the same snaps, split another way
         np.testing.assert_allclose(real["by_rem"].sum(), real["step"].sum())
+        # Q4's last 2:00 by the lead: the same snaps as the rest; regulation points from every Q4 state
+        q4_real = real["step"][:, 6:10].sum() - real["step"][:, 6].sum()
+        self.assertEqual(real["late"].sum(), q4_real)
+        self.assertGreater(real["pts_ball"].sum() + real["pts_other"].sum(), 0)
+        self.assertGreater(step["pts_ball"].sum() + step["pts_other"].sum(), 0)
+        np.testing.assert_allclose(step["level"].sum(1), real["level"].sum(1))
         for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
-                     "ONE SNAP by the snaps left"):
+                     "ONE SNAP by the snaps left", "ONE SNAP in Q4's last 2:00", "Q4 STATES", "Q4 STATES, level"):
             self.assertIn(part, lines)
 
 

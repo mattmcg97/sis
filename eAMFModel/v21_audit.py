@@ -10,7 +10,11 @@
               set against what really came of it: the draws with the game flow taken out. By down and
               part of the game, and by down and distance: the share of each outcome (a turnover, a
               loss, no gain, a gain short of the line, a first down, a touchdown), the yards and the
-              clock; and the 4th-down and early-kick choices from the same states.
+              clock; and the 4th-down and early-kick choices from the same states. Q4's last 2:00 is
+              split by the lead, the real states the game's own end (v21.auto_end) covers apart:
+              the sim ends the game there with no snap.
+  Q4 states   from every real Q4 state to the end: how often the game went to overtime, each side's
+              points still to come in regulation and, from level, who won it.
 
 The parts of the game are the halves' quarters, the second quarter of each half cut at 2:00, 1:00 and
 0:30 (SLICES). Real snaps are v21.match_snaps' (a punt or a field goal is not a snap; a 4th down that
@@ -50,13 +54,17 @@ def outcome_of(kind, gain, dist, field, conv=None):
 
 
 REMAINS = ("0-1 snaps left", "2", "3-4", "5-7", "8-12", "13+")
+LEADS3 = ("behind", "level", "ahead")
+RESULTS = ("won", "overtime", "lost")
 
 
 def tables():
     return dict(games=0.0, flow=np.zeros((D, S, O)), flow_yards=np.zeros((D, S)), flow_secs=np.zeros((D, S)),
                 step=np.zeros((D, S, B, O)), step_yards=np.zeros((D, S, B)), step_secs=np.zeros((D, S, B)),
                 fourth=np.zeros((S, 3)), early=np.zeros((S, 2)), ot_games=0.0, ot=np.zeros((7, 4)),
-                ot_n=np.zeros((7, 4)), by_rem=np.zeros((D, len(REMAINS), O)))
+                ot_n=np.zeros((7, 4)), by_rem=np.zeros((D, len(REMAINS), O)),
+                late=np.zeros((4, O)), late_secs=np.zeros(4), pts_ball=np.zeros((7, 4)), pts_other=np.zeros((7, 4)),
+                level=np.zeros((4, 3)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -87,7 +95,8 @@ def _real_cols(recs):
     gain = np.minimum(gain, 100 - field)
     conv = np.array([r["converted"] and not r["replay"] for r in recs], bool)
     return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist,
-                out=outcome_of(kind, gain, dist, field, conv), gain=gain, secs=g("seconds").astype(float), kind=kind)
+                out=outcome_of(kind, gain, dist, field, conv), gain=gain, secs=g("seconds").astype(float), kind=kind,
+                period=g("period"), clock=g("clock").astype(float), lead=g("margin"))
 
 
 def _sim_cols(log, keep=None):
@@ -96,7 +105,38 @@ def _sim_cols(log, keep=None):
     kind, gain, dist, field = g("kind"), g("gain"), g("dist"), g("field")
     return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist,
                 out=outcome_of(kind, gain, dist, field, g("conv")), gain=gain, secs=g("seconds").astype(float),
-                kind=kind, rem=g("rem"))
+                kind=kind, rem=g("rem"), period=g("period"), clock=g("clock").astype(float), lead=g("lead"))
+
+
+def _late(t, c, w, auto=None):
+    """Q4's last 2:00 by the lead (LEADS3; row 3: the states the game's own end covers)."""
+    on = (c["period"] == 4) & (c["clock"] <= v21.LATE)
+    row = np.sign(np.asarray(c["lead"])).astype(np.int64) + 1
+    if auto is not None:
+        row = np.where(auto, 3, row)
+    np.add.at(t["late"], (row[on], c["out"][on]), w)
+    np.add.at(t["late_secs"], row[on], c["secs"][on] * w)
+
+
+def _side_lead(s):
+    side = int(s["team"][0])
+    pts = (int(s["home"][0]), int(s["away"][0]))
+    return side, pts, pts[side] - pts[1 - side]
+
+
+def _regulation(rows, final=None):
+    """The real (home, away) score when regulation ended: the final (home's, away's) where the game did
+    not go to overtime and the history has it, else the rows' (the scores only rise)."""
+    if final is not None and not any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows):
+        return int(final[0]), int(final[1])
+    h = a = 0
+    for r in rows:
+        p = v21.s14._i(r.get("period"))
+        if p is None or p > 4:
+            continue
+        h = max(h, v21.s14._i(r.get("score_p1")) or 0)
+        a = max(a, v21.s14._i(r.get("score_p2")) or 0)
+    return h, a
 
 
 def _worker(job):
@@ -104,7 +144,7 @@ def _worker(job):
     model_path, items, n_paths, state_paths, every = job
     model = v21.Model.load(model_path)
     real, flow, step = tables(), tables(), tables()
-    for code, rows, pair, teams in items:
+    for code, rows, pair, teams, final in items:
         seed = zlib.crc32(str(code).encode())
         rows = v21._with_side(rows)
         recs = [r for r in v21.match_snaps(rows) if r["period"] <= 4 + v21.MAX_OT]
@@ -131,10 +171,15 @@ def _worker(job):
         sl_start = slice_of([s["period"][0] for _, s in starts], [s["clock"][0] for _, s in starts])
         down_start = np.array([s["down"][0] for _, s in starts])
         mine = [by_start.get(v21.s14._i(r["message"])) for r in st_rows]
-        got = [r for r in mine if r is not None]
+        pairs = [(r, s) for (_, s), r in zip(starts, mine) if r is not None]
+        got = [r for r, _ in pairs]
         if got:
             c = _real_cols(got)
             _put(real, "step", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0)
+            # the states where the sim ends the game at once (the side ahead runs it out)
+            auto = np.array([bool(v21.auto_end(s["period"][0], s["clock"][0], _side_lead(s)[2], s["down"][0],
+                                               s["tos"][0][1 - _side_lead(s)[0]])) for _, s in pairs])
+            _late(real, c, 1.0, auto)
             # by the snaps left the model expects at each real state (its own table, the state's own key)
             rb = v21.remain_b(model.remain_at(*v21.remain_inputs(got)))
             np.add.at(real["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), rb, c["out"]), 1)
@@ -158,6 +203,7 @@ def _worker(job):
             c = _sim_cols(log)
             _put(step, "step", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0 / state_paths)
             np.add.at(step["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), c["rem"], c["out"]), 1.0 / state_paths)
+            _late(step, c, 1.0 / state_paths)
         for name, who, k, sl, ix in st.get("_dec") or []:
             if ix is None or name not in ("fourth", "early_fg"):
                 continue
@@ -173,9 +219,10 @@ def _worker(job):
             st = {}
             v21.simulate(model, v21.concat_starts([s for _, s in q4]), state_paths, seed=seed + 2, stats=st)
             went = st["went_ot"].reshape(len(q4), state_paths).mean(1)
-            for (j, s), w in zip(q4, went):
-                side = int(s["team"][0])
-                lead = int(s["home"][0] - s["away"][0]) * (1 if side == 0 else -1)
+            reg_sim = st["regulation"].reshape(len(q4), state_paths, 2)
+            reg_real = _regulation(rows, final)
+            for k, ((j, s), w) in enumerate(zip(q4, went)):
+                side, pts, lead = _side_lead(s)
                 c = float(s["clock"][0])
                 cs = 0 if c > 120 else 1 if c > 60 else 2 if c > 30 else 3
                 lb = int(v21.margin_b(lead))
@@ -183,6 +230,17 @@ def _worker(job):
                 real["ot_n"][lb, cs] += 1
                 step["ot"][lb, cs] += w
                 step["ot_n"][lb, cs] += 1
+                # each side's points still to come in regulation, and from level who won it
+                mine_s, theirs_s = reg_sim[k, :, side], reg_sim[k, :, 1 - side]
+                real["pts_ball"][lb, cs] += reg_real[side] - pts[side]
+                real["pts_other"][lb, cs] += reg_real[1 - side] - pts[1 - side]
+                step["pts_ball"][lb, cs] += (mine_s - pts[side]).mean()
+                step["pts_other"][lb, cs] += (theirs_s - pts[1 - side]).mean()
+                if lead == 0:
+                    d_real = reg_real[side] - reg_real[1 - side]
+                    real["level"][cs, 0 if d_real > 0 else 1 if d_real == 0 else 2] += 1
+                    d_sim = mine_s - theirs_s
+                    step["level"][cs] += [(d_sim > 0).mean(), (d_sim == 0).mean(), (d_sim < 0).mean()]
     return real, flow, step
 
 
@@ -193,8 +251,9 @@ def run(model_dir, matches, history, n_paths=500, state_paths=50, every=1, worke
     keys = ("match_code", "message", "period", "clock_seconds", "play_kind", "offense", "down", "distance",
             "field_position", "score_p1", "score_p2", "play_messages", "team_a_side", "opening_offense",
             "timeouts_used_a", "timeouts_used_b", "timeout_after", "timeout_prev", "home_handle", "away_handle")
+    from .v21_report import _finals
     items = [(c, [{k: r.get(k) for k in keys} for r in v21._with_side(rows)]) + v21.match_people(c, rows, hist)
-             for c, rows in sorted(matches.items())]
+             + (_finals(hist[c]) if c in hist else None,) for c, rows in sorted(matches.items())]
     if not items:
         raise SystemExit("no matches to audit")
     workers = max(1, min(workers, len(items)))
@@ -358,6 +417,46 @@ def ot_lines(real, flow, step):
     return lines
 
 
+def late_lines(real, step):
+    lines = ["", "  ONE SNAP in Q4's last 2:00, by the lead of the side with the ball (real / sim, % of the snaps)",
+             f"  {'':24s}{'n real':>7s}" + "".join(f"{o:>13s}" for o in OUTCOMES) + f"{'seconds':>13s}"]
+    names = LEADS3 + ("ahead, the game's own end",)
+    for k, name in enumerate(names):
+        r, m = real["late"][k], step["late"][k]
+        if not r.sum():
+            continue
+        sr = real["late_secs"][k] / r.sum()
+        ss = step["late_secs"][k] / m.sum() if m.sum() else float("nan")
+        lines.append(f"  {name:24s}{int(r.sum()):>7d}" + "".join(
+            f"{_pair(_pct(r[o], r.sum()), _pct(m[o], m.sum())):>13s}" for o in range(O)) + f"{_pair(sr, ss):>13s}")
+    lines.append("  (the game's own end: the side ahead with the ball, its downs at the 40-second play clock outlasting"
+                 " the clock, the defense out of timeouts -- the sim ends the game there, no snap)")
+    return lines
+
+
+def q4_lines(real, step):
+    lines = []
+    for key, label in (("pts_ball", "the side with the ball"), ("pts_other", "the other side")):
+        lines += ["", f"  Q4 STATES: {label}'s points still to come in regulation, by the lead of the side with the"
+                      f" ball and the time left (real / sim)", f"  {'':14s}" + "".join(f"{c:>20s}" for c in OT_CLOCK)]
+        for lb, name in enumerate(OT_LEADS):
+            n = real["ot_n"][lb]
+            if not n.sum():
+                continue
+            cells = [f"{real[key][lb, cs] / n[cs]:5.2f}/{step[key][lb, cs] / step['ot_n'][lb, cs]:5.2f}" if n[cs] else "-"
+                     for cs in range(4)]
+            lines.append(f"  {name:14s}" + "".join(f"{c:>20s}" for c in cells))
+    lines += ["", "  Q4 STATES, level: how regulation ended for the side with the ball (real / sim, %)",
+              f"  {'':16s}{'n real':>7s}" + "".join(f"{o:>14s}" for o in RESULTS)]
+    for cs in range(4):
+        r, m = real["level"][cs], step["level"][cs]
+        if r.sum():
+            lines.append(f"  {OT_CLOCK[cs]:16s}{int(r.sum()):>7d}"
+                         + "".join(f"{_pair(_pct(r[k], r.sum()), _pct(m[k], m.sum())):>14s}" for k in range(3)))
+    lines.append("  (real states of one game share its result: the real figures move in steps of whole games)")
+    return lines
+
+
 def report(out):
     lines = [f"  v2.1 audit on {out['matches']:,} matches {out['since'] or ''} to {out['until'] or ''}:"
              f" {2 * out['n_paths']:,} kick-off games each; the next snap {out['state_paths']} times from every"
@@ -366,8 +465,10 @@ def report(out):
     lines += [""] + flow_lines(out["real"], out["flow"])
     lines += step_lines(out["real"], out["step"])
     lines += rem_lines(out["real"], out["step"])
+    lines += late_lines(out["real"], out["step"])
     lines += choice_lines(out["real"], out["step"])
     lines += ot_lines(out["real"], out["flow"], out["step"])
+    lines += q4_lines(out["real"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
                   " snaps that kept the ball, cut at the goal line; seconds: PLAY_OVER to PLAY_OVER)"]
     return lines
