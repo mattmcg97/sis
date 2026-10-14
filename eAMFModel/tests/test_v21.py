@@ -384,6 +384,83 @@ class TestDecisions(unittest.TestCase):
         self.assertLess(go[1], 0.2)
 
 
+class TestRules(unittest.TestCase):
+
+    def cols(self, **kw):
+        return {k: np.array([v]) for k, v in kw.items()}
+
+    def test_the_rules_strike_out_what_cannot_help(self):
+        late4 = self.cols(togo10=2, dist=1, margin=1, phase=5, left=1)          # 4-8 behind, Q4, 0:11-0:30
+        ok = v21.rule_mask("fourth", late4)
+        self.assertFalse(ok[0, v21.FG])
+        self.assertFalse(ok[0, v21.PUNT])
+        self.assertTrue(ok[0, v21.GO])
+        close = self.cols(togo10=2, dist=1, margin=2, phase=5, left=1)          # 1-3 behind: the kick can tie
+        self.assertTrue(v21.rule_mask("fourth", close)[0, v21.FG])
+        self.assertIsNone(v21.rule_mask("fourth", self.cols(togo10=2, dist=1, margin=1, phase=4, left=5)))
+        must = v21.rule_mask("fourth", self.cols(togo10=2, dist=1, margin=1, phase=6, left=5), must_score=[True])
+        self.assertFalse(must[0, v21.FG] or must[0, v21.PUNT])
+        early = v21.rule_mask("early_fg", self.cols(left=2, range=1, down=0, margin=0, half=1))
+        self.assertFalse(early[0, 1])
+        two = v21.rule_mask("two", self.cols(cell=5, lead=v21.CONV_MARGIN - 2))
+        self.assertFalse(two[0, 0])
+        self.assertIsNone(v21.rule_mask("two", self.cols(cell=5, lead=v21.CONV_MARGIN - 1)))
+        self.assertFalse(v21.rule_mask("two", self.cols(cell=7, lead=v21.CONV_MARGIN - 1), ot_other_done=[True])[0, 0])
+        self.assertFalse(v21.rule_mask("to_off", self.cols(phase=5, margin=5, left=2))[0, 1])   # ahead: no timeout
+        self.assertIsNone(v21.rule_mask("to_off", self.cols(phase=5, margin=1, left=2)))
+        self.assertFalse(v21.rule_mask("to_def", self.cols(phase=5, margin=1, left=2))[0, 1])   # the defense ahead
+        self.assertFalse(v21.rule_mask("kickoff", self.cols(desperate=0, late=1, lead=2))[0, v21.KEPT])
+
+    def test_rule_breaks_are_counted_and_left_out_of_the_leans(self):
+        n = 400
+        X = np.tile([2, 1, 3, 4, 5], (n, 1))                                   # an ordinary state
+        ruled = np.tile([2, 1, 1, 5, 1], (60, 1))                              # 4+ behind, Q4's last 0:30
+        X = np.r_[X, ruled]
+        who = np.r_[np.arange(n) % 2, np.zeros(60, np.int64)]
+        rng = np.random.default_rng(2)
+        chosen = np.r_[np.where(rng.random(n) < 0.3, v21.FG, v21.PUNT), np.full(60, v21.FG)]   # gamer 0 kicks anyway
+        ch = v21.Choice.build("fourth", X, chosen, who, 3)
+        self.assertEqual((ch.ruled, ch.broke), (60, 60))
+        self.assertLess(abs(ch.lean[0, v21.FG] - ch.lean[1, v21.FG]), 0.4)     # not read as a kicker
+        p = ch.probs({f: ruled[:5, i] for i, f in enumerate(v21.DECISIONS["fourth"]["features"])}, np.zeros(5, np.int64),
+                     v21.rule_mask("fourth", {f: ruled[:5, i] for i, f in enumerate(v21.DECISIONS["fourth"]["features"])}))
+        np.testing.assert_allclose(p[:, v21.GO], 1.0)
+
+    def test_the_sim_never_kicks_4_behind_at_the_end(self):
+        m = built()
+        m.choices["fourth"] = _always("fourth", v21.FG, len(m.gamers) + 1)
+        st = {}
+        v21.simulate(m, _state(m, period=4, clock=20.0, down=4, dist=3, y=80, home=10, away=17), 50, stats=st)
+        name, who, k, sl = st["_dec"][0]
+        self.assertEqual(name, "fourth")
+        self.assertTrue((k == v21.GO).all())
+        m.rules = False
+        st = {}
+        v21.simulate(m, _state(m, period=4, clock=20.0, down=4, dist=3, y=80, home=10, away=17), 50, stats=st)
+        self.assertTrue((st["_dec"][0][2] == v21.FG).all())
+
+    def test_the_side_ahead_kneels_the_clock_out(self):
+        m = built()
+        m.kneel_run, m.kneel_time, m.kneel_gain = np.array([40.0]), 40.0, np.array([-1])
+        start = _state(m, period=4, clock=80.0, down=1, y=40, prev=v21.SHORT, home=7, away=4)
+        start["tos"] = np.array([[3, 0]])
+        st = {}
+        h, a = v21.simulate(m, start, 40, stats=st)
+        np.testing.assert_array_equal(h, 7)
+        np.testing.assert_array_equal(a, 4)
+        self.assertGreaterEqual(st["kneels"], 40)
+        start["tos"], start["clock"] = np.array([[3, 3]]), np.array([150.0])  # their timeouts and 2:00 stop it
+        st = {}
+        v21.simulate(m, start, 40, stats=st)
+        log = v21.snap_log(st)
+        self.assertNotEqual(log["gain"][np.flatnonzero(log["path"] == 0)[0]], -1)
+
+    def test_a_build_without_the_rules(self):
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, rules=False)
+        self.assertFalse(m.rules)
+        self.assertTrue(all(ch.ruled == 0 for ch in m.choices.values()))
+
+
 class TestReport(unittest.TestCase):
 
     def run_report(self, workers=1):

@@ -2032,7 +2032,28 @@ missing something. Nothing is ever fitted to close those gaps.
   | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six |
   | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half |
 
-  Each is drawn in two steps:
+  Each is drawn in three steps:
+  - **The global rules first**, the same for every gamer. Each rule strikes out an option that
+    can't help in that state:
+
+    | rule | what it does |
+    |---|---|
+    | 4+ behind late | no field goal in Q4's last 0:30, on 4th down or as an early kick (in overtime: once the other side has had the ball) |
+    | behind late | no punt in Q4's last 1:00 (in overtime: once the other side has had the ball) |
+    | 2 behind after a late touchdown | go for two in Q4's last 2:00 (in overtime: 1 or 2 behind once the other side has had the ball) |
+    | ahead late | no timeouts by the side ahead in Q4's last 2:00 or overtime |
+    | ahead late | no onside kick by the side ahead in a half's last 2:00 |
+    | kneel | the side ahead in Q4 kneels when kneeling on its downs left runs the clock out |
+
+    For the kneel, each kneel takes a real running kneel's time. Each of the defense's timeouts, a
+    stopped clock now and a two-minute warning on the way costs one kneel's worth. The snap is a
+    real kneel: its time and its yards.
+
+    The rest of the decision is drawn among what the rules leave. Real decisions that broke a rule
+    are left out of the gamers' leans. The build prints how many real decisions each decision had
+    under a rule and how many broke it. It also prints how often real sides knelt when kneeling
+    would have run the clock out, so the thresholds can be checked against how the game is really
+    played. `--no-rules` builds without them.
   - **The league's share of each option** among real decisions in similar states. Like the snap
     draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own

@@ -328,7 +328,7 @@ def cmd_v21_build(args):
         print(f"  building on {len(data):,} matches before {cut}")
     history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
-                      gamer_decisions=not args.no_gamer_decisions)
+                      gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
@@ -726,6 +726,10 @@ def build_parser():
     p.add_argument("--no-gamer-decisions", action="store_true",
                    help="every gamer decides (4th downs, early kicks, kick-offs, conversions, timeouts) as the "
                         "league does in the same state: no gamer's own lean")
+    p.add_argument("--no-rules", action="store_true",
+                   help="without the global decision rules (no field goal 4+ behind late, no punt behind late, "
+                        "two when 2 down late, no timeout by the side ahead late, no onside kick ahead late, "
+                        "kneel when it runs the clock out): the real shares alone")
     p.set_defaults(func=cmd_v21_build)
 
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "

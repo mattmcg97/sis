@@ -48,8 +48,11 @@ first, then the sim's own from kick-off (refine_remaining), and the draws are re
 
 The decisions (DECISIONS) are each the deciding gamer's: 4th downs (go, field goal, punt), a kick on
 downs 1-3 in the half's last minute, kick-offs (returned, touchback, no landing zone, kept), going for
-two and the timeouts before a running-clock snap (the defense's, then the offense's). Each is drawn
-from the league's shares among real decisions alike in its features, leaned by the gamer's own
+two and the timeouts before a running-clock snap (the defense's, then the offense's). The global rules
+come first, the same for every gamer (RULE_NAMES, rule_mask): they strike out what can't help -- a field
+goal 4+ behind at the end, a punt behind at the end, the kick 2 down after a late touchdown, a timeout
+or an onside kick by the side ahead late -- and the side ahead in Q4 kneels when kneeling runs the clock
+out (kneel_burn). The rest is drawn from the league's shares among real decisions alike in its features, leaned by the gamer's own
 log-odds shift for each option (Choice, fit_leans): fitted on their real decisions against the
 league's in the same states and shrunk toward none, so it carries into every state. What follows is
 real data too: the kicks' fields and clock, field goals made by distance, punts' net yards and safety
@@ -184,6 +187,21 @@ SLICE_NAMES = {
 # the option each gamer's lean is shown for, and the real decisions a gamer needs to be shown
 LEAN_SHOWN = {"fourth": (GO, 20), "early_fg": (1, 10), "kickoff": (TOUCHBACK, 20), "two": (1, 10),
               "to_def": (1, 40), "to_off": (1, 40)}
+
+# The global rules: what any side does whoever its gamer is, before the league's shares and any gamer's
+# lean are drawn from (rule_mask). Each strikes out options that cannot help in that state; the real
+# decisions that broke one are left out of the gamers' leans. RULES off: the real shares alone.
+RULES = True
+RULE_NAMES = {
+    "no_fg_4_behind": "no field goal 4+ behind in Q4's last 0:30 (or in overtime once the other side has had the ball)",
+    "no_punt_behind": "no punt behind in Q4's last 1:00 (or in overtime once the other side has had the ball)",
+    "two_when_2_down": "go for two 2 behind after a touchdown in Q4's last 2:00 (and in overtime 1 or 2 behind "
+                       "once the other side has had the ball)",
+    "no_timeout_ahead": "no timeout by the side ahead in Q4's last 2:00 or overtime",
+    "no_onside_ahead": "no onside kick by the side ahead in a half's last 2:00",
+    "kneel": "the side ahead in Q4 kneels when kneeling runs the clock out",
+}
+KNEEL_STOPS_AT_2MIN = True
 REMAIN_SLICE = 20.0           # snaps left in the half, by 20-second slice of the time left in it
 REMAIN_SLICES = int(2 * QUARTER // REMAIN_SLICE) + 1
 REFINE_REMAINING = True
@@ -293,6 +311,49 @@ def share_slice(period, clock):
     played = (np.minimum(period, 4) - 1) * QUARTER + (QUARTER - clock)
     return np.where(period >= 5, SHARE_SLICES - 1,
                     np.clip((played // SHARE_SLICE).astype(np.int64), 0, SHARE_SLICES - 1))
+
+
+def rule_mask(name, c, must_score=None, ot_other_done=None):
+    """(decisions, options) the options the global rules leave each decision (True), off its features;
+    None where no rule touches it. must_score: overtime, the other side has had the ball and this side
+    is behind (the sim's own state); ot_other_done: overtime and the other side has had the ball."""
+    if not RULES or name not in DECISIONS:
+        return None
+    K = len(DECISIONS[name]["options"])
+    n = len(np.asarray(next(iter(c.values()))))
+    ok = np.ones((n, K), bool)
+    must = np.zeros(n, bool) if must_score is None else np.asarray(must_score, bool)
+    if name == "fourth":
+        late, left, mb = np.asarray(c["phase"]) == 5, np.asarray(c["left"]), np.asarray(c["margin"])
+        ok[:, FG] &= ~((late & (left <= 1) | must) & (mb <= 1))        # 4+ behind: a kick can't save it
+        ok[:, PUNT] &= ~((late & (left <= 2) | must) & (mb <= 2))      # behind: a punt gives it up
+    elif name == "early_fg":
+        late = (np.asarray(c["half"]) == 1) & (np.asarray(c["left"]) <= 3)
+        ok[:, 1] &= ~((late | must) & (np.asarray(c["margin"]) <= 1))
+    elif name == "two":
+        lead = np.asarray(c["lead"]) - CONV_MARGIN
+        late = np.isin(np.asarray(c["cell"]), (4, 5, 6))
+        other = np.zeros(n, bool) if ot_other_done is None else np.asarray(ot_other_done, bool)
+        ok[:, 0] &= ~((late & (lead == -2)) | (other & ((lead == -1) | (lead == -2))))
+    elif name in ("to_def", "to_off"):
+        late = np.isin(np.asarray(c["phase"]), (5, 6))
+        mb = np.asarray(c["margin"])                                   # the offense's lead
+        ahead = mb <= 2 if name == "to_def" else mb >= 4
+        ok[:, 1] &= ~(late & ahead)
+    elif name == "kickoff":
+        ok[:, KEPT] &= ~((np.asarray(c["lead"]) == 2) & (np.asarray(c["late"]) == 1))
+    return ok if not ok.all() else None
+
+
+def kneel_burn(down, left, tos_def, stopped, kneel_run):
+    """The clock a side can run out by kneeling on every down it has left: each kneel takes a running
+    kneel's time (kneel_run) unless something stops the clock after it -- a defensive timeout, the
+    clock stopped now, the two-minute warning on the way."""
+    downs = np.maximum(0, 5 - np.asarray(down))
+    stops = np.minimum(np.asarray(tos_def), downs) + np.asarray(stopped, int)
+    if KNEEL_STOPS_AT_2MIN:
+        stops = stops + (np.asarray(left) > LATE)
+    return np.maximum(0, downs - stops) * kneel_run + downs * 2.0
 
 
 # ---------------------------------------------------------------- the draws
@@ -430,12 +491,24 @@ class Choice:
     """A decision drawn from real ones: the league's share of each option among the real decisions in
     states alike (Bins over its features), leaned by the deciding gamer's log-odds shift (lean)."""
 
-    def __init__(self, name, bins, shares, lean, league, n, counts):
+    def __init__(self, name, bins, shares, lean, league, n, counts, ruled=0, broke=0):
         self.name, self.bins, self.shares, self.lean, self.league, self.n = name, bins, shares, lean, league, n
         self.counts = counts                              # real decisions by gamer and option
+        self.ruled, self.broke = ruled, broke             # real decisions under a global rule, and how many broke it
+
+    @staticmethod
+    def _masked(base, allowed):
+        """Shares with the options a rule strikes out taken away, the rest scaled up (all of them
+        equal where none of the allowed ones was ever chosen)."""
+        if allowed is None:
+            return base
+        m = base * allowed
+        tot = m.sum(1, keepdims=True)
+        return np.where(tot > 0, m / np.where(tot > 0, tot, 1), allowed / allowed.sum(1, keepdims=True))
 
     @classmethod
-    def build(cls, name, X, chosen, who, n_who, min_records=DECISION_MIN, prior=DECISION_PRIOR, gamers=True):
+    def build(cls, name, X, chosen, who, n_who, min_records=DECISION_MIN, prior=DECISION_PRIOR, gamers=True,
+              rules=True):
         spec = DECISIONS[name]
         K = len(spec["options"])
         chosen, who = np.asarray(chosen, np.int64), np.asarray(who, np.int64)
@@ -453,21 +526,32 @@ class Choice:
         np.add.at(got, (group, bins.payload["choice"]), 1)
         shares = (got + league) / (bins.count[:, None] + 1.0)
         bins.payload = {}
+        cols = {f: X[:, i] for i, f in enumerate(spec["features"])}
+        allowed = rule_mask(name, cols) if rules else None
+        ruled = broke = 0
+        keep = np.ones(len(chosen), bool)
+        if allowed is not None:
+            under = ~allowed.all(1)
+            keep = allowed[np.arange(len(chosen)), chosen]
+            ruled, broke = int(under.sum()), int((~keep).sum())
         lean = np.zeros((n_who, K))
-        if gamers:
-            mine = bins.bin_of({f: X[:, i] for i, f in enumerate(spec["features"])})
-            lean = fit_leans(np.log(np.maximum(shares[mine], 1e-9)), chosen, who, n_who, prior)
-        return cls(name, bins, shares, lean, league, len(chosen), counts)
+        if gamers and keep.any():
+            base = cls._masked(shares[bins.bin_of(cols)], allowed)[keep]
+            lean = fit_leans(np.log(np.maximum(base, 1e-9)), chosen[keep], who[keep], n_who, prior)
+        return cls(name, bins, shares, lean, league, len(chosen), counts, ruled, broke)
 
-    def probs(self, cols, who):
+    def probs(self, cols, who, allowed=None):
         base = self.shares[self.bins.bin_of(cols)] if self.bins is not None else np.tile(self.shares[0], (len(who), 1))
-        z = np.log(np.maximum(base, 1e-9)) + self.lean[who]
+        base = self._masked(base, allowed)
+        z = np.log(np.maximum(base, 1e-12)) + self.lean[who]
+        if allowed is not None:
+            z = np.where(allowed, z, -np.inf)
         z -= z.max(1, keepdims=True)
         p = np.exp(z)
         return p / p.sum(1, keepdims=True)
 
-    def draw(self, cols, who, u):
-        c = np.cumsum(self.probs(cols, who), 1)
+    def draw(self, cols, who, u, allowed=None):
+        c = np.cumsum(self.probs(cols, who, allowed), 1)
         return np.minimum((u[:, None] > c).sum(1), c.shape[1] - 1)
 
 
@@ -671,6 +755,11 @@ class Model:
         self.kick_pool = {}                # (RETURN | KEPT, desperate, late) -> (field, seconds)
         self.safety_fields = np.array([35])
         self.two_good, self.kick_good = 0.5, 0.97
+        self.rules = True                  # the global rules (RULES) on in this build
+        self.kneel_run = np.array([s14.PLAY_CLOCK - 2.0])   # real Q4 kneels' seconds on a running clock
+        self.kneel_stop = np.array([3.0])  # and off a stopped one
+        self.kneel_gain = np.array([-1])
+        self.kneel_time = s14.PLAY_CLOCK - 2.0
         self.remain = np.zeros((3, REMAIN_SLICES))
         self.share = np.linspace(1, 0, SHARE_SLICES)
         self.meta = {}
@@ -728,13 +817,15 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0, gamer_decisions=True):
+          seed=0, gamer_decisions=True, rules=True):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
-    gamer_decisions=False: every gamer decides as the league does in the same state."""
+    gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
+    global rules, the real shares alone."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     m = Model()
     m.mode = mode
+    m.rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
     dec = {k: [] for k in DECISIONS}
@@ -792,7 +883,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         who = np.array([m.gamer_index(r[0]) for r in got], np.int64)
         chosen = np.array([r[1] for r in got], np.int64)
         X = np.array([r[2:] for r in got], np.int64).reshape(len(got), len(spec["features"]))
-        m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions)
+        m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions, rules=m.rules)
     # kick-offs' outcomes: the field and clock of the returned and the kept ones, by desperate and late
     pool = np.array(dec["kick_pool"], float).reshape(-1, 5)
     for kind in (RETURN, KEPT):
@@ -834,8 +925,23 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         kick = [g for t, g in conv if not t]
         m.two_good = (sum(two) + 5) / (len(two) + 10)
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
+    # kneel-downs: the clock and yards of real ones (the side ahead in Q4, downs 1-3, a 1-4 yard loss)
+    kneels = [r for r in recs if s14.is_kneel(r) and not r["cut"]]
+    run_k = np.array([r["seconds"] for r in kneels if r["seconds"] > STOPPED_MAX], float)
+    stop_k = np.array([r["seconds"] for r in kneels if r["seconds"] <= STOPPED_MAX], float)
+    if len(run_k) >= 10:
+        m.kneel_run, m.kneel_time = run_k, float(np.median(run_k))
+    if len(stop_k) >= 10:
+        m.kneel_stop = stop_k
+    if kneels:
+        m.kneel_gain = np.array([r["gain"] for r in kneels], np.int64)
+    # how often real sides ahead knelt when kneeling would have run the clock out (the kneel rule's states)
+    can = [r for r in recs if r["period"] == 4 and r["margin"] > 0 and r["down"] <= 3 and r["clock"] > 0
+           and r["clock"] <= float(kneel_burn(r["down"], r["clock"], (r.get("timeouts_left") or (3, 3))[1],
+                                              r["prev_cls"] in (NOTHING, FRESH, TIMEOUT), m.kneel_time))]
+    kneel_check = (len(can), sum(s14.is_kneel(r) for r in can))
     run = dec["to_def"]
-    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, timeouts=bool(run),
+    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, timeouts=bool(run), kneel_check=kneel_check,
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
         before = m.remain.copy()
@@ -943,11 +1049,21 @@ def report_build(m, recs=None):
                           f" to {v[:-1].max():+.2f}")
     print(f"  timeouts: {'fitted from the export' if m.meta.get('timeouts') else 'none (no timeout columns)'}")
     names = {i: g for g, i in m.gamers.items()}
+    if m.rules:
+        n, k = m.meta.get("kneel_check", (0, 0))
+        print("  global rules, for every gamer before any lean: " + "; ".join(RULE_NAMES.values()))
+        print(f"    kneel: {n:,} real Q4 snaps where the side ahead could kneel the clock out, {k:,} of them kneels"
+              f" ({100 * k / max(1, n):.0f}%); a running kneel takes {m.kneel_time:.0f}s")
+    else:
+        print("  no global rules: the real shares alone")
     for name, ch in m.choices.items():
         spec = DECISIONS[name]
         opt, need = LEAN_SHOWN[name]
         print(f"  {spec['label']}: {ch.n:,} real, "
               + ", ".join(f"{o} {100 * p:.1f}%" for o, p in zip(spec["options"], ch.league)))
+        if ch.ruled:
+            print(f"    {ch.ruled:,} real ones under a global rule, {ch.broke:,} broke it"
+                  f" ({100 * ch.broke / ch.ruled:.0f}%; left out of the gamers' leans)")
         n_g = ch.counts.sum(1)
         ok = np.flatnonzero(n_g[:-1] >= need)
         if len(ok) and ch.lean[:, opt].any() and ch.league[opt] > 0:
@@ -1070,9 +1186,13 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
 
-    def decide(name, cols, who):
-        """A decision for each path: drawn from the real ones in the state, leaned by the gamer deciding."""
-        k = model.choices[name].draw(cols, who, rng.random(len(who)))
+    rules_on = RULES and getattr(model, "rules", True)
+
+    def decide(name, cols, who, must=None, other=None):
+        """A decision for each path: the global rules first, then drawn from the real ones in the state
+        among what they leave, leaned by the gamer deciding."""
+        allowed = rule_mask(name, cols, must, other) if rules_on else None
+        k = model.choices[name].draw(cols, who, rng.random(len(who)), allowed)
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols)))
         return k
@@ -1139,8 +1259,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             for i, edge in reversed(list(enumerate(CONV_CLOCK))):
                 cell = np.where((p == 4) & (c <= edge), 4 + i, cell)
         two = decide("two", dict(cell=cell, lead=np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN),
-                     gamer[ix, side]) == 1
-        two |= ot & ot_done[ix, 1 - side] & ((lead == -1) | (lead == -2))
+                     gamer[ix, side], other=ot & ot_done[ix, 1 - side]) == 1
         good = rng.random(len(ix)) < np.where(two, model.two_good, model.kick_good)
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
         tally("two_point_tries", two.sum())
@@ -1175,7 +1294,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         off = team[ix]
         cols = dict(togo10=togo10(y[ix]), dist=dist_b(dist[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
                     phase=phase_of(period[ix], clock[ix]), left=left_b(half_left(period[ix], clock[ix])))
-        choice = decide("fourth", cols, gamer[ix, off])
+        must = (period[ix] >= 5) & ot_done[ix, 1 - off] & (score[ix, off] < score[ix, 1 - off])
+        choice = decide("fourth", cols, gamer[ix, off], must=must)
         choice = np.where((choice == FG) & (100 - y[ix] + 17 > FG_MAX), np.where(dist[ix] <= 2, GO, PUNT), choice)
         pu, fg = ix[choice == PUNT], ix[choice == FG]
         if len(pu):
@@ -1277,8 +1397,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             gain[on] = np.maximum(g0, reach)
         return kind, gain, shift
 
-    def play(ix):
+    def play(ix, kneel=None):
         off = team[ix]
+        kneel = np.zeros(len(ix), bool) if kneel is None else kneel
         # timeouts: only before a snap off a running clock, and they move only the time draw
         running = prev[ix] <= LOSS
         cols = dict(phase=phase_of(period[ix], clock[ix]), margin=margin_b(score[ix, off] - score[ix, 1 - off]),
@@ -1296,6 +1417,12 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         prv[call_def | call_off] = TIMEOUT
         tally("timeouts", (call_def | call_off).sum())
         secs = draw_time(ix, prv)
+        if kneel.any():                          # a kneel takes a real kneel's time, off a stopped clock or not
+            kx = np.flatnonzero(kneel)
+            stop = np.isin(prv[kx], (NOTHING, FRESH, TIMEOUT))
+            secs[kx] = np.where(stop, model.kneel_stop[rng.integers(0, len(model.kneel_stop), len(kx))],
+                                model.kneel_run[rng.integers(0, len(model.kneel_run), len(kx))])
+            tally("kneels", len(kx))
         ran = secs > STOPPED_MAX
         # a running clock that runs out before the snap: the period is over, no snap
         gone = ran & (secs - PLAY_SECONDS >= clock[ix])
@@ -1303,7 +1430,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             clock[ix[gone]] = 0.0
             tally("clock_ran_out", gone.sum())
         keep = ~gone
-        ix, secs, ran, prv = ix[keep], secs[keep], ran[keep], prv[keep]
+        ix, secs, ran, prv, kneel = ix[keep], secs[keep], ran[keep], prv[keep], kneel[keep]
         if not len(ix):
             return
         start_clock, start_prv = clock[ix].copy(), prv.copy()
@@ -1314,9 +1441,16 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             w = ix[warn]
             clock[w] = LATE
             secs[warn] = draw_time(w, prv[warn], stopped=True)
+            wk = np.flatnonzero(warn & kneel)
+            if len(wk):
+                secs[wk] = model.kneel_stop[rng.integers(0, len(model.kneel_stop), len(wk))]
             tally("two_minute", len(w))
         clock[ix] = np.maximum(0.0, clock[ix] - secs)
         kind, gain, shift = draw_play(ix, secs)
+        if kneel.any():
+            kx = np.flatnonzero(kneel)
+            kind[kx], shift[kx] = GAIN, 0
+            gain[kx] = model.kneel_gain[rng.integers(0, len(model.kneel_gain), len(kx))]
         off = team[ix]
         elapsed[ix] += 1
         if st is not None:                    # logged as a real snap reads: PLAY_OVER to PLAY_OVER
@@ -1426,7 +1560,17 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             kickoff(k)
         sn = live[phase[live] == SNAP]
         sn = sn[~np.isin(sn, k)]
-        if len(sn):
+        kn = sn[:0]
+        if len(sn) and rules_on:
+            # the side ahead in Q4 that can kneel the clock out kneels, whoever its gamer is
+            off = team[sn]
+            can = (period[sn] == 4) & (score[sn, off] > score[sn, 1 - off])
+            if can.any():
+                burn = kneel_burn(down[sn], clock[sn], tos[sn, 1 - off], np.isin(prev[sn], (NOTHING, FRESH)),
+                                  model.kneel_time)
+                can &= clock[sn] <= burn
+                kn, sn = sn[can], sn[~can]
+        if len(sn) or len(kn):
             # downs 1-3 in range in the half's last minute: kick now or play on
             left = half_left(period[sn], clock[sn])
             kd = 100 - y[sn] + 17
@@ -1437,16 +1581,17 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1,
                             margin=margin_b(score[e, off] - score[e, 1 - off]),
                             half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)))
-                now = e[decide("early_fg", cols, gamer[e, off]) == 1]
+                must = (period[e] >= 5) & ot_done[e, 1 - off] & (score[e, off] < score[e, 1 - off])
+                now = e[decide("early_fg", cols, gamer[e, off], must=must) == 1]
                 if len(now):
                     tally("early_field_goals", len(now))
                     field_goal(now)
                     sn = sn[~np.isin(sn, now)]
             on4 = sn[down[sn] >= 4]
             go = fourth(on4) if len(on4) else on4
-            plays = np.concatenate([sn[down[sn] < 4], go])
+            plays = np.concatenate([sn[down[sn] < 4], go, kn])
             if len(plays):
-                play(plays)
+                play(plays, np.r_[np.zeros(len(plays) - len(kn), bool), np.ones(len(kn), bool)])
         ended = np.flatnonzero((phase != DONE) & (clock <= 0.0))
         if len(ended):
             end_period(ended)
