@@ -43,8 +43,17 @@ took, the draw moves on to a real snap at least as long. The distance stops at e
 the goal line is a touchdown, behind its own a safety; a real touchdown drawn from further back runs on
 with the real chance a gain that long goes further (gain_surv).
 
-Snaps left in the half (REMAIN) is a table by the time left in the half: the real games' average
-first, then the sim's own from kick-off (refine_remaining), and the draws are rebuilt on it.
+Snaps left in the half (REMAIN) is a core split of both draws: the expected count from a table by
+the half's 10-second slice, the clock running or stopped into the snap, both sides' timeouts and the
+lead (remain_key), each cell shrunk toward its slice and clock's, that toward its slice's
+(remain_table). Real snaps and the sim's read it the same way, off their own state -- never the count
+that actually followed. The real games' counts first, then the sim's own from kick-off
+(refine_remaining), the draws rebuilt on it each round (REFINE_ROUNDS).
+
+A new set of downs is the next row's down (snap_records): spots are whole yards, so a sneak for inches
+shows as a 0-yard gain that moves the chains, and a gain of the yards to go can be spotted short. The
+sim takes the drawn real snap's own result where it was at the same distance, else the yards; a down
+played again (a penalty) keeps its number.
 
 The decisions (DECISIONS) are each the deciding gamer's: 4th downs (go, field goal, punt), a kick on
 downs 1-3 in the half's last minute, kick-offs (returned, touchback, no landing zone, kept), going for
@@ -93,14 +102,14 @@ MARGIN_EDGES = np.array([-8.5, -3.5, -0.5, 0.5, 3.5, 8.5])
 DIST_EDGES = np.array([1.5, 3.5, 6.5, 10.5])
 ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 89.5, 95.5])     # the last two: the 10 to the 5, inside the 5
 ELAPSED_EDGES = np.array([30.5, 60.5, 90.5])
-REMAIN_EDGES = np.array([2.5, 6.5, 12.5])
+REMAIN_EDGES = np.array([1.5, 2.5, 4.5, 7.5, 12.5])         # snaps left in the half: 0-1, 2, 3-4, 5-7, 8-12, 13+
 TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
-SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=4, tb=6,
-             late=4, lead3=3, tb2=2, dist3=3, zone3=3)                   # late: late_of; the rest coarse (derive)
-TIME_BASE = ("prev", "phase", "late", "margin", "down", "dist", "zone", "elapsed", "remain")
-DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "late", "elapsed", "remain")
+SIZES = dict(prev=6, phase=7, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=6, tb=6,
+             lead3=3, tb2=2, dist3=3, zone3=3, rem3=3)                   # the last five: coarse ones (derive)
+TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
+DIST_BASE = ("tb", "down", "dist", "zone", "margin", "phase", "elapsed", "remain")
 TIME_FEATURES = TIME_BASE + ("lead3",)                   # the fine features, then the coarse ones the fallbacks read
 DIST_FEATURES = DIST_BASE + ("lead3", "zone3")
 
@@ -109,24 +118,25 @@ def _drop(features, *names):
     return tuple(f for f in features if f not in names)
 
 
-# The fallbacks keep the situation -- the down, the distance, the field and (coarsely) the part of the
-# game and the lead -- to the end: a 3rd down is never drawn from 1st downs, the end of a half never
-# from the rest of it, while there are real snaps alike enough to draw from.
+# The fallbacks keep the situation -- the down, the distance, the field, the snaps left in the half (the
+# sim's own expected count for the clock, whether it's running, both sides' timeouts and the lead) and
+# coarsely the part of the game and the lead -- to the end: a 3rd down is never drawn from 1st downs,
+# a side with time for one snap never from one with time for ten, while there are real snaps alike.
 TIME_LEVELS = (TIME_BASE,
-               _drop(TIME_BASE, "remain"),
-               _drop(TIME_BASE, "remain", "elapsed"),
-               _drop(TIME_BASE, "remain", "elapsed", "zone"),
-               ("prev", "phase", "late", "margin", "down"),
-               ("prev", "phase", "late", "lead3", "down"),
-               ("prev", "phase", "late", "down"),
-               ("prev", "phase", "late"),
+               _drop(TIME_BASE, "elapsed"),
+               _drop(TIME_BASE, "elapsed", "zone"),
+               ("prev", "phase", "margin", "down", "remain"),
+               ("prev", "phase", "lead3", "down", "remain"),
+               ("prev", "phase", "lead3", "remain"),
+               ("prev", "phase", "remain"),
+               ("prev", "remain"),
                ("prev",),
                ())
 DIST_LEVELS = (DIST_BASE,
-               _drop(DIST_BASE, "remain"),
-               _drop(DIST_BASE, "remain", "elapsed"),
-               ("tb", "down", "dist", "zone", "lead3", "late"),
-               ("tb", "down", "dist", "zone", "late"),
+               _drop(DIST_BASE, "elapsed"),
+               ("tb", "down", "dist", "zone", "lead3", "phase", "remain"),
+               ("tb", "down", "dist", "zone", "lead3", "remain"),
+               ("tb", "down", "dist", "zone", "remain"),
                ("tb", "down", "dist", "zone"),
                ("tb", "down", "dist", "zone3"),
                ("tb", "down", "dist"),
@@ -135,9 +145,9 @@ DIST_LEVELS = (DIST_BASE,
                ())
 # a gamer's or team's own snaps: alike in the situation, or the league's draw -- never their snaps of
 # every down and distance
-GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "late", "lead3")
+GAMER_TIME_FEATURES = ("who", "prev", "phase", "margin", "down", "rem3", "lead3")
 GAMER_DIST_FEATURES = ("who", "tb", "down", "dist", "zone", "tb2", "dist3", "zone3")
-GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "late", "lead3", "down"))
+GAMER_TIME_LEVELS = (("who", "prev", "phase", "margin", "down"), ("who", "prev", "rem3", "lead3"))
 GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone"), ("who", "tb2", "down", "dist3", "zone3"))
 MIN_RECORDS = 40
 MIN_GAMER_RECORDS = 30
@@ -209,10 +219,13 @@ RULES = True
 # The game's own end: in Q4, the side ahead with the ball whose downs left, each taking the play clock,
 # outlast the clock while the defense has no timeouts -- the game is over (auto_end).
 AUTO_END = True
-REMAIN_SLICE = 20.0           # snaps left in the half, by 20-second slice of the time left in it
-REMAIN_SLICES = int(2 * QUARTER // REMAIN_SLICE) + 1
+REMAIN_SLICE = 10.0           # snaps left in the half, by 10-second slice of the time left in it,
+REMAIN_SLICES = int(2 * QUARTER // REMAIN_SLICE) + 1      # the clock running or not, both sides' timeouts, the lead
+REMAIN_SHAPE = (3, REMAIN_SLICES, 2, 4, 4, 3)
+REMAIN_PRIOR = 20.0           # a cell's own count shrunk toward its slice's (and clock's) by this many snaps
 REFINE_REMAINING = True
-REFINE_PATHS = 3000
+REFINE_ROUNDS = 3             # the sim's own counts, the draws rebuilt on them, so many times over
+REFINE_PATHS = 6000
 SHARE_SLICE = 20.0            # points still to come, by 20-second slice of regulation (v21_report)
 SHARE_SLICES = int(4 * QUARTER // SHARE_SLICE)
 
@@ -305,11 +318,48 @@ def half_left(period, clock):
 
 
 def remain_slice(period, clock):
-    """(half: 0 first, 1 second, 2 overtime, 20-second slice of the time left in it)."""
+    """(half: 0 first, 1 second, 2 overtime, 10-second slice of the time left in it)."""
     period = np.asarray(period)
     half = np.where(period <= 2, 0, np.where(period <= 4, 1, 2))
     sl = np.clip((half_left(period, clock) // REMAIN_SLICE).astype(np.int64), 0, REMAIN_SLICES - 1)
     return half, sl
+
+
+def running_of(prev):
+    """Whether the clock runs into the snap off the play before (a gain short of the line, a first
+    down, a loss); nothing gained (mostly an incomplete pass), a fresh possession and a timeout stop it."""
+    return np.isin(np.asarray(prev), (SHORT, FIRST, LOSS)).astype(np.int64)
+
+
+def remain_key(period, clock, running, own_to, opp_to, lead3):
+    """The snaps-left table's index of a state: the half, its 10-second slice, the clock running or
+    not, the side with the ball's timeouts and the other side's (0-3) and the lead (behind, level,
+    ahead)."""
+    half, sl = remain_slice(period, clock)
+    to = lambda v: np.clip(np.asarray(v, np.int64), 0, 3)
+    return half, sl, np.asarray(running, np.int64), to(own_to), to(opp_to), np.asarray(lead3, np.int64)
+
+
+def remain_table(key, counts, prior=REMAIN_PRIOR, base=None):
+    """The expected snaps left in the half for every cell of REMAIN_SHAPE off states (key) and the
+    snaps that followed each (counts): each cell's own average shrunk toward its slice and clock's,
+    that toward its slice's; slices with none read off their neighbours (or `base`'s)."""
+    num, den = np.zeros(REMAIN_SHAPE), np.zeros(REMAIN_SHAPE)
+    np.add.at(num, key, counts)
+    np.add.at(den, key, 1)
+    n2, s2 = den.sum((2, 3, 4, 5)), num.sum((2, 3, 4, 5))
+    m2 = np.zeros(n2.shape)
+    for h in range(n2.shape[0]):
+        have = np.flatnonzero(n2[h] > 0)
+        if len(have):
+            m2[h] = np.interp(np.arange(n2.shape[1]), have, s2[h, have] / n2[h, have])
+        elif base is not None:
+            m2[h] = base[h].mean((1, 2, 3, 4))
+        else:
+            m2[h] = np.arange(n2.shape[1]) * REMAIN_SLICE / 20.0
+    n3, s3 = den.sum((3, 4, 5)), num.sum((3, 4, 5))
+    m3 = (s3 + prior * m2[..., None]) / (n3 + prior)
+    return (num + prior * m3[..., None, None, None]) / (den + prior)
 
 
 def share_slice(period, clock):
@@ -586,6 +636,59 @@ def _with_side(rows):
     return [r if r.get("team_a_side") in ("home", "away") else dict(r, team_a_side="home") for r in rows]
 
 
+def snap_records(rows):
+    """Every scrimmage snap of a match, as sim14.snap_records reads them, with what the next row says
+    the down became: `converted` (a new set of downs, or a touchdown) and `replay` (the same down again,
+    the gain short of the line: a penalty). Spots are whole yards, so a gain of 0 can move the chains (a
+    sneak for inches) and one of the yards to go can fall short; sim14 left out the 4th downs that kept
+    the ball short of the line, which these are kept."""
+    _i, _f = s14._i, s14._f
+    out = []
+    for a, b in zip(rows, rows[1:]):
+        if a["play_kind"] not in s14.SNAP_KINDS or not a["down"] or not a["field_position"]:
+            continue
+        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"] \
+                or not b["clock_seconds"] or not a["distance"]:
+            continue
+        seconds = _f(a["clock_seconds"]) - _f(b["clock_seconds"])
+        if not 0 <= seconds <= 60:
+            continue
+        down, t, y = _i(a["down"]), max(1, _i(a["distance"])), _i(a["field_position"])
+        rec = dict(offense=a["offense"], period=_i(a["period"]), clock=_f(a["clock_seconds"]),
+                   margin=s14._margin(a, a["offense"]), down=down, distance=t, field=y, seconds=seconds,
+                   message=_i(b["message"]), kind=GAIN, gain=0, new_field=0, replay=False, converted=False,
+                   fresh=s14.is_fresh(a), start=_i(a["message"]))
+        if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
+            continue
+        bk = b["play_kind"]
+        if bk == "TOUCHDOWN":
+            scorer = s14._scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
+            if scorer == a["offense"]:
+                rec["gain"], rec["converted"] = 100 - y, True
+            else:
+                rec["kind"] = DEF_TD
+        elif bk in ("SCRIMMAGE", "TURNOVER_ON_DOWNS"):
+            if not b["field_position"]:
+                continue
+            by = _i(b["field_position"])
+            if b["offense"] == a["offense"]:
+                rec["gain"] = by - y
+                nd = _i(b["down"])
+                rec["replay"] = nd == down and by - y < t
+                rec["converted"] = nd == 1
+            elif bk == "TURNOVER_ON_DOWNS" or (down == 4 and bk == "SCRIMMAGE"
+                                               and "TURNOVER_ON_DOWNS" in (b["play_messages"] or "")):
+                rec["gain"] = 100 - by - y
+            else:
+                rec["kind"] = TURNOVER
+                rec["new_field"] = by
+        else:
+            continue
+        s14._timeouts_at(rec, a)
+        out.append(rec)
+    return out
+
+
 def match_snaps(rows, pair=None, teams=None):
     """A match's scrimmage snaps with the features both draws read and who had the ball: a list of
     dicts (sim14.snap_records plus side, prev_cls, elapsed, remain, cut, play_seconds, the gamers and
@@ -594,7 +697,7 @@ def match_snaps(rows, pair=None, teams=None):
     if not rows:
         return []
     a_home = rows[0]["team_a_side"] != "away"
-    recs = s14.link_prev(s14.snap_records(rows))
+    recs = s14.link_prev(snap_records(rows))
     for n, r in enumerate(recs):
         r["side"] = _side_of(r["offense"], a_home)
         r["elapsed"] = n
@@ -858,7 +961,7 @@ class Model:
         self.two_good, self.kick_good = 0.5, 0.97
         self.rules = {}                    # learned (v21_rules): {decision: [(option, {feature: (lo, hi)})]}
         self.use_rules = True
-        self.remain = np.zeros((3, REMAIN_SLICES))
+        self.remain = np.zeros(REMAIN_SHAPE)
         self.share = np.linspace(1, 0, SHARE_SLICES)
         self.meta = {}
 
@@ -882,9 +985,9 @@ class Model:
     def team_index(self, team):
         return self.teams.get((team or "").strip(), len(self.teams))
 
-    def remain_at(self, period, clock):
-        h, sl = remain_slice(period, clock)
-        return self.remain[h, sl]
+    def remain_at(self, period, clock, running, own_to, opp_to, lead3):
+        """The expected snaps left in the half (remain_key)."""
+        return self.remain[remain_key(period, clock, running, own_to, opp_to, lead3)]
 
 
 MODEL_FILE = "v21model.pkl"
@@ -905,6 +1008,8 @@ def derive(f):
     stopped, running), the distance (dist3: 1-3, 4-6, 7+) and the field (zone3)."""
     if "margin" in f:
         f["lead3"] = np.select([f["margin"] <= 2, f["margin"] == 3], [0, 1], 2).astype(np.int64)
+    if "remain" in f:
+        f["rem3"] = np.select([np.asarray(f["remain"]) <= 2, np.asarray(f["remain"]) <= 4], [0, 1], 2).astype(np.int64)
     if "tb" in f:
         f["tb2"] = (np.asarray(f["tb"]) >= 3).astype(np.int64)
     if "dist" in f:
@@ -914,14 +1019,25 @@ def derive(f):
     return f
 
 
+def remain_inputs(recs):
+    """(period, clock, running, own timeouts, the other side's, lead3) of real snaps, as the sim reads
+    its own (timeouts not known: three each)."""
+    get = lambda k: np.array([r[k] for r in recs])
+    tos = np.array([r.get("timeouts_left") or (TIMEOUTS, TIMEOUTS) for r in recs], np.int64).reshape(-1, 2)
+    mb = margin_b(get("margin"))
+    return (get("period"), get("clock").astype(float), running_of(get("prev_cls")), tos[:, 0], tos[:, 1],
+            derive(dict(margin=mb))["lead3"])
+
+
 def _features(recs, model):
-    """{feature: array} for real snaps (snaps left in the half off the model's table)."""
+    """{feature: array} for real snaps (snaps left in the half off the model's table, for each snap's
+    own state)."""
     get = lambda k: np.array([r[k] for r in recs])
     period, clock = get("period"), get("clock").astype(float)
-    return derive(dict(prev=get("prev_cls"), phase=phase_of(period, clock), late=late_of(period, clock),
+    return derive(dict(prev=get("prev_cls"), phase=phase_of(period, clock),
                        margin=margin_b(get("margin")),
                        down=down_b(get("down")), dist=dist_b(get("distance")), zone=zone_b(get("field")),
-                       elapsed=elapsed_b(get("elapsed")), remain=remain_b(model.remain_at(period, clock)),
+                       elapsed=elapsed_b(get("elapsed")), remain=remain_b(model.remain_at(*remain_inputs(recs))),
                        tb=time_b(get("play_seconds"))))
 
 
@@ -980,12 +1096,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
                 m.teams[t] = len(m.teams)
 
     # snaps left in the half, from the real games first
-    half, sl = remain_slice(np.array([r["period"] for r in recs]), np.array([r["clock"] for r in recs], float))
-    rem = np.array([r["remain"] for r in recs], float)
-    num, den = np.zeros(m.remain.shape), np.zeros(m.remain.shape)
-    np.add.at(num, (half, sl), rem)
-    np.add.at(den, (half, sl), 1)
-    m.remain = np.where(den > 0, num / np.maximum(den, 1), 0.0)
+    m.remain = remain_table(remain_key(*remain_inputs(recs)), np.array([r["remain"] for r in recs], float))
     m.share = points_share(matches)
 
     # positive gains' survival, touchdowns counted as at least the yards the field allowed
@@ -1057,13 +1168,13 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
-        before = m.remain.copy()
-        refine_remaining(m, seed=seed)
-        if verbose:
-            got = np.abs(m.remain - before)[before > 0]
-            print(f"  snaps left in the half, the sim's own against the real games': mean change"
-                  f" {got.mean() if len(got) else 0:.2f} snaps; the draws rebuilt on it", flush=True)
-        _build_draws(m, recs, min_records, verbose=False)
+        for r_ in range(REFINE_ROUNDS):
+            before = m.remain.copy()
+            refine_remaining(m, seed=seed + r_)
+            _build_draws(m, recs, min_records, verbose=False)
+            if verbose:
+                print(f"  snaps left in the half, round {r_ + 1}: the sim's own counts, mean change"
+                      f" {np.abs(m.remain - before).mean():.2f} snaps; the draws rebuilt on them", flush=True)
     if verbose:
         report_build(m, recs)
     return m
@@ -1084,7 +1195,9 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     field = np.array([r["field"] for r in recs], np.int64)
     shift = np.array([_turnover_shift(r) if r["kind"] == TURNOVER else 0 for r in recs], np.int64)
     dvalue = np.where(kind == DEF_TD, DEF_TD_VALUE, np.where(kind == TURNOVER, TO_VALUE, gain)).astype(float)
-    dist_pay = {"kind": kind.astype(np.int8), "gain": gain.astype(np.int16), "shift": shift.astype(np.int16),
+    made = np.array([2 if r["replay"] else int(r["converted"]) if r["kind"] == GAIN else 3 for r in recs], np.int8)
+    dist_pay = {"made": made, "rdist": np.array([r["distance"] for r in recs], np.int16),
+                "kind": kind.astype(np.int8), "gain": gain.astype(np.int16), "shift": shift.astype(np.int16),
                 "td": (kind == GAIN) & (gain >= 100 - field), "value": dvalue.astype(np.float32)}
     m.dist = Bins.build(DIST_FEATURES, [SIZES[f] for f in DIST_FEATURES], DIST_LEVELS,
                         _cols(feats, DIST_FEATURES), dvalue, dist_pay, min_records)
@@ -1161,6 +1274,11 @@ def report_build(m, recs=None):
                     print(f"  {kind_} tilt by {k.replace('_', ' ')}: sd {np.std(v[:-1]):.3f}, from {v[:-1].min():+.2f}"
                           f" to {v[:-1].max():+.2f}")
     print(f"  timeouts: {'fitted from the export' if m.meta.get('timeouts') else 'none (no timeout columns)'}")
+    for line in remain_lines(m):
+        print(line)
+    if recs is not None:
+        for line in chains_lines(recs):
+            print(line)
     names = {i: g for g, i in m.gamers.items()}
     if m.use_rules:
         print(f"  rules learned off the real decisions (v21_rules: never or all but never taken): "
@@ -1184,6 +1302,47 @@ def report_build(m, recs=None):
             print(f"    {spec['options'][opt]}: each gamer's rate over every real state (the league's"
                   f" {100 * ch.gamer_rate(len(m.gamers), opt):.1f}%), {len(ok)} gamers with {need}+:"
                   f" least {show(order[:3])}; most {show(order[::-1][:3])}")
+
+
+# the snaps-left table at a few states: (label, period, clock, running, own timeouts, the other side's)
+REMAIN_SHOWN = (("Q2 2:00, clock stopped, 3 timeouts each", 2, 120.0, 0, 3, 3),
+                ("Q2 0:40, clock stopped, 3 timeouts each", 2, 40.0, 0, 3, 3),
+                ("Q2 0:40, clock running, no timeouts", 2, 40.0, 1, 0, 0),
+                ("Q4 2:00, clock stopped, 3 timeouts each", 4, 120.0, 0, 3, 3),
+                ("Q4 0:40, clock stopped, 3 timeouts each", 4, 40.0, 0, 3, 3),
+                ("Q4 0:40, clock running, none for the ball, 3 the other side", 4, 40.0, 1, 0, 3),
+                ("Q4 0:40, clock running, no timeouts", 4, 40.0, 1, 0, 0))
+
+
+def remain_lines(m):
+    """The snaps-left table at REMAIN_SHOWN's states, behind / level / ahead."""
+    out = ["  snaps left in the half at a few states (behind / level / ahead; buckets"
+           " 0-1, 2, 3-4, 5-7, 8-12, 13+):"]
+    for label, p, c, run, own_, opp_ in REMAIN_SHOWN:
+        v = [float(m.remain_at(p, c, run, own_, opp_, l3)) for l3 in range(3)]
+        out.append(f"    {label}: " + " / ".join(f"{x:.1f}" for x in v))
+    return out
+
+
+def chains_lines(recs):
+    """How the real snaps' new sets of downs line up with the yards: spots are whole yards, so a gain
+    short of the distance can move the chains (inches) and one of the distance can fall short; and the
+    downs played again (a penalty, the gain short of the line)."""
+    g = [r for r in recs if r["kind"] == GAIN]
+    if not g:
+        return []
+    out = [f"  first downs off the next row's down: {len(g):,} real gains, "
+           f"{100 * np.mean([r['replay'] for r in g]):.1f}% the same down played again"]
+    for lo, hi, label in ((1, 1, "1 to go"), (2, 3, "2-3"), (4, 6, "4-6"), (7, 99, "7+")):
+        s = [r for r in g if lo <= r["distance"] <= hi and not r["replay"] and r["gain"] < 100 - r["field"]]
+        if not s:
+            continue
+        yards = np.array([r["gain"] >= r["distance"] for r in s])
+        conv = np.array([r["converted"] for r in s])
+        out.append(f"    {label}: {len(s):,} snaps, first down {100 * conv.mean():.1f}% (by the yards"
+                   f" {100 * yards.mean():.1f}%); short of the yards yet moved the chains {(conv & ~yards).sum():,},"
+                   f" the yards yet not {(~conv & yards).sum():,}")
+    return out
 
 
 # ---------------------------------------------------------------- the starts
@@ -1271,7 +1430,7 @@ def _tilts(model, kind, gamer, team_ix):
 # a snap as the census reads it: its clock and the play before as at its PLAY_OVER, the clock it used to
 # the next (seconds) and the time its distance was drawn on (drawn)
 SNAP_LOG = ("path", "period", "clock", "prev", "seconds", "drawn", "kind", "gain", "dist", "field", "side", "down",
-            "lead")
+            "lead", "conv", "rem", "to_own", "to_opp")
 
 
 def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
@@ -1467,14 +1626,20 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                     out["_from"][sel[ok]] = layers.index((kind_, role, draw))
                     out["_j"][sel[ok]] = jj
 
-    def draw_time(ix, prv, stopped=False):
+    def remain_of(ix, prv, tos0):
+        """The snaps-left bucket of each path's snap: its clock, running or not (prv), the timeouts
+        each side had before any was called for it (tos0: own, other's) and the lead."""
+        off = team[ix]
+        lead3 = derive(dict(margin=margin_b(score[ix, off] - score[ix, 1 - off])))["lead3"]
+        return remain_b(model.remain_at(period[ix], clock[ix], running_of(prv), tos0[:, 0], tos0[:, 1], lead3))
+
+    def draw_time(ix, prv, rem, stopped=False):
         """Each snap's time; `stopped`: from the stopped-clock part of the same draw (the snap after
         the two-minute warning)."""
         off = team[ix]
-        f = derive(dict(prev=prv, phase=phase_of(period[ix], clock[ix]), late=late_of(period[ix], clock[ix]),
+        f = derive(dict(prev=prv, phase=phase_of(period[ix], clock[ix]),
                         margin=margin_b(score[ix, off] - score[ix, 1 - off]), down=down_b(down[ix]),
-                        dist=dist_b(dist[ix]), zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]),
-                        remain=remain_b(model.remain_at(period[ix], clock[ix]))))
+                        dist=dist_b(dist[ix]), zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]), remain=rem))
         u = rng.random(len(ix))
         k = k_time[ix, off] if k_time is not None else None
         b = model.time.bin_of(f)
@@ -1498,20 +1663,21 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 secs[again[a]] = b.payload["seconds"][b.above(out["_j"][again[a]], u2[a])]
         return secs
 
-    def draw_play(ix, secs):
+    def draw_play(ix, secs, clk, rem):
+        """What came of each snap, off the state at the snap (clk: the clock then): (kind, gain, shift,
+        a new set of downs, the down played again)."""
         off = team[ix]
         f = derive(dict(tb=time_b(secs), down=down_b(down[ix]), dist=dist_b(dist[ix]), zone=zone_b(y[ix]),
-                        margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clock[ix]),
-                        late=late_of(period[ix], clock[ix]), elapsed=elapsed_b(elapsed[ix]),
-                        remain=remain_b(model.remain_at(period[ix], clock[ix]))))
+                        margin=margin_b(score[ix, off] - score[ix, 1 - off]), phase=phase_of(period[ix], clk),
+                        elapsed=elapsed_b(elapsed[ix]), remain=rem))
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
         j = model.dist.draw(model.dist.bin_of(f), u, k)
-        names = ("kind", "gain", "shift", "td")
+        names = ("kind", "gain", "shift", "td", "made", "rdist")
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()
         own("dist", f, ix, off, u, names, out)
-        kind, gain, shift, td = (out[x] for x in names)
+        kind, gain, shift, td, made, rdist = (out[x] for x in names)
         if SMOOTH_YARDS:
             spread = (kind == GAIN) & (gain != 0) & ~td
             gain = np.where(spread, gain + rng.integers(-SMOOTH_YARDS, SMOOTH_YARDS + 1, len(ix)), gain)
@@ -1524,7 +1690,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             t = rng.random(len(on)) * S_[g0]
             reach = np.searchsorted(-S_, -t, side="right") - 1          # the longest gain with S >= t
             gain[on] = np.maximum(g0, reach)
-        return kind, gain, shift
+        # a new set of downs: the real snap's own, where it was to go as far (spots are whole yards: a
+        # sneak for inches shows as 0 and moves the chains); else by the yards
+        same = (made <= 1) & (rdist == dist[ix])
+        conv = np.where(same, made == 1, gain >= dist[ix])
+        return kind, gain, shift, conv, made == 2
 
     def play(ix):
         off = team[ix]
@@ -1542,11 +1712,13 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             call_off[o_] = decide("to_off", {k: v[o_] for k, v in cols.items()}, gamer[ix[o_], off[o_]],
                                   fine=state(ix[o_], off[o_]), ix=ix[o_]) == 1
         prv = prev[ix].copy()
+        tos0 = np.stack([tos[ix, off], tos[ix, 1 - off]], axis=1)      # before any is called for this snap
         tos[ix[call_def], 1 - off[call_def]] -= 1
         tos[ix[call_off], off[call_off]] -= 1
         prv[call_def | call_off] = TIMEOUT
         tally("timeouts", (call_def | call_off).sum())
-        secs = draw_time(ix, prv)
+        rem = remain_of(ix, prv, tos0)
+        secs = draw_time(ix, prv, rem)
         ran = secs > STOPPED_MAX
         # a running clock that runs out before the snap: the period is over, no snap
         gone = ran & (secs - PLAY_SECONDS >= clock[ix])
@@ -1554,7 +1726,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             clock[ix[gone]] = 0.0
             tally("clock_ran_out", gone.sum())
         keep = ~gone
-        ix, secs, ran, prv = ix[keep], secs[keep], ran[keep], prv[keep]
+        ix, secs, ran, prv, tos0, rem = ix[keep], secs[keep], ran[keep], prv[keep], tos0[keep], rem[keep]
         if not len(ix):
             return
         start_clock, start_prv = clock[ix].copy(), prv.copy()
@@ -1564,16 +1736,20 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if warn.any():
             w = ix[warn]
             clock[w] = LATE
-            secs[warn] = draw_time(w, prv[warn], stopped=True)
+            rem[warn] = remain_of(w, np.full(len(w), TIMEOUT), tos0[warn])    # the warning stops the clock
+            secs[warn] = draw_time(w, prv[warn], rem[warn], stopped=True)
             tally("two_minute", len(w))
+        snap_clock = clock[ix].copy()
         clock[ix] = np.maximum(0.0, clock[ix] - secs)
-        kind, gain, shift = draw_play(ix, secs)
+        kind, gain, shift, conv, replay = draw_play(ix, secs, snap_clock, rem)
         off = team[ix]
         elapsed[ix] += 1
         if st is not None:                    # logged as a real snap reads: PLAY_OVER to PLAY_OVER
+            got = (kind == GAIN) & (conv | (gain >= 100 - y[ix])) & ~replay
             st["_snaps"].append((ix.copy(), period[ix].copy(), start_clock, start_prv, start_clock - clock[ix],
                                  secs.copy(), kind.copy(), np.minimum(gain, 100 - y[ix]), dist[ix].copy(),
-                                 y[ix].copy(), off.copy(), down[ix].copy(), score[ix, off] - score[ix, 1 - off]))
+                                 y[ix].copy(), off.copy(), down[ix].copy(), score[ix, off] - score[ix, 1 - off],
+                                 got, rem.copy(), tos0[:, 0].copy(), tos0[:, 1].copy()))
         tally("snaps", len(ix))
         to = kind == TURNOVER
         if to.any():
@@ -1586,7 +1762,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             tally("defensive_tds", len(d))
             touchdown(d, 1 - team[d])
         g = kind == GAIN
-        gx, gg = ix[g], gain[g]
+        gx, gg, gconv, grep = ix[g], gain[g], conv[g], replay[g]
         if not len(gx):
             return
         y2 = y[gx] + gg
@@ -1600,14 +1776,14 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             score[s, 1 - team[s]] += 2
             set_ball(s, 1 - team[s], model.safety_fields[rng.integers(0, len(model.safety_fields), len(s))])
         on = ~td & ~sf
-        ox, og, oy = gx[on], gg[on], y2[on]
-        first = og >= dist[ox]
-        prev[ox] = play_class(og, dist[ox])
+        ox, og, oy, oc, orp = gx[on], gg[on], y2[on], gconv[on], grep[on]
+        first = oc & ~orp
+        prev[ox] = np.where(first, FIRST, play_class(og, dist[ox]))
         y[ox] = oy
         f, nf = ox[first], ox[~first]
         down[f] = 1
         dist[f] = np.minimum(10, 100 - y[f])
-        down[nf] += 1
+        down[nf] += np.where(orp[~first], 0, 1)                    # a down played again keeps its number
         dist[nf] = np.maximum(1, dist[nf] - og[~first])
         failed = nf[down[nf] > 4]
         if len(failed):
@@ -1762,8 +1938,8 @@ def snap_log(stats):
 
 def refine_remaining(model, n_paths=REFINE_PATHS, seed=0):
     """Snaps left in the half from the sim's own games: kick-offs at league, each snap's count of the
-    snaps after it in its half, by the half's 20-second slice; slices the sim reached under 20 times
-    keep the real games' count."""
+    snaps after it in its half, by remain_key (the slice, the clock running or not, the timeouts, the
+    lead), shrunk as remain_table shrinks; slices the sim never reached read off the table before."""
     stats = {}
     simulate(model, kickoff_start(model), max(1, n_paths // 2), seed=seed, stats=stats)
     log = snap_log(stats)
@@ -1779,8 +1955,7 @@ def refine_remaining(model, n_paths=REFINE_PATHS, seed=0):
     size = np.bincount(k, minlength=int(k.max()) + 1)[k]
     rem = np.empty(len(k), float)
     rem[order] = size - ordinal - 1
-    num, den = np.zeros(model.remain.shape), np.zeros(model.remain.shape)
-    np.add.at(num, (half, sl), rem)
-    np.add.at(den, (half, sl), 1)
-    model.remain = np.where(den >= 20, num / np.maximum(den, 1), model.remain)
+    lead3 = derive(dict(margin=margin_b(log["lead"])))["lead3"]
+    cells = remain_key(log["period"], log["clock"], running_of(log["prev"]), log["to_own"], log["to_opp"], lead3)
+    model.remain = remain_table(cells, rem, base=model.remain)
     return model.remain

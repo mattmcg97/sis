@@ -40,18 +40,23 @@ def slice_of(period, clock):
     return np.select([p == 1, p == 2, p == 3, p == 4], [0, 1 + late, 5, 6 + late], 10).astype(np.int64)
 
 
-def outcome_of(kind, gain, dist, field):
-    """Each snap's outcome (OUTCOMES); gains cut at the goal line."""
+def outcome_of(kind, gain, dist, field, conv=None):
+    """Each snap's outcome (OUTCOMES); gains cut at the goal line. conv: whether it moved the chains
+    (the next row's down for a real snap, the sim's own for its), else gain >= dist."""
     kind, gain, dist, field = (np.asarray(x) for x in (kind, gain, dist, field))
-    return np.select([kind != v21.GAIN, gain >= 100 - field, gain >= dist, gain > 0, gain == 0],
+    first = gain >= dist if conv is None else np.asarray(conv, bool)
+    return np.select([kind != v21.GAIN, gain >= 100 - field, first, gain > 0, gain == 0],
                      [0, TD, FIRST, 3, 2], 1).astype(np.int64)
+
+
+REMAINS = ("0-1 snaps left", "2", "3-4", "5-7", "8-12", "13+")
 
 
 def tables():
     return dict(games=0.0, flow=np.zeros((D, S, O)), flow_yards=np.zeros((D, S)), flow_secs=np.zeros((D, S)),
                 step=np.zeros((D, S, B, O)), step_yards=np.zeros((D, S, B)), step_secs=np.zeros((D, S, B)),
                 fourth=np.zeros((S, 3)), early=np.zeros((S, 2)), ot_games=0.0, ot=np.zeros((7, 4)),
-                ot_n=np.zeros((7, 4)))
+                ot_n=np.zeros((7, 4)), by_rem=np.zeros((D, len(REMAINS), O)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -80,16 +85,18 @@ def _real_cols(recs):
     g = lambda k: np.array([r[k] for r in recs])
     kind, gain, dist, field = g("kind"), g("gain"), g("distance"), g("field")
     gain = np.minimum(gain, 100 - field)
-    return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist, out=outcome_of(kind, gain, dist, field),
-                gain=gain, secs=g("seconds").astype(float), kind=kind)
+    conv = np.array([r["converted"] and not r["replay"] for r in recs], bool)
+    return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist,
+                out=outcome_of(kind, gain, dist, field, conv), gain=gain, secs=g("seconds").astype(float), kind=kind)
 
 
 def _sim_cols(log, keep=None):
     keep = np.ones(len(log["path"]), bool) if keep is None else keep
     g = lambda k: log[k][keep]
     kind, gain, dist, field = g("kind"), g("gain"), g("dist"), g("field")
-    return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist, out=outcome_of(kind, gain, dist, field),
-                gain=gain, secs=g("seconds").astype(float), kind=kind)
+    return dict(down=g("down"), sl=slice_of(g("period"), g("clock")), dist=dist,
+                out=outcome_of(kind, gain, dist, field, g("conv")), gain=gain, secs=g("seconds").astype(float),
+                kind=kind, rem=g("rem"))
 
 
 def _worker(job):
@@ -128,6 +135,9 @@ def _worker(job):
         if got:
             c = _real_cols(got)
             _put(real, "step", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0)
+            # by the snaps left the model expects at each real state (its own table, the state's own key)
+            rb = v21.remain_b(model.remain_at(*v21.remain_inputs(got)))
+            np.add.at(real["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), rb, c["out"]), 1)
         # the real choices at the same states: 4th downs, and kicks on downs 1-3 in the half's last minute
         for j, (i, s) in enumerate(starts):
             b = rows[i + 1] if i + 1 < len(rows) else None
@@ -147,6 +157,7 @@ def _worker(job):
         if len(log["path"]):
             c = _sim_cols(log)
             _put(step, "step", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0 / state_paths)
+            np.add.at(step["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), c["rem"], c["out"]), 1.0 / state_paths)
         for name, who, k, sl, ix in st.get("_dec") or []:
             if ix is None or name not in ("fourth", "early_fg"):
                 continue
@@ -268,6 +279,20 @@ def step_lines(real, step):
     return lines
 
 
+def rem_lines(real, step):
+    lines = ["", "  ONE SNAP by the snaps left in the half the model expects at the state (the clock, running or not,"
+                 " both sides' timeouts, the lead): real / sim, % of the snaps",
+             f"  {'':16s}{'n real':>7s}" + "".join(f"{o:>13s}" for o in OUTCOMES)]
+    for d in range(D):
+        lines.append(f"  {DOWNS[d]} down")
+        for b in range(len(REMAINS)):
+            r, m = real["by_rem"][d, b], step["by_rem"][d, b]
+            if r.sum():
+                lines.append(f"  {REMAINS[b]:16s}{int(r.sum()):>7d}"
+                             + "".join(f"{_pair(_pct(r[o], r.sum()), _pct(m[o], m.sum())):>13s}" for o in range(O)))
+    return lines
+
+
 def choice_lines(real, step):
     lines = ["", "  4th DOWN from the real states: the choice (real / sim, %)",
              f"  {'':16s}{'n real':>7s}" + "".join(f"{o:>14s}" for o in FOURTH)]
@@ -340,6 +365,7 @@ def report(out):
     lines += gap_lines(out["real"], out["flow"], out["step"])
     lines += [""] + flow_lines(out["real"], out["flow"])
     lines += step_lines(out["real"], out["step"])
+    lines += rem_lines(out["real"], out["step"])
     lines += choice_lines(out["real"], out["step"])
     lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"

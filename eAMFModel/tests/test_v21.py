@@ -66,11 +66,15 @@ def _fixed_time(model, seconds):
         b.payload["cut"][:] = False
 
 
-def _fixed_play(model, gain, td):
+def _fixed_play(model, gain, td, made=3, rdist=0):
+    """Every play the same; made 3: the down by the yards (0 short, 1 a new set, 2 played again: at
+    the real snap's own distance rdist)."""
     for b in [model.dist] + [v for k, v in model.own.items() if k[2] == "dist"]:
         b.payload["kind"][:] = v21.GAIN
         b.payload["gain"][:] = gain
         b.payload["td"][:] = td
+        b.payload["made"][:] = made
+        b.payload["rdist"][:] = rdist
 
 
 class TestBins(unittest.TestCase):
@@ -182,6 +186,22 @@ class TestRealSnaps(unittest.TestCase):
             self.assertGreater(float(s["clock"][0]), 0)
         self.assertEqual(len(v21.match_starts(model, rows, every=2)), (len(starts) + 1) // 2)
 
+    def test_the_next_row_says_whether_the_chains_moved(self):
+        rows = [_row(7, 1, 200, "SCRIMMAGE", "TEAM_A", 3, 1, 50),       # 3rd and inches: no yards, a 1st down
+                _row(14, 1, 170, "SCRIMMAGE", "TEAM_A", 1, 10, 50),      # 10 yards, spotted short: 2nd down
+                _row(21, 1, 140, "SCRIMMAGE", "TEAM_A", 2, 1, 60),       # a penalty: 2nd down again, 5 back
+                _row(28, 1, 120, "SCRIMMAGE", "TEAM_A", 2, 6, 55),       # 4 yards: 3rd and 2
+                _row(35, 1, 95, "SCRIMMAGE", "TEAM_A", 3, 2, 59),        # 1 yard: 4th and 1
+                _row(42, 1, 70, "SCRIMMAGE", "TEAM_A", 4, 1, 60),        # 4th and inches: kept, a 1st down
+                _row(49, 1, 45, "SCRIMMAGE", "TEAM_A", 1, 10, 60)]
+        recs = v21.match_snaps(rows)
+        got = [(r["down"], r["gain"], r["converted"], r["replay"]) for r in recs]
+        self.assertEqual(got, [(3, 0, True, False), (1, 10, False, False), (2, -5, False, True),
+                               (2, 4, False, False), (3, 1, False, False), (4, 0, True, False)])
+        lines = "\n".join(v21.chains_lines(recs))
+        self.assertIn("16.7% the same down played again", lines)
+        self.assertIn("short of the yards yet moved the chains 2", lines)
+
     def test_points_share_runs_from_all_to_none(self):
         share = v21.points_share(MATCHES)
         self.assertAlmostEqual(share[0], 1.0, places=6)
@@ -226,6 +246,30 @@ class TestBuild(unittest.TestCase):
         v21.refine_remaining(m, n_paths=400)
         self.assertEqual(m.remain.shape, before.shape)
         self.assertFalse(np.allclose(m.remain, before))
+
+    def test_the_snaps_left_table_shrinks_toward_the_slice(self):
+        cell = lambda h, sl, run, own, opp, l3: tuple(np.array([v]) for v in (h, sl, run, own, opp, l3))
+        keys = [(1, 4, 0, 3, 3, 1)] * 200 + [(1, 4, 1, 0, 0, 1)] * 200 + [(1, 8, 0, 3, 3, 1)] * 100
+        counts = np.r_[np.full(200, 6.0), np.full(200, 2.0), np.full(100, 10.0)]
+        key = tuple(np.array(c) for c in zip(*keys))
+        t = v21.remain_table(key, counts, prior=20.0)
+        self.assertEqual(t.shape, v21.REMAIN_SHAPE)
+        self.assertAlmostEqual(float(t[cell(1, 4, 0, 3, 3, 1)][0]), 6.0, delta=0.05)     # its own, many
+        self.assertAlmostEqual(float(t[cell(1, 4, 1, 0, 0, 1)][0]), 2.0, delta=0.05)
+        # none: its slice and clock's (6.0 over 200), shrunk toward the slice's (4.0 over 400)
+        self.assertAlmostEqual(float(t[cell(1, 4, 0, 0, 0, 1)][0]), (200 * 6 + 20 * 4) / 220, places=6)
+        self.assertAlmostEqual(float(t[cell(1, 6, 0, 3, 3, 1)][0]), 7.0, delta=0.05)     # no slice: between 4's and 8's
+        m = built()
+        self.assertEqual(m.remain.shape, v21.REMAIN_SHAPE)
+        late_stopped = m.remain_at(4, 40.0, 0, 3, 3, 1)
+        self.assertGreater(late_stopped, m.remain_at(4, 40.0, 1, 0, 0, 1) - 1e-9)
+        self.assertLess(late_stopped, m.remain_at(4, 600.0, 0, 3, 3, 1))
+        self.assertEqual(len(v21.remain_lines(m)), len(v21.REMAIN_SHOWN) + 1)
+
+    def test_rem3_reads_the_snaps_left_bucket(self):
+        f = v21.derive(dict(remain=np.arange(6)))
+        self.assertEqual(list(f["rem3"]), [0, 0, 0, 1, 1, 2])
+        self.assertEqual(list(v21.remain_b([0, 1, 2, 3, 4, 5, 7, 8, 12, 13])), [0, 0, 1, 2, 2, 3, 3, 4, 4, 5])
 
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
@@ -300,6 +344,21 @@ class TestSimulate(unittest.TestCase):
         v21.simulate(m, _state(m, y=20), 20, stats=st)
         log = v21.snap_log(st)
         self.assertEqual(log["gain"][np.flatnonzero(log["path"] == 0)[0]], 30)
+
+    def test_inches_move_the_chains_and_a_down_played_again_keeps_its_number(self):
+        m = built()
+        _fixed_time(m, 7.0)
+        nxt = lambda log: (int(log["down"][1]), bool(log["conv"][0]))
+        cases = ((1, 1, (1, True)),          # the real snap at 1 to go moved the chains for no yards
+                 (1, 5, (3, False)),         # one at 5 to go: by the yards, 0 short of 1
+                 (3, 0, (3, False)),         # by the yards
+                 (2, 1, (2, False)))         # a down played again: still 2nd
+        for made, rdist, want in cases:
+            _fixed_play(m, 0, False, made=made, rdist=rdist)
+            st = {}
+            v21.simulate(m, _state(m, down=2, dist=1, y=50, prev=v21.SHORT), 1, stats=st, max_steps=3)
+            log = v21.snap_log(st)
+            self.assertEqual(nxt(log), want, (made, rdist))
 
     def test_overtime_ends_when_the_second_side_goes_ahead(self):
         m = built()
@@ -557,7 +616,10 @@ class TestAudit(unittest.TestCase):
         lines = "\n".join(A.report(out))
         self.assertGreater(real["ot_n"].sum(), 0)
         np.testing.assert_allclose(step["ot_n"], real["ot_n"])
-        for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME"):
+        np.testing.assert_allclose(step["by_rem"].sum(), step["step"].sum())     # the same snaps, split another way
+        np.testing.assert_allclose(real["by_rem"].sum(), real["step"].sum())
+        for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
+                     "ONE SNAP by the snaps left"):
             self.assertIn(part, lines)
 
 

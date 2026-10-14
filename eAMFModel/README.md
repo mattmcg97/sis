@@ -1988,7 +1988,7 @@ missing something. Nothing is ever fitted to close those gaps.
     timeout;
   - the part of the game, with Q2 and Q4 split at 2:00;
   - the offense's lead, down, distance and field zone;
-  - the snaps played so far and the snaps left in the half.
+  - the snaps played so far and the snaps left in the half (below).
 
   This draw is where the bimodal split lives. A stopped clock gives a play's own 5–8 seconds, a
   running one 25–40, and the play before (from the action log) sets the mix. So from any point in
@@ -1999,16 +1999,16 @@ missing something. Nothing is ever fitted to close those gaps.
   5 seconds can only have gone so far.
 - **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
   draw falls back level by level to fewer features. The build prints how deep the real states fall.
-  The fallbacks keep the situation to the end: the down, the distance and the field, plus coarsely the
-  part of the game and the lead. Q2's and Q4's last 0:30 is its own part of the game, apart from
-  2:00 to 0:31. So a 3rd down is never drawn from 1st downs, and the end of a half
-  never from the rest of it, while there are real snaps alike enough to draw from. (Before the down
-  audit, the part of the game went first.)
+  The fallbacks keep the situation to the end: the down, the distance, the field and the snaps left
+  in the half, plus coarsely the part of the game and the lead. So a 3rd down is never drawn from
+  1st downs, and a side with time for one snap never from one with time for ten, while there are
+  real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
     defending gamer, else its team, allowed. "Alike" always means the same down and, at least
-    coarsely, the same distance, field, clock (stopped or running), part of the game and lead. A
+    coarsely, the same distance, field, clock (stopped or running), part of the game, snaps left
+    (0–2, 3–4, 5+) and lead. A
     gamer's own draw gives way to the league's rather than drop the situation. Before the down
     audit, it fell back to all the gamer's snaps with that time, whatever the down, so 3rd downs
     played like 1st downs.
@@ -2029,8 +2029,25 @@ missing something. Nothing is ever fitted to close those gaps.
     safety.
   - A real touchdown drawn from further back runs on with the real chance that a gain that long
     goes further.
-- **Snaps left in the half** start as the real games' average by the time left. The build then
-  replaces them with the sim's own counts from kick-off and rebuilds the draws on them.
+- **Snaps left in the half** is a core split of both draws, in place of a cut at 0:30. It is
+  the expected count, never the count that actually followed, read off a table by:
+  - the half and its 10-second slice of time left;
+  - the clock running into the snap (a short gain, a first down, a loss) or stopped (nothing gained,
+    a fresh possession, a timeout);
+  - the timeouts of the side with the ball and of the other side (0–3);
+  - the lead (behind, level, ahead).
+
+  Each cell is shrunk toward its slice's figure for that clock, and that toward the slice's alone,
+  by 20 snaps. Real snaps and sim states read the table the same way. The real games' counts come
+  first. Then, 3 times over, the build plays 6,000 games from kick-off, replaces the table with the
+  sim's own counts and rebuilds the draws on it. The draws bucket it as 0–1, 2, 3–4, 5–7, 8–12 and
+  13+. The build prints the table at a few late states.
+- **First downs come from the next row's down.** Spots are whole yards and a distance of inches
+  reads as 1, so a sneak for inches shows as a 0-yard gain that moves the chains, and a gain of the
+  yards to go can be spotted short. The build prints how often each happens by distance. The sim
+  takes the drawn real snap's own result where it was at the same distance, and otherwise goes by
+  the yards. A down played again (a penalty: the same down, short of the line) keeps its number.
+  4th downs short of the line that kept the ball are no longer left out.
 - **The decisions**, each made by the gamer whose call it is:
 
   | decision | options | drawn from real decisions alike in |
@@ -2095,7 +2112,8 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares two
   against what really came of it. This shows the draws with the game flow taken out. For each down,
   by part of the game and by distance, it gives the share of each outcome: turnover, loss, no gain,
   short of the line, first down, touchdown. It also gives the yards, the clock, and the 4th-down and
-  early-kick choices from the same states.
+  early-kick choices from the same states. A last table splits each down by the snaps left in the
+  half, as the draws read them.
 
 It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
 standard errors of the real one. It ends with overtime: how often a game goes there, from kick-off
