@@ -4,7 +4,8 @@
         --arm "glmer-trim=glmer/out/cadence/cadence_matches.csv@trim:hl60:game" \\
         --arm "nb2=rolling:nb2_daily"
 
-An arm is NAME=SOURCE, its expected points per side for every match as of the match's kick-off:
+An arm is NAME=SOURCE[#MODE], its expected points per side for every match as of the match's
+kick-off:
   PATH@PREFIX   glmer/cadence.R's cadence_matches.csv: the columns PREFIX|1 and PREFIX|2
   PATH          a CSV with MATCH_CODE (or MatchId) and the two sides' expected points:
                 Pred_P1_Points / Pred_P2_Points (NB2_schedule_predict.py, glmer/predict.R),
@@ -14,11 +15,23 @@ An arm is NAME=SOURCE, its expected points per side for every match as of the ma
 prod is always there: its last pre-match moneyline and total (line and the over's price), from
 GAMEPLAI_STREAM.
 
+MODE is how an arm's moneyline and over are read off its expected points (score_model.py), each
+match's two scores simulated together:
+  own      the prior's own joint score model: NB2's (each side negative binomial with its gamers'
+           dispersions, a shared gamma pace factor: covariance) for an NB2 source -- a rolling NB2
+           directory, or a CSV with NB2's P1_Effective_Alpha / P2_Effective_Alpha /
+           Shared_Gamma_Fraction -- and glmer's (Poisson about a log-normal mean, a shared match
+           noise) for a rolling glmer directory. The default where there is one
+  fitted   NB2's construction with one dispersion and shared fraction fitted to the arm's own errors
+           by the method of moments, walk-forward (each UTC day on the days before it): for a prior
+           with no score model of its own, as glmer trimmed of its noise terms. The default otherwise
+  normal   the normal about the expected margin (sd 9.35) and total (sd 12): for comparison
+A moneyline splits ties half and half (NB2's way); the over leaves out pushes.
+
 Each arm, prod among them, is graded as it is and with the rematch layer (rematch_layer.py) on top,
-fitted walk-forward on that arm's own errors (each UTC day on the days before it). An arm's
-moneyline is the normal about its expected margin (rematch_layer.MARGIN_SD), its total's over the
-normal about its expected total (TOTAL_SD) at prod's line; prod's own are its prices, and prod with
-the layer moves the margin its moneyline implies and the mean its total implies.
+fitted walk-forward on that arm's own errors (each UTC day on the days before it). The layer shifts
+the arm's simulated margin and total, so it moves the model's own price. prod's own are its prices;
+prod with the layer moves the margin its moneyline implies and the mean its total implies.
 
 Graded on the matches every arm priced, after the layer's burn-in, by:
   moneyline   log loss and Brier (draws left out)
@@ -35,7 +48,7 @@ import os
 from collections import defaultdict
 from statistics import NormalDist
 
-from . import bets, config, rematch_layer, snowflake_io
+from . import bets, config, rematch_layer, score_model, snowflake_io
 from .bet_losers import prematch_p1
 from .bet_rematches import day_meetings
 from .bet_totals import _start
@@ -44,6 +57,9 @@ TOTAL_SD = 12.0
 BURN_IN_DAYS = 7
 PROD = "prod"
 POINT_COLUMNS = (("Pred_P1_Points", "Pred_P2_Points"), ("raw_home", "raw_away"), ("exp_p1", "exp_p2"))
+NB2_JOINT = ("P1_Effective_Alpha", "P2_Effective_Alpha", "Shared_Gamma_Fraction")
+MODES = ("own", "fitted", "normal")
+NB2_PREDICT_SIMS = 2000          # NB2's own simulation is not read here (score_model draws again)
 _N = NormalDist()
 
 
@@ -64,18 +80,71 @@ def prematch_total(tl, match):
     return (q[2], q[1]) if q else (None, None)
 
 
-def read_points(spec, rows, history):
-    """{match: (home, away) expected points} for one arm's source."""
+def read_arm(spec, rows, history):
+    """({match: (home, away) expected points}, {match: (kind, params)} of the prior's own score model
+    where it has one) for one arm's source."""
     if spec.startswith("rolling:"):
-        from eAMFModel import rolling_prior
-        prior = rolling_prior.Rolling(spec[len("rolling:"):])
-        got = prior.means(rows, results=history)
-        return {k: (float(v[0]), float(v[1])) for k, v in got.items()}
+        return read_rolling(spec[len("rolling:"):], rows, history)
+    points = read_points(spec, rows, history)
+    own = {}
+    path = spec.partition("@")[0]
+    if "@" not in spec:
+        with open(path, newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            cols = reader.fieldnames or []
+            if all(c in cols for c in NB2_JOINT):
+                key = "MATCH_CODE" if "MATCH_CODE" in cols else "Match Id" if "Match Id" in cols else "MatchId"
+                for r in reader:
+                    a1, a2, sh = (_f(r.get(c)) for c in NB2_JOINT)
+                    if r.get(key) in points and None not in (a1, a2, sh):
+                        own[r[key]] = ("nb2", points[r[key]] + (a1, a2, sh))
+    return points, own
+
+
+def read_rolling(directory, rows, history):
+    """A rolling prior's expected points and its own score model, each match by its own day's fit:
+    NB2's dispersions and shared fraction (its means times the fit's level scale), or glmer's noise
+    sds."""
+    from eAMFModel import nb2_prior, rolling_prior
+    prior = rolling_prior.Rolling(directory)
+    if prior.kind != "nb2":
+        means = prior.means(rows, results=history)
+        points = {k: (float(v[0]), float(v[1])) for k, v in means.items()}
+        own = {}
+        for r in rows:
+            code = r["MATCH_CODE"]
+            if code not in points:
+                continue
+            start = _start(r.get("SCHEDULED_START_TIME_UTC"))
+            fit = prior.fit_for(start.date() if start else None)
+            m = (getattr(fit, "meta", None) or {}).get("model", {}) or {}
+            own[code] = ("lognormal", points[code] + (float(m.get("sigma_obs") or 0.0),
+                                                       float(m.get("sigma_match") or 0.0)))
+        return points, own
+    by_fit = defaultdict(list)
+    for r in rows:
+        start = _start(r.get("SCHEDULED_START_TIME_UTC"))
+        by_fit[id(fit := prior.fit_for(start.date() if start else None))].append((fit, r))
+    points, own = {}, {}
+    for group in by_fit.values():
+        fit = group[0][0]
+        got = nb2_prior.predict(fit.directory, [r for _, r in group], NB2_PREDICT_SIMS, full=True)
+        for code, row in got.items():
+            mu1, mu2 = float(row["Pred_P1_Points"]) * fit.scale, float(row["Pred_P2_Points"]) * fit.scale
+            a1, a2, sh = (_f(row.get(c)) for c in NB2_JOINT)
+            points[code] = (mu1, mu2)
+            if None not in (a1, a2, sh):
+                own[code] = ("nb2", (mu1, mu2, a1, a2, sh))
+    return points, own
+
+
+def read_points(spec, rows, history):
+    """{match: (home, away) expected points} for one arm's CSV source."""
     path, _, prefix = spec.partition("@")
     with open(path, newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
         cols = reader.fieldnames or []
-        key = "MATCH_CODE" if "MATCH_CODE" in cols else "MatchId"
+        key = "MATCH_CODE" if "MATCH_CODE" in cols else "Match Id" if "Match Id" in cols else "MatchId"
         if prefix:
             pair = (f"{prefix}|1", f"{prefix}|2")
         else:
@@ -119,24 +188,57 @@ def over_chance(total, line, sd=TOTAL_SD):
     return 1 - _N.cdf((line - total) / sd)
 
 
-def readings(name, rows, prod):
+def fitted_by_day(rows):
+    """{UTC day: (alpha, shared)}: NB2's dispersion and shared fraction fitted to an arm's errors on
+    every match before that day (score_model.fit_nb2); (None, None) until there are enough."""
+    out, train, day = {}, [], None
+    for r in sorted(rows, key=lambda r: r["start"]):
+        d = r["start"].date()
+        if d != day:
+            day = d
+            out[d] = score_model.fit_nb2(train)
+        if r["actual_margin"] is not None and r["margin"] is not None:
+            mu1, mu2 = (r["total"] + r["margin"]) / 2, (r["total"] - r["margin"]) / 2
+            y1, y2 = (r["actual_total"] + r["actual_margin"]) / 2, (r["actual_total"] - r["actual_margin"]) / 2
+            train.append((mu1, mu2, y1, y2))
+    return out
+
+
+def score_book(r, mode, own, fits, draws):
+    """The pricing object of one arm's match: its own score model, NB2's fitted one, or the normal."""
+    mu1, mu2 = (r["total"] + r["margin"]) / 2, (r["total"] - r["margin"]) / 2
+    if mode == "own" and r["match"] in own:
+        kind, params = own[r["match"]]
+        return score_model.book(kind, params, r["match"], draws)
+    if mode == "fitted":
+        alpha, shared = fits.get(r["start"].date(), (None, None))
+        if alpha is not None:
+            return score_model.book("nb2", (max(mu1, 0.1), max(mu2, 0.1), alpha, alpha, shared), r["match"], draws)
+    return score_model.Normal(r["margin"], r["total"])
+
+
+def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS):
     """{match: {variant: (p home, expected total, p over prod's line)}} for an arm and its +layer."""
+    own = own or {}
+    fits = fitted_by_day(rows) if mode == "fitted" else {}
     out = {}
     for r in rows:
         p = prod.get(r["match"]) or {}
         line, over = p.get("line"), p.get("over")
         v = {}
-        for tag, mk, tk in (("", "margin", "total"), ("+layer", "margin_adj", "total_adj")):
-            m, t = r[mk], r[tk]
-            if name == PROD and tag == "":
-                v[name] = (p.get("p1"), line, over)
-                continue
-            if name == PROD:                       # prod moved: its total's implied mean moves
-                base = line + TOTAL_SD * _N.inv_cdf(min(max(over, 1e-6), 1 - 1e-6)) if over is not None else line
-                t = base + r["move_total"]
-            v[name + tag] = (rematch_layer.win_chance(m), t, None if line is None else over_chance(t, line))
+        if name == PROD:
+            v[name] = (p.get("p1"), line, over)
+            # prod moved: the margin its moneyline implies, and the mean its total implies
+            base = line + TOTAL_SD * _N.inv_cdf(min(max(over, 1e-6), 1 - 1e-6)) if over is not None else line
+            t = None if base is None else base + r["move_total"]
+            v[name + "+layer"] = (rematch_layer.win_chance(r["margin_adj"]), t,
+                                  None if line is None or t is None else over_chance(t, line))
+        else:
+            bk = score_book(r, mode, own, fits, draws)
+            for tag, dm, dt_ in (("", 0.0, 0.0), ("+layer", r["move_margin"], r["move_total"])):
+                v[name + tag] = (bk.p_home(dm), r["total"] + dt_, None if line is None else bk.p_over(line, dt_))
         out[r["match"]] = v
-    return out
+    return out, fits
 
 
 def _ll(p, y):
@@ -215,7 +317,32 @@ def table(label, codes, prices, results, starts):
     return L
 
 
-def report(prices, results, meets, layers, burn_from):
+def describe_model(mode, own, fits):
+    """One line: how an arm's moneyline and over were read."""
+    if mode is None:
+        return "its own prices"
+    if mode == "own":
+        kinds = defaultdict(list)
+        for kind, params in own.values():
+            kinds[kind].append(params)
+        parts = []
+        for kind, ps in kinds.items():
+            if kind == "nb2":
+                parts.append(f"NB2's own: dispersion {sum(p[2] + p[3] for p in ps) / (2 * len(ps)):.3f} on average, "
+                             f"shared fraction {sum(p[4] for p in ps) / len(ps):.3f}")
+            else:
+                parts.append(f"glmer's own: s_obs {sum(p[2] for p in ps) / len(ps):.3f}, "
+                             f"s_match {sum(p[3] for p in ps) / len(ps):.3f}")
+        return "; ".join(parts) + " (the normal for a match without them)"
+    if mode == "fitted":
+        last = [v for _, v in sorted(fits.items()) if v[0] is not None]
+        return ("NB2's construction fitted to its errors, walk-forward" +
+                (f"; the last fit: dispersion {last[-1][0]:.3f}, shared fraction {last[-1][1]:.3f}" if last else
+                 " (never enough matches: the normal)"))
+    return "the normal about its expected margin and total"
+
+
+def report(prices, results, meets, layers, burn_from, models=None):
     """Lines of text: every arm against prod on the matches all of them priced, after the burn-in."""
     arms = list(prices)
     codes = sorted((c for c in results if all(c in prices[a] for a in arms)
@@ -233,6 +360,9 @@ def report(prices, results, meets, layers, burn_from):
         sub = [c for c in codes if keep(c)]
         if sub:
             L += table(label, sub, {a: prices[a] for a in arms}, results, [meets[c]["start"] for c in sub])
+    if models:
+        L.append("\n  How each arm's moneyline and over are read:")
+        L += [f"  {name}: {text}" for name, text in models.items()]
     L.append("\n  The rematch layers' last fits (each arm's own errors):")
     for name, layer in layers.items():
         L.append(f"  {name}:")
@@ -240,7 +370,15 @@ def report(prices, results, meets, layers, burn_from):
     return L
 
 
-def run(cur, out_dir, arms, since, until=None):
+def parse_arm(spec):
+    """(source, mode) off SOURCE[#MODE]."""
+    source, _, mode = spec.partition("#")
+    if mode and mode not in MODES:
+        raise SystemExit(f"{spec!r}: the mode after # is one of {', '.join(MODES)}")
+    return source, mode or None
+
+
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
     """Grade prod and every arm, each with and without the rematch layer, over [since, until]."""
     history = snowflake_io.fetch_history(cur)
     meets = day_meetings(history)
@@ -259,15 +397,23 @@ def run(cur, out_dir, arms, since, until=None):
         prod[c] = dict(p1=prematch_p1(tl, c), line=line, over=over)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
     sched = [rows_by_code[c] for c in codes if c in rows_by_code]
-    prices, layers = {}, {}
+    prices, layers, models = {}, {}, {}
     for name, spec in [(PROD, None)] + list(arms):
-        points = {} if spec is None else read_points(spec, sched, history)
+        points, own, mode = {}, {}, None
         if spec is not None:
-            print(f"  {name}: {sum(1 for c in codes if c in points):,} of {len(codes):,} matches priced ({spec})",
-                  flush=True)
+            source, mode = parse_arm(spec)
+            points, own = read_arm(source, sched, history)
+            if mode == "own" and not own:
+                raise SystemExit(f"--arm {name}: {source} has no score model of its own (only NB2 and a rolling "
+                                 "glmer do); use #fitted or #normal")
+            mode = mode or ("own" if own else "fitted")
+            print(f"  {name}: {sum(1 for c in codes if c in points):,} of {len(codes):,} matches priced ({source}), "
+                  f"scores {mode}", flush=True)
         rows, layer = rematch_layer.walk_forward(items_for(name, points, prod, window), BURN_IN_DAYS)
         layers[name] = layer
-        for code, v in readings(name, rows, prod).items():
+        got, fits = readings(name, rows, prod, mode or "normal", own, draws)
+        models[name] = describe_model(mode, own, fits)
+        for code, v in got.items():
             for arm, val in v.items():
                 prices.setdefault(arm, {})[code] = val
     results = {}
@@ -277,7 +423,7 @@ def run(cur, out_dir, arms, since, until=None):
             results[c] = (s1 - s2, s1 + s2, prod[c]["line"])
     first = min((m["start"] for m in window.values()), default=start)
     burn_from = first.replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(days=BURN_IN_DAYS)
-    lines = report(prices, results, window, layers, burn_from)
+    lines = report(prices, results, window, layers, burn_from, models)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "prior_backtest.csv"), "w", newline="", encoding="utf-8") as fh:

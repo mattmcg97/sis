@@ -197,7 +197,8 @@ def cmd_prior_backtest(args):
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
-            path = prior_backtest.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END)
+            path = prior_backtest.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
+                                      draws=args.draws)
     finally:
         conn.close()
     print(f"\n  -> {path} and prior_backtest.csv")
@@ -1225,11 +1226,16 @@ def build_parser():
              "fitted walk-forward on its own errors): the moneyline's log loss and Brier, the total's "
              "RMSE and the over at prod's line, match by match against prod, for every match, the "
              "rematches and the first meetings (-> prior_backtest.txt/csv)")
-    pb_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE",
+    pb_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
                            help="a prior to test (repeatable): NAME=PATH@PREFIX (glmer/cadence.R's "
                                 "cadence_matches.csv, columns PREFIX|1 and |2), NAME=PATH (a CSV of "
                                 "MATCH_CODE and Pred_P1_Points / Pred_P2_Points, raw_home / raw_away or "
-                                "exp_p1 / exp_p2), or NAME=rolling:DIR (eAMFModel prior-daily's fits)")
+                                "exp_p1 / exp_p2), or NAME=rolling:DIR (eAMFModel prior-daily's fits). "
+                                "#MODE reads its moneyline and over: own (NB2's or glmer's own joint "
+                                "score model; the default where there is one), fitted (NB2's construction "
+                                "fitted to its errors; the default otherwise) or normal")
+    pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match (default 40000)")
     pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     ps_parser = sub.add_parser(

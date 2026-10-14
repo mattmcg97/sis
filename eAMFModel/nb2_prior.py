@@ -81,8 +81,9 @@ def fit(history, out_dir, before=None):
     return len(rows)
 
 
-def predict(ratings_dir, schedule, n_sims=N_SIMS):
-    """Each match's expected (home, away) points from fitted ratings."""
+def predict(ratings_dir, schedule, n_sims=N_SIMS, full=False):
+    """Each match's expected (home, away) points from fitted ratings; with `full`, NB2's whole
+    prediction row (its joint score model's dispersions and shared gamma fraction among them)."""
     _need_libraries()
     if not schedule:
         return {}
@@ -101,7 +102,7 @@ def predict(ratings_dir, schedule, n_sims=N_SIMS):
               encoding="utf-8") as fh:
         for r in csv.DictReader(fh):
             if r.get("Prediction_Status") == "OK":
-                out[r["Match Id"]] = (float(r["Pred_P1_Points"]), float(r["Pred_P2_Points"]))
+                out[r["Match Id"]] = dict(r) if full else (float(r["Pred_P1_Points"]), float(r["Pred_P2_Points"]))
     return out
 
 

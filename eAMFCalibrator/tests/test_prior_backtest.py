@@ -35,6 +35,38 @@ class TestRead(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 pb.read_points(bad, [], [])
 
+    def test_an_nb2_csv_carries_its_own_score_model(self):
+        with tempfile.TemporaryDirectory() as d:
+            nb2 = self.write(d, "nb2.csv", "Match Id,Pred_P1_Points,Pred_P2_Points,P1_Effective_Alpha,"
+                                           "P2_Effective_Alpha,Shared_Gamma_Fraction\nAF1,16,18,0.12,0.1,0.45\n")
+            plain = self.write(d, "plain.csv", "MATCH_CODE,exp_p1,exp_p2\nAF1,16,18\n")
+            points, own = pb.read_arm(nb2, [], [])
+            self.assertEqual(points, {"AF1": (16.0, 18.0)})
+            self.assertEqual(own, {"AF1": ("nb2", (16.0, 18.0, 0.12, 0.1, 0.45))})
+            self.assertEqual(pb.read_arm(plain, [], [])[1], {})
+
+    def test_an_arms_mode(self):
+        self.assertEqual(pb.parse_arm("x.csv@trim:hl60:game#fitted"), ("x.csv@trim:hl60:game", "fitted"))
+        self.assertEqual(pb.parse_arm("rolling:d"), ("rolling:d", None))
+        with self.assertRaises(SystemExit):
+            pb.parse_arm("x.csv#poisson")
+
+    def test_each_mode_prices_a_match(self):
+        r = dict(match="AF1", start=T0, margin=3.0, total=36.0, move_margin=1.0, move_total=-2.0,
+                 margin_adj=4.0, total_adj=34.0, actual_margin=7, actual_total=35)
+        prod = {"AF1": {"p1": 0.6, "line": 35.5, "over": 0.5}}
+        normal, _ = pb.readings("m", [r], prod, "normal")
+        own, _ = pb.readings("m", [r], prod, "own", {"AF1": ("nb2", (19.5, 16.5, 0.1, 0.1, 0.4))}, draws=20000)
+        for got in (normal, own):
+            p, t, po = got["AF1"]["m"]
+            p2, t2, po2 = got["AF1"]["m+layer"]
+            self.assertTrue(0.5 < p < p2 < 1)                  # the layer adds a point to the margin
+            self.assertEqual((t, t2), (36.0, 34.0))
+            self.assertGreater(po, po2)                         # and takes two off the total
+        self.assertNotAlmostEqual(normal["AF1"]["m"][0], own["AF1"]["m"][0], places=3)
+        p_prod = pb.readings(pb.PROD, [r], prod)[0]["AF1"]
+        self.assertEqual(p_prod[pb.PROD], (0.6, 35.5, 0.5))
+
     def test_prods_closing_total_and_its_over(self):
         def q(line, p, msg=None):
             return ("AF1", 54, T0, 100.0 * p, None, f"Line {line}", msg, "open", "true")
@@ -84,6 +116,7 @@ class TestRun(unittest.TestCase):
             self.assertIn(arm_name, text)
         self.assertIn("Rematches", text)
         self.assertIn("The rematch layers' last fits", text)
+        self.assertIn("NB2's construction fitted to its errors", text)
 
 
 def defaultdict_list(quotes):

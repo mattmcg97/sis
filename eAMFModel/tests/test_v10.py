@@ -1663,6 +1663,11 @@ class TestNB2Prior(unittest.TestCase):
         self.assertAlmostEqual(means["NEW1"][0], home * pre.scale, places=6)
         self.assertAlmostEqual(means["NEW1"][1], away * pre.scale, places=6)
         self.assertEqual(means["NEW2"], pre.league)          # NB2 cannot price it: unscaled
+        # full: the predict script's whole row (the real one's carries its joint score model)
+        full = nb2_prior.predict(out, schedule, 1000, full=True)
+        self.assertEqual(set(full), {"NEW1"})
+        self.assertEqual(full["NEW1"]["Prediction_Status"], "OK")
+        self.assertAlmostEqual(float(full["NEW1"]["Pred_P1_Points"]), home, places=6)
         self.assertTrue(nb2_prior.Prematch.exists(out))
         self.assertFalse(nb2_prior.Prematch.exists(self.tmp.name))
 
