@@ -41,6 +41,7 @@ The code that runs:
 | v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
 | v13 | v12 with each side's big-play rate: its gamer's, its team's and what the other side allows, boom or bust (held out in-play RPS 3.821 → 3.811; totals' spread follows the big-play sides) |
 | v14 | v13 played closer to the real game -- strength as boom or bust, the clock as played, long plays, losses and kick-offs by side, the go curve's field shape -- and built in one joint fit with a calibration report (first downs 37.6% → 41.5% of snaps, real 41.0%; field goals 1.51 → 1.22 a game, real 1.15; held out RPS level) |
+| v2.1 | apart from v8–v14: each snap's time drawn from real snaps, then its distance given that time, with no strength -- the pre-match expected points are only what its report measures it against (`v21-build`, `v21-report`) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
@@ -1969,6 +1970,103 @@ Every key setting tried beat the even line in both markets (bands 42–58% to 38
 to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shipped setting is
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
+
+## v2.1: each snap's time, then its distance, from real snaps (`v21-build`, `v21-report`)
+
+v2.1 is a separate model, not a v14 variant. It is still a snap simulation, but every snap is two
+draws from real snaps, and it has no strength. The pre-match expected points are not an input to
+any draw. The report sets the sim's output against them, so the gaps show where the draws are
+missing something. Nothing is ever fitted to close those gaps.
+
+- **Inputs:**
+  - the fixture: the gamers and teams;
+  - the state: clock, down, distance, field, score and timeouts;
+  - the action log: what the play before did to the clock, and the snaps so far.
+- **The time draw.** The clock from the end of the play before to the end of this one, covering the
+  wait for the snap and the play itself. It is drawn from real snaps alike in:
+  - the play before: nothing gained, a short gain, a first down, a loss, a fresh possession or a
+    timeout;
+  - the part of the game, with Q2 and Q4 split at 2:00;
+  - the offense's lead, down, distance and field zone;
+  - the snaps played so far and the snaps left in the half.
+
+  This draw is where the bimodal split lives. A stopped clock gives a play's own 5–8 seconds, a
+  running one 25–40, and the play before (from the action log) sets the mix. So from any point in
+  play the first snap can come off a running or a stopped clock in the real proportions for that
+  state.
+- **The distance draw.** What came of the snap (the yards, a turnover or a defensive touchdown),
+  drawn from real snaps alike in the time just drawn (6 buckets) and the same state. A snap over in
+  5 seconds can only have gone so far.
+- **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
+  draw falls back level by level to fewer features. The build prints how deep the real states fall.
+- **Gamers and teams, two ways (`--mode`):**
+  - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
+    gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
+    defending gamer, else its team, allowed.
+  - `adjusted`, the league's draws for everyone, then leaned. Each draw is pushed toward its longer
+    or shorter end by a tilt for each of: the offense's gamer, the defense's gamer and both teams.
+    The tilts are fitted on their real snaps against what the league's draws gave the same states,
+    and shrunk toward none by 300 snaps. This one is built for thin data.
+- **Bounds:**
+  - The time never passes the play clock, since no real draw does.
+  - A running clock that runs out before the snap ends the quarter, and the same ball carries over.
+  - A running clock reaching 2:00 of Q2 or Q4 stops there. The snap then takes a time from the
+    stopped-clock part of the same draw.
+  - A play under way when time runs out is finished.
+  - Some real snaps were cut short: the quarter ran out on them, or a running clock crossed 2:00.
+    These are kept as "at least this long". Where one is drawn with more time to go than it took,
+    the draw moves to a real snap at least as long.
+  - The distance stops at the end zones: past the goal line is a touchdown, behind its own a
+    safety.
+  - A real touchdown drawn from further back runs on with the real chance that a gain that long
+    goes further.
+- **Timeouts** come before a running-clock snap, with the defense's and the offense's real call
+  rates by part of the game and lead. They move only the time draw.
+- **Snaps left in the half** start as the real games' average by the time left. The build then
+  replaces them with the sim's own counts from kick-off and rebuilds the draws on them.
+- **Everything else is drawn from real data too:**
+  - 4th downs (go, field goal or punt) by field, distance, lead and part of the game;
+  - field goals made by distance;
+  - punts' net yards;
+  - kick-offs, with onside kicks when trailing late;
+  - going for two, in v14's cells;
+  - safety free kicks.
+
+  Overtime is played as in v14.
+
+```powershell
+python -m eAMFModel v21-build --until 2026-10-01 --out v21_full --mode full
+python -m eAMFModel v21-build --until 2026-10-01 --out v21_adj --mode adjusted
+python -m eAMFModel v21-report --model v21_full --prior-model v14_model --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_full
+```
+
+The build reads the calibrator's snapshots, history and timeouts from `eAMFCalibrator/out` by
+default and writes `v21model.pkl`. The report reads the expected points from a v13/v14 build's
+pre-match model: its own means by default, or those it prices with under `--inputs priced`. Its
+sections:
+
+- **Kick-off.** Each side's expected points against the sim's mean (both sides receiving,
+  `--paths` games each) and the real points:
+  - overall, with how many of the sim's points a point more expected brings;
+  - by band of the side's expected points and of the expected margin;
+  - by gamer and by team, for points for and against;
+  - graded against the prior's own score model: moneyline log loss and Brier, margin and total RPS,
+    and the paired log-loss difference.
+- **Each step.** From every `--every`-th real state (`--state-paths` games each), each side's points
+  still to come:
+  - the input's, which is its expected points times the league's share of a game's points still to
+    come at that clock;
+  - the sim's;
+  - the real ones.
+
+  These are shown by part of the game, for the favourite and the underdog, and by the side's lead at
+  the time.
+- **The draws.** The kick-off games against the real games of the window:
+  - events per game and points by quarter;
+  - the time draw, as time buckets after each kind of play;
+  - the distance draw, as snap classes within each time bucket.
+
+`--out` also writes `v21_matches.csv` (a row per match) and `v21_states.csv` (a row per real state).
 
 ## Which prior on a few matches (`v14-variants`, `v14-priors`)
 

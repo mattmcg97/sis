@@ -311,6 +311,64 @@ def cmd_strength_check(args):
     return 0
 
 
+def cmd_v21_build(args):
+    import datetime as dt
+    import time
+    from . import nb2_prior, v21
+    from .remaining import day
+    t0 = time.time()
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts and not args.no_timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts})")
+    if args.until:
+        cut = dt.date.fromisoformat(args.until)
+        data = {c: rows for c, rows in data.items() if day(c) < cut}
+        print(f"  building on {len(data):,} matches before {cut}")
+    history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
+    model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine)
+    os.makedirs(args.out, exist_ok=True)
+    model.save(os.path.join(args.out, v21.MODEL_FILE))
+    print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_report(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_report
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    rows = [r for r in history if r["MATCH_CODE"] in snaps]
+    print(f"  the inputs: {args.prior_model}'s pre-match expected points ({args.inputs})", flush=True)
+    means, books = v21_report.prior_inputs(args.prior_model, rows, history, which=args.inputs)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
+          f" ({workers} processes)", flush=True)
+    out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
+                         state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books)
+    lines = v21_report.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_report.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_report.write_csv(os.path.join(args.out, "v21_matches.csv"), out)
+        v21_report.write_states_csv(os.path.join(args.out, "v21_states.csv"), out)
+        print(f"\n  -> {args.out}/v21_report.txt, v21_matches.csv and v21_states.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
 def cmd_v14_variants(args):
     import datetime as dt
     from . import nb2_prior, prior_variants
@@ -647,6 +705,43 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write strength_check.txt and a per-side strength_check.csv here")
     p.set_defaults(func=cmd_strength_check)
+
+    p = sub.add_parser("v21-build", help="v2.1: a snap sim drawing each snap's time, then its distance given "
+                                         "the time, from real snaps alone (no strength; see v21.py)")
+    p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                   help=f"scouting_playover.csv (default {DATA['snapshots']})")
+    p.add_argument("--until", help="build on the matches before this date (YYYY-MM-DD)")
+    p.add_argument("--out", default="v21_model", help="the build directory (default v21_model)")
+    p.add_argument("--mode", choices=["full", "adjusted"], default="full",
+                   help="full: the gamers' and teams' own real snaps as draws; adjusted: the league's draws "
+                        "leaned by a fitted tilt for each (default full)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers and "
+                                                               f"teams (default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--no-timeouts", action="store_true", help="build without the timeouts")
+    p.add_argument("--min-records", type=int, default=40, help="real snaps a draw's group needs (default 40)")
+    p.add_argument("--no-refine", action="store_true",
+                   help="keep the real games' snaps left in the half (no simulated pass)")
+    p.set_defaults(func=cmd_v21_build)
+
+    p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
+                                          "every step of the real games, and its draws against the real snaps")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--prior-model", default="v14_model",
+                   help="a v13/v14 build whose pre-match model gives the expected points (default v14_model)")
+    p.add_argument("--inputs", choices=["raw", "priced"], default="raw",
+                   help="raw: the pre-match model's own expected points; priced: with the build's layers")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=1000, help="kick-off games per receiving side (default 1000)")
+    p.add_argument("--state-paths", type=int, default=200, help="games from each real state (default 200; 0: none)")
+    p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
+    p.set_defaults(func=cmd_v21_report)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")
