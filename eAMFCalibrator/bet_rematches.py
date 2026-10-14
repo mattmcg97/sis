@@ -15,6 +15,14 @@ result.
             the rematch: whether prod moved after the result, and how often he won again against it
   residual  on the moneyline, won less prod's probability at the bet: 0 where prod is right, + where
             the side backed wins more than prod said (2se clustered by match)
+  totals    prod's pre-match total line at the first meeting and at the rematch, and how far each
+            match's total landed from it (its miss): does the first meeting's miss carry over?
+  fits      how much to move a rematch's price per point of the first meeting's miss: the rematch's
+            total miss on the first's (and the previous meeting's from the 3rd on), its margin miss
+            on the first's (prod's moneyline read as a margin, MARGIN_SD), and the first winner
+            winning again, logistic on prod's price and the first's margin miss
+  layer     rematch_layer.py run on prod's prices walk-forward: what it moves and what that does to
+            the log loss, Brier and total error of the rematches
 
     python -m eAMFCalibrator bets rematches --since "2026-10-01 00:00:00"
 """
@@ -22,15 +30,19 @@ result.
 import os
 from collections import defaultdict
 
-from . import bets, config, markets, snowflake_io
+import math
+
+from . import bets, config, markets, rematch_layer, snowflake_io
 from .bet_losers import prematch_p1
 from .bet_sessions import group_of
 from .bet_totals import _start, mean_se
+from .totals_signals import ols
 
 MARGINS = ("draw", "1-3", "4-7", "8-13", "14-20", "21+")
 MEETINGS = ("1st", "2nd", "3rd", "4th+")
 TEAMS = ("same teams", "swapped teams", "teams changed")
 TOTALS = ("first total <28", "first total 28-41", "first total 42+")
+MISSES = ("first under 10+", "first under 3-10", "first within 3", "first over 3-10", "first over 10+")
 WINNER, LOSER, DRAWN = "first winner", "first loser", "first drawn"
 HOME_SIDE = {50: 1, 52: 1, 51: 2, 53: 2}
 MIN_BETS = 30
@@ -56,6 +68,25 @@ def total_band(t):
     if t is None:
         return None
     return TOTALS[0] if t < 28 else TOTALS[1] if t < 42 else TOTALS[2]
+
+
+def miss_band(x):
+    """The first meeting's total less prod's line, banded."""
+    if x is None:
+        return None
+    return (MISSES[0] if x <= -10 else MISSES[1] if x <= -3 else MISSES[2] if x < 3
+            else MISSES[3] if x < 10 else MISSES[4])
+
+
+def prematch_line(tl, match, market=54):
+    """prod's last pre-match line on a market (its first in-play one where it quoted none before the
+    kick-off), or None."""
+    entry = tl.get((match, market))
+    if not entry or not entry[1]:
+        return None
+    pre = [q for q in entry[1] if q[0] is None and q[2] is not None]
+    q = pre[-1] if pre else next((q for q in entry[1] if q[2] is not None), None)
+    return q[2] if q else None
 
 
 def meeting_label(k):
@@ -125,12 +156,15 @@ def day_meetings(history, gap=None):
         a, b = sorted((g["home"], g["away"]))
         days[(a, b, session[(a, g["match"])])].append(g)
     out = {}
-    for (a, b, _), gs in days.items():
+    for key, gs in days.items():
+        a, b, _ = key
         first = summary(gs[0])
         for k, g in enumerate(gs, 1):
             out[g["match"]] = dict(summary(g), pair=f"{a} v {b}", k=k, meeting=meeting_label(k), first=first,
                                    prev=summary(gs[k - 2]) if k > 1 else None,
-                                   teams=None if k == 1 else teams_against(g, first))
+                                   teams=None if k == 1 else teams_against(g, first),
+                                   day_key=key, earlier=[x["match"] for x in gs[:k - 1]],
+                                   home_score=g["home_score"], away_score=g["away_score"])
     return out
 
 
@@ -168,6 +202,19 @@ def match_row(m, rows, prod_tl):
                fw_p_first=p_of(m["first"]["match"], m["first"]), fw_p_now=p_of(m["match"], m),
                fw_won=None if fw is None or m["winner"] is None else float(m["winner"] == fw))
     out["fw_res"] = None if out["fw_won"] is None or out["fw_p_now"] is None else out["fw_won"] - out["fw_p_now"]
+    line0, line1 = prematch_line(prod_tl, m["first"]["match"]), prematch_line(prod_tl, m["match"])
+    out.update(line_first=line0, line_now=line1,
+               first_miss=None if line0 is None or m["first"]["total"] is None else m["first"]["total"] - line0,
+               miss=None if line1 is None or m["total"] is None else m["total"] - line1)
+    out["first_miss_band"] = miss_band(out["first_miss"])
+    if m["prev"] is not None:
+        line_p = prematch_line(prod_tl, m["prev"]["match"])
+        out["prev_miss"] = None if line_p is None or m["prev"]["total"] is None else m["prev"]["total"] - line_p
+    # the first winner's margin and prod's, read as margins (MARGIN_SD), at the first meeting and now
+    if fw is not None and out["fw_p_first"] is not None and out["fw_p_now"] is not None and m["margin"] is not None:
+        signed = m["margin"] if m["winner"] == fw else -m["margin"]
+        out["fw_margin_miss"] = signed - rematch_layer.implied_margin(out["fw_p_now"])
+        out["fw_first_surprise"] = m["first"]["margin"] - rematch_layer.implied_margin(out["fw_p_first"])
     for mk in (markets.MONEYLINE, markets.SPREAD, markets.TOTAL):
         rs = [r for r in rows if r["market"] == mk]
         out[f"{mk}_stake"] = sum(r["stake"] for r in rs)
@@ -274,6 +321,147 @@ def other_lines(brows, key, order, title, market, sides, min_bets=MIN_BETS):
     return L
 
 
+def _ms(xs):
+    """(mean, 2se) of a list."""
+    if not xs:
+        return None, None
+    m = sum(xs) / len(xs)
+    if len(xs) < 2:
+        return m, None
+    return m, 2 * math.sqrt(sum((x - m) ** 2 for x in xs) / (len(xs) - 1) / len(xs))
+
+
+def totals_lines(re_m):
+    """Lines: prod's total line at the first meeting and now, and each rematch's miss against it, by
+    the first meeting's total and by its own miss."""
+    L = []
+    for key, order, title in (("first_total", TOTALS, "by the first meeting's total"),
+                              ("first_miss_band", MISSES, "by the first meeting's total less prod's line then")):
+        g = _group([r for r in re_m if r["line_now"] is not None and r["miss"] is not None], key)
+        L += [f"\n  Rematch totals against prod's line, {title} (miss: total less the line; 2se by match)",
+              f"  {'':22s} {'matches':>7s} {'line then':>9s} {'line now':>8s} {'moved':>6s} {'first miss':>10s} "
+              f"{'miss':>6s} {'2se':>5s} {'over':>6s}"]
+        for k in _ordered(g, order):
+            rs = g[k]
+            l0 = [r["line_first"] for r in rs if r["line_first"] is not None]
+            l1 = [r["line_now"] for r in rs]
+            fm = [r["first_miss"] for r in rs if r["first_miss"] is not None]
+            moved = [r["line_now"] - r["line_first"] for r in rs if r["line_first"] is not None]
+            m, se = _ms([r["miss"] for r in rs])
+            L.append(f"  {str(k)[:22]:22s} {len(rs):7,d} {_f(sum(l0) / len(l0) if l0 else None, 9, '.1f')} "
+                     f"{_f(sum(l1) / len(l1), 8, '.1f')} {_f(sum(moved) / len(moved) if moved else None, 6, '+.2f')} "
+                     f"{_f(sum(fm) / len(fm) if fm else None, 10, '+.2f')} {_f(m, 6, '+.2f')} {_f(se, 5, '.2f')} "
+                     f"{_pc(sum(1 for r in rs if r['miss'] > 0) / len(rs), 6)}")
+    return L
+
+
+def logistic_offset(xs, ys, offsets, iters=50):
+    """(a, b, se a, se b) of logit P(y) = offset + a + b x, by Newton; None if it cannot be fitted."""
+    a = b = 0.0
+    det = haa = hbb = 0.0
+    for _ in range(iters):
+        ga = gb = haa = hab = hbb = 0.0
+        for x, y, o in zip(xs, ys, offsets):
+            p = 1 / (1 + math.exp(-(o + a + b * x)))
+            w = p * (1 - p)
+            ga += y - p
+            gb += (y - p) * x
+            haa += w
+            hab += w * x
+            hbb += w * x * x
+        det = haa * hbb - hab * hab
+        if det <= 1e-12:
+            return None
+        da = (hbb * ga - hab * gb) / det
+        db = (haa * gb - hab * ga) / det
+        a, b = a + da, b + db
+        if abs(da) < 1e-9 and abs(db) < 1e-9:
+            break
+    return a, b, math.sqrt(hbb / det), math.sqrt(haa / det)
+
+
+def _logit(p):
+    p = min(max(p, 1e-6), 1 - 1e-6)
+    return math.log(p / (1 - p))
+
+
+def _fit_row(label, rs, ykey, xkeys):
+    """One line: y on a constant and the x's (ols), the slopes with their se and t."""
+    rs = [r for r in rs if r.get(ykey) is not None and all(r.get(x) is not None for x in xkeys)]
+    if len(rs) < 30:
+        return f"  {label[:46]:46s} {len(rs):6,d}  (too few)"
+    fit = ols([[1.0] + [r[x] for x in xkeys] for r in rs], [r[ykey] for r in rs])
+    if fit is None:
+        return f"  {label[:46]:46s} {len(rs):6,d}  (singular)"
+    beta, se = fit
+    parts = "  ".join(f"{x}: {b:+.3f} ±{s:.3f} (t {b / s if s else 0:+.1f})"
+                      for x, b, s in zip(xkeys, beta[1:], se[1:]))
+    return f"  {label[:46]:46s} {len(rs):6,d}  const {beta[0]:+.2f}  {parts}"
+
+
+def fit_lines(re_m):
+    """Lines: how far to move a rematch per point of the earlier meetings' misses."""
+    second = [r for r in re_m if r["k"] == 2]
+    later = [r for r in re_m if r["k"] > 2]
+    L = ["\n  ==== How far to move a rematch: fits on the earlier meetings' misses ====",
+         "  each slope: the points the rematch's miss moves per point of that earlier miss (what a layer "
+         "should move it by); const: the rematch's own bias against prod",
+         f"\n  {'':46s} {'n':>6s}",
+         "  Total: the rematch's total less prod's line now"]
+    L.append(_fit_row("2nd meetings, on the first's miss", second, "miss", ["first_miss"]))
+    for t in (TEAMS[0], TEAMS[2]):
+        L.append(_fit_row(f"2nd meetings, {t}", [r for r in second if r["teams"] == t], "miss", ["first_miss"]))
+    L.append(_fit_row("3rd+, on the first's and the previous one's", later, "miss", ["first_miss", "prev_miss"]))
+    L.append("  Margin: the first winner's margin less prod's (its moneyline read as a margin), on the "
+             "first meeting's margin less prod's then")
+    L.append(_fit_row("2nd meetings", second, "fw_margin_miss", ["fw_first_surprise"]))
+    L.append(_fit_row("3rd+ meetings", later, "fw_margin_miss", ["fw_first_surprise"]))
+    L.append("  Moneyline: the first winner winning again, logistic with prod's price now as the offset, "
+             "on the first meeting's margin surprise per 10 points")
+    for label, rs in (("2nd meetings", second), ("3rd+ meetings", later), ("every rematch", re_m)):
+        rs = [r for r in rs if r.get("fw_won") is not None and r.get("fw_first_surprise") is not None
+              and r.get("fw_p_now") is not None]
+        fit = logistic_offset([r["fw_first_surprise"] / 10 for r in rs], [r["fw_won"] for r in rs],
+                              [_logit(r["fw_p_now"]) for r in rs]) if len(rs) >= 30 else None
+        if fit is None:
+            L.append(f"  {label:46s} {len(rs):6,d}  (too few, or no fit)")
+            continue
+        a, b, sa, sb = fit
+        L.append(f"  {label:46s} {len(rs):6,d}  const {a:+.3f} ±{sa:.3f}  per 10 points {b:+.3f} ±{sb:.3f} "
+                 f"(t {b / sb if sb else 0:+.1f}); at evens, 10 points of first surprise -> "
+                 f"{100 * (1 / (1 + math.exp(-(a + b))) - 0.5):+.1f} points")
+    return L
+
+
+def layer_lines(scored, layer, min_days):
+    """Lines: the layer on prod's prices, walk-forward, against prod alone."""
+    active = [r for r in scored if r.get("active")]
+    L = ["\n  ==== The rematch layer on prod's prices (rematch_layer.py, refitted each day on the days "
+         f"before it; the first {min_days} days are its burn-in) ====", "  the last fit:"]
+    L += layer.describe()
+    L.append(f"\n  {'':26s} {'matches':>7s} {'moved':>7s} {'log loss':>9s} {'+layer':>9s} {'diff':>8s} {'t':>5s} "
+             f"{'Brier':>7s} {'+layer':>7s} {'tot RMSE':>8s} {'+layer':>7s} {'diff':>7s} {'t':>5s}")
+    groups = [("every match", active), ("rematches", [r for r in active if r["n_earlier"]]),
+              ("2nd meetings", [r for r in active if r["n_earlier"] == 1]),
+              ("3rd+ meetings", [r for r in active if r["n_earlier"] > 1])]
+    for t in rematch_layer.RELATIONS:
+        groups.append((f"rematches, {t}", [r for r in active if r["n_earlier"] and r.get("teams_label") == t]))
+    for label, rs in groups:
+        if not rs:
+            continue
+        a, b = rematch_layer.score(rs), rematch_layer.score(rs, "margin_adj", "total_adj")
+        dl, tl = rematch_layer.paired(a["ll"], b["ll"])
+        dt_, tt = rematch_layer.paired(a["te"], b["te"])
+        moved = sum(1 for r in rs if abs(r["move_margin"]) > 1e-9 or abs(r["move_total"]) > 1e-9)
+        L.append(f"  {label[:26]:26s} {len(rs):7,d} {moved:7,d} {_f(a['log_loss'], 9, '.4f')} "
+                 f"{_f(b['log_loss'], 9, '.4f')} {_f(dl, 8, '+.4f')} {_f(tl, 5, '+.1f')} "
+                 f"{_f(a['brier'], 7, '.4f')} {_f(b['brier'], 7, '.4f')} {_f(a['total_rmse'], 8, '.2f')} "
+                 f"{_f(b['total_rmse'], 7, '.2f')} {_f(dt_, 7, '+.2f')} {_f(tt, 5, '+.1f')}")
+    L.append("  diff: +layer less prod alone (negative is better), t on it match by match; the total's "
+             "diff is in squared points")
+    return L
+
+
 def report(brows, mrows):
     """Lines of text."""
     re_m = [r for r in mrows if r["k"] > 1]
@@ -316,6 +504,8 @@ def report(brows, mrows):
                      markets.TOTAL, ("Over", "Under"))
     L += other_lines(re_b, first, MARGINS[1:], "Total: over and under, by the first meeting's margin",
                      markets.TOTAL, ("Over", "Under"))
+    L += totals_lines(re_m)
+    L += fit_lines(re_m)
     big = sorted(re_m, key=lambda r: -r["moneyline_stake"])[:25]
     L.append("\n  The 25 rematches with the most moneyline stake (first: the day's first winner and his "
              "margin; fw p: prod's for him at the first meeting -> now; won: did he win again)")
@@ -333,6 +523,31 @@ def report(brows, mrows):
 
 # --- run -------------------------------------------------------------------------------------
 
+LAYER_MIN_DAYS = 7
+
+
+def prod_layer(meets, codes, prod_tl, min_days=LAYER_MIN_DAYS):
+    """The rematch layer on prod's pre-match prices (its moneyline read as a margin, its total line),
+    walk-forward over these matches: (rows, the last layer)."""
+    items = []
+    for code in codes:
+        m = meets.get(code)
+        p1, line = prematch_p1(prod_tl, code), prematch_line(prod_tl, code)
+        if m is None or p1 is None or line is None:
+            continue
+        s1, s2 = m.get("home_score"), m.get("away_score")
+        it = rematch_layer.item(code, m["start"], m["day_key"], m["home"], m["away"], m["team"][m["home"]],
+                                m["team"][m["away"]], rematch_layer.implied_margin(p1), line,
+                                None if s1 is None or s2 is None else s1 - s2,
+                                None if s1 is None or s2 is None else s1 + s2)
+        it["teams_label"] = m["teams"] if m["teams"] != TEAMS[1] else TEAMS[2]
+        items.append(it)
+    rows, layer = rematch_layer.walk_forward(items, min_days)
+    first = min((r["start"] for r in rows), default=None)
+    for r in rows:
+        r["active"] = first is not None and (r["start"].date() - first.date()).days >= min_days
+    return rows, layer
+
 def run(cur, out_dir):
     """Every settled match of the window with its place in the day's meetings, prod's pre-match
     prices and every bet on it; print the report, write the CSV."""
@@ -343,7 +558,7 @@ def run(cur, out_dir):
     window = sorted((m for m in meets.values() if m["start"] >= since and (until is None or m["start"] < until)),
                     key=lambda m: m["start"])
     in_window = {m["match"] for m in window}
-    codes = sorted(in_window | {m["first"]["match"] for m in window})
+    codes = sorted(in_window | {x for m in window for x in m["earlier"]})
     print(f"  {len(window):,} settled matches in the window, {sum(m['k'] > 1 for m in window):,} rematches the "
           f"same day; prod's prices for {len(codes):,} (with the first meetings)", flush=True)
     sql, params, _ = bets.bets_sql()
@@ -363,7 +578,9 @@ def run(cur, out_dir):
     for r in brows:
         by[r["match_code"]].append(r)
     mrows = [match_row(m, by.get(m["match"], []), prod_tl) for m in window]
-    lines = report(brows, mrows)
+    scored, layer = prod_layer(meets, codes, prod_tl)
+    scored = [r for r in scored if r["match"] in in_window]
+    lines = report(brows, mrows) + layer_lines(scored, layer, LAYER_MIN_DAYS)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
     bets.write_csv(os.path.join(out_dir, "bets_rematches.csv"), mrows,

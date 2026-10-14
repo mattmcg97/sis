@@ -2,6 +2,7 @@
 first meeting, each bet read against the first winner, and prod's price of him then and now."""
 
 import datetime as dt
+import math
 import random
 import unittest
 
@@ -71,6 +72,57 @@ class TestMeetings(unittest.TestCase):
         self.assertEqual(br.match_row(self.m["G4"], [], tl)["fw_won"], 0.0)
 
 
+class TestLinesAndFits(unittest.TestCase):
+
+    def test_meetings_carry_the_day_and_the_earlier_ones(self):
+        m = br.day_meetings(HISTORY)
+        self.assertEqual(m["G4"]["earlier"], ["G1", "G3"])
+        self.assertEqual(m["G4"]["day_key"], m["G1"]["day_key"])
+        self.assertNotEqual(m["G5"]["day_key"], m["G1"]["day_key"])
+
+    def test_prods_closing_total_line(self):
+        def q(match, line, msg=None):
+            return (match, 54, T0, 50.0, None, f"Line {line}", msg, "open", "true")
+        tl = bets.timeline([q("G1", 38.5), q("G1", 40.5), q("G1", 44.5, msg=7)])
+        self.assertEqual(br.prematch_line(tl, "G1"), 40.5)               # the last before kick-off
+        self.assertEqual(br.prematch_line(bets.timeline([q("G2", 33.5, msg=3)]), "G2"), 33.5)
+        self.assertIsNone(br.prematch_line(tl, "G9"))
+
+    def test_the_rematch_row_reads_the_lines_and_the_surprise(self):
+        def q(match, market, p, line=None):
+            return (match, market, T0, 100.0 * p, None, None if line is None else f"Line {line}", None,
+                    "open", "true")
+        tl = bets.timeline([q("G1", 50, 0.5), q("G1", 54, 0.5, 35.5), q("G3", 50, 0.5), q("G3", 54, 0.5, 37.5)])
+        row = br.match_row(br.day_meetings(HISTORY)["G3"], [], tl)
+        self.assertEqual((row["line_first"], row["line_now"]), (35.5, 37.5))
+        self.assertAlmostEqual(row["first_miss"], 38 - 35.5)              # G1: 24-14
+        self.assertAlmostEqual(row["miss"], 27 - 37.5)                    # G3: 10-17
+        self.assertEqual(row["first_miss_band"], "first within 3")
+        self.assertAlmostEqual(row["fw_first_surprise"], 10.0)            # ANN by 10 at evens
+        self.assertAlmostEqual(row["fw_margin_miss"], 7.0)                # ANN by 7 again at evens
+
+    def test_the_logistic_fit_recovers_a_planted_slope(self):
+        rnd = random.Random(2)
+        xs = [rnd.gauss(0, 1) for _ in range(4000)]
+        offs = [rnd.gauss(0, 0.5) for _ in xs]
+        ys = [1.0 if rnd.random() < 1 / (1 + math.exp(-(o + 0.1 + 0.4 * x))) else 0.0 for x, o in zip(xs, offs)]
+        a, b, sa, sb = br.logistic_offset(xs, ys, offs)
+        self.assertAlmostEqual(a, 0.1, delta=3 * sa)
+        self.assertAlmostEqual(b, 0.4, delta=3 * sb)
+
+    def test_the_layer_on_prods_prices(self):
+        def q(match, market, p, line=None):
+            return (match, market, T0, 100.0 * p, None, None if line is None else f"Line {line}", None,
+                    "open", "true")
+        meets = br.day_meetings(HISTORY)
+        tl = bets.timeline([x for g in ("G1", "G2", "G3", "G4", "G5") for x in (q(g, 50, 0.5), q(g, 54, 0.5, 30.5))])
+        rows, layer = br.prod_layer(meets, sorted(meets), tl, min_days=0)
+        self.assertEqual(len(rows), 5)
+        self.assertEqual(sorted(r["n_earlier"] for r in rows), [0, 0, 0, 1, 2])
+        text = "\n".join(br.layer_lines(rows, layer, 0))
+        self.assertIn("2nd meetings", text)
+
+
 class TestReport(unittest.TestCase):
 
     def test_the_report_over_many_rematches(self):
@@ -98,7 +150,7 @@ class TestReport(unittest.TestCase):
         text = "\n".join(br.report(brows, mrows))
         for heading in ("Every match by its meeting of the day", "by the first meeting's margin of victory",
                         "Same teams (against the first meeting)", "Handicap:", "Total: over and under",
-                        "The 25 rematches"):
+                        "The 25 rematches", "Rematch totals against prod's line", "How far to move a rematch"):
             self.assertIn(heading, text)
 
 
