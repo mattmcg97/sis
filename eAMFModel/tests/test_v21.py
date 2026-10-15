@@ -547,6 +547,18 @@ class TestSimulate(unittest.TestCase):
         st = {}
         v21.simulate(m, _state(m, y=50), 5, stats=st)
         self.assertEqual(first(st), 50)
+        # at another distance, its own result against the line: a 3rd-and-1 sneak for a yard moves the
+        # chains at 3rd and 3 too, a 3rd-and-3 throw for 2 does not at 3rd and 1
+        log1 = lambda st: {k: v21.snap_log(st)[k][np.flatnonzero(v21.snap_log(st)["path"] == 0)[0]]
+                           for k in ("gain", "conv")}
+        _fixed_play(m, 1, False, made=1, rdist=1)
+        st = {}
+        v21.simulate(m, _state(m, down=3, dist=3, y=50), 5, stats=st)
+        self.assertEqual((log1(st)["gain"], bool(log1(st)["conv"])), (3, True))
+        _fixed_play(m, 2, False, made=0, rdist=3)
+        st = {}
+        v21.simulate(m, _state(m, down=3, dist=1, y=50), 5, stats=st)
+        self.assertEqual((log1(st)["gain"], bool(log1(st)["conv"])), (0, False))
         # a gain short of this goal plays as drawn
         every(8, False, 40)
         st = {}

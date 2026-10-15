@@ -123,9 +123,11 @@ SPLITS = ("snaps", "time")
 # The draws' key (KEY): "full" -- TIME_BASE / DIST_BASE (the play before in its six classes, the part of
 # the game, the snaps played so far); "lean" -- fewer cells, more real snaps in each: the clock into the
 # snap running or stopped (clock2) or the time the play took (tb), the period (qtr), the lead, down,
-# distance, field and snaps left in the half, and nothing else. Its fallbacks coarsen the distance,
-# the time, the snaps left and the field before the lead (all seven of margin_b's) gives way to behind,
+# distance, field and snaps left in the half, and nothing else. Its fallbacks coarsen the time, the
+# field, the snaps left and the distance before the lead (all seven of margin_b's) gives way to behind,
 # level or ahead: a side 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
+# The distance draw lets the field go before the distance: the field windows find the snaps near the
+# state's own field in a group of every field, and 4th and 1 is not played as 4th and 9.
 KEY = "full"
 KEYS = ("full", "lean")
 # Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
@@ -165,13 +167,13 @@ TIME_LEAN_LEVELS = (TIME_LEAN,
                     ("clock2",),
                     ())
 DIST_LEAN_LEVELS = (DIST_LEAN,
-                    ("tb", "qtr", "margin", "down", "dist3", "zone", "remain"),
-                    ("tb2", "qtr", "margin", "down", "dist3", "zone", "remain"),
-                    ("tb2", "qtr", "margin", "down", "dist3", "zone", "rem4"),
+                    ("tb2", "qtr", "margin", "down", "dist", "zone", "remain"),
+                    ("tb2", "qtr", "margin", "down", "dist", "zone3", "remain"),
+                    ("tb2", "qtr", "margin", "down", "dist", "zone3", "rem4"),
                     ("tb2", "qtr", "margin", "down", "dist3", "zone3", "rem4"),
-                    ("tb2", "qtr", "margin", "down", "zone3", "rem4"),
-                    ("qtr", "margin", "down", "zone3", "rem4"),
-                    ("qtr", "lead3", "down", "zone3", "rem4"),
+                    ("tb2", "qtr", "margin", "down", "dist3", "rem4"),
+                    ("qtr", "margin", "down", "dist3", "rem4"),
+                    ("qtr", "lead3", "down", "dist3", "rem4"),
                     ("qtr", "lead3", "down", "rem4"),
                     ("tb", "down", "dist", "zone"),
                     ("tb", "down", "dist"),
@@ -2383,6 +2385,15 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             gain = np.where(spread, gain + rng.integers(-SMOOTH_YARDS, SMOOTH_YARDS + 1, len(ix)), gain)
         need = 100 - y[ix]
         if field_share:
+            # drawn at another distance, the real snap's own result against the line: a new set of downs
+            # past it by as far, or short of it as far of the way (a 4th-and-1 sneak is not replayed at 4th
+            # and 3 as a yard short, nor a 3rd-and-3 incompletion at 3rd and 1)
+            other = (kind == GAIN) & ~td & (made <= 1) & (rdist != dist[ix]) & (rdist > 0)
+            if other.any():
+                d_, rd = dist[ix].astype(np.int64), np.maximum(1, rdist.astype(np.int64))
+                moved = np.maximum(gain - rd + d_, d_)
+                short = np.minimum(np.where(gain > 0, gain * d_ // rd, gain), d_ - 1)
+                gain = np.where(other, np.where(made == 1, moved, short), gain)
             # drawn near the state's own field, the real snap's own result: its touchdown is one here, and
             # a gain that fell short of its own goal falls short of this one, as far of the way there
             gain = np.where(td, np.maximum(gain, need), gain)

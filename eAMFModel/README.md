@@ -2078,7 +2078,14 @@ missing something. Nothing is ever fitted to close those gaps.
   group where it holds fewer than 20. With F = 0.2, that is ±10 yards at the opposing 50 and ±2 at
   the 10. A gamer's or team's own draws do the same. The drawn snap keeps its own result: its
   touchdown is one here, with no run-on, and a gain that fell short of its own goal falls short of
-  this one, as far of the way there (the chains then move by the yards). Windows alone, with the
+  this one, as far of the way there (the chains then move by the yards). The line too: a snap
+  drawn from another distance keeps its own result against the line. A new set of downs stays one,
+  past the line by as far; a snap short of it stays short, as far of the way there. Before, the
+  yards were replayed: a 4th-and-1 sneak that gained a yard failed at 4th and 3, and a 3rd-and-3
+  throw for 2 moved the chains at 3rd and 1. Short yardage isn't played like a longer distance, so
+  from the real states the sim converted fewer 4th downs at every distance (2–3 to go, 44% against
+  50% real). With the field windows doing the field's work, the lean key's distance fallbacks now
+  let the field go before the distance. Windows alone, with the
   gains replayed at the new field, took the level late-Q4 figure only from 9.1% to 8.3%. Near the
   goal, any short gain from a yard or two further back still scored: from the opposing 4–1, the
   real snaps scored 43%, the sim 51%. An adjusted build's tilt still leans each
