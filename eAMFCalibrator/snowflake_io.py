@@ -11,6 +11,9 @@ detect_play_time_column() is kept anyway: if the feed ever gains a real
 timestamp, it is preferred over the reconstruction automatically.
 """
 
+import hashlib
+import os
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -120,16 +123,39 @@ def source_table(stream_table):
 _FETCH_CACHE = {}
 
 
+def _disk_path(key):
+    """The file a query's answer is kept in under config.FETCH_DISK_CACHE (None when off)."""
+    directory = getattr(config, "FETCH_DISK_CACHE", None)
+    if not directory:
+        return None
+    digest = hashlib.sha256(repr((" ".join(key[0].split()), key[1])).encode("utf-8")).hexdigest()
+    return os.path.join(directory, f"{digest[:40]}.pkl")
+
+
 def fetch_all(cur, sql, params=None):
     key = (sql, tuple(params or ()))
     if getattr(config, "FETCH_CACHE", False) and key in _FETCH_CACHE:
         cols, rows = _FETCH_CACHE[key]
         return list(cols), list(rows)
+    disk = _disk_path(key)
+    if disk and os.path.exists(disk):
+        with open(disk, "rb") as fh:
+            cols, rows = pickle.load(fh)
+        return list(cols), list(rows)
+    if cur is None:
+        raise SystemExit("this needs Snowflake, and its answer isn't in the query cache "
+                         f"({getattr(config, 'FETCH_DISK_CACHE', None) or 'no cache'})")
     cur.execute(sql, params or ())
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     if getattr(config, "FETCH_CACHE", False):
         _FETCH_CACHE[key] = (list(cols), list(rows))
+    if disk:
+        os.makedirs(os.path.dirname(disk), exist_ok=True)
+        tmp = disk + ".part"
+        with open(tmp, "wb") as fh:
+            pickle.dump((list(cols), list(rows)), fh, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, disk)                         # whole or not at all, even if stopped mid-write
     return cols, rows
 
 

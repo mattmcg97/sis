@@ -2836,12 +2836,23 @@ is kept, so a step can be rerun on its own.
 
 | step | what it does |
 |---|---|
-| `history` | every settled match, for the fits: `match_history.csv` |
-| `fits` | NB2 refitted every day of the window (`eAMFModel prior-daily`), one directory per half-life: `nb2_hl<D>/`. Days already fitted are kept |
+| `history` | every settled match, for the fits: `match_history.csv`. `--history CSV` copies one you already have instead, with no Snowflake |
+| `fits` | NB2 refitted every day of the window (`eAMFModel prior-daily`), one directory per half-life: `nb2_hl<D>/`. Days already fitted are kept. Only the days the history covers are fitted; a later day waits for a fresher history rather than being fitted short |
 | `audit` | the inputs checked (below): `suite_audit.txt`. A FAIL stops the run; `--keep-going` carries on |
 | `backtest` | the layers' leak check, then `prior-backtest` on every arm and the controls: `prior_backtest.txt/csv` |
 | `replay` | `prior-replay` on the same arms, from the same read and fits: `prior_replay.txt/csv` |
 | `summary` | every variant ranked: `suite_summary.txt/csv` |
+
+**Warehouse credits:** every Snowflake query's answer is kept on disk in `out/suite/cache/`. A
+later run asking the same query reads it from there, so rerunning a step or changing a setting
+spends no credits. When every answer is already there, no connection is made at all. `--fresh`
+empties the cache. The fits and the audit never touch Snowflake, so they can run while the
+warehouse is unavailable:
+
+```bash
+python -m eAMFCalibrator backtest-suite --since "2026-08-15 00:00:00" --until "2026-10-15 00:00:00" \
+    --steps history,fits --history eAMFCalibrator/out/match_history.csv
+```
 
 **The arms:** an NB2 arm per half-life (`nb2-hl30`, `nb2-hl60`, `nb2-hl120` by default), the glmer
 arm (`glmer/cadence.R`'s daily trimmed model by default; cadence.R must have been run over the
@@ -2851,7 +2862,9 @@ window), and any others in the settings. Each comes as it is and with every laye
 **What the audit checks:**
 - **The history:** every match appears once, and the history reaches the window's end.
 - **Each NB2 directory:** fitted at its half-life, with a fit for every day. Every day's training
-  file (and its level scale's) holds only results from before that day.
+  file (and its level scale's) holds only results from before that day. Every fit saw at least 99%
+  of the results the current history has before its day; a fit made on an older history fails, and
+  its day's directory should be deleted and refitted.
 - **Each CSV arm:** the file is there and how much of the window it prices (warns below 95%: the
   backtest grades only the matches every arm priced). cadence.R's daily fits are cut at midnight.
 - **The gamers' stats:** there, fresh (else rerun `player-stats`), and their coverage of the window.

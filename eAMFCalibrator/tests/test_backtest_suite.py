@@ -85,6 +85,99 @@ class TestAuditFits(unittest.TestCase):
             self.assertIn("run the fits step", audit.lines[0])
 
 
+    def test_a_fit_on_an_older_history_fails(self):
+        day = dt.date(2026, 9, 10)
+        before = dt.datetime.combine(day, dt.time())
+        history = sorted(before - dt.timedelta(minutes=10 * k) for k in range(1, 201))
+        with tempfile.TemporaryDirectory() as d:
+            write_day(d, day, history[:190])                           # the fit missed the last 10 results
+            with open(os.path.join(d, "rolling.json"), "w") as fh:
+                json.dump({"prior": "nb2", "options": {"half_life": 30}, "days": [day.isoformat()]}, fh)
+            audit = bs.Audit()
+            with mock.patch("builtins.print"):
+                bs.audit_rolling(audit, "nb2-hl30", d, day, day, 30, history)
+            self.assertIn("FAIL  nb2-hl30: every fit on all the results before its day: 1 fitted on an older "
+                          "history (results seen of those now known): 2026-09-10 (190 of 200)", "\n".join(audit.lines))
+            write_day(d, day, history[:199])                           # one late result is within the 1%
+            audit = bs.Audit()
+            with mock.patch("builtins.print"):
+                bs.audit_rolling(audit, "nb2-hl30", d, day, day, 30, history)
+            self.assertIn("PASS  nb2-hl30: every fit on all the results before its day", "\n".join(audit.lines))
+
+
+class TestHistoryAndFits(unittest.TestCase):
+
+    def test_a_history_csv_is_taken_and_only_the_days_it_covers_are_fitted(self):
+        rows = [dict(MATCH_CODE=f"m{k}", SPORT_CODE="AF", STREAM_NUMBER="1",
+                     SCHEDULED_START_TIME_UTC=f"2026-09-{1 + k // 4:02d} {10 + k % 4}:00:00", PLAYER_1_HANDLE="A",
+                     PLAYER_1_TEAM="X", PLAYER_2_HANDLE="B", PLAYER_2_TEAM="Y", PLAYER_1_FINAL_SCORE="21",
+                     PLAYER_2_FINAL_SCORE="14") for k in range(40)]                  # 1 to 10 Sep
+        with tempfile.TemporaryDirectory() as d:
+            src = os.path.join(d, "mine.csv")
+            with open(src, "w", newline="") as fh:
+                w = csv.DictWriter(fh, snowflake_io.HISTORY_COLUMNS)
+                w.writeheader()
+                w.writerows(rows)
+            out = os.path.join(d, "suite")
+            os.makedirs(out)
+            with mock.patch("builtins.print"):
+                bs.step_history(None, out, src)                        # no Snowflake: cur None
+            self.assertTrue(os.path.exists(os.path.join(out, bs.HISTORY)))
+            from eAMFModel import rolling_prior
+            calls = []
+            with mock.patch.object(rolling_prior, "fit", lambda h, prior, directory, first, last, **kw:
+                                   calls.append((directory, first, last, kw["options"]))), \
+                    mock.patch("builtins.print"):
+                bs.step_fits(dict(bs.load_config(), nb2_half_lives=[30, 60]), out, dt.date(2026, 9, 5),
+                             dt.date(2026, 9, 20))
+            self.assertEqual([c[1:] for c in calls], [(dt.date(2026, 9, 5), dt.date(2026, 9, 10), {"half_life": 30}),
+                                                      (dt.date(2026, 9, 5), dt.date(2026, 9, 10), {"half_life": 60})])
+            with mock.patch("builtins.print"), self.assertRaises(SystemExit):
+                bs.step_fits(bs.load_config(), out, dt.date(2026, 9, 12), dt.date(2026, 9, 20))
+
+
+class TestQueryCache(unittest.TestCase):
+
+    class Cursor:
+        def __init__(self):
+            self.runs = 0
+            self.description = [("A",), ("B",)]
+
+        def execute(self, sql, params):
+            self.runs += 1
+
+        def fetchall(self):
+            return [(1, dt.datetime(2026, 9, 1, 12, 0)), (2, None)]
+
+    def test_a_query_is_asked_once_and_read_back_after(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(config, "FETCH_DISK_CACHE", d):
+            cur = self.Cursor()
+            first = snowflake_io.fetch_all(cur, "SELECT A, B\n  FROM T WHERE X = %s", (1,))
+            again = snowflake_io.fetch_all(cur, "SELECT A, B FROM T   WHERE X = %s", (1,))   # spacing aside
+            self.assertEqual(cur.runs, 1)
+            self.assertEqual(first, again)
+            self.assertEqual(snowflake_io.fetch_all(None, "SELECT A, B FROM T WHERE X = %s", (1,)), first)
+            snowflake_io.fetch_all(cur, "SELECT A, B FROM T WHERE X = %s", (2,))              # other params
+            self.assertEqual(cur.runs, 2)
+            with self.assertRaises(SystemExit):                                                 # not cached, no cursor
+                snowflake_io.fetch_all(None, "SELECT A FROM T", ())
+        cur = self.Cursor()                                                                     # cache off
+        snowflake_io.fetch_all(cur, "SELECT 1", ())
+        snowflake_io.fetch_all(cur, "SELECT 1", ())
+        self.assertEqual(cur.runs, 2)
+
+    def test_the_suite_connects_only_when_a_query_needs_it(self):
+        from .. import __main__ as cli
+        with mock.patch.object(snowflake_io, "get_connection") as connect:
+            cur = cli._LazyCursor()
+            cur.close()
+            self.assertFalse(connect.called)
+            cur = cli._LazyCursor()
+            cur.execute("SELECT 1", ())
+            self.assertTrue(connect.called and cur.opened)
+            cur.close()
+
+
 class TestAuditFeatures(unittest.TestCase):
 
     def stats(self, d):

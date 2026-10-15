@@ -228,20 +228,42 @@ def cmd_backtest_suite(args):
         cfg["features"] = os.path.join(DEFAULT_OUT, player_stats.CACHE)
     out = args.out or os.path.join(DEFAULT_OUT, "suite")
     steps = [s.strip() for s in args.steps.split(",") if s.strip()]
-    needs_db = {"history", "backtest", "replay"} & set(steps)
-    conn = snowflake_io.get_connection() if needs_db else None
+    cur = _LazyCursor()                     # connects on the first query the suite's cache can't answer
     try:
-        if conn is None:
-            path = backtest_suite.run(None, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps, args.keep_going)
-        else:
-            with conn.cursor() as cur:
-                path = backtest_suite.run(cur, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps,
-                                          args.keep_going)
+        path = backtest_suite.run(cur, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps, args.keep_going,
+                                  history=args.history, fresh=args.fresh)
     finally:
-        if conn is not None:
-            conn.close()
-    print(f"\n  -> {path} (the suite: {out})")
+        cur.close()
+    print(f"\n  -> {path} (the suite: {out})" + ("" if cur.opened else "; no Snowflake connection needed"))
     return 0
+
+
+class _LazyCursor:
+    """A Snowflake cursor opened on the first query that runs (none at all when every answer is
+    already in a query cache, so no warehouse is woken)."""
+
+    def __init__(self):
+        self.conn = self.cur = None
+        self.opened = False
+
+    def execute(self, *args, **kwargs):
+        if self.cur is None:
+            self.conn = snowflake_io.get_connection()
+            self.cur = self.conn.cursor()
+            self.opened = True
+        return self.cur.execute(*args, **kwargs)
+
+    @property
+    def description(self):
+        return self.cur.description
+
+    def fetchall(self):
+        return self.cur.fetchall()
+
+    def close(self):
+        if self.conn is not None:
+            self.cur.close()
+            self.conn.close()
 
 
 def cmd_prior_replay(args):
@@ -1336,6 +1358,11 @@ def build_parser():
                            help="the steps to run, comma-separated (default all: history,fits,audit,backtest,"
                                 "replay,summary)")
     bs_parser.add_argument("--keep-going", action="store_true", help="carry on past a failed audit check")
+    bs_parser.add_argument("--history", metavar="CSV",
+                           help="the history step takes this match_history.csv (eAMFCalibrator history's) "
+                                "instead of fetching one: no Snowflake")
+    bs_parser.add_argument("--fresh", action="store_true",
+                           help="empty the suite's query cache first (every query asked of Snowflake again)")
     bs_parser.add_argument("--out", help=f"the suite's directory (default: {DEFAULT_OUT}/suite)")
 
     ps_parser = sub.add_parser(
