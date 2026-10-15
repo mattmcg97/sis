@@ -145,10 +145,12 @@ FIELD_MIN = 20
 FIELD_CANDIDATES = 6
 # Clock windows (build's clock, 0 off): in a half's last CLOCK_LATE seconds the time draw takes a real snap
 # of its group from those with as long left in the half -- within `clock` x the seconds left (CLOCK_SECONDS
-# at least), or the FIELD_MIN nearest -- so a side at 0:20 on a running clock draws what real sides did at
+# at least), or the CLOCK_MIN nearest -- so a side at 0:20 on a running clock draws what real sides did at
 # 0:20, not a 30-second snap made at 0:45 that runs the half out before it can kick.
 CLOCK_LATE = 120.0
 CLOCK_SECONDS = 2
+CLOCK_MIN = 5                 # a thin cell's window widens to its 5 nearest only: its 20 nearest at 0:12
+                              # could reach back to 0:40 and its 30-second snaps
 WINDOW_SPAN = 1024
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
 TIME_LEAN = ("clock2", "qtr", "margin", "down", "dist", "zone", "remain")
@@ -700,10 +702,11 @@ class Bins:
     def by_field(self):
         return self.by_value("field")
 
-    def window(self, b, v, r, name, nmin=FIELD_MIN):
+    def window(self, b, v, r, name, nmin=None):
         """(lo, hi) each draw's window in by_value(name) order: its group's (b) real records within r of
         the state's own value v, or the nmin nearest where fewer are there (the whole group where it
-        has fewer)."""
+        has fewer; nmin: FIELD_MIN, CLOCK_MIN for the time left)."""
+        nmin = nmin if nmin is not None else CLOCK_MIN if name == "left" else FIELD_MIN
         _, key = self.by_value(name)
         b, v = np.asarray(b, np.int64), np.asarray(v, np.int64)
         r = np.asarray(r, np.int64)
@@ -2392,7 +2395,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             if other.any():
                 d_, rd = dist[ix].astype(np.int64), np.maximum(1, rdist.astype(np.int64))
                 moved = np.maximum(gain - rd + d_, d_)
-                short = np.minimum(np.where(gain > 0, gain * d_ // rd, gain), d_ - 1)
+                # a gain short of the line stays a gain where there is room for one (rounded, not floored:
+                # a 2-yard gain at 3rd and 10 is a yard at 3rd and 4, not nothing)
+                scaled = np.maximum(1, np.round(gain * d_ / rd)).astype(np.int64)
+                short = np.minimum(np.where(gain > 0, scaled, gain), d_ - 1)
                 gain = np.where(other, np.where(made == 1, moved, short), gain)
             # drawn near the state's own field, the real snap's own result: its touchdown is one here, and
             # a gain that fell short of its own goal falls short of this one, as far of the way there

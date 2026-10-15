@@ -2080,7 +2080,8 @@ missing something. Nothing is ever fitted to close those gaps.
   touchdown is one here, with no run-on, and a gain that fell short of its own goal falls short of
   this one, as far of the way there (the chains then move by the yards). The line too: a snap
   drawn from another distance keeps its own result against the line. A new set of downs stays one,
-  past the line by as far; a snap short of it stays short, as far of the way there. Before, the
+  past the line by as far; a snap short of it stays short, as far of the way there (rounded, and a
+  gain stays at least a yard where the line leaves room for one). Before, the
   yards were replayed: a 4th-and-1 sneak that gained a yard failed at 4th and 3, and a 3rd-and-3
   throw for 2 moved the chains at 3rd and 1. Short yardage isn't played like a longer distance, so
   from the real states the sim converted fewer 4th downs at every distance (2–3 to go, 44% against
@@ -2097,7 +2098,9 @@ missing something. Nothing is ever fitted to close those gaps.
   on level sides in Q4's 1:00–0:31 on 15.5% of their drives in the sim, against 0.3% real. With
   `--clock`, the time draw there takes its real snap from the cell's snaps with as long left in
   the half: within C x the seconds left (2 at least), or the 20 nearest where fewer. With C = 0.2,
-  that is ±4 seconds at 0:20 and ±24 at 2:00. A gamer's or team's own draws do the same.
+  that is ±4 seconds at 0:20 and ±24 at 2:00. A thin cell's window widens to its 5 nearest only:
+  its 20 nearest at 0:12 could reach back to 0:40 and the 30-second snaps made there. A gamer's or
+  team's own draws do the same.
   `--clock 0` (the default) draws from anywhere in the cell.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
