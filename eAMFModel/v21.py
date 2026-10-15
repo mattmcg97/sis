@@ -987,14 +987,42 @@ def _prev_at(row, by_end, period):
     return int(play_class(last["gain"], last["distance"]))
 
 
-def decision_points(rows, recs=None):
+def end_points(row, after, final=None):
+    """(the offense's points, the other side's) from a half's last row to the first row after it (after),
+    or to the game's final score (final: (home, away)) where it was regulation's last; None where
+    neither is known. The feed can miss the half's last play -- a kick at the buzzer -- but not the score
+    it left (the next half's rows, the history's final)."""
+    if after is not None:
+        h1, w1 = s14._i(after.get("score_p1")), s14._i(after.get("score_p2"))
+    elif final is not None:
+        h1, w1 = int(final[0]), int(final[1])
+    else:
+        return None
+    h0, w0 = s14._i(row.get("score_p1")), s14._i(row.get("score_p2"))
+    if None in (h0, w0, h1, w1) or row.get("offense") not in TEAMS:
+        return None
+    mine_home = (row["offense"] == "TEAM_A") == ((row.get("team_a_side") or "home") != "away")
+    return (h1 - h0, w1 - w0) if mine_home else (w1 - w0, h1 - h0)
+
+
+def match_final(hist_row):
+    """The history's (home, away) final score of a match, or None."""
+    try:
+        return float(hist_row["PLAYER_1_FINAL_SCORE"]), float(hist_row["PLAYER_2_FINAL_SCORE"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def decision_points(rows, recs=None, final=None):
     """A match's real decisions in their full state: {name: [dict]} for every name in DECISIONS, each
     with the deciding side (0 home, 1 away), the choice, the period, clock, seconds left in the half
     (left), the deciding side's lead, yards to the goal (togo), to go (dist), the down, both sides'
     timeouts left (own_to, opp_to; -1 unknown), the play before (prev) and the row (msg); and
     "kick_pool" (choice, desperate, late, field, seconds) for every kick-off, "fg_clock" (seconds left in
     the half, seconds used) for every field goal and "conv" (two, good) for every conversion. `recs`:
-    the match's match_snaps."""
+    the match's match_snaps; final: the game's (home, away) final score, for the end of regulation.
+    At the end of a half the score after it says what the feed missed (end_points): 3 more to the side
+    with the ball and none to the other is its kick at the buzzer."""
     rows = _with_side(rows)
     out = {k: [] for k in DECISIONS}
     out.update(kick_pool=[], fg_clock=[], conv=[])
@@ -1004,7 +1032,9 @@ def decision_points(rows, recs=None):
     by_end = {r["message"]: r for r in recs}
     a_home = rows[0]["team_a_side"] != "away"
     _i, _f = s14._i, s14._f
-    for a, b in zip(rows, rows[1:]):
+    regulation = final is not None and not any((_i(r.get("period")) or 0) >= 5 for r in rows)
+    out["missed_kicks"] = 0
+    for a, b in zip(rows, rows[1:] + [None]):
         if a["play_kind"] not in s14.SNAP_KINDS or a.get("offense") not in TEAMS or not a.get("field_position") \
                 or not a.get("down") or not a.get("period") or not a.get("clock_seconds"):
             continue
@@ -1012,20 +1042,31 @@ def decision_points(rows, recs=None):
         m = s14._margin(a, a["offense"])
         if c <= 0 or m is None:
             continue
-        side, left, same = _side_of(a["offense"], a_home), float(half_left(p, c)), a["period"] == b["period"]
+        if b is None and not (regulation and p == 4):
+            continue
+        same = b is not None and a["period"] == b["period"]
+        # the half's end after this row: what the score did from here says whether the side kicked
+        pts = end_points(a, b, final if b is None else None) if not same and p in (2, 4) else None
+        kicked = pts is not None and pts == (3, 0) and float(half_left(p, c)) <= EARLY_LEFT
+        b = b if b is not None else dict(play_kind="", period=None)
+        side, left = _side_of(a["offense"], a_home), float(half_left(p, c))
         if b["play_kind"] == "FIELD_GOAL" and same and b.get("clock_seconds"):
             out["fg_clock"].append((left, c - _f(b["clock_seconds"])))
         own, opp = _tos_left(a, a["offense"], p)
         point = dict(side=side, period=p, clock=c, left=left, lead=m, togo=100 - y,
                      dist=max(1, _i(a["distance"]) or 1), down=d, own_to=own, opp_to=opp,
                      prev=_prev_at(a, by_end, p), msg=_i(a["message"]))
-        if d == 4 and same and a.get("distance"):
-            point["choice"] = PUNT if b["play_kind"] == "PUNT" else FG if b["play_kind"] == "FIELD_GOAL" else GO
+        if d == 4 and (same or kicked) and a.get("distance"):
+            point["choice"] = FG if kicked else PUNT if b["play_kind"] == "PUNT" \
+                else FG if b["play_kind"] == "FIELD_GOAL" else GO
             out["fourth"].append(point)
+            out["missed_kicks"] += int(kicked)
         elif d in (1, 2, 3) and 100 - y + 17 <= FG_MAX and (same or p in (2, 4)):
-            # a half that ran out before the next row is a side that did not kick
-            point["choice"] = int(b["play_kind"] == "FIELD_GOAL" and same)
+            # a half that ran out before the next row is a side that did not kick, unless the score
+            # after it says it did
+            point["choice"] = int((b["play_kind"] == "FIELD_GOAL" and same) or kicked)
             out["early_fg"].append(point)
+            out["missed_kicks"] += int(kicked)
     # kick-offs: after a conversion or a field goal (a touchdown straight after: returned or run in), and
     # each half's opening kick
     prev = None
@@ -1362,6 +1403,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
+    missed_kicks = 0
     dec = {k: [] for k in DECISIONS}
     dec.update(kick_pool=[], fg_clock=[], conv=[])
     ot_games = {}
@@ -1371,7 +1413,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         pair, teams = match_people(code, rows, hist)
         mine = match_snaps(rows, pair, teams)
         recs += mine
-        got = decision_points(rows, mine)
+        got = decision_points(rows, mine, match_final(hist[code]) if code in hist else None)
+        missed_kicks += got["missed_kicks"]
         for name in DECISIONS:
             dec[name] += [dict(q, gamer=pair[q["side"]], code=code)
                           for q, k in zip(got[name], in_draw_window(name, got[name])) if k]
@@ -1384,6 +1427,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         raise ValueError("no real snaps to build on")
     if verbose:
         print(f"  v2.1: {len(recs):,} real snaps from {len(matches):,} matches ({mode})", flush=True)
+        print(f"  kicks at a half's end the feed missed, read off the score after it (3 more to the side with"
+              f" the ball, none to the other): {missed_kicks:,}", flush=True)
         try:
             m._trend_lines = trend_lines(dec, ot_games)
         except (ValueError, IndexError):          # codes without a date

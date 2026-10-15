@@ -293,7 +293,7 @@ def sweep_points(matches, history=None):
     for code, rows in matches.items():
         rows = v21._with_side(rows)
         pair, _ = v21.match_people(code, rows, hist)
-        got = v21.decision_points(rows)
+        got = v21.decision_points(rows, final=v21.match_final(hist[code]) if code in hist else None)
         for name in v21.DECISIONS:
             for q in got[name]:
                 out[name].append(dict(q, code=code, gamer=pair[q["side"]]))

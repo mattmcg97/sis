@@ -662,6 +662,23 @@ class TestDecisions(unittest.TestCase):
         self.assertEqual(got["fg_clock"], [(20.0, 5.0)])
         self.assertEqual(got["conv"], [(True, True)])
 
+    def test_a_kick_the_feed_missed_at_the_half_s_end(self):
+        # Q2: in range at 0:03, the next row is Q3's kick-off with 3 more to the side: it kicked
+        rows = [_r(7, 1, 236, "KICKOFF", "TEAM_A", y=25),
+                _r(14, 2, 3, "SCRIMMAGE", "TEAM_A", 2, 6, 75),
+                _r(21, 3, 236, "KICKOFF", "TEAM_B", y=30, a=3),
+                # Q4: 3 behind, in range at 0:04 on 4th down, the rows end there; the final has 3 more to it
+                _r(28, 4, 4, "SCRIMMAGE", "TEAM_B", 4, 3, 80, a=3)]
+        got = v21.decision_points(rows, final=(3.0, 3.0))
+        self.assertEqual([q["choice"] for q in got["early_fg"]], [1])
+        self.assertEqual([q["choice"] for q in got["fourth"]], [v21.FG])
+        self.assertEqual(got["missed_kicks"], 2)
+        # no final, or a final the rows already have: the half ran out on the side
+        got = v21.decision_points(rows[:3] + [_r(28, 4, 4, "SCRIMMAGE", "TEAM_B", 1, 10, 80, a=3)], final=(3.0, 0.0))
+        self.assertEqual([q["choice"] for q in got["early_fg"]], [1, 0])
+        self.assertEqual(v21.end_points(rows[1], rows[2]), (3, 0))
+        self.assertIsNone(v21.end_points(rows[-1], None))
+
     def test_a_touchback_puts_the_ball_at_the_20_with_no_clock(self):
         m = built()
         m.choices["kickoff"] = _always("kickoff", v21.TOUCHBACK, len(m.gamers) + 1)
@@ -832,6 +849,14 @@ class TestAudit(unittest.TestCase):
         self.assertEqual(list(A.outcome_of([v21.TURNOVER, v21.GAIN, v21.GAIN, v21.GAIN, v21.GAIN, v21.GAIN],
                                            [0, 30, 10, 3, 0, -2], [10, 10, 10, 10, 10, 10], [70, 70, 50, 50, 50, 50])),
                          [0, A.TD, A.FIRST, 3, 2, 1])
+
+    def test_a_drive_the_rows_end_on_reads_the_final(self):
+        from .. import v21_audit as A
+        rows = [_r(7, 4, 20, "SCRIMMAGE", "TEAM_A", 1, 10, 70), _r(14, 4, 9, "SCRIMMAGE", "TEAM_A", 2, 4, 76)]
+        self.assertEqual(A.real_drive_end(rows, 0), v21.DRIVE_ENDS.index("clock out"))
+        self.assertEqual(A.real_drive_end(rows, 0, (3.0, 0.0)), v21.DRIVE_ENDS.index("field goal"))
+        self.assertEqual(A.real_drive_end(rows, 0, (7.0, 0.0)), v21.DRIVE_ENDS.index("touchdown"))
+        self.assertEqual(A.real_drive_end(rows, 0, (0.0, 0.0)), v21.DRIVE_ENDS.index("clock out"))
 
     def test_the_audit_sets_the_sim_against_the_real_downs(self):
         from .. import v21_audit as A

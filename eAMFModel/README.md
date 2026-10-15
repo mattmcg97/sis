@@ -2168,6 +2168,15 @@ missing something. Nothing is ever fitted to close those gaps.
     offense's timeout reads whether a field goal is in range, the timeout a level side calls to
     kick.
 
+    The feed can also miss a half's last play, a kick at the buzzer, though never the score it
+    left: the next half's rows have it, and at the game's end the history's final score. In the
+    September audit, level sides with the ball in Q4's last 0:30 went on to win 81% of the time,
+    yet their drives read as only 68% scored and 24% run out of clock. So the build reads a kick
+    off the score after a half's last row: 3 more to the side with the ball and none to the other,
+    with a minute or less left, is a kick it took and made. Before, that state counted as a side
+    that let the half run out. It prints how many such kicks it found. The audit reads the real
+    drive endings and choices the same way.
+
     `--decision-blend K` blends the cells, as `--blend` does the draws. Every cell of 5 real
     decisions or more is kept, and a state's shares are its cells' over the levels: a cell of n
     weighs n / (n + K), the rest passes to its parent. `--decision-blend 0` (the default) takes

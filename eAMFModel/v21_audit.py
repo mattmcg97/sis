@@ -132,9 +132,10 @@ def _late(t, c, w, auto=None):
         np.add.at(t["late_src"], (row[on3], c["src"][on3], 1), td[on3] * w)
 
 
-def real_drive_end(rows, i):
+def real_drive_end(rows, i, final=None):
     """How the drive with the ball at row i ended (v21.DRIVE_ENDS index): the next score, kick, punt,
-    change of side or the half's end after it."""
+    change of side or the half's end after it. final: the game's (home, away) final, for a drive the
+    rows end on in regulation -- the feed can miss the game's last play, not its final score."""
     _i = v21.s14._i
     a = rows[i]
     off, period = a.get("offense"), _i(a.get("period"))
@@ -168,6 +169,13 @@ def real_drive_end(rows, i):
             return 6
         if r.get("offense") in ("TEAM_A", "TEAM_B") and r.get("offense") != off and kind in v21.s14.SNAP_KINDS:
             return 5 if "TURNOVER_ON_DOWNS" in (rows[j - 1].get("play_messages") or "") else 4
+    if final is not None and period == 4 and not any((_i(r.get("period")) or 0) >= 5 for r in rows):
+        pts = v21.end_points(dict(a, score_p1=rows[-1].get("score_p1"), score_p2=rows[-1].get("score_p2")),
+                             None, final)
+        if pts is not None and pts[1] == 0 and pts[0] >= 6:
+            return 0
+        if pts == (3, 0):
+            return 1
     return 6
 
 
@@ -257,9 +265,16 @@ def _worker(job):
         # the real choices at the same states: 4th downs, and kicks on downs 1-3 in the half's last minute
         for j, (i, s) in enumerate(starts):
             b = rows[i + 1] if i + 1 < len(rows) else None
-            if b is None or b.get("period") != rows[i].get("period"):
-                continue
             p, clk, d = int(s["period"][0]), float(s["clock"][0]), int(s["down"][0])
+            if b is None or b.get("period") != rows[i].get("period"):
+                # the half's end: the score after it says whether the side kicked (v21.decision_points)
+                if p not in (2, 4) or (b is None and (p != 4 or final is None)) \
+                        or float(v21.half_left(p, clk)) > v21.EARLY_LEFT:
+                    continue
+                pts = v21.end_points(rows[i], b, final if b is None else None)
+                b = dict(play_kind="FIELD_GOAL" if pts == (3, 0) else "", period=rows[i].get("period"))
+                if d == 4 and b["play_kind"] != "FIELD_GOAL":
+                    continue
             if d == 4:
                 k = v21.PUNT if b["play_kind"] == "PUNT" else v21.FG if b["play_kind"] == "FIELD_GOAL" else v21.GO
                 real["fourth"][sl_start[j], k] += 1
@@ -307,7 +322,7 @@ def _worker(job):
                     c_ = float(s["clock"][0])
                     cs_ = 0 if c_ > 120 else 1 if c_ > 60 else 2 if c_ > 30 else 3
                     lb_ = int(v21.margin_b(_side_lead(s)[2]))
-                    real["drives"][lb_, cs_, real_drive_end(rows, starts[j][0])] += 1
+                    real["drives"][lb_, cs_, real_drive_end(rows, starts[j][0], final)] += 1
                     e = ends[k][ends[k] >= 0]
                     if len(e):
                         step["drives"][lb_, cs_] += np.bincount(e, minlength=len(v21.DRIVE_ENDS)) / len(e)
