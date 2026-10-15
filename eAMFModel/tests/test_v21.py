@@ -431,26 +431,26 @@ class TestBuild(unittest.TestCase):
                 self.assertIn("down", lv)
                 self.assertIn("tb", lv)                    # the time the play took, all six buckets
 
-    def test_a_blended_cell_weighs_by_its_snaps_near_the_field(self):
-        # 30 snaps in cell a=1, all at the goal line and touchdowns; 400 others across midfield. A state
-        # in a=1 at midfield has none of its cell's near it: weighed by them, its draws all come from ()
+    def test_a_blended_cell_with_none_near_the_field_passes_its_draws_on(self):
+        # cell a=1: 27 snaps at the goal line, 3 at midfield; 400 others across midfield. A state in a=1
+        # at the 70 has none of its cell near it: its draws all come from (); at midfield it weighs by all 30
         X = np.r_[np.ones(30, np.int64), np.zeros(400, np.int64)][:, None]
         rng = np.random.default_rng(0)
-        field = np.r_[np.full(30, 95), rng.integers(40, 61, 400)]
+        field = np.r_[np.full(27, 95), np.full(3, 50), rng.integers(40, 61, 400)]
         b = v21.Bins.build(("a",), (2,), (("a",), ()), X, field.astype(float), {"field": field}, 5)
-        C = b.chain(dict(a=np.array([1, 1])))
-        y = np.array([50, 95])
-        r = v21.field_radius(0.2, y)
+        C = b.chain(dict(a=np.array([1, 1, 1])))
+        y = np.array([50, 95, 70])
         W_all = b.blend_weights(C, 40.0)
-        W_near = b.blend_weights(C, 40.0, b.near_counts(C, y, r, "field"))
-        self.assertAlmostEqual(W_all[0, 0], 30 / 70)
-        self.assertEqual(W_near[0, 0], 0.0)                         # none of its 30 near midfield
-        self.assertAlmostEqual(W_near[1, 0], 30 / 70)               # all 30 at the goal line
-        np.testing.assert_allclose(W_near.sum(1), 1.0)
-        g, li = v21.Bins.pick(np.repeat(C[:1], 200, 0), np.repeat(W_near[:1], 200, 0), rng)
+        W = b.blend_weights(C, 40.0, v21.near_weight_counts(b, C, y, 0.2))
+        np.testing.assert_allclose(W_all[:, 0], 30 / 70)
+        np.testing.assert_allclose(W[:, 0], [30 / 70, 30 / 70, 0.0])       # by all 30, or none near: none
+        np.testing.assert_allclose(W.sum(1), 1.0)
+        g, li = v21.Bins.pick(np.repeat(C[2:], 200, 0), np.repeat(W[2:], 200, 0), rng)
         self.assertTrue((li == 1).all())
         lo, hi = b.span(np.array([C[0, 0]]), np.array([50]), np.array([10]), "field")
-        self.assertEqual(int((hi - lo)[0]), 0)
+        self.assertEqual(int((hi - lo)[0]), 3)                            # its 3 at midfield, not widened
+        lo, hi = b.window(np.array([C[0, 0]]), np.array([50]), np.array([10]), "field", np.array([1]))
+        self.assertEqual(int((hi - lo)[0]), 3)
         lo, hi = b.window(np.array([C[0, 0]]), np.array([50]), np.array([10]), "field")
         self.assertGreaterEqual(int((hi - lo)[0]), 20)             # widened, the old way, to the goal line
 
@@ -466,8 +466,13 @@ class TestBuild(unittest.TestCase):
         self.assertIn("every snap by the field", text)
         self.assertIn("the sim draws from near it", text)
         self.assertIn("opp 19-11", text)
-        h, a = v21.simulate(m, v21.kickoff_start(m), 30)
+        st = {}
+        h, a = v21.simulate(m, v21.kickoff_start(m), 30, stats=st)
         self.assertGreater((h + a).mean(), 10)
+        last = st["drive_last"]                                       # the start's own drive at its end
+        self.assertEqual(last.shape, (h.size, 4))
+        done = st["drive_end"] >= 0
+        self.assertTrue(((last[done, 0] >= 0) & (last[done, 0] <= 100)).all())
         # the sim's touchdown chance from near the field: none where the group's snaps there never reach
         recs = []
         for code in sorted(MATCHES)[:20]:
@@ -1097,6 +1102,8 @@ class TestAudit(unittest.TestCase):
                      "ONE SNAP on 2nd-4th downs by the time its play took", "CONVERSIONS before Q4's last 3:00",
                      "two-point tries made"):
             self.assertIn(part, lines)
+        self.assertEqual(step["clock_out"].shape, (2, 4, len(A.CLOCK_OUTS) + 1))
+        self.assertTrue((step["clock_out"][..., :4].sum(-1) <= step["clock_out"][..., 5] + 1e-9).all())
 
 
 class TestCoverage(unittest.TestCase):

@@ -154,13 +154,15 @@ BLEND_MIN = 5
 FIELD_YARDS = 1
 FIELD_MIN = 20
 FIELD_CANDIDATES = 6
-# Blended with field windows (NEAR_BLEND, a build's near_blend): a cell weighs by its real snaps near the
-# state's own field, n / (n + blend) of them, not by all it holds, and its window is never widened -- only
-# the last level's, to FIELD_MIN. A thin cell weighed by all its snaps and widened its window to 20 of
-# them: a late cell of 2nd and 1 at midfield reached its snaps at the goal line, a touchdown kept there
-# and a stuffed run played as no gain. From the real states at the other side's 49-30 the sim's draws
-# scored 6.0% against 4.3% real (from the whole group, 5.1%); 2nd-4th and 1 moved the chains 64.7% of
-# the time against 67.2%, short in every bucket of the play's time while the times matched.
+# Blended with field windows (NEAR_BLEND, a build's near_blend): a cell's window is never widened -- only
+# the last level's, to FIELD_MIN -- and a cell with none of its snaps near the state's own field passes
+# all its weight on. A thin cell widened its window to 20 of its snaps: a late cell of 2nd and 1 at
+# midfield reached its snaps at the goal line, a touchdown kept there and a stuffed run played as no
+# gain. From the real states at the other side's 49-30 the sim's draws scored 6.0% against 4.3% real
+# (from the whole group, 5.1%). A cell still weighs by all its snaps, n / (n + blend): weighed by those
+# near the field alone (t8), the thin late cells passed their draws to levels without the lead or the
+# period -- a level side in Q4's last 2:00 drew 36% of them from levels with both, against 61% -- and
+# its snaps scored 9.4% against 6.1% real, 1 to go moved the chains 63.2% against 67.2%.
 NEAR_BLEND = True
 # Clock windows (build's clock, 0 off): in a half's last CLOCK_LATE seconds the time draw takes a real snap
 # of its group from those with as long left in the half -- within `clock` x the seconds left (CLOCK_SECONDS
@@ -417,12 +419,20 @@ def near_blended(m):
     return bool(getattr(m, "near_blend", False) and getattr(m, "field", 0.0) and getattr(m, "blend", 0.0))
 
 
+def near_weight_counts(b, C, field, share):
+    """(states, levels) the records a blended distance draw counts each level's group for (NEAR_BLEND):
+    all of them where any is near the state's field, none where none is (the group passes all on)."""
+    full = np.where(C >= 0, b.count[np.maximum(C, 0)], 0)
+    return np.where(b.near_counts(C, field, field_radius(share, field), "field") > 0, full, 0)
+
+
 def dist_weights(m, C, field):
-    """(states, levels) the distance draw's blended weights for states at `field` (chain C): by each
-    group's real snaps near the field where the model blends near (near_blended), else by all of them."""
+    """(states, levels) the distance draw's blended weights for states at `field` (chain C): where the
+    model blends near (near_blended), a group with none of its snaps near the field passes all on;
+    else by all of them."""
     b = m.dist
     if near_blended(m):
-        return b.blend_weights(C, m.blend, b.near_counts(C, field, field_radius(m.field, field), "field"))
+        return b.blend_weights(C, m.blend, near_weight_counts(b, C, field, m.field))
     return b.blend_weights(C, m.blend)
 
 
@@ -727,7 +737,7 @@ class Bins:
         """(states, levels) the chance each level's group is drawn from when the levels are blended: the
         finest first, each taken with its real records' share n / (n + prior), the rest passed on to the
         next level there; the last level takes what is left. n: (states, levels) the records each group
-        counts for the state (near_counts), else all of them."""
+        counts for the state, else all of them (0: the group passes all on)."""
         n = (np.where(chain >= 0, self.count[np.maximum(chain, 0)], 0) if n is None else n).astype(float)
         a = np.where((chain >= 0) & (n > 0), n / (n + prior), 0.0)
         a[:, -1] = np.where(chain[:, -1] >= 0, 1.0, 0.0)
@@ -1907,13 +1917,15 @@ def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None, near_blend=False
     """(states, n_bins) what the league's draw gives each state, by histogram bin: its groups' real
     records over the levels as bin_blend weighs them (blend 0: its first group), each group's records
     in the state's window where near is (values, radii, payload name: Bins.window) or all of them;
-    records of bin -1 left out (the time's cut ones: only "at least this long"). near_blend: the levels
-    weighed by their records in the window, no window widened but the last level's (dist_weights)."""
+    records of bin -1 left out (the time's cut ones: only "at least this long"). near_blend: a group with
+    none of its records in the window passes all on, no window widened but the last level's (dist_weights)."""
     n = len(np.asarray(feats[b.features[0]]))
     near_blend = bool(near_blend and blend and near is not None)
     if blend:
         C = b.chain(feats)
-        W = b.blend_weights(C, blend, b.near_counts(C, near[0], near[1], near[2]) if near_blend else None)
+        W = b.blend_weights(C, blend, np.where(b.near_counts(C, near[0], near[1], near[2]) > 0,
+                                               np.where(C >= 0, b.count[np.maximum(C, 0)], 0), 0)
+                            if near_blend else None)
     else:
         g = b.bin_of(feats)
         C, W = g[:, None], (g >= 0).astype(float)[:, None]
@@ -2664,12 +2676,16 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     # how the start's own drive ended (DRIVE_ENDS; -1 not yet): the audit's late drives
     drive_end = np.full(P, -1, np.int64)
     start_team = team.copy()
+    last_clk = clock.copy()                   # the clock at the latest snap's start
+    # at the drive's end: the yards to the goal, the down, the side's timeouts, the clock at its last snap
+    drive_last = np.full((P, 4), -1.0)
 
     def mark(ix, code):
         ix = np.asarray(ix, np.int64)
         if len(ix):
             new = ix[drive_end[ix] < 0]
             drive_end[new] = code
+            drive_last[new] = np.stack([100 - y[new], down[new], tos[new, team[new]], last_clk[new]], 1)
 
     from . import v21_rules
     use_rules = RULES and getattr(model, "use_rules", True)
@@ -3016,6 +3032,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if not len(ix):
             return
         start_clock, start_prv = clock[ix].copy(), prv.copy()
+        last_clk[ix] = start_clock
         # the two-minute warning stops a running clock at 2:00; the snap then comes off a stopped clock
         warn = ran & ((period[ix] == 2) | (period[ix] == 4)) & (clock[ix] > LATE) \
             & (clock[ix] - (secs - PLAY_SECONDS) <= LATE)
@@ -3190,6 +3207,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st["final"] = score.copy()
         st["regulation"] = reg_score.copy()
         st["drive_end"] = drive_end.copy()
+        st["drive_last"] = drive_last.copy()
         st["q_points"] = q_points
         st["unfinished"] = st.get("unfinished", 0) + int((phase != DONE).sum())
     return score[:, 0].reshape(S, n_paths), score[:, 1].reshape(S, n_paths)

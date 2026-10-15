@@ -2104,15 +2104,16 @@ missing something. Nothing is ever fitted to close those gaps.
   `v21-coverage` read the blend: each level's expected share of the draws, and the real snaps
   behind them weighted the same way. `--blend 0` (the default) keeps the first-level rule.
 
-  Blended with field windows, the distance draw weighs each cell by its real snaps near the
-  state's own field, n / (n + K) of those, and never widens a window but the last level's
-  (`NEAR_BLEND`, the model's `near_blend`). Weighed by all it held, a thin cell was drawn from
-  as often as its snaps said, then widened its window to the 20 nearest: a late cell of 2nd and 1
-  at midfield reached its snaps at the goal line, a touchdown kept there and a stuffed run played
-  as no gain. From September's real states at the other side's 49–30 the sim's draws scored 6.0%
-  against 4.3% real (drawing from the whole group, 5.1%). 2nd–4th and 1 moved the chains 64.7%
-  of the time against 67.2%, short in every bucket of the play's time while the times themselves
-  matched the real mix. The tilts' bases and the build's lines weigh the cells the same way.
+  Blended with field windows, the distance draw never widens a window but the last level's, and a
+  cell with none of its snaps near the state's own field passes all its weight on (`NEAR_BLEND`,
+  the model's `near_blend`). A thin cell had widened its window to the 20 nearest: a late cell of
+  2nd and 1 at midfield reached its snaps at the goal line, a touchdown kept there and a stuffed
+  run played as no gain. From September's real states at the other side's 49–30 the sim's draws
+  scored 6.0% against 4.3% real (drawing from the whole group, 5.1%). A cell still weighs by all
+  its snaps: weighed by those near the field alone, the thin late cells passed their draws to the
+  levels without the lead or the period. A level side in Q4's last 2:00 then drew 36% of them from
+  levels with both, against 61%, and its snaps scored 9.4% against 6.1% real, while 1 to go moved
+  the chains 63.2% against 67.2%. The tilts' bases and the build's lines weigh the cells the same way.
 - **Field windows (`--field F`).** A group's real snaps come from across its field zone (20 yards
   at midfield), or wider in the coarse fallbacks. A gain is played out at the state's own field,
   so a 35-yard gain made from midfield becomes a touchdown at the opposing 30. And a touchdown
@@ -2401,7 +2402,10 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   downs are split by the time each play took, by the distance (1, 2–3, 4+ to go) and in the halves'
   last 2:00: the share of the snaps in each bucket and the share that moved the chains, real and
   sim, and the sim's own rates on the real snaps' times. Where that last is near the real, the
-  time draw is what's off; near the sim's, the draw given the time.
+  time draw is what's off; near the sim's, the draw given the time. And from every real Q4 state,
+  1–3 behind or level, it gives how often the sim's drive ran out of clock and where it was: in
+  field-goal range (a kick of 52 yards or less) or not, with 0:05 or less at its last snap's start
+  or more, and with a timeout left.
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. It also gives how the drive with the ball ended: a

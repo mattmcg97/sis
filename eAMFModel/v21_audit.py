@@ -57,9 +57,13 @@ REMAINS = ("0-1 snaps left",) + v21.REMAIN_NAMES[1:]
 LEADS3 = ("behind", "level", "ahead")
 DRIVE_LEADS = ("9+ behind", "4-8 behind", "1-3 behind", "level", "1-3 ahead", "4-8 ahead", "9+ ahead")
 RESULTS = ("won", "overtime", "lost")
+CLOCK_OUT = v21.DRIVE_ENDS.index("clock out")
+KICK_FAR = 13                 # in range for the clock-outs: a kick no longer than 52 yards (no real side kicks 52+)
 SHORT_ROWS = ("1 to go", "2-3 to go", "4+ to go", "a half's last 2:00")
 CONV_PARTS = ("the first half", "Q3", "Q4 to 3:00")
 GOOD_PARTS = CONV_PARTS + ("Q4's last 3:00", "overtime")
+CLOCK_OUTS = ("in range, <=0:05", "in range, more", "out of range, <=0:05", "out of range, more", "timeouts left")
+CLOCK_OUT_LEADS = ("1-3 behind", "level")
 
 
 def tables():
@@ -76,7 +80,8 @@ def tables():
                 short_tb=np.zeros((len(SHORT_ROWS), len(v21.TIME_BUCKETS), 3)),
                 two_part=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1, 2)),
                 two_part_base=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1)),
-                two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(4))
+                two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(4),
+                clock_out=np.zeros((2, 4, len(CLOCK_OUTS) + 1)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -361,6 +366,7 @@ def _worker(job):
             went = st["went_ot"].reshape(len(q4), state_paths).mean(1)
             reg_sim = st["regulation"].reshape(len(q4), state_paths, 2)
             ends = st["drive_end"].reshape(len(q4), state_paths)
+            lasts = st["drive_last"].reshape(len(q4), state_paths, 4)
             reg_real = _regulation(rows, final)
             for k, ((j, s), w) in enumerate(zip(q4, went)):
                 if int(s["phase"][0]) == v21.SNAP:   # how the drive with the ball ended
@@ -371,6 +377,16 @@ def _worker(job):
                     e = ends[k][ends[k] >= 0]
                     if len(e):
                         step["drives"][lb_, cs_] += np.bincount(e, minlength=len(v21.DRIVE_ENDS)) / len(e)
+                    if lb_ in (2, 3):                 # the sim's clock-outs, 1-3 behind or level: where they were
+                        out = lasts[k][ends[k] == CLOCK_OUT]
+                        if len(out):
+                            inr = out[:, 0] + 17 <= v21.FG_MAX - KICK_FAR
+                            near = out[:, 3] <= 5
+                            cat = np.where(inr, np.where(near, 0, 1), np.where(near, 2, 3))
+                            row = step["clock_out"][lb_ - 2, cs_]
+                            row[:4] += np.bincount(cat, minlength=4) / state_paths
+                            row[4] += (out[:, 2] > 0).sum() / state_paths
+                            row[5] += len(out) / state_paths
                 side, pts, lead = _side_lead(s)
                 c = float(s["clock"][0])
                 cs = 0 if c > 120 else 1 if c > 60 else 2 if c > 30 else 3
@@ -541,6 +557,21 @@ def two_lines(real, flow):
         if r.sum() >= 3:
             cell = f"{_pair(_pct(r[1], r.sum()), _pct(m[1], m.sum()))}/{_pct(flow['two_base'][i], m.sum()):5.1f}"
             lines.append(f"  {i - v21.CONV_MARGIN:>+6d}{int(r.sum()):>8d}{int(m.sum()):>10d}{cell:>20s}")
+    return lines
+
+
+def clock_out_lines(step):
+    lines = ["", "  Q4 STATES: the sim's drives that ran out of clock, 1-3 behind or level (% of the states), and where"
+                 " they were (% of those clock-outs): in field-goal range or not (a kick of 52 yards or less), with"
+                 " 0:05 or less on the clock at the last snap's start or more; and with a timeout left",
+             f"  {'':28s}{'clock out':>10s}" + "".join(f"{c:>22s}" for c in CLOCK_OUTS)]
+    for k, name in enumerate(CLOCK_OUT_LEADS):
+        for cs in range(4):
+            row, n = step["clock_out"][k, cs], step["drives"][2 + k, cs].sum()
+            if not n or not row[5]:
+                continue
+            lines.append(f"  {name + ', ' + OT_CLOCK[cs]:28s}{_pct(row[5], n):>9.1f}%"
+                         + "".join(f"{_pct(row[c], row[5]):>21.0f}%" for c in range(len(CLOCK_OUTS))))
     return lines
 
 
@@ -725,6 +756,7 @@ def report(out):
     lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += q4_lines(out["real"], out["step"])
     lines += drive_lines(out["real"], out["step"])
+    lines += clock_out_lines(out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
                   " snaps that kept the ball, cut at the goal line; seconds: PLAY_OVER to PLAY_OVER)"]
     return lines
