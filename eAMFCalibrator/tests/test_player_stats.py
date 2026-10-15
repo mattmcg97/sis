@@ -68,6 +68,9 @@ class TestMatch(unittest.TestCase):
         self.assertEqual((h["tds"], h["twopt_att"], h["twopt_good"]), (1, 1, 0))
         self.assertEqual((h["punts"], h["punts_spotted"], h["punt_yards"]), (1, 1, 22))
         self.assertEqual(h["opp_yards"], 15 + 2)
+        # the points the messages add up to (a TD, the two-point try failed) are the final's
+        self.assertEqual((h["td_plays"], h["points_msgs"], self.away["points_msgs"]), (1, 6, 0))
+        self.assertEqual((h["rz_series"], h["rz_series_td"]), (1, 1))     # one set of downs inside the 20
 
     def test_the_other_side_turns_it_over_on_downs(self):
         a = self.away
@@ -88,6 +91,68 @@ class TestMatch(unittest.TestCase):
     def test_a_match_without_scouting_keeps_its_result(self):
         home, away = ps.match_rows("M1", INFO, [], [], ("6", "0"))
         self.assertEqual((home["scouting"], home["result"], home.get("plays")), (0, "w", None))
+
+
+# TEAM_A drives from its 70: a first down at the 82, first and goal at the 93, stopped at the 95, and a
+# field goal -- one red-zone trip, two sets of downs in it, no touchdown. TEAM_B's first snap is
+# intercepted and returned for a TEAM_A touchdown (the extra point good): 3 + 6 + 1 = 10 to TEAM_A.
+ROWS2 = [row(1, 240, "FIRST_QUARTER_STARTED"),
+         row(2, 240, kind="KICKOFF_TEAM_B"), row(3, 240, kind="PLAY_STARTED", team="TEAM_B"),
+         row(4, 235, kind="PLAY_OVER", team="TEAM_A", down=1, dist=10, field=70),
+         row(5, 232, kind="PLAY_STARTED", team="TEAM_A", down=1, dist=10, field=70),
+         row(6, 228, kind="PLAY_OVER", team="TEAM_A", down=1, dist=10, field=82),
+         row(7, 225, kind="PLAY_STARTED", team="TEAM_A", down=1, dist=10, field=82),
+         row(8, 220, kind="PLAY_OVER", team="TEAM_A", down=1, dist=7, field=93),
+         row(9, 218, kind="PLAY_STARTED", team="TEAM_A", down=1, dist=7, field=93),
+         row(10, 214, kind="PLAY_OVER", team="TEAM_A", down=2, dist=5, field=95),
+         row(11, 212, kind="PLAY_STARTED", team="TEAM_A", down=2, dist=5, field=95),
+         row(12, 208, kind="PLAY_OVER", team="TEAM_A", down=3, dist=5, field=95),
+         row(13, 206, kind="PLAY_STARTED", team="TEAM_A", down=3, dist=5, field=95),
+         row(14, 202, kind="PLAY_OVER", team="TEAM_A", down=4, dist=5, field=95),
+         row(15, 200, kind="PLAY_STARTED", team="TEAM_A", down=4, dist=5, field=95),
+         row(16, 198, kind="FIELD_GOAL_GOOD_TEAM_A"),
+         row(17, 198, kind="PLAY_OVER", team="TEAM_A"),
+         row(18, 198, kind="KICKOFF_TEAM_A"), row(19, 198, kind="PLAY_STARTED", team="TEAM_A"),
+         row(20, 192, kind="PLAY_OVER", team="TEAM_B", down=1, dist=10, field=25),
+         row(21, 190, kind="PLAY_STARTED", team="TEAM_B", down=1, dist=10, field=25),
+         row(22, 182, kind="TOUCHDOWN_TEAM_A"),
+         row(23, 182, kind="PLAY_OVER", team="TEAM_A"),
+         row(24, 182, kind="PLAY_STARTED", team="TEAM_A"),
+         row(25, 182, kind="EXTRA_POINT_GOOD_TEAM_A"),
+         row(26, 182, kind="PLAY_OVER", team="TEAM_A")]
+SCORES2 = [("M1", 17, None, None, None, 3, 0), ("M1", 23, None, None, None, 9, 0),
+           ("M1", 26, None, None, None, 10, 0)]
+
+
+class TestCounts(unittest.TestCase):
+
+    def setUp(self):
+        self.home, self.away = ps.match_rows("M1", INFO, ROWS2, SCORES2, ("10", "0"))
+
+    def test_a_red_zone_trip_and_its_sets_of_downs(self):
+        h = self.home
+        self.assertEqual((h["rz_trips"], h["rz_td"], h["rz_fg"]), (1, 0, 1))
+        self.assertEqual((h["rz_series"], h["rz_series_td"]), (2, 0))
+
+    def test_a_defensive_touchdown_goes_to_the_scorer(self):
+        self.assertEqual((self.home["td_plays"], self.home["tds"], self.away["td_plays"]), (1, 1, 0))
+        self.assertEqual(self.away["turnovers"], 1)                       # the interception
+        self.assertEqual((self.home["points_msgs"], self.away["points_msgs"]), (10, 0))
+
+    def test_our_reading_against_itself(self):
+        text = "\n".join(ps.reconcile_lines([self.home, self.away]))
+        self.assertIn("1 matches with SCOUTING_FULL", text)
+        all_row = next(line for line in text.splitlines() if line.strip().startswith("all"))
+        self.assertEqual(all_row.split()[2:4], ["100.0%", "100.0%"])     # points and TDs agree
+        self.assertIn("rerun player-stats", "\n".join(ps.reconcile_lines([dict(self.home, points_msgs="")])))
+
+    def test_the_readings_of_the_sites_fields(self):
+        ours = ps.player_stats([self.home, self.away])
+        self.assertEqual((ours["ANN"]["redZonEfficiencyPct"], ours["ANN"]["redZone_per_series"]), (0.0, 0.0))
+        self.assertEqual(ours["BOB"]["turnovers_all"], 1.0)               # the interception, no downs
+        readings = dict(ps.CHECKS)
+        self.assertIn("turnovers_all", readings["avgTurnoverOnDowns"])
+        self.assertIn("redZone_per_series", readings["redZonEfficiencyPct"])
 
 
 class TestPlayers(unittest.TestCase):
