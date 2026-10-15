@@ -149,6 +149,35 @@ class TestBins(unittest.TestCase):
         self.assertAlmostEqual(float(np.mean(got == C[0, fine])), 0.5, delta=0.02)
         self.assertTrue((got >= 0).all())
 
+    def test_a_draw_near_its_field(self):
+        # one group of 400: fields 1-99 four times over, the value its field
+        fld = np.repeat(np.arange(1, 101), 4)[:400]
+        b = v21.Bins.build(("a",), (1,), ((),), np.zeros((400, 1)), fld.astype(float),
+                           {"field": fld, "v": fld.astype(float)}, 1)
+        g = np.zeros(3000, np.int64)
+        u = np.random.default_rng(0).random(3000)
+        for y in (20, 60, 95):
+            got = b.payload["field"][b.draw_near(g, np.full(3000, y), u, 0.2)]
+            r = max(v21.FIELD_YARDS, round(0.2 * (100 - y)))
+            self.assertTrue((np.abs(got - y) <= r).all())
+            self.assertAlmostEqual(got.mean(), y, delta=1.0)
+        # a thin window widens to the FIELD_MIN nearest
+        lo, hi = b.near(np.array([0]), np.array([99]), 0.0)
+        self.assertEqual(int(hi[0] - lo[0]), v21.FIELD_MIN)
+        self.assertGreaterEqual(int(b.payload["field"][b.by_field()[0][lo[0]]]), 90)
+        # a group of 5 draws from all of it; a tilt still leans up
+        small = v21.Bins.build(("a",), (1,), ((),), np.zeros((5, 1)), np.arange(5.0),
+                               {"field": np.array([10, 30, 50, 70, 90]), "v": np.arange(5.0)}, 1)
+        lo, hi = small.near(np.array([0]), np.array([50]), 0.2)
+        self.assertEqual((int(lo[0]), int(hi[0])), (0, 5))
+        # a tilt leans toward the top of the group by value (the yards), the field held
+        rng = np.random.default_rng(1)
+        val = rng.permutation(400).astype(float)
+        mixed = v21.Bins.build(("a",), (1,), ((),), np.zeros((400, 1)), val, {"field": fld, "v": val}, 1)
+        plain = mixed.payload["v"][mixed.draw_near(g, np.full(3000, 50), u, 0.2)].mean()
+        up = mixed.payload["v"][mixed.draw_near(g, np.full(3000, 50), u, 0.2, np.full(3000, 3.0), rng)].mean()
+        self.assertGreater(up, plain + 40)
+
     def test_strict_has_no_fallback(self):
         X = np.array([[0, 0]] * 50 + [[1, 0]] * 5)
         b = v21.Bins.build(("a", "b"), (3, 2), (("a", "b"),), X, self.value, {"v": self.value}, 10, strict=True)
@@ -365,6 +394,43 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(list(f["rem4"]), [3, 1, 2])
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, verbose=False, key="other")
+
+    def test_the_lean_key_keeps_the_lead_to_the_last(self):
+        # all seven of the lead in every fallback that keeps the snaps left, before behind / level / ahead
+        for levels in (v21.TIME_LEAN_LEVELS, v21.DIST_LEAN_LEVELS):
+            seen3 = False
+            for lv in levels:
+                if "lead3" in lv:
+                    seen3 = True
+                if "margin" in lv:
+                    self.assertFalse(seen3, lv)
+            first3 = next(i for i, lv in enumerate(levels) if "lead3" in lv)
+            self.assertTrue(all("zone" not in lv for lv in levels[first3 - 1:first3 + 1]))
+
+    def test_field_windows(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=True, refine=False, mode="adjusted",
+                          key="lean", blend=40.0, field=0.2)
+        self.assertEqual(m.field, 0.2)
+        self.assertEqual(m.meta["field"], 0.2)
+        text = out.getvalue()
+        self.assertIn("every snap by the field", text)
+        self.assertIn("the sim draws from near it", text)
+        self.assertIn("opp 19-11", text)
+        h, a = v21.simulate(m, v21.kickoff_start(m), 30)
+        self.assertGreater((h + a).mean(), 10)
+        # the sim's touchdown chance from near the field: none where the group's snaps there never reach
+        recs = []
+        for code in sorted(MATCHES)[:20]:
+            recs += v21.match_snaps(v21._with_side(MATCHES[code]))
+        feats = v21._features(recs, m)
+        td, grp, whole, near = v21._td_states(m, recs, feats, np.arange(len(recs)))
+        self.assertEqual(len(near), len(recs))
+        self.assertTrue(((near >= 0) & (near <= 1)).all())
+        full = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, field=0.2)
+        h, a = v21.simulate(full, v21.kickoff_start(full), 30)
+        self.assertGreater((h + a).mean(), 10)
 
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):

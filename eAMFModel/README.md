@@ -2025,8 +2025,11 @@ missing something. Nothing is ever fitted to close those gaps.
   prints how deep real states fall, for the rest of the game and the end of a half apart. It
   also sets Q4's last 2:00, by the lead, against the league groups those real snaps draw from:
   touchdowns, losses and seconds. For touchdowns it also gives the sim's own chance at each state's
-  field: the group's gains that reach the goal from there, plus its touchdowns that run on. A group that mixes situations shows up as a gap there, apart
-  from the game flow and the decisions. Last, the late choices that settle a game in regulation
+  field: the group's gains that reach the goal from there, plus its touchdowns that run on. It
+  gives it twice, drawing from the whole group and from near the state's field (`--field`, below).
+  A group that mixes situations shows up as a gap there, apart from the game flow and the
+  decisions. The same four figures follow for every snap of the game by field zone, on a sample
+  of 8,000 real snaps. Last, the late choices that settle a game in regulation
   (going for it 3 behind, kicking level, going for two at −1 and −2) and the overtime rate, by
   fortnight of the build's data: a trend says the players are still learning, and the oldest
   matches weigh too much.
@@ -2042,9 +2045,12 @@ missing something. Nothing is ever fitted to close those gaps.
   That is 78,400 cells for the time draw. On 172,751 real states, 57% sit in a cell with 40 or
   more real snaps: 82% in Q1, 51% in Q2, 64% in Q3, 40% in Q4. The six classes of the play before
   collapse to running or stopped, since their times split that way (26–29 s against 8–10 s on
-  average). The fallbacks coarsen the time, then the distance, then the field, before they let
-  the period, the snaps left or the lead go. `--key full` (the default) keeps the full key, for
-  comparison.
+  average). The fallbacks coarsen the distance, the time, the snaps left and the field before
+  the lead gives way to behind, level or ahead. A side 9+ ahead in Q4 runs it out, where one 1–3
+  ahead still plays for a first down. The first lean build collapsed the lead to those three at its
+  first fallback. Its sides 9+ ahead in Q4's 4:00–2:00 then scored a touchdown on 36% of their
+  drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
+  key, for comparison.
 - **Blended levels (`--blend K`).** Without it, a draw takes the first level whose cell holds 40
   real snaps (`--min-records`): a cell of 39 is dropped whole for its parent, one of 40 used whole.
   With it, the league's draws keep every cell of 5 or more, and a draw takes its finest cell
@@ -2054,6 +2060,18 @@ missing something. Nothing is ever fitted to close those gaps.
   its snaps say, and nothing jumps at a threshold. The build's level shares, its late-Q4 check and
   `v21-coverage` read the blend: each level's expected share of the draws, and the real snaps
   behind them weighted the same way. `--blend 0` (the default) keeps the first-level rule.
+- **Field windows (`--field F`).** A group's real snaps come from across its field zone (20 yards
+  at midfield), or wider in the coarse fallbacks. A gain is played out at the state's own field,
+  so a 35-yard gain made from midfield becomes a touchdown at the opposing 30. And a touchdown
+  from the 12, drawn at midfield, runs on with the league's chance of a gain that long. Near the
+  goal the field compresses, so this mixing makes touchdowns: for a level side in Q4's last 2:00,
+  the real snaps scored 6.2%, their groups' real snaps 7.0%, the sim's draws 9.1%. With `--field`,
+  the distance draw takes its real snap from the group's snaps near the state's own field: within
+  F x the yards to go (2 yards at least), or the 20 nearest where fewer are there, or the whole
+  group where it holds fewer than 20. With F = 0.2, that is ±10 yards at the opposing 50 and ±2 at
+  the 10. A gamer's or team's own draws do the same. An adjusted build's tilt still leans each
+  draw toward the top of its whole group, by resampling six near snaps on where they sit in the
+  group. `--field 0` (the default) draws from anywhere in the group.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
