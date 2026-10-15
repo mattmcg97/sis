@@ -21,7 +21,9 @@ layer's are:
           explains, kept apart by whether the teams were the same (rematch_layer.RELATIONS)
   noise   sigma^2: an error's variance less both gamers' form and the pair's effect
 A raw estimate below zero (a gamer who won big doing worse next time than the prior says) is
-reported as it is and used as zero. Fewer than MIN_PAIRS pairs: zero.
+reported as it is and used as zero. Fewer than MIN_PAIRS pairs: zero. At a rematch the two gamers'
+form and the pair's effect add up to what the rematch layer reads off the same meetings, so the
+inference layer moves a rematch about as the rematch layer does, and moves a first meeting as well.
 
 At a match, the move is the Gaussian BLUP of its error, c' S^-1 e, off the earlier errors e of
   - every earlier match that session of either gamer (they are finished: a gamer plays one match at
@@ -71,10 +73,10 @@ def _errors(it):
 
 
 def _use(tau2, order):
-    """Variances as used: below zero is zero, and a 'changed' one no bigger than its 'same' one (so
-    every covariance matrix built from them is a proper one)."""
-    same = [max(v, 0.0) for v in tau2[order[0]]]
-    return {order[0]: same, order[1]: [min(max(v, 0.0), s) for v, s in zip(tau2[order[1]], same)]}
+    """Variances as used: below zero is zero. A 'changed' one may be the bigger (the pair's often is,
+    once the gamers' form takes its share of a same-teams rematch): the noise on the diagonal keeps
+    the covariance matrices proper, and move() checks."""
+    return {r: [max(v, 0.0) for v in tau2[r]] for r in order}
 
 
 class InferenceLayer:
@@ -187,6 +189,9 @@ class InferenceLayer:
                 out.append(0.0)
                 continue
             e = np.array([x[q] - self.means[q] for _, x in prev])
+            low = float(np.linalg.eigvalsh(S).min())
+            if low <= 1e-6:                             # not a proper covariance: lift it until it is
+                S = S + (1e-6 - low) * np.eye(n)
             try:
                 w = np.linalg.solve(S, c)
             except np.linalg.LinAlgError:
