@@ -6,8 +6,8 @@ the pre-match markets with glmer or NB2 (each with and without the rematch layer
         --arm "nb2=rolling:eAMFModel/out/nb2_daily"
 
 The arms are prior-backtest's (NAME=SOURCE[#MODE]) and are read the same way: each match's expected
-points, its score model, and the rematch layer fitted walk-forward on the arm's own errors. prod with
-the layer is always there too.
+points, its score model, and the rematch layer (+layer) and inference layer (+infer) fitted
+walk-forward on the arm's own errors. prod with each layer is always there too.
 
 Every pre-match bet (by the operator's in-play flag, and placed before kick-off) on the matches every
 arm priced, after the layer's burn-in, is re-priced as `bets prematch` re-prices a candidate stream
@@ -22,7 +22,9 @@ margin, prior_backtest.TOTAL_SD for the total). An arm's chance is held within [
 An arm prices a match as of its kick-off, off every result before it. A bet placed before either
 gamer's previous result was in (bets.RESULT_IN after that match's kick-off) would be re-priced with
 results neither the bettor nor prod's price had then. Those bets are reported apart. The headline is
-the clean bets, placed with both gamers' earlier results in.
+the clean bets, placed with both gamers' earlier results in. (The inference layer also reads the
+opponents' other games whose results were in by kick-off; for a clean bet placed before one of those
+came in, that is a little later than the bettor had.)
 
 The bets are the ones that were placed, at their stakes: nobody bets differently at the arm's prices.
 Only the bets that won move the book: a shorter price on one is revenue kept, a longer one revenue
@@ -121,8 +123,9 @@ def prematch_only(tl, codes):
 
 
 def variants(ctx, arms, draws):
-    """[([variant names], price)] -- prod+layer, then each arm with arm+layer, both read off the same
-    simulated scores -- with {match} every one of them priced after the burn-in, and the layers."""
+    """[([variant names], price)] -- prod+layer and prod+infer, then each arm with arm+layer and
+    arm+infer, all read off the same simulated scores -- with {match} every one of them priced after
+    the burn-in, {match: what its gamers had played that session}, and the layers."""
     prod_rows = None
     found, layers = [], {}
     for name, spec in [(pb.PROD, None)] + list(arms):
@@ -141,8 +144,9 @@ def variants(ctx, arms, draws):
 
     def prod_price(match, market, line, p):
         r = prod_rows[match]
-        return (moved_chance(p, market, r["move_margin"], r["move_total"]),)
-    out = [([pb.PROD + "+layer"], prod_price)]
+        return (moved_chance(p, market, r["move_margin"], r["move_total"]),
+                moved_chance(p, market, r["infer_margin"], r["infer_total"]))
+    out = [([pb.PROD + "+layer", pb.PROD + "+infer"], prod_price)]
     for name, mode, own, fits, by in found:
         memo = {}                                       # one match's book and its prices by line
 
@@ -154,10 +158,20 @@ def variants(ctx, arms, draws):
             if key not in memo:
                 r = by[match]
                 memo[key] = (arm_chance(memo["book"], market, line),
-                             arm_chance(memo["book"], market, line, r["move_margin"], r["move_total"]))
+                             arm_chance(memo["book"], market, line, r["move_margin"], r["move_total"]),
+                             arm_chance(memo["book"], market, line, r["infer_margin"], r["infer_total"]))
             return memo[key]
-        out.append(([name, name + "+layer"], price))
-    return out, codes, layers
+        out.append(([name, name + "+layer", name + "+infer"], price))
+    played = {c: played_label(r) for c, r in prod_rows.items()}
+    return out, codes, played, layers
+
+
+def played_label(r):
+    """What the match's gamers had played that session before it: a rematch, a first meeting after
+    either had played someone else, or a first meeting with neither having played anyone else."""
+    if r.get("n_earlier"):
+        return "rematch"
+    return "first, after others" if r.get("n_others") else "first, no others"
 
 
 def previous_kickoffs(history):
@@ -268,8 +282,10 @@ def cut(title, table, idx, key):
     return L
 
 
-def report(table, idx_all, clean, info, n_boot):
-    """Lines of text: the clean bets, then every pre-match bet and when the money went down."""
+def report(table, idx_all, clean, info, n_boot, played=None):
+    """Lines of text: the clean bets, then every pre-match bet and when the money went down. `played`:
+    {match: what its gamers had played that session}."""
+    played = played or {}
     idx_clean = [i for i in idx_all if clean[i]]
     vip = config.BET_VIP_VALUE.lower()
     L = headline("Clean bets (both gamers' earlier results in when placed)", table, idx_clean, n_boot)
@@ -279,6 +295,10 @@ def report(table, idx_all, clean, info, n_boot):
             L += headline(f"Clean bets, {g}", table, sub, n_boot)
     L.append("\n  (change: each variant's margin less prod's, points of stake; negative is worse for the book)")
     L += cut("Clean bets by meeting", table, idx_clean, lambda r: info[r["match_code"]]["meeting"])
+    L += cut("Clean bets by what the gamers had played that session (the inference layer moves all but the "
+             "last)", table, idx_clean, lambda r: played.get(r["match_code"], "unknown"))
+    L += cut("Clean bets by market and what the gamers had played", table, idx_clean,
+             lambda r: f"{r['market']}, {played.get(r['match_code'], 'unknown')}")
     L += cut("Clean bets by market and meeting", table, idx_clean,
              lambda r: f"{r['market']} {info[r['match_code']]['meeting']}")
     L += cut("Clean bets by operator", table, idx_clean, lambda r: r.get(config.BET_GROUP_COLUMN))
@@ -299,7 +319,7 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=N
     n_boot = config.SIM_BOOT if n_boot is None else n_boot
     ctx = pb.prepare(cur, since, until)
     window, tl = ctx["window"], ctx["tl"]
-    found, codes, layers = variants(ctx, arms, draws)
+    found, codes, played, layers = variants(ctx, arms, draws)
     sql, params, _ = bets.bets_sql()
     cols, raw = fetch_all(cur, sql, tuple(params))
     every = bets.to_bets(cols, raw)
@@ -347,11 +367,8 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=N
          f"{sum(table.stake[i] for i in range(len(idx)) if clean[i]):,.0f}",
          "  each bet at the variant's chance at its line, the operator's margin kept, settled as it settled; "
          "the same bets and stakes (nobody bets differently)"]
-    L += report(table, list(range(len(idx))), clean, window, n_boot)
-    L.append("\n  The rematch layers' last fits (each arm's own errors):")
-    for name, layer in layers.items():
-        L.append(f"  {name}:")
-        L += ["  " + x for x in layer.describe()]
+    L += report(table, list(range(len(idx))), clean, window, n_boot, played)
+    L += pb.layer_lines(layers)
     print("\n".join(L))
     os.makedirs(out_dir, exist_ok=True)
     out_rows = []
@@ -360,7 +377,7 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=N
         row = {k: r.get(k) for k in ("bet_id", "match_code", "bet_time", "kickoff", "minutes_before", "market",
                                      "selection", "bet_line_prod_side", "odds", "stake", "revenue", "result",
                                      "stream_prob", config.BET_GROUP_COLUMN, config.BET_VIP_COLUMN)}
-        row.update(meeting=window[r["match_code"]]["meeting"], clean=r["_clean"])
+        row.update(meeting=window[r["match_code"]]["meeting"], played=played.get(r["match_code"]), clean=r["_clean"])
         for name, rows in results:
             row.update({f"{name}_prob": rows[i]["candidate_prob"], f"{name}_odds": rows[i]["candidate_odds"],
                         f"{name}_revenue": rows[i]["candidate_revenue"]})

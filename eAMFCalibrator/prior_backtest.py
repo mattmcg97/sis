@@ -28,17 +28,20 @@ match's two scores simulated together:
   normal   the normal about the expected margin (sd 9.35) and total (sd 12): for comparison
 A moneyline splits ties half and half (NB2's way); the over leaves out pushes.
 
-Each arm, prod among them, is graded as it is and with the rematch layer (rematch_layer.py) on top,
-fitted walk-forward on that arm's own errors (each UTC day on the days before it). The layer shifts
-the arm's simulated margin and total, so it moves the model's own price. prod's own are its prices;
-prod with the layer moves the margin its moneyline implies and the mean its total implies.
+Each arm, prod among them, is graded as it is, with the rematch layer (rematch_layer.py: +layer) and
+with the inference layer (inference_layer.py: +infer -- each gamer's form that session read off every
+match he played, against anyone, beside the pair's own effect), each fitted walk-forward on that
+arm's own errors (each UTC day on the days before it). A layer shifts the arm's simulated margin and
+total, so it moves the model's own price. prod's own are its prices; prod with a layer moves the
+margin its moneyline implies and the mean its total implies.
 
 Graded on the matches every arm priced, after the layer's burn-in, by:
   moneyline   log loss and Brier (draws left out)
   total       RMSE and bias of the expected total (prod: its line), and the log loss of the over at
               prod's line (pushes left out)
 each against prod match by match (the difference, its t, and the fortnights it was better), for every
-match, the rematches, the 2nd meetings and the 3rd+.
+match, the rematches, the 2nd meetings, the 3rd+, the first meetings, and the first meetings after
+either gamer had played someone else that session (where only the inference layer moves) and not.
 """
 
 import csv
@@ -48,7 +51,7 @@ import os
 from collections import defaultdict
 from statistics import NormalDist
 
-from . import bets, config, rematch_layer, score_model, snowflake_io
+from . import bets, config, inference_layer, rematch_layer, score_model, snowflake_io
 from .bet_losers import prematch_p1
 from .bet_rematches import day_meetings
 from .bet_totals import _start
@@ -179,7 +182,7 @@ def items_for(name, points, prod, meets):
         it = rematch_layer.item(code, m["start"], m["day_key"], m["home"], m["away"], m["team"][m["home"]],
                                 m["team"][m["away"]], margin, total,
                                 None if s1 is None or s2 is None else s1 - s2,
-                                None if s1 is None or s2 is None else s1 + s2)
+                                None if s1 is None or s2 is None else s1 + s2, m.get("gamer_keys"))
         out.append(it)
     return out
 
@@ -218,7 +221,8 @@ def score_book(r, mode, own, fits, draws):
 
 
 def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS):
-    """{match: {variant: (p home, expected total, p over prod's line)}} for an arm and its +layer."""
+    """{match: {variant: (p home, expected total, p over prod's line)}} for an arm, its +layer (the
+    rematch layer) and its +infer (the inference layer)."""
     own = own or {}
     fits = fitted_by_day(rows) if mode == "fitted" else {}
     out = {}
@@ -230,12 +234,15 @@ def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS)
             v[name] = (p.get("p1"), line, over)
             # prod moved: the margin its moneyline implies, and the mean its total implies
             base = line + TOTAL_SD * _N.inv_cdf(min(max(over, 1e-6), 1 - 1e-6)) if over is not None else line
-            t = None if base is None else base + r["move_total"]
-            v[name + "+layer"] = (rematch_layer.win_chance(r["margin_adj"]), t,
-                                  None if line is None or t is None else over_chance(t, line))
+            for tag, dm, dt_ in (("+layer", r["move_margin"], r["move_total"]),
+                                 ("+infer", r.get("infer_margin", 0.0), r.get("infer_total", 0.0))):
+                t = None if base is None else base + dt_
+                v[name + tag] = (rematch_layer.win_chance(r["margin"] + dm), t,
+                                 None if line is None or t is None else over_chance(t, line))
         else:
             bk = score_book(r, mode, own, fits, draws)
-            for tag, dm, dt_ in (("", 0.0, 0.0), ("+layer", r["move_margin"], r["move_total"])):
+            for tag, dm, dt_ in (("", 0.0, 0.0), ("+layer", r["move_margin"], r["move_total"]),
+                                 ("+infer", r.get("infer_margin", 0.0), r.get("infer_total", 0.0))):
                 v[name + tag] = (bk.p_home(dm), r["total"] + dt_, None if line is None else bk.p_over(line, dt_))
         out[r["match"]] = v
     return out, fits
@@ -342,8 +349,10 @@ def describe_model(mode, own, fits):
     return "the normal about its expected margin and total"
 
 
-def report(prices, results, meets, layers, burn_from, models=None):
-    """Lines of text: every arm against prod on the matches all of them priced, after the burn-in."""
+def report(prices, results, meets, layers, burn_from, models=None, others=None):
+    """Lines of text: every arm against prod on the matches all of them priced, after the burn-in.
+    `others`: the matches where either gamer had played someone else earlier that session."""
+    others = others or set()
     arms = list(prices)
     codes = sorted((c for c in results if all(c in prices[a] for a in arms)
                     and meets[c]["start"] >= burn_from), key=lambda c: meets[c]["start"])
@@ -355,7 +364,10 @@ def report(prices, results, meets, layers, burn_from, models=None):
          "t on it; fn: fortnights the arm beat prod on log loss"]
     subsets = (("Every match", lambda c: True), ("Rematches", lambda c: meets[c]["k"] > 1),
                ("2nd meetings", lambda c: meets[c]["k"] == 2), ("3rd+ meetings", lambda c: meets[c]["k"] > 2),
-               ("First meetings", lambda c: meets[c]["k"] == 1))
+               ("First meetings", lambda c: meets[c]["k"] == 1),
+               ("First meetings after either gamer played someone else that session",
+                lambda c: meets[c]["k"] == 1 and c in others),
+               ("First meetings, neither had played anyone else", lambda c: meets[c]["k"] == 1 and c not in others))
     for label, keep in subsets:
         sub = [c for c in codes if keep(c)]
         if sub:
@@ -363,10 +375,18 @@ def report(prices, results, meets, layers, burn_from, models=None):
     if models:
         L.append("\n  How each arm's moneyline and over are read:")
         L += [f"  {name}: {text}" for name, text in models.items()]
-    L.append("\n  The rematch layers' last fits (each arm's own errors):")
-    for name, layer in layers.items():
+    L += layer_lines(layers)
+    return L
+
+
+def layer_lines(layers):
+    """Lines: each arm's last fits of the rematch layer and the inference layer."""
+    L = ["\n  The layers' last fits (each arm's own errors): +layer the rematch layer, +infer the inference "
+         "layer (each gamer's form that session, from every match he played, and the pair's own effect)"]
+    for name, by in layers.items():
         L.append(f"  {name}:")
-        L += ["  " + x for x in layer.describe()]
+        L += ["    rematch layer"] + ["  " + x for x in by["rematch"].describe()]
+        L += ["    inference layer"] + ["  " + x for x in by["inference"].describe()]
     return L
 
 
@@ -405,8 +425,9 @@ def prepare(cur, since, until=None):
 
 
 def fit_arm(name, spec, ctx):
-    """(mode, own score models, layer rows, the last layer) for one arm (prod: spec None): its expected
-    points read, the rematch layer fitted walk-forward on its own errors."""
+    """(mode, own score models, layer rows, {"rematch": the last rematch layer, "inference": the last
+    inference layer}) for one arm (prod: spec None): its expected points read, both layers fitted
+    walk-forward on its own errors (the rows carry both moves)."""
     points, own, mode = {}, {}, None
     codes = ctx["codes"]
     if spec is not None:
@@ -418,18 +439,26 @@ def fit_arm(name, spec, ctx):
         mode = mode or ("own" if own else "fitted")
         print(f"  {name}: {sum(1 for c in codes if c in points):,} of {len(codes):,} matches priced ({source}), "
               f"scores {mode}", flush=True)
-    rows, layer = rematch_layer.walk_forward(items_for(name, points, ctx["prod"], ctx["window"]), BURN_IN_DAYS)
-    return mode, own, rows, layer
+    items = items_for(name, points, ctx["prod"], ctx["window"])
+    rows, layer = rematch_layer.walk_forward(items, BURN_IN_DAYS)
+    inferred, ilayer = inference_layer.walk_forward(items, BURN_IN_DAYS)
+    by = {r["match"]: r for r in inferred}
+    for r in rows:
+        x = by[r["match"]]
+        r.update(infer_margin=x["infer_margin"], infer_total=x["infer_total"], n_others=x["n_others"])
+    return mode, own, rows, dict(rematch=layer, inference=ilayer)
 
 
 def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
-    """Grade prod and every arm, each with and without the rematch layer, over [since, until]."""
+    """Grade prod and every arm, each as it is, with the rematch layer and with the inference layer,
+    over [since, until]."""
     ctx = prepare(cur, since, until)
     window, prod = ctx["window"], ctx["prod"]
-    prices, layers, models = {}, {}, {}
+    prices, layers, models, others = {}, {}, {}, set()
     for name, spec in [(PROD, None)] + list(arms):
         mode, own, rows, layer = fit_arm(name, spec, ctx)
         layers[name] = layer
+        others |= {r["match"] for r in rows if r.get("n_others")}
         got, fits = readings(name, rows, prod, mode or "normal", own, draws)
         models[name] = describe_model(mode, own, fits)
         for code, v in got.items():
@@ -441,7 +470,7 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
         if s1 is not None and s2 is not None and prod[c]["line"] is not None:
             results[c] = (s1 - s2, s1 + s2, prod[c]["line"])
     burn_from = ctx["burn_from"]
-    lines = report(prices, results, window, layers, burn_from, models)
+    lines = report(prices, results, window, layers, burn_from, models, others)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "prior_backtest.csv"), "w", newline="", encoding="utf-8") as fh:
