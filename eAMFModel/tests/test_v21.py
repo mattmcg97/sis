@@ -546,6 +546,25 @@ class TestSimulate(unittest.TestCase):
         v21.simulate(m, _state(m, y=60), 5, stats=st)
         self.assertEqual(first(st), 8)
 
+    def test_a_half_s_end_draws_its_time_from_snaps_with_as_long_left(self):
+        def run(clock):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, clock=clock)
+            for b in [m.time] + [v for k, v in m.own.items() if k[2] == "time"]:
+                n = len(b.payload["seconds"])
+                b.payload["left"][:] = np.where(np.arange(n) % 2 == 0, 20, 45)      # half at 0:20, half at 0:45
+                b.payload["seconds"][:] = np.where(b.payload["left"] == 20, 10.0, 35.0)
+                b.payload["cut"][:] = False
+                b.__dict__.pop("_by_left", None)
+            st = {}
+            v21.simulate(m, _state(m, period=4, clock=20.0, prev=v21.SHORT, y=40), 200, stats=st, max_steps=1)
+            log = v21.snap_log(st)
+            return log["seconds"][np.isin(log["path"], np.arange(200))], st.get("clock_ran_out", 0)
+        secs, gone = run(0.2)
+        self.assertTrue((secs == 10.0).all())
+        self.assertEqual(gone, 0)
+        secs, gone = run(0.0)
+        self.assertGreater(gone, 40)                     # 35 seconds drawn at 0:20: the half runs out first
+
     def test_inches_move_the_chains_and_a_down_played_again_keeps_its_number(self):
         m = built()
         _fixed_time(m, 7.0)

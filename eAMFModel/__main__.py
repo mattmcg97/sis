@@ -329,7 +329,8 @@ def cmd_v21_build(args):
     history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
                       gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split,
-                      key=args.key, blend=args.blend, field=args.field, decision_blend=args.decision_blend)
+                      key=args.key, blend=args.blend, field=args.field, decision_blend=args.decision_blend,
+                      clock=args.clock)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
@@ -818,6 +819,10 @@ def build_parser():
                         "within FIELD x the yards to go (2 yards at least; the 20 nearest where fewer), so a gain "
                         "made at midfield is not played out at the 12; 0 (default): anywhere in its group "
                         "(try 0.2)")
+    p.add_argument("--clock", type=float, default=0.0,
+                   help="clock windows: in a half's last 2:00 the time draw takes its real snap from those with as "
+                        "long left in the half, within CLOCK x the seconds left (2 at least; the 20 nearest where "
+                        "fewer); 0 (default): anywhere in its group (try 0.2)")
     p.add_argument("--decision-blend", type=float, default=0.0,
                    help="blend the decisions' cells: a cell of n real decisions weighs n / (n + K) of its state's "
                         "shares, the rest its parents' (cells of 5+ kept); 0 (default): the first level with 25")

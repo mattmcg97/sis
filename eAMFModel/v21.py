@@ -141,6 +141,13 @@ BLEND_MIN = 5
 FIELD_YARDS = 1
 FIELD_MIN = 20
 FIELD_CANDIDATES = 6
+# Clock windows (build's clock, 0 off): in a half's last CLOCK_LATE seconds the time draw takes a real snap
+# of its group from those with as long left in the half -- within `clock` x the seconds left (CLOCK_SECONDS
+# at least), or the FIELD_MIN nearest -- so a side at 0:20 on a running clock draws what real sides did at
+# 0:20, not a 30-second snap made at 0:45 that runs the half out before it can kick.
+CLOCK_LATE = 120.0
+CLOCK_SECONDS = 2
+WINDOW_SPAN = 1024
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
 TIME_LEAN = ("clock2", "qtr", "margin", "down", "dist", "zone", "remain")
 DIST_LEAN = ("tb", "qtr", "margin", "down", "dist", "zone", "remain")
@@ -261,9 +268,8 @@ DECISIONS = {
                    sizes=(10, 5, 7, 7, 6, 4, 3, 4),
                    levels=(("togo10", "dist", "margin", "fg4", "phase", "left"), ("togo10", "dist", "fg4", "phase", "left"),
                            ("togo10", "dist3", "fg4", "phase", "left"), ("togo4", "dist3", "fg4", "phase", "left"),
-                           ("togo10", "dist", "fg4", "phase"), ("togo4", "dist3", "fg4", "phase"),
-                           ("togo4", "fg4", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
-                           ("togo10",), ())),
+                           ("togo4", "fg4", "phase", "left"), ("togo4", "dist3", "fg4", "phase"),
+                           ("togo4", "fg4", "phase"), ("fg4", "phase"), ("togo10", "dist"), ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
                      who="offense", features=("left", "range", "down", "margin", "half", "fg4", "clock2", "to3"),
                      sizes=(6, 4, 3, 7, 3, 4, 2, 3),
@@ -674,43 +680,53 @@ class Bins:
         return self.start[b] + np.minimum(n - 1, (u * n).astype(np.int64))
 
     def __getstate__(self):
-        return {k: v for k, v in self.__dict__.items() if k != "_by_field"}        # rebuilt when first needed
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_by_")}   # rebuilt when first needed
 
-    def by_field(self):
-        """(order, key): every group's records by their field (payload "field") -- order the payload
-        positions so sorted, key each one's group * 128 + field -- each group in its own place."""
-        got = self.__dict__.get("_by_field")
+    def by_value(self, name):
+        """(order, key): every group's records by a payload value (whole numbers, 0 to WINDOW_SPAN - 1)
+        -- order the payload positions so sorted, key each one's group * WINDOW_SPAN + value -- each
+        group in its own place."""
+        got = self.__dict__.get("_by_" + name)
         if got is None:
             g_of = np.repeat(np.arange(len(self.count)), self.count)
-            fld = np.clip(np.asarray(self.payload["field"], np.int64), 0, 127)
-            o = np.lexsort((fld, g_of))
-            got = self._by_field = (o, g_of[o] * 128 + fld[o])
+            v = np.clip(np.asarray(self.payload[name], np.int64), 0, WINDOW_SPAN - 1)
+            o = np.lexsort((v, g_of))
+            got = (o, g_of[o] * WINDOW_SPAN + v[o])
+            self.__dict__["_by_" + name] = got
         return got
 
-    def near(self, b, y, share, ymin=FIELD_YARDS, nmin=FIELD_MIN):
-        """(lo, hi) each draw's window in by_field order: its group's (b) real records within share x the
-        yards to go (ymin at least) of field y, or the nmin nearest where fewer are there (the whole group
-        where it has fewer)."""
-        _, key = self.by_field()
-        b, y = np.asarray(b, np.int64), np.asarray(y, np.int64)
-        r = np.maximum(ymin, np.round(share * (100 - y))).astype(np.int64)
-        base = b * 128
-        lo = np.searchsorted(key, base + np.maximum(0, y - r), "left")
-        hi = np.searchsorted(key, base + np.minimum(127, y + r), "right")
+    def by_field(self):
+        return self.by_value("field")
+
+    def window(self, b, v, r, name, nmin=FIELD_MIN):
+        """(lo, hi) each draw's window in by_value(name) order: its group's (b) real records within r of
+        the state's own value v, or the nmin nearest where fewer are there (the whole group where it
+        has fewer)."""
+        _, key = self.by_value(name)
+        b, v = np.asarray(b, np.int64), np.asarray(v, np.int64)
+        r = np.asarray(r, np.int64)
+        base = b * WINDOW_SPAN
+        lo = np.searchsorted(key, base + np.clip(v - r, 0, WINDOW_SPAN - 1), "left")
+        hi = np.searchsorted(key, base + np.clip(v + r, 0, WINDOW_SPAN - 1), "right")
         s, n = self.start[b], self.count[b]
         w = np.minimum(nmin, n)
         thin = np.flatnonzero(hi - lo < w)
         if len(thin):
-            p = np.searchsorted(key, base[thin] + y[thin], "left")
+            p = np.searchsorted(key, base[thin] + v[thin], "left")
             lo[thin] = np.clip(p - w[thin] // 2, s[thin], s[thin] + n[thin] - w[thin])
             hi[thin] = lo[thin] + w[thin]
         return lo, hi
 
-    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES):
-        """The record each draw lands on from near its state's own field y (near), u uniform; k: leaned
-        toward the top of its group as draw's is, by resampling m near ones on their place in it."""
-        order, _ = self.by_field()
-        lo, hi = self.near(b, y, share)
+    def near(self, b, y, share, ymin=FIELD_YARDS, nmin=FIELD_MIN):
+        """window on the field: within share x the yards to go (ymin at least) of field y."""
+        y = np.asarray(y, np.int64)
+        return self.window(b, y, np.maximum(ymin, np.round(share * (100 - y))).astype(np.int64), "field", nmin)
+
+    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES):
+        """The record each draw lands on from its window (window), u uniform; k: leaned toward the top
+        of its group as draw's is, by resampling m of the window on their place in the group."""
+        order, _ = self.by_value(name)
+        lo, hi = self.window(b, v, r, name)
         width = hi - lo
         if k is None:
             return order[lo + np.minimum(width - 1, (u * width).astype(np.int64))]
@@ -722,6 +738,12 @@ class Bins:
         c = np.cumsum(w, 1)
         pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
         return cand[np.arange(len(lo)), pick]
+
+    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES):
+        """draw_window on the field (near)."""
+        y = np.asarray(y, np.int64)
+        r = np.maximum(FIELD_YARDS, np.round(share * (100 - y))).astype(np.int64)
+        return self.draw_window(b, y, r, u, "field", k, rng, m)
 
     def above(self, j, u):
         """A record at or above record j in its group (j's group read off its position), u uniform."""
@@ -1242,6 +1264,7 @@ class Model:
         self.blend = 0.0
         self.field = 0.0                   # the distance draws' field windows (0: off)
         self.decision_blend = 0.0          # the decisions' cells blended (0: off)
+        self.clock = 0.0                   # the time draws' clock windows at a half's end (0: off)
         self.time = self.dist = None
         self.own = {}                      # full: {(who, role, "time"|"dist"): Bins}
         self.gamers, self.teams = {}, {}
@@ -1383,13 +1406,15 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0, decision_blend=0.0):
+          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0, decision_blend=0.0,
+          clock=0.0):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
     global rules, the real shares alone; split: the draws' part of the game (SPLIT); key: the league's
     draws' key (KEY); blend: the league's draws' levels blended with this prior (0: off, BLEND_MIN);
     field: the distance draws' field windows, this share of the yards to go (0: off, FIELD_YARDS);
-    decision_blend: the decisions' cells blended with this prior (0: off, Choice)."""
+    decision_blend: the decisions' cells blended with this prior (0: off, Choice); clock: the time draws'
+    clock windows in a half's last CLOCK_LATE seconds, this share of the seconds left (0: off)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     draw_spec(split, key)
@@ -1400,6 +1425,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.blend = float(blend or 0.0)
     m.field = float(field or 0.0)
     m.decision_blend = float(decision_blend or 0.0)
+    m.clock = float(clock or 0.0)
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -1528,7 +1554,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
     run = dec["to_def"]
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, blend=m.blend,
-                  field=m.field, decision_blend=m.decision_blend,
+                  field=m.field, decision_blend=m.decision_blend, clock=m.clock,
                   timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
@@ -1570,8 +1596,9 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     feats = _features(recs, m)
     seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
     cut = np.array([r["cut"] for r in recs], bool)
-    time_pay = {"seconds": seconds.astype(np.float32), "cut": cut}       # compact: a record sits in a group
-                                                                           # at every level that draws on it
+    left = np.array([half_left(r["period"], r["clock"]) for r in recs], float)
+    time_pay = {"seconds": seconds.astype(np.float32), "cut": cut,        # compact: a record sits in a group
+                "left": np.clip(np.round(left), 0, WINDOW_SPAN - 1).astype(np.int16)}   # at every level
     league_min = BLEND_MIN if getattr(m, "blend", 0) else min_records
     m.time = Bins.build(time_f, [SIZES[f] for f in time_f], time_l, _cols(feats, time_f), seconds, time_pay,
                         league_min)
@@ -1691,7 +1718,9 @@ def report_build(m, recs=None):
           + ("; the league's draws on the lean key (the clock or the play's time, period, lead, down, distance,"
              " field, snaps left)" if getattr(m, "key", "full") == "lean" else "")
           + (f"; distance draws from near the state's own field (within {m.field:g} x the yards to go)"
-             if getattr(m, "field", 0.0) else ""))
+             if getattr(m, "field", 0.0) else "")
+          + (f"; time draws in a half's last {CLOCK_LATE:g}s from real snaps with as long left (within"
+             f" {m.clock:g} x the seconds left)" if getattr(m, "clock", 0.0) else ""))
     for line in remain_lines(m):
         print(line)
     if recs is not None:
@@ -2097,6 +2126,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     from . import v21_rules
     use_rules = RULES and getattr(model, "use_rules", True)
     field_share = getattr(model, "field", 0.0) or 0.0
+    clock_share = getattr(model, "clock", 0.0) or 0.0
 
     def state(ix, side):
         """The full state of a decision by `side` on each path (v21_rules.SWEEP_FEATURES)."""
@@ -2254,7 +2284,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         """full: half the draws from the offense's own real snaps, half from what the defense
         allowed, each its gamer's where it has them, else its team's (else the league's, as drawn).
         out["_from"] and out["_j"] keep which draw (0 the league's) and record each came from; near:
-        each draw's field, its record taken near it (the model's field windows)."""
+        (values, radii, payload name), each record taken from its window (Bins.window)."""
         if model.mode != "full" or not model.own:
             return
         allowed = rng.random(len(ix)) < DEF_SHARE
@@ -2271,7 +2301,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 ok = lb >= 0
                 if ok.any():
                     jj = layer.draw_low(lb[ok], u[sel[ok]], "seconds", STOPPED_MAX) if stopped \
-                        else layer.draw_near(lb[ok], near[sel[ok]], u[sel[ok]], field_share) if near is not None \
+                        else layer.draw_window(lb[ok], near[0][sel[ok]], near[1][sel[ok]], u[sel[ok]], near[2]) \
+                        if near is not None \
                         else layer.draw(lb[ok], u[sel[ok]])
                     for name in fields:
                         out[name][sel[ok]] = layer.payload[name][jj]
@@ -2300,10 +2331,19 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         u = rng.random(len(ix))
         k = k_time[ix, off] if k_time is not None else None
         b = league_bins(model.time, f)
-        j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped else model.time.draw(b, u, k)
+        near = None
+        if clock_share and not stopped:
+            # a half's end: from the real snaps with as long left in the half (the rest: their whole group)
+            left = half_left(period[ix], clock[ix])
+            late = (left <= CLOCK_LATE) & (period[ix] <= 4)
+            r_c = np.where(late, np.maximum(CLOCK_SECONDS, np.round(clock_share * left)), 4 * WINDOW_SPAN)
+            near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
+        j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
+            else model.time.draw_window(b, near[0], near[1], u, "left", k, rng) if near is not None \
+            else model.time.draw(b, u, k)
         out = {"seconds": model.time.payload["seconds"][j].copy(), "cut": model.time.payload["cut"][j].copy(),
                "_from": np.zeros(len(ix), np.int64), "_j": j.copy()}
-        own("time", f, ix, off, u, ("seconds", "cut"), out, stopped)
+        own("time", f, ix, off, u, ("seconds", "cut"), out, stopped, near)
         secs, cut = out["seconds"], out["cut"]
         if stopped:
             return secs
@@ -2334,7 +2374,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()
-        own("dist", f, ix, off, u, names, out, near=y[ix] if field_share else None)
+        r_f = np.maximum(FIELD_YARDS, np.round(field_share * (100 - y[ix]))).astype(np.int64)
+        own("dist", f, ix, off, u, names, out, near=(y[ix], r_f, "field") if field_share else None)
         kind, gain, shift, td, made, rdist = (out[x] for x in names[:6])
         gain = gain.astype(np.int64)
         if SMOOTH_YARDS:

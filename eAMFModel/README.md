@@ -2077,6 +2077,14 @@ missing something. Nothing is ever fitted to close those gaps.
   real snaps scored 43%, the sim 51%. An adjusted build's tilt still leans each
   draw toward the top of its whole group, by resampling six near snaps on where they sit in the
   group. `--field 0` (the default) draws from anywhere in the group.
+- **Clock windows (`--clock C`).** The time draw's cell knows the snaps left, not the clock. In a
+  half's last 2:00, a side at 0:20 on a running clock could draw a 30-second snap a real side made
+  at 0:45, and the half ran out before it could kick. After the buzzer-kick fix, the clock ran out
+  on level sides in Q4's 1:00–0:31 on 15.5% of their drives in the sim, against 0.3% real. With
+  `--clock`, the time draw there takes its real snap from the cell's snaps with as long left in
+  the half: within C x the seconds left (2 at least), or the 20 nearest where fewer. With C = 0.2,
+  that is ±4 seconds at 0:20 and ±24 at 2:00. A gamer's or team's own draws do the same.
+  `--clock 0` (the default) draws from anywhere in the cell.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
@@ -2167,6 +2175,10 @@ missing something. Nothing is ever fitted to close those gaps.
     stopped and its own timeouts, and keeps what a field goal does to the end of its fallbacks. The
     offense's timeout reads whether a field goal is in range, the timeout a level side calls to
     kick.
+
+    The 4th down's fallbacks now keep what a field goal does and the time left to the end, and
+    coarsen the field and distance first. From the real states, level or 1–2 behind in Q4's last
+    2:00, real sides kicked on 54% of 4th downs and the sim's cells on 49%.
 
     The feed can also miss a half's last play, a kick at the buzzer, though never the score it
     left: the next half's rows have it, and at the game's end the history's final score. In the
