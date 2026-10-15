@@ -2011,14 +2011,19 @@ missing something. Nothing is ever fitted to close those gaps.
   1st downs, and a side with time for one snap never from one with time for ten, while there are
   real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
   At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
-  distance, the field and the time before it lets the lead go. It keeps the half, the snaps left
-  (0–1, 2–4, 5+) and behind / level / ahead. The audit showed why: level sides in Q4's last 2:00 scored a
+  distance and the time, then the field, before it lets the lead go. It keeps the half, the snaps
+  left (0–1, 2–4, 5+) and behind / level / ahead. The field keeps its 7 zones as long as it can:
+  with the other half as one zone, a real touchdown from the 12 drawn at the 45 ran on to a long
+  one. The audit showed why: level sides in Q4's last 2:00 scored a
   touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
   sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
   prints how deep real states fall, for the rest of the game and the end of a half apart. It
   also sets Q4's last 2:00, by the lead, against the league groups those real snaps draw from:
   touchdowns, losses and seconds. A group that mixes situations shows up as a gap there, apart
-  from the game flow and the decisions.
+  from the game flow and the decisions. Last, the late choices that settle a game in regulation
+  (going for it 3 behind, kicking level, going for two at −1 and −2) and the overtime rate, by
+  fortnight of the build's data: a trend says the players are still learning, and the oldest
+  matches weigh too much.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the

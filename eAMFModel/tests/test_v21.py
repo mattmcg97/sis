@@ -314,6 +314,15 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(len(rates), len(m.dist.count))
         self.assertTrue(((rates >= 0) & (rates <= 1)).all())
 
+    def test_the_late_choices_by_fortnight(self):
+        q4 = lambda code, lead, choice: dict(code=code, period=4, clock=60.0, lead=lead, choice=choice)
+        dec = dict(fourth=[q4("AF001010926", -3, v21.FG), q4("AF001300926", -3, v21.GO), q4("AF002300926", 0, v21.FG)],
+                   two=[dict(code="AF001300926", cell=4, lead=-1, choice=1)])
+        lines = v21.trend_lines(dec, {"AF001010926": True, "AF001300926": False, "AF002300926": False})
+        self.assertEqual(len(lines), 3)                       # the header, the latest fortnight, an older one
+        self.assertIn("go 100.0% (1), kick 100.0% (1), two at -1 100.0% (1)", lines[-1])
+        self.assertIn("overtime 100.0% (1)", lines[1])
+
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, mode="other", verbose=False)

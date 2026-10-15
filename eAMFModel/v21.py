@@ -132,9 +132,10 @@ def _drop(features, *names):
 # sim's own expected count for the clock, whether it's running, both sides' timeouts and the lead) and
 # coarsely the part of the game and the lead -- to the end: a 3rd down is never drawn from 1st downs,
 # a side with time for one snap never from one with time for ten, while there are real snaps alike.
-# At the end of a half (endgame3: the snaps left and the lead) the distance and field coarsen before
-# the lead goes: a level side in field-goal range late plays for the kick, a side ahead runs it out,
-# and neither is drawn from the snaps of every lead at that spot.
+# At the end of a half (endgame3: the snaps left and the lead) the distance and time coarsen before
+# the lead goes, and the field (its 7 zones) last: a level side in field-goal range late plays for the
+# kick, a side ahead runs it out, and neither is drawn from the snaps of every lead at that spot; nor
+# from the whole of the other half, where a real touchdown from the 12 drawn at the 45 runs on.
 TIME_LEVELS = (TIME_BASE,
                _drop(TIME_BASE, "elapsed"),
                _drop(TIME_BASE, "elapsed", "zone"),
@@ -152,6 +153,9 @@ DIST_LEVELS = (DIST_BASE,
                ("tb", "down", "dist", "zone", "lead3", "half", "remain"),
                ("tb", "down", "dist", "zone", "endgame3"),
                ("tb", "down", "dist3", "zone", "endgame3"),
+               ("tb2", "down", "dist3", "zone", "endgame3"),
+               ("tb2", "down", "zone", "endgame3"),
+               ("down", "zone", "endgame3"),
                ("tb2", "down", "dist3", "zone3", "endgame3"),
                ("tb2", "down", "zone3", "endgame3"),
                ("tb", "down", "dist", "zone"),
@@ -1137,8 +1141,10 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     recs, kick_dec, safeties = [], [], []
     dec = {k: [] for k in DECISIONS}
     dec.update(kick_pool=[], fg_clock=[], conv=[])
+    ot_games = {}
     for code, rows in matches.items():
         rows = _with_side(rows)
+        ot_games[code] = any((s14._i(r.get("period")) or 0) >= 5 for r in rows)
         pair, teams = match_people(code, rows, hist)
         mine = match_snaps(rows, pair, teams)
         recs += mine
@@ -1155,6 +1161,10 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         raise ValueError("no real snaps to build on")
     if verbose:
         print(f"  v2.1: {len(recs):,} real snaps from {len(matches):,} matches ({mode})", flush=True)
+        try:
+            m._trend_lines = trend_lines(dec, ot_games)
+        except (ValueError, IndexError):          # codes without a date
+            m._trend_lines = []
     for r in recs:
         for g in r["gamer"]:
             if g and g not in m.gamers:
@@ -1387,6 +1397,8 @@ def report_build(m, recs=None):
             print(line)
         for line in late_lines(m, recs, real):
             print(line)
+    for line in getattr(m, "_trend_lines", []):
+        print(line)
     names = {i: g for g, i in m.gamers.items()}
     if m.use_rules:
         print(f"  rules learned off the real decisions (v21_rules: never or all but never taken): "
@@ -1469,6 +1481,48 @@ def late_lines(m, recs, real=None):
         out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * d_td[bd[okd]].mean():.1f},"
                    f" loss {100 * loss[w].mean():.1f} / {100 * d_loss[bd[okd]].mean():.1f}, seconds"
                    f" {g('seconds')[w].mean():.1f} / {t_mean[bt[okt]].mean() if okt.any() else float('nan'):.1f}")
+    return out
+
+
+def trend_lines(dec, ot_games):
+    """The late choices that settle a game in regulation, by fortnight of the build's data (the
+    latest last): a trend says the players are still learning, and the oldest weigh too much.
+    dec: build's decision points ({name: [dict with code]}); ot_games: {code: went to overtime}."""
+    from .remaining import day
+    codes = list(ot_games)
+    if not codes:
+        return []
+    last = max(day(c) for c in codes)
+    span = lambda c: min(5, (last - day(c)).days // 14)
+    names = [f"{14 * k}-{14 * k + 13} days before the last" if k < 5 else "older" for k in range(6)]
+    rows = {k: dict(three=[0, 0], kick=[0, 0], minus1=[0, 0], minus2=[0, 0], ot=[0, 0]) for k in range(6)}
+    late = lambda q: q["period"] == 4 and q["clock"] <= LATE
+    for q in dec.get("fourth", []):
+        if late(q):
+            f = int(fg4_of(q["lead"]))
+            if f == 1:
+                rows[span(q["code"])]["three"][0] += q["choice"] == GO
+                rows[span(q["code"])]["three"][1] += 1
+            elif f == 2:
+                rows[span(q["code"])]["kick"][0] += q["choice"] == FG
+                rows[span(q["code"])]["kick"][1] += 1
+    for q in dec.get("two", []):
+        if 3 <= q["cell"] <= CONV_CELLS - 2 and q["lead"] in (-1, -2):
+            key = "minus1" if q["lead"] == -1 else "minus2"
+            rows[span(q["code"])][key][0] += q["choice"] == 1
+            rows[span(q["code"])][key][1] += 1
+    for c, went in ot_games.items():
+        rows[span(c)]["ot"][0] += went
+        rows[span(c)]["ot"][1] += 1
+    pc = lambda a: f"{100 * a[0] / a[1]:5.1f}% ({a[1]})" if a[1] else "    -"
+    out = ["  the late choices that settle a game in regulation, by fortnight of the build's data (go for it at"
+           " 3 behind, kick at 1-2 behind or level -- Q4's last 2:00; go for two at -1 and -2 after the six --"
+           " Q4's last 3:00; overtime a game):"]
+    for k in range(5, -1, -1):
+        r = rows[k]
+        if r["ot"][1]:
+            out.append(f"    {names[k]:28s} go {pc(r['three'])}, kick {pc(r['kick'])}, two at -1 {pc(r['minus1'])},"
+                       f" at -2 {pc(r['minus2'])}, overtime {pc(r['ot'])}")
     return out
 
 
