@@ -2139,6 +2139,21 @@ missing something. Nothing is ever fitted to close those gaps.
     or shorter end by a tilt for each of: the offense's gamer, the defense's gamer and both teams.
     The tilts are fitted on their real snaps against what the league's draws gave the same states,
     and shrunk toward none by 300 snaps. This one is built for thin data.
+  - `tilt`, the league's draws for everyone, reweighted per matchup (step 2 of the plan). Every real
+    snap a draw can land on is weighted by exp(theta . phi). For the distance draw, phi is its
+    yards / 10 (cut to −10..50), whether it was a touchdown, and whether it was a turnover. For the
+    time draw, phi is its seconds / 10. Theta is the sum of four tilts: the offense's gamer and team,
+    and the defense's gamer and team (what each allows). The draw keeps its group's shape, field
+    window and own result, and leans only as far as the real snaps say. The tilts are fitted by
+    maximum likelihood. Each real snap's own outcome is scored against what the league's draw gave
+    its state: blended over the levels, near the field, as a histogram by yards, touchdown and
+    turnover (the time's cut snaps left out). Each tilt is fitted in turn by Newton steps, the others
+    held, over four rounds. Each is shrunk toward none by a penalty of 200 snaps' worth of the
+    league's variance, so a gamer with 200 snaps moves half way to their own. In the sim, a draw
+    takes 16 real snaps evenly from its group or window and keeps one on its weight. The build
+    prints each tilt's spread on each feature, the gamers furthest each way and the log-likelihood
+    gained a snap. Unlike `adjusted`, the tilt can move touchdowns and turnovers on their own, not
+    only the yards, and is fitted on the whole outcome, not its mean.
 - **Bounds:**
   - The time never passes the play clock, since no real draw does.
   - A running clock that runs out before the snap ends the quarter, and the same ball carries over.

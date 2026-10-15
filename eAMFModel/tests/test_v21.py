@@ -444,6 +444,53 @@ class TestBuild(unittest.TestCase):
         h, a = v21.simulate(full, v21.kickoff_start(full), 30)
         self.assertGreater((h + a).mean(), 10)
 
+    def test_exponential_tilts_recover_each_side_s_lean(self):
+        # three bins (0, 1, 2 yards / 10), a flat base; gamer 0 lands high, gamer 1 as the base
+        rng = np.random.default_rng(0)
+        n = 3000
+        who = {"gamer_off": np.repeat([0, 1], n)}
+        obs = np.r_[rng.choice(3, n, p=[0.2, 0.3, 0.5]), rng.choice(3, n)]
+        H = np.full((2 * n, 3), 1 / 3)
+        phi_b = np.array([[0.0], [1.0], [2.0]])
+        theta, gain = v21.fit_exp_tilts(H, obs, phi_b, who, {"gamer_off": 3}, prior=50.0)
+        t = theta["gamer_off"][:, 0]
+        self.assertGreater(t[0], 0.4)
+        self.assertLess(abs(t[1]), 0.08)
+        self.assertEqual(t[2], 0.0)                                 # the unknown gamer: none
+        self.assertGreater(gain, 0)
+        # a draw reweighted by a positive theta lands higher
+        fld = np.repeat(np.arange(1, 101), 4)[:400]
+        val = rng.permutation(400).astype(float)
+        b = v21.Bins.build(("a",), (1,), ((),), np.zeros((400, 1)), val,
+                           {"field": fld, "v": val, "phi": (val / 100.0)[:, None]}, 1)
+        g = np.zeros(4000, np.int64)
+        u = rng.random(4000)
+        plain = b.payload["v"][b.draw(g, u)].mean()
+        up = b.payload["v"][b.draw_tilted(g, u, np.full((4000, 1), 1.0), rng)].mean()
+        near = b.payload["v"][b.draw_near(g, np.full(4000, 50), u, 0.2, theta=np.full((4000, 1), 1.0), rng=rng)].mean()
+        self.assertGreater(up, plain + 40)
+        self.assertGreater(near, plain + 30)
+
+    def test_the_tilt_mode(self):
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=True, refine=False, mode="tilt", key="lean",
+                          blend=40.0, field=0.2, clock=0.2)
+        self.assertIn("tilts (exp(theta . phi)", out.getvalue())
+        self.assertEqual(m.etilt["dist"]["gamer_off"].shape, (len(m.gamers) + 1, len(v21.PHI_DIST)))
+        self.assertEqual(m.etilt["time"]["team_def"].shape, (len(m.teams) + 1, len(v21.PHI_TIME)))
+        h, a = v21.simulate(m, v21.kickoff_start(m), 40)
+        self.assertGreater((h + a).mean(), 10)
+        # a side whose gamer gains more: more points in the sim
+        hi = copy.deepcopy(m)
+        hi.etilt["dist"]["gamer_off"][:, 0] = 0.8
+        start = v21.kickoff_start(hi)
+        self.assertGreater(v21.simulate(hi, start, 200, seed=1)[0].mean(), v21.simulate(m, start, 200, seed=1)[0].mean())
+        with tempfile.TemporaryDirectory() as d:
+            m.save(os.path.join(d, v21.MODEL_FILE))
+            back = v21.Model.load(os.path.join(d, v21.MODEL_FILE))
+        self.assertEqual(back.mode, "tilt")
+
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, mode="other", verbose=False)

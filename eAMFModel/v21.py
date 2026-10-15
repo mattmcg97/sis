@@ -174,8 +174,8 @@ TIME_LEAN_LEVELS = (TIME_LEAN,
                     ())
 DIST_LEAN_LEVELS = (DIST_LEAN,
                     ("tb", "qtr", "margin", "down", "dist", "zone3", "remain"),
-                    ("tb", "qtr", "margin", "down", "dist", "zone3", "rem4"),
-                    ("tb", "qtr", "margin", "down", "dist", "rem4"),
+                    ("tb", "qtr", "margin", "down", "dist", "remain"),
+                    ("tb", "qtr", "lead3", "down", "dist", "remain"),
                     ("tb", "qtr", "lead3", "down", "dist", "rem4"),
                     ("tb", "qtr", "lead3", "down", "dist"),
                     ("tb", "down", "dist", "zone"),
@@ -236,7 +236,20 @@ GAMER_DIST_LEVELS = (("who", "tb", "down", "dist", "zone", "endgame"), ("who", "
 MIN_RECORDS = 40
 MIN_GAMER_RECORDS = 30
 DEF_SHARE = 0.5                                           # full: the share of draws from what the defense allowed
-MODES = ("full", "adjusted")
+MODES = ("full", "adjusted", "tilt")
+# tilt: the league's draws for every side, each reweighted by exp(theta . phi) of the real snap drawn --
+# phi the distance's (yards / 10 cut to -10..50, a touchdown, a turnover: PHI_DIST) and the time's
+# (seconds / 10: PHI_TIME) -- theta the summed tilts of the offense's gamer and team and the defense's,
+# fitted by maximum likelihood on their real snaps against what the league's draws (blended, near the
+# field) gave the same states, each shrunk toward none as if it had TILT_PRIOR league-average snaps.
+# A draw resamples TILT_CANDIDATES real snaps of its group (or window) on their weights.
+PHI_DIST = ("yards", "touchdown", "turnover")
+PHI_TIME = ("seconds",)
+TILT_PRIOR = 200.0
+TILT_ROUNDS = 4
+TILT_CANDIDATES = 16
+YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
+SECOND_BIN_EDGES = np.arange(2, 61, 2)
 ADJUST_GRID = np.round(np.linspace(-1.5, 1.5, 31), 3)     # log tilts tried
 ADJUST_PRIOR = 300.0
 ADJUST_SWEEPS = 3
@@ -535,6 +548,36 @@ def combine(*masks):
 
 # ---------------------------------------------------------------- the draws
 
+def phi_dist(kind, gain):
+    """(records, 3) a real snap's distance features the tilts weigh (PHI_DIST), and its histogram bin."""
+    kind, gain = np.asarray(kind), np.asarray(gain, float)
+    g = np.where(kind == GAIN, np.clip(gain, -10, 50), 0.0)
+    return np.stack([g / 10.0, np.zeros(len(g)), (kind != GAIN).astype(float)], axis=1)
+
+
+def phi_dist_of(kind, gain, td):
+    phi = phi_dist(kind, gain)
+    phi[:, 1] = np.asarray(td, float)
+    return phi
+
+
+def dist_bin(kind, gain, td):
+    """Each record's histogram bin for the fit: by yards (YARD_BIN_EDGES) for a gain and apart for a
+    touchdown, one bin for a turnover or a defensive touchdown."""
+    kind, gain, td = np.asarray(kind), np.asarray(gain, float), np.asarray(td, bool)
+    yb = np.digitize(np.clip(gain, -10, 50), YARD_BIN_EDGES)
+    nb = len(YARD_BIN_EDGES) + 1
+    return np.where(kind != GAIN, 2 * nb, np.where(td, nb + yb, yb)).astype(np.int64)
+
+
+DIST_BINS = 2 * (len(YARD_BIN_EDGES) + 1) + 1
+TIME_BINS = len(SECOND_BIN_EDGES) + 1
+
+
+def time_bin(seconds):
+    return np.digitize(np.asarray(seconds, float), SECOND_BIN_EDGES).astype(np.int64)
+
+
 class Bins:
     """Real records grouped for drawing: a group for every combination of each level's features that
     holds `min_records` (every level but the last, (); with `strict` that one too), each group's records
@@ -679,7 +722,7 @@ class Bins:
         return self.start[b] + np.minimum(n - 1, (u * n).astype(np.int64))
 
     def __getstate__(self):
-        return {k: v for k, v in self.__dict__.items() if not k.startswith("_by_")}   # rebuilt when first needed
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_by_") and k != "_identity"}
 
     def by_value(self, name):
         """(order, key): every group's records by a payload value (whole numbers, 0 to WINDOW_SPAN - 1)
@@ -734,12 +777,35 @@ class Bins:
         y = np.asarray(y, np.int64)
         return self.window(b, y, np.maximum(ymin, np.round(share * (100 - y))).astype(np.int64), "field", nmin)
 
-    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES):
+    def tilted(self, order, lo, hi, u, theta, rng, m=TILT_CANDIDATES):
+        """A record from each draw's span lo..hi of `order` reweighted by exp(theta . phi) (payload
+        "phi"): m drawn evenly from the span, one of them taken on its weight (u uniform)."""
+        width = hi - lo
+        U = rng.random((len(lo), m))
+        cand = order[lo[:, None] + np.minimum(width[:, None] - 1, (U * width[:, None]).astype(np.int64))]
+        z = np.einsum("nmd,nd->nm", self.payload["phi"][cand].astype(float), np.asarray(theta, float))
+        w = np.exp(z - z.max(1, keepdims=True))
+        c = np.cumsum(w, 1)
+        pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
+        return cand[np.arange(len(lo)), pick]
+
+    def draw_tilted(self, b, u, theta, rng):
+        """draw from the whole group, reweighted by theta (tilted)."""
+        b = np.asarray(b, np.int64)
+        order = self.__dict__.get("_identity")
+        if order is None or len(order) != len(self.payload["phi"]):
+            order = self.__dict__["_identity"] = np.arange(len(self.payload["phi"]))
+        return self.tilted(order, self.start[b], self.start[b] + self.count[b], u, theta, rng)
+
+    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES, theta=None):
         """The record each draw lands on from its window (window), u uniform; k: leaned toward the top
-        of its group as draw's is, by resampling m of the window on their place in the group."""
+        of its group as draw's is, by resampling m of the window on their place in the group; theta:
+        reweighted by it instead (tilted)."""
         order, _ = self.by_value(name)
         lo, hi = self.window(b, v, r, name)
         width = hi - lo
+        if theta is not None:
+            return self.tilted(order, lo, hi, u, theta, rng)
         if k is None:
             return order[lo + np.minimum(width - 1, (u * width).astype(np.int64))]
         U = rng.random((len(lo), m))
@@ -751,11 +817,11 @@ class Bins:
         pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
         return cand[np.arange(len(lo)), pick]
 
-    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES):
+    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES, theta=None):
         """draw_window on the field (near)."""
         y = np.asarray(y, np.int64)
         r = np.maximum(FIELD_YARDS, np.round(share * (100 - y))).astype(np.int64)
-        return self.draw_window(b, y, r, u, "field", k, rng, m)
+        return self.draw_window(b, y, r, u, "field", k, rng, m, theta)
 
     def above(self, j, u):
         """A record at or above record j in its group (j's group read off its position), u uniform."""
@@ -1577,6 +1643,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
             if verbose:
                 print(f"  snaps left in the half, round {r_ + 1}: the sim's own counts, mean change"
                       f" {np.abs(m.remain - before).mean():.2f} snaps; the draws rebuilt on them", flush=True)
+    if m.mode == "tilt":
+        fit_model_tilts(m, recs, verbose)
     if verbose:
         report_build(m, recs)
     return m
@@ -1611,6 +1679,8 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     left = np.array([half_left(r["period"], r["clock"]) for r in recs], float)
     time_pay = {"seconds": seconds.astype(np.float32), "cut": cut,        # compact: a record sits in a group
                 "left": np.clip(np.round(left), 0, WINDOW_SPAN - 1).astype(np.int16)}   # at every level
+    if m.mode == "tilt":
+        time_pay["phi"] = (seconds / 10.0).astype(np.float32)[:, None]
     league_min = BLEND_MIN if getattr(m, "blend", 0) else min_records
     m.time = Bins.build(time_f, [SIZES[f] for f in time_f], time_l, _cols(feats, time_f), seconds, time_pay,
                         league_min)
@@ -1624,6 +1694,8 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
                 "kind": kind.astype(np.int8), "gain": gain.astype(np.int16), "shift": shift.astype(np.int16),
                 "td": (kind == GAIN) & (gain >= 100 - field), "value": dvalue.astype(np.float32),
                 "field": field.astype(np.int16)}
+    if m.mode == "tilt":
+        dist_pay["phi"] = phi_dist_of(kind, gain, dist_pay["td"]).astype(np.float32)
     m.dist = Bins.build(dist_f, [SIZES[f] for f in dist_f], dist_l, _cols(feats, dist_f), dvalue, dist_pay,
                         league_min)
 
@@ -1644,7 +1716,7 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
                 m.own[(kind_, role, draw)] = Bins.build(
                     features, [sizes[name]] + [SIZES[x] for x in features[1:]], levels, _cols(f, features),
                     value, pay, MIN_GAMER_RECORDS, strict=True)
-    else:
+    elif m.mode == "adjusted":
         timed = ~cut
         b_time = m.time.bin_of({f: feats[f][timed] for f in time_f})
         m.tilt["time"] = fit_tilts(m.time, m.time.payload["seconds"], b_time, seconds[timed],
@@ -1676,6 +1748,165 @@ def fit_tilts(bins, values, bin_ids, observed, who, sizes, grid=ADJUST_GRID, pri
             effects[name] = np.where(n > 0, best * n / (n + prior), 0.0)
             effects[name][-1] = 0.0                       # the unknown gamer or team: none
     return effects
+
+
+def _tilt_who(m, recs):
+    """{effect: entity per real snap} and {effect: entities} (the unknown last) for the tilts."""
+    who = dict(gamer_off=np.array([m.gamer_index(r["gamer"][0]) for r in recs], np.int64),
+               gamer_def=np.array([m.gamer_index(r["gamer"][1]) for r in recs], np.int64),
+               team_off=np.array([m.team_index(r["team"][0]) for r in recs], np.int64),
+               team_def=np.array([m.team_index(r["team"][1]) for r in recs], np.int64))
+    sizes = dict(gamer_off=len(m.gamers) + 1, gamer_def=len(m.gamers) + 1,
+                 team_off=len(m.teams) + 1, team_def=len(m.teams) + 1)
+    return who, sizes
+
+
+def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None):
+    """(states, n_bins) what the league's draw gives each state, by histogram bin: its groups' real
+    records over the levels as bin_blend weighs them (blend 0: its first group), each group's records
+    in the state's window where near is (values, radii, payload name: Bins.window) or all of them;
+    records of bin -1 left out (the time's cut ones: only "at least this long")."""
+    n = len(np.asarray(feats[b.features[0]]))
+    if blend:
+        C = b.chain(feats)
+        W = b.blend_weights(C, blend)
+    else:
+        g = b.bin_of(feats)
+        C, W = g[:, None], (g >= 0).astype(float)[:, None]
+    H = np.zeros((n, n_bins))
+    if near is not None:
+        order = b.by_value(near[2])[0]
+        pb = np.asarray(payload_bin)[order]
+    else:
+        pb = np.asarray(payload_bin)
+    pos = [np.flatnonzero(pb == k) for k in range(n_bins)]
+    for li in range(C.shape[1]):
+        ok = np.flatnonzero((C[:, li] >= 0) & (W[:, li] > 0))
+        if not len(ok):
+            continue
+        g = C[ok, li]
+        if near is not None:
+            lo, hi = b.window(g, near[0][ok], near[1][ok], near[2])
+        else:
+            lo, hi = b.start[g], b.start[g] + b.count[g]
+        cnt = np.zeros((len(ok), n_bins))
+        for k in range(n_bins):
+            if len(pos[k]):
+                cnt[:, k] = np.searchsorted(pos[k], hi) - np.searchsorted(pos[k], lo)
+        tot = cnt.sum(1, keepdims=True)
+        H[ok] += W[ok, li, None] * np.where(tot > 0, cnt / np.maximum(tot, 1), 0.0)
+    tot = H.sum(1, keepdims=True)
+    return np.where(tot > 0, H / np.where(tot > 0, tot, 1), 1.0 / n_bins)
+
+
+def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUNDS):
+    """({effect: (entities, dims) tilt}, the in-sample log-likelihood gained a snap): each entity's
+    theta, fitted in turn by Newton steps on the penalized log-likelihood of its real snaps' own bins
+    (obs) under their bases H reweighted by exp(theta . phi_b), theta the summed tilts of the snap's
+    entities; the penalty prior x the league's variance of phi, so an entity with prior snaps' worth
+    of evidence moves half way. The unknown entity (the last) stays at none."""
+    S, B = H.shape
+    D = phi_b.shape[1]
+    logH = np.log(np.maximum(H, 1e-300))
+    phi_o = phi_b[obs]
+    lam = prior * np.maximum(phi_o.var(0), 1e-6)
+    theta = {k: np.zeros((sizes[k], D)) for k in who}
+    outer = phi_b[:, :, None] * phi_b[:, None, :]
+    def moments(th):
+        z = logH + th @ phi_b.T
+        zm = z.max(1, keepdims=True)
+        p = np.exp(z - zm)
+        Z = p.sum(1, keepdims=True)
+        p /= Z
+        return p, (zm + np.log(Z))[:, 0]
+    for _ in range(rounds):
+        for name, ent in who.items():
+            th = sum(theta[k][who[k]] for k in who)
+            p, _ = moments(th)
+            mu = p @ phi_b
+            cov = np.einsum("sb,bij->sij", p, outer) - mu[:, :, None] * mu[:, None, :]
+            n_e = sizes[name]
+            g = np.zeros((n_e, D))
+            np.add.at(g, ent, phi_o - mu)
+            g -= lam * theta[name]
+            Hs = np.zeros((n_e, D, D))
+            np.add.at(Hs, ent, cov)
+            Hs += np.diag(lam)[None]
+            theta[name] = theta[name] + np.linalg.solve(Hs, g[:, :, None])[:, :, 0]
+            theta[name][-1] = 0.0
+    th = sum(theta[k][who[k]] for k in who)
+    _, logZ = moments(th)
+    gain = float(np.mean((th * phi_o).sum(1) - logZ))
+    return theta, gain
+
+
+def fit_model_tilts(m, recs, verbose=True):
+    """The tilt mode's thetas for the distance and the time draws (m.etilt) off the real snaps, against
+    the model's own league draws as the sim takes them."""
+    feats = _features(recs, m)
+    who, sizes = _tilt_who(m, recs)
+    blend = getattr(m, "blend", 0.0)
+    g = lambda k: np.array([r[k] for r in recs])
+    kind, gain, field = g("kind"), g("gain"), g("field")
+    td = (kind == GAIN) & (gain >= 100 - field)
+    pd_ = m.dist.payload
+    pbin = dist_bin(pd_["kind"], pd_["gain"], pd_["td"])
+    share = getattr(m, "field", 0.0)
+    near = None
+    if share:
+        r = np.maximum(FIELD_YARDS, np.round(share * (100 - field))).astype(np.int64)
+        near = (field.astype(np.int64), r, "field")
+    fd = {k: v for k, v in feats.items()}
+    H = tilt_bases(m.dist, fd, pbin, DIST_BINS, blend, near)
+    obs = dist_bin(kind, gain, td)
+    phi_all = pd_["phi"].astype(float)
+    phi_b = np.zeros((DIST_BINS, len(PHI_DIST)))
+    cnt = np.bincount(pbin, minlength=DIST_BINS)
+    for d in range(len(PHI_DIST)):
+        phi_b[:, d] = np.bincount(pbin, phi_all[:, d], minlength=DIST_BINS) / np.maximum(cnt, 1)
+    m.etilt = {}
+    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes)
+    # the time: the uncut real snaps, against their whole groups (the clock windows' late states aside)
+    seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
+    timed = ~np.array([r["cut"] for r in recs], bool)
+    pt = m.time.payload
+    tbin = np.where(pt["cut"], -1, time_bin(pt["seconds"]))
+    Ht = tilt_bases(m.time, {k: v[timed] for k, v in feats.items()}, tbin, TIME_BINS, blend)
+    keep = tbin >= 0
+    tb_cnt = np.bincount(tbin[keep], minlength=TIME_BINS)
+    phi_t = (np.bincount(tbin[keep], pt["seconds"][keep].astype(float), minlength=TIME_BINS)
+             / np.maximum(tb_cnt, 1) / 10.0)[:, None]
+    m.etilt["time"], gain_t = fit_exp_tilts(Ht, time_bin(seconds[timed]), phi_t,
+                                            {k: v[timed] for k, v in who.items()}, sizes)
+    m._etilt_gain = (gain_d, gain_t)
+    return m.etilt
+
+
+def etilt_lines(m):
+    """The tilt mode's lines: each effect's spread on each feature, and the log-likelihood gained."""
+    t = getattr(m, "etilt", None)
+    if not t:
+        return []
+    names = {i: g for g, i in m.gamers.items()}
+    gd, gt = getattr(m, "_etilt_gain", (float("nan"), float("nan")))
+    out = [f"  tilts (exp(theta . phi) on the league's draws, shrunk by {TILT_PRIOR:g} snaps): in-sample log-likelihood"
+           f" gained a snap, distance {gd:+.4f}, time {gt:+.4f}"]
+    for kind_, feats_ in (("dist", PHI_DIST), ("time", PHI_TIME)):
+        for eff, th in t[kind_].items():
+            if len(th) < 2:
+                continue
+            core = th[:-1]
+            out.append(f"    {kind_} {eff.replace('_', ' ')}: " + ", ".join(
+                f"{f} sd {core[:, d].std():.3f} ({core[:, d].min():+.2f} to {core[:, d].max():+.2f})"
+                for d, f in enumerate(feats_)))
+    th = t["dist"]["gamer_off"][:-1]
+    if len(th):
+        top = np.argsort(-th[:, 0])[:3]
+        low = np.argsort(th[:, 0])[:3]
+        out.append("    gamers furthest each way on the offense's yards: "
+                   + ", ".join(f"{names.get(i, i)} {th[i, 0]:+.2f}" for i in top) + "; "
+                   + ", ".join(f"{names.get(i, i)} {th[i, 0]:+.2f}" for i in low))
+    return out
 
 
 def report_build(m, recs=None):
@@ -1718,12 +1949,14 @@ def report_build(m, recs=None):
                     line += (f"; real snaps alike enough to draw from their own (time / distance): the rest of the"
                              f" game {pc(ht, ~end)} / {pc(hd, ~end)}, the end of a half {pc(ht, end)} / {pc(hd, end)}")
                 print(line)
-    else:
+    elif m.mode == "adjusted":
         for kind_ in ("time", "dist"):
             for k, v in m.tilt[kind_].items():
                 if len(v) > 1:
                     print(f"  {kind_} tilt by {k.replace('_', ' ')}: sd {np.std(v[:-1]):.3f}, from {v[:-1].min():+.2f}"
                           f" to {v[:-1].max():+.2f}")
+    for line in etilt_lines(m):
+        print(line)
     print(f"  timeouts: {'fitted from the export' if m.meta.get('timeouts') else 'none (no timeout columns)'}")
     print(f"  the draws' part of the game: " + ("the half and the two-minute warning, the snaps left the rest"
                                                if getattr(m, "split", "time") == "snaps" else "the seven parts")
@@ -2080,6 +2313,21 @@ def concat_starts(starts):
     return {k: np.concatenate([s[k] for s in starts]) for k in starts[0]}
 
 
+def _etilts(model, kind, gamer, team_ix):
+    """(paths, 2, dims) each side's theta with the ball (tilt builds; None otherwise): its gamer's and
+    team's offense tilts and the other side's defense ones."""
+    t = getattr(model, "etilt", None)
+    if model.mode != "tilt" or not t or kind not in t:
+        return None
+    t = t[kind]
+    D = t["gamer_off"].shape[1]
+    out = np.zeros(gamer.shape + (D,))
+    for s_ in (0, 1):
+        out[:, s_] = (t["gamer_off"][gamer[:, s_]] + t["gamer_def"][gamer[:, 1 - s_]]
+                      + t["team_off"][team_ix[:, s_]] + t["team_def"][team_ix[:, 1 - s_]])
+    return out
+
+
 def _tilts(model, kind, gamer, team_ix):
     """(paths, 2) each side's tilt with the ball (adjusted builds; None otherwise)."""
     if model.mode != "adjusted" or kind not in model.tilt:
@@ -2113,6 +2361,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     prev, elapsed, tos = rep(start["prev"], np.int64), rep(start["elapsed"], np.int64), rep(start["tos"], np.int64)
     kick2, gamer, team_ix = rep(start["kick2"], np.int64), rep(start["gamer"], np.int64), rep(start["team_ix"], np.int64)
     k_time, k_dist = _tilts(model, "time", gamer, team_ix), _tilts(model, "dist", gamer, team_ix)
+    th_time, th_dist = _etilts(model, "time", gamer, team_ix), _etilts(model, "dist", gamer, team_ix)
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
@@ -2350,8 +2599,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             late = (left <= CLOCK_LATE) & (period[ix] <= 4)
             r_c = np.where(late, np.maximum(CLOCK_SECONDS, np.round(clock_share * left)), 4 * WINDOW_SPAN)
             near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
+        th = th_time[ix, off] if th_time is not None else None
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
-            else model.time.draw_window(b, near[0], near[1], u, "left", k, rng) if near is not None \
+            else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th) if near is not None \
+            else model.time.draw_tilted(b, u, th, rng) if th is not None \
             else model.time.draw(b, u, k)
         out = {"seconds": model.time.payload["seconds"][j].copy(), "cut": model.time.payload["cut"][j].copy(),
                "_from": np.zeros(len(ix), np.int64), "_j": j.copy()}
@@ -2382,7 +2633,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
         b = league_bins(model.dist, f)
-        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng) if field_share else model.dist.draw(b, u, k)
+        th = th_dist[ix, off] if th_dist is not None else None
+        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th) if field_share \
+            else model.dist.draw_tilted(b, u, th, rng) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()

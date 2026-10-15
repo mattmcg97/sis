@@ -796,9 +796,11 @@ def build_parser():
                    help=f"scouting_playover.csv (default {DATA['snapshots']})")
     p.add_argument("--until", help="build on the matches before this date (YYYY-MM-DD)")
     p.add_argument("--out", default="v21_model", help="the build directory (default v21_model)")
-    p.add_argument("--mode", choices=["full", "adjusted"], default="full",
+    p.add_argument("--mode", choices=["full", "adjusted", "tilt"], default="full",
                    help="full: the gamers' and teams' own real snaps as draws; adjusted: the league's draws "
-                        "leaned by a fitted tilt for each (default full)")
+                        "leaned by a fitted tilt for each; tilt: the league's draws reweighted by exp(theta . "
+                        "phi) on yards, touchdowns, turnovers and seconds, theta per gamer and team, offense and "
+                        "defense, fitted by maximum likelihood (default full)")
     p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers and "
                                                                f"teams (default {DATA['history']})")
     p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
