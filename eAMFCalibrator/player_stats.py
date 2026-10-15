@@ -29,6 +29,18 @@ site's (analysis/h2hggl_api.py's players.csv).
             the counts that need no spot (touchdowns, time of possession, two-point tries, fouls)
             and are left out of the rest (detail: the share of snaps with a spot)
 
+Second readings, to say which definition the site uses: a red zone per set of downs inside the 20
+(rz_series: a first down starts a new attempt) beside ours per drive, and all turnovers (an
+interception or fumble -- the ball changing hands on a scrimmage play other than on downs -- plus the
+turnovers on downs) beside the turnovers on downs alone.
+
+Each match is also checked against itself where two sources say the same thing (reconcile_lines):
+the points its scoring messages add up to (td 6, extra point 1, two-point try 2, field goal 3,
+safety 2, less the undone) against the final score, touchdown messages against touchdown plays,
+turnovers on downs as plays against messages, and both sides' possession against the 4 x 240 s,
+week by week with the share of snaps carrying a spot. A cached match read before these counts
+existed is read again.
+
 Per player the averages are per match, over the matches each stat could be read on. The site's
 are career figures; ours cover the window read, so the check is: played, won, lost and the form
 exactly (all time, off the history), and the rest by level and rank across the players. Each
@@ -63,7 +75,15 @@ SIDES = ("home", "away")
 COUNTS = ("snaps", "detail_snaps", "plays", "yards_known", "yards", "clean_plays", "yards_clean",
           "third_att", "third_conv", "fourth_att", "fourth_conv", "tod", "tod_msgs", "rz_trips",
           "rz_td", "rz_fg", "top_s", "punts", "punt_yards", "punts_spotted", "tds", "twopt_att",
-          "twopt_good", "fouls", "fouls_other", "turnovers")
+          "twopt_good", "fouls", "fouls_other", "turnovers", "td_plays", "points_msgs", "rz_series",
+          "rz_series_td")
+# counts a cached row must carry: one without them (read before they were added) is read again
+REREAD_IF_MISSING = ("points_msgs", "rz_series")
+# points off the scoring messages, by message (without its team), for the check against the final
+POINTS = (("TOUCHDOWN", 6), ("EXTRA_POINT_GOOD", 1), ("TWO_POINT_CONVERSION_SUCCESSFUL", 2),
+          ("FIELD_GOAL_GOOD", 3), ("SAFETY_AWARDED", 2), ("UNDO_TOUCHDOWN", -6), ("UNDO_EXTRA_POINT", -1),
+          ("UNDO_TWO_POINT_CONVERSION", -2), ("UNDO_FIELD_GOAL", -3))
+GAME_S = 4 * 240.0
 CACHE = "player_match_stats.csv"
 FIELDS = ("match_code", "start", "side", "player", "opponent", "team", "opp_team", "points",
           "points_against", "result", "scouting") + COUNTS + ("opp_yards", "opp_yards_known")
@@ -125,9 +145,18 @@ def play_stats(snaps, a_side):
     """{side: Counter} of one match off its PLAY_OVER snapshots (in message order)."""
     c = {s: Counter() for s in SIDES}
     drive = None                                      # [side, reached the red zone]
+    series = None                                     # the set of downs under way: [side, in the red zone]
+
+    def end_series(outcome=None):
+        nonlocal series
+        if series and series[1]:
+            c[series[0]]["rz_series"] += 1
+            c[series[0]]["rz_series_td"] += outcome == "td"
+        series = None
 
     def close(outcome=None):
         nonlocal drive
+        end_series(outcome)
         if drive and drive[1]:
             c[drive[0]]["rz_trips"] += 1
             c[drive[0]]["rz_td"] += outcome == "td"
@@ -148,6 +177,8 @@ def play_stats(snaps, a_side):
         if kind in SCRIM:
             k = c[mine]
             k["snaps"] += 1
+            if kind == "TOUCHDOWN":                   # to the scorer: a defensive score is the other side's
+                c[side_of(team_in(msgs, "TOUCHDOWN_TEAM"), a_side) or mine]["td_plays"] += 1
             if y is None or down is None:
                 continue
             k["detail_snaps"] += 1
@@ -156,6 +187,10 @@ def play_stats(snaps, a_side):
                 close()
                 drive = [mine, False]
             drive[1] = drive[1] or y >= RED_ZONE
+            if series is None or series[0] != mine or down == 1:     # a first down starts a new set
+                end_series()
+                series = [mine, False]
+            series[1] = series[1] or y >= RED_ZONE
             scorer = side_of(team_in(msgs, "TOUCHDOWN_TEAM"), a_side) if kind == "TOUCHDOWN" else None
             kept = b_side == mine and by is not None and kind != "TOUCHDOWN"
             if kind == "TOUCHDOWN" and scorer in (mine, None):
@@ -252,7 +287,8 @@ def match_rows(match, info, rows, scores, final):
     for team in ("TEAM_A", "TEAM_B"):
         s = side_of(team, a_side)
         k = counts[s]
-        k["tds"] += msgs[("TOUCHDOWN", team)]
+        k["tds"] += msgs[("TOUCHDOWN", team)] - msgs[("UNDO_TOUCHDOWN", team)]
+        k["points_msgs"] += sum(v * msgs[(kind, team)] for kind, v in POINTS)
         k["twopt_good"] += msgs[("TWO_POINT_CONVERSION_SUCCESSFUL", team)]
         k["twopt_att"] += msgs[("TWO_POINT_CONVERSION_SUCCESSFUL", team)] + msgs[("TWO_POINT_CONVERSION_FAILED", team)]
         k["tod_msgs"] += msgs[("TURNOVER_ON_DOWNS", team)]
@@ -339,27 +375,30 @@ def player_stats(rows):
             avgYardsConceded=_ratio(dt_["opp_yards"], nd),
             avgPenaltiesConceded=_ratio(tot["fouls"], n), penalties_other_side=_ratio(tot["fouls_other"], n),
             avgTurnoverOnDowns=_ratio(dt_["tod"], nd), turnoverOnDowns_msgs=_ratio(tot["tod_msgs"], n),
+            turnovers_all=_ratio(dt_["turnovers"] + dt_["tod"], nd),
+            redZone_per_series=_ratio(dt_["rz_series_td"], dt_["rz_series"], 100),
             avgPlays=_ratio(dt_["plays"], nd), avgTurnovers=_ratio(dt_["turnovers"], nd))
     return out
 
 
-# the site's field -> (our reading, the second reading or None)
+# the site's field -> our readings of it (the first ours; the rest other definitions, to say which the
+# site uses)
 CHECKS = (
-    ("matchesPlayed", "matchesPlayed", None), ("matchesWon", "matchesWon", None),
-    ("matchesLost", "matchesLost", None), ("matchesWinPct", "matchesWinPct", None),
-    ("avgPoints", "avgPoints", "avgPoints_scouted"), ("avgPointsAgainst", "avgPointsAgainst", None),
-    ("avgTouchdowns", "avgTouchdowns", None),
-    ("redZonEfficiencyPct", "redZonEfficiencyPct", "redZone_any_score"),
-    ("thirdDownConversionPct", "thirdDownConversionPct", None),
-    ("fourthDownConversionPct", "fourthDownConversionPct", None),
-    ("avgYardsPlay", "avgYardsPlay", "yardsPlay_clean"),
-    ("avgOffensiveYards", "avgOffensiveYards", "offensiveYards_clean"),
-    ("avgTimeOfPossession", "avgTimeOfPossession", None),
-    ("twoPtConversionPct", "twoPtConversionPct", None),
-    ("avgPuntYards", "avgPuntYards", "puntYards_per_punt"),
-    ("avgYardsConceded", "avgYardsConceded", None),
-    ("avgPenaltiesConceded", "avgPenaltiesConceded", "penalties_other_side"),
-    ("avgTurnoverOnDowns", "avgTurnoverOnDowns", "turnoverOnDowns_msgs"),
+    ("matchesPlayed", ("matchesPlayed",)), ("matchesWon", ("matchesWon",)),
+    ("matchesLost", ("matchesLost",)), ("matchesWinPct", ("matchesWinPct",)),
+    ("avgPoints", ("avgPoints", "avgPoints_scouted")), ("avgPointsAgainst", ("avgPointsAgainst",)),
+    ("avgTouchdowns", ("avgTouchdowns",)),
+    ("redZonEfficiencyPct", ("redZonEfficiencyPct", "redZone_any_score", "redZone_per_series")),
+    ("thirdDownConversionPct", ("thirdDownConversionPct",)),
+    ("fourthDownConversionPct", ("fourthDownConversionPct",)),
+    ("avgYardsPlay", ("avgYardsPlay", "yardsPlay_clean")),
+    ("avgOffensiveYards", ("avgOffensiveYards", "offensiveYards_clean")),
+    ("avgTimeOfPossession", ("avgTimeOfPossession",)),
+    ("twoPtConversionPct", ("twoPtConversionPct",)),
+    ("avgPuntYards", ("avgPuntYards", "puntYards_per_punt")),
+    ("avgYardsConceded", ("avgYardsConceded",)),
+    ("avgPenaltiesConceded", ("avgPenaltiesConceded", "penalties_other_side")),
+    ("avgTurnoverOnDowns", ("avgTurnoverOnDowns", "turnoverOnDowns_msgs", "turnovers_all")),
 )
 
 
@@ -396,10 +435,8 @@ def check_lines(site, ours):
          "site / ours: the mean over the players; |diff|: the median gap",
          f"  {'field':26s} {'reading':22s} {'players':>7s} {'exact':>6s} {'corr':>6s} {'site':>9s} "
          f"{'ours':>9s} {'|diff|':>8s}"]
-    for field, key, alt in CHECKS:
-        for name in (key, alt):
-            if name is None:
-                continue
+    for field, readings in CHECKS:
+        for name in readings:
             pairs = [(_f(site[g].get(field)), ours[g].get(name)) for g in both]
             pairs = [(a, b) for a, b in pairs if a is not None and b is not None]
             if not pairs:
@@ -440,6 +477,64 @@ def check_lines(site, ours):
     return L
 
 
+# --- our reading against itself ---------------------------------------------------------------
+
+def _week(text):
+    t = _start(text)
+    if t is None:
+        return "unknown"
+    y, w, _ = t.isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def reconcile_lines(rows):
+    """Lines: each match read against itself, where two sources say the same thing -- the points the
+    scoring messages add up to against the final score, touchdown messages against touchdown plays,
+    turnovers on downs as plays against messages, both sides' possession against the game's
+    regulation clock -- overall and week by week, with the share of snaps carrying a spot."""
+    matches = defaultdict(dict)
+    for r in rows:
+        if _i(r.get("scouting")) and r.get("points_msgs") not in (None, ""):
+            matches[r["match_code"]][r["side"]] = r
+    pairs = [m for m in matches.values() if len(m) == 2]
+    L = [f"\n  ==== Our reading against itself: {len(pairs):,} matches with SCOUTING_FULL ====",
+         "  points: the scoring messages (TD 6, extra point 1, two-point try 2, field goal 3, safety 2, less "
+         "the undone) against the final score; TDs: TOUCHDOWN messages against touchdown plays; ToD: "
+         "turnovers on downs, plays against messages (matches with a spot on 80%+ of snaps); clock: both "
+         "sides' possession within 15 s of the 4 x 240 s; spot: the snaps carrying a field position"]
+    if not pairs:
+        return L + ["  (none: rerun player-stats to read the matches again with these counts)"]
+
+    def summary(ms):
+        sides = [r for m in ms for r in m.values()]
+        pts = [(_f(r["points_msgs"]), _f(r.get("points"))) for r in sides if _f(r.get("points")) is not None]
+        tds = [(_f(r["tds"]), _f(r["td_plays"])) for r in sides]
+        det = [r for r in sides if (_f(r.get("snaps")) or 0) and (_f(r.get("detail_snaps")) or 0) >= 0.8 * _f(r["snaps"])]
+        tod = [(_f(r["tod"]), _f(r["tod_msgs"])) for r in det]
+        clock = [abs(sum(_f(r["top_s"]) or 0 for r in m.values()) - GAME_S) for m in ms]
+        snaps = sum(_f(r.get("snaps")) or 0 for r in sides)
+        pct = lambda xs: None if not xs else 100 * sum(1 for a, b in xs if a == b) / len(xs)
+        return dict(n=len(ms), pts=pct(pts), tds=pct(tds), tod=pct(tod),
+                    clock=100 * sum(1 for x in clock if x <= 15) / len(clock) if clock else None,
+                    spot=100 * sum(_f(r.get("detail_snaps")) or 0 for r in sides) / snaps if snaps else None,
+                    gaps=Counter(int(a - b) for a, b in pts if a != b))
+    p = lambda x: f"{'-':>7s}" if x is None else f"{x:6.1f}%"
+    head = f"  {'':12s} {'matches':>8s} {'points':>7s} {'TDs':>7s} {'ToD':>7s} {'clock':>7s} {'spot':>7s}"
+    tot = summary(pairs)
+    L += [head, f"  {'all':12s} {tot['n']:8,d} {p(tot['pts'])} {p(tot['tds'])} {p(tot['tod'])} {p(tot['clock'])} "
+                f"{p(tot['spot'])}"]
+    if tot["gaps"]:
+        L.append("  points off by (messages less the final): " +
+                 ", ".join(f"{g:+d} ({n:,})" for g, n in tot["gaps"].most_common(8)))
+    weeks = defaultdict(list)
+    for m in pairs:
+        weeks[_week(next(iter(m.values())).get("start"))].append(m)
+    for w in sorted(weeks):
+        x = summary(weeks[w])
+        L.append(f"  {w:12s} {x['n']:8,d} {p(x['pts'])} {p(x['tds'])} {p(x['tod'])} {p(x['clock'])} {p(x['spot'])}")
+    return L
+
+
 # --- run -------------------------------------------------------------------------------------
 
 def read_cache(path):
@@ -465,7 +560,8 @@ def run(cur, out_dir, since=None, check=None, refresh=False):
     cached = [] if refresh else read_cache(cache_path)
     recent = dt.datetime.utcnow() - dt.timedelta(days=RECHECK_DAYS)
     done = {r["match_code"] for r in cached
-            if _i(r.get("scouting")) or (_start(r.get("start")) or recent) < recent}
+            if (_i(r.get("scouting")) and all(r.get(k) not in (None, "") for k in REREAD_IF_MISSING))
+            or (not _i(r.get("scouting")) and (_start(r.get("start")) or recent) < recent)}
     history = snowflake_io.fetch_history(cur)
     info = {r["MATCH_CODE"]: r for r in history}
     start = _start(since) if since else None
@@ -515,6 +611,7 @@ def run(cur, out_dir, since=None, check=None, refresh=False):
     if kinds:
         L.append("  in-play messages read (without their team): " +
                  ", ".join(f"{k} {n:,}" for k, n in kinds.most_common(40)))
+    L += reconcile_lines(window)
     names = sorted(ours, key=lambda g: -(ours[g].get("matchesPlayed") or 0))
     fields = list(dict.fromkeys(["player"] + [k for g in names for k in ours[g] if k != "form"] + ["form"]))
     write_csv(os.path.join(out_dir, "player_stats.csv"),
@@ -525,11 +622,10 @@ def run(cur, out_dir, since=None, check=None, refresh=False):
         side = []
         for g in sorted(set(site) & set(ours)):
             row = {"player": g}
-            for field, key, alt in CHECKS:
+            for field, readings in CHECKS:
                 row[f"site_{field}"] = site[g].get(field)
-                row[f"ours_{key}"] = ours[g].get(key)
-                if alt:
-                    row[f"ours_{alt}"] = ours[g].get(alt)
+                for name in readings:
+                    row[f"ours_{name}"] = ours[g].get(name)
             row["site_matchForm"] = "".join(json.loads(site[g]["matchForm"])) if site[g].get("matchForm") else ""
             row["ours_form"] = "".join(ours[g].get("form") or [])
             row["matches_scouted"] = ours[g].get("matches_scouted")
