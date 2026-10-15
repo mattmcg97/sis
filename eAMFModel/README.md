@@ -1987,7 +1987,9 @@ missing something. Nothing is ever fitted to close those gaps.
   - the play before: nothing gained, a short gain, a first down, a loss, a fresh possession or a
     timeout;
   - the half (first, second, overtime) and whether the two-minute warning has passed;
-  - the offense's lead, down, distance and field zone;
+  - the offense's lead, down, distance and field zone (8 zones: the own 10, to the 30, to midfield,
+    to the other 30, the other 29–20 and 19–11 apart as field-goal range, the 10 to the 5, inside
+    the 5);
   - the snaps played so far and the snaps left in the half (below).
 
   Snaps left stands in for the time left (`--split snaps`, the default): it tells Q1 from Q2 and the
@@ -2012,14 +2014,15 @@ missing something. Nothing is ever fitted to close those gaps.
   real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
   At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
   distance and the time, then the field, before it lets the lead go. It keeps the half, the snaps
-  left (0–1, 2–4, 5+) and behind / level / ahead. The field keeps its 7 zones as long as it can:
+  left (0–1, 2–4, 5+) and behind / level / ahead. The field keeps its zones as long as it can:
   with the other half as one zone, a real touchdown from the 12 drawn at the 45 ran on to a long
   one. The audit showed why: level sides in Q4's last 2:00 scored a
   touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
   sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
   prints how deep real states fall, for the rest of the game and the end of a half apart. It
   also sets Q4's last 2:00, by the lead, against the league groups those real snaps draw from:
-  touchdowns, losses and seconds. A group that mixes situations shows up as a gap there, apart
+  touchdowns, losses and seconds. For touchdowns it also gives the sim's own chance at each state's
+  field: the group's gains that reach the goal from there, plus its touchdowns that run on. A group that mixes situations shows up as a gap there, apart
   from the game flow and the decisions. Last, the late choices that settle a game in regulation
   (going for it 3 behind, kicking level, going for two at −1 and −2) and the overtime rate, by
   fortnight of the build's data: a trend says the players are still learning, and the oldest
@@ -2054,7 +2057,9 @@ missing something. Nothing is ever fitted to close those gaps.
   - The distance stops at the end zones: past the goal line is a touchdown, behind its own a
     safety.
   - A real touchdown drawn from further back runs on with the real chance that a gain that long
-    goes further.
+    goes further, in the same part of the game: at the end of a half by the half, snaps left and
+    lead, each shrunk toward the league's by 200 snaps. A level side late plays for the kick, and
+    its gains go less far than the league's.
 - **Snaps left in the half** is a core split of both draws, in place of a cut at 0:30. It is
   the expected count, never the count that actually followed, read off a table by:
   - the half and its 10-second slice of time left;

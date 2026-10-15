@@ -386,16 +386,28 @@ class TestSimulate(unittest.TestCase):
         m = built()
         _fixed_time(m, 7.0)
         _fixed_play(m, 30, True)
-        m.gain_surv = np.ones(101)                                         # a long gain always goes on
+        runs = lambda S: np.tile(S, (v21.SIZES["endgame3"], 1))
+        m.gain_surv_end = runs(np.ones(101))                               # a long gain always goes on
         st = {}
         v21.simulate(m, _state(m, y=20), 20, stats=st)
         log = v21.snap_log(st)
         self.assertEqual(log["gain"][np.flatnonzero(log["path"] == 0)[0]], 80)
-        m.gain_surv = np.r_[np.ones(31), np.zeros(70)]                     # nothing passes 30 yards
+        m.gain_surv_end = runs(np.r_[np.ones(31), np.zeros(70)])           # nothing passes 30 yards
         st = {}
         v21.simulate(m, _state(m, y=20), 20, stats=st)
         log = v21.snap_log(st)
         self.assertEqual(log["gain"][np.flatnonzero(log["path"] == 0)[0]], 30)
+        # the end of a half reads its own: Q4's last 0:20, level, nothing passes 30 yards there
+        m.gain_surv_end = runs(np.ones(101))
+        late = v21.endgame3_of(5, v21.remain_b(m.remain_at(4, 20.0, 1, 3, 3, 1)), 1)
+        m.gain_surv_end[late] = np.r_[np.ones(31), np.zeros(70)]
+        st = {}
+        v21.simulate(m, _state(m, period=4, clock=20.0, y=20, prev=v21.SHORT), 20, stats=st)
+        log = v21.snap_log(st)
+        self.assertEqual(log["gain"][np.flatnonzero(log["path"] == 0)[0]], 30)
+        b = built()
+        self.assertEqual(b.gain_surv_end.shape, (v21.SIZES["endgame3"], 101))
+        self.assertTrue((np.diff(b.gain_surv_end, axis=1) <= 1e-12).all())
 
     def test_inches_move_the_chains_and_a_down_played_again_keeps_its_number(self):
         m = built()

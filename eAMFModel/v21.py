@@ -101,14 +101,15 @@ PREV_NAMES = ("nothing gained", "short gain", "first down", "loss", "fresh posse
 PHASES = ("Q1", "Q2", "Q2 2:00", "Q3", "Q4", "Q4 2:00", "OT")
 MARGIN_EDGES = np.array([-8.5, -3.5, -0.5, 0.5, 3.5, 8.5])
 DIST_EDGES = np.array([1.5, 3.5, 6.5, 10.5])
-ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 89.5, 95.5])     # the last two: the 10 to the 5, inside the 5
+ZONE_EDGES = np.array([10.5, 30.5, 50.5, 70.5, 80.5, 89.5, 95.5])   # the other side's 29-20 and 19-11 apart
+                                                                     # (field-goal range); the 10 to the 5, inside the 5
 ELAPSED_EDGES = np.array([30.5, 60.5, 90.5])
 REMAIN_EDGES = np.array([1.5, 2.5, 4.5, 7.5, 12.5, 17.5])   # snaps left in the half: 0-1, 2, 3-4, 5-7, 8-12, 13-17, 18+
 REMAIN_NAMES = ("0-1", "2", "3-4", "5-7", "8-12", "13-17", "18+")
 TIME_EDGES = np.array([6.5, 9.5, 14.5, 24.5, 34.5])
 TIME_BUCKETS = ("<=6s", "7-9s", "10-14s", "15-24s", "25-34s", "35s+")
 
-SIZES = dict(prev=6, phase=7, part=5, half=3, margin=7, down=4, dist=5, zone=7, elapsed=4, remain=7, tb=6,
+SIZES = dict(prev=6, phase=7, part=5, half=3, margin=7, down=4, dist=5, zone=8, elapsed=4, remain=7, tb=6,
              lead3=3, tb2=2, dist3=3, zone3=3, endgame=50, endgame3=22)  # part and the last six: derive's
 # The draws' part of the game (SPLIT): "snaps" -- the half and the two-minute warning (part: the first
 # half before its 2:00, its last 2:00, the same of the second, overtime), the snaps left in the half
@@ -250,6 +251,7 @@ REMAIN_SLICE = 10.0           # snaps left in the half, by 10-second slice of th
 REMAIN_SLICES = int(2 * QUARTER // REMAIN_SLICE) + 1      # the clock running or not, both sides' timeouts, the lead
 REMAIN_SHAPE = (3, REMAIN_SLICES, 2, 4, 4, 3)
 REMAIN_PRIOR = 20.0           # a cell's own count shrunk toward its slice's (and clock's) by this many snaps
+SURV_PRIOR = 200.0            # gains' survival at the end of a half: shrunk toward the league's by this many snaps
 REFINE_REMAINING = True
 REFINE_ROUNDS = 3             # the sim's own counts, the draws rebuilt on them, so many times over
 REFINE_PATHS = 6000
@@ -997,6 +999,7 @@ class Model:
         self.gamers, self.teams = {}, {}
         self.tilt = {}                     # adjusted: {"time"|"dist": {effect: arr}}
         self.gain_surv = np.ones(101)      # P(a positive gain reaches x yards)
+        self.gain_surv_end = None          # the same by endgame3 (the end of a half by snaps left and lead), shrunk to it
         self.choices = {}                  # the decisions: {name in DECISIONS: Choice}
         self.fg_make = np.array([0.8])     # P(make) by 5-yard kick distance from 15
         self.fg_near = np.array([[5.0, 5.0]])   # (seconds left, seconds used) of real kicks FG_NEAR or less from the end
@@ -1039,7 +1042,7 @@ class Model:
 MODEL_FILE = "v21model.pkl"
 
 
-ZONE3 = np.array([0, 0, 0, 1, 1, 2, 2])                  # own half, the other half outside the 10, inside the 10
+ZONE3 = np.array([0, 0, 0, 1, 1, 1, 2, 2])               # own half, the other half outside the 10, inside the 10
 
 
 def late_of(period, clock):
@@ -1186,6 +1189,21 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         hazard = np.where(at_risk > 0, ended / np.maximum(at_risk, 1), 0.0)
         m.gain_surv = np.concatenate([[1.0], np.cumprod(1 - hazard[:-1])])
         m.gain_surv[:2] = 1.0
+        # and by the end of a half (endgame3): a level side late in field-goal range plays for the kick,
+        # its gains go less far than the league's; each shrunk toward the league's by SURV_PRIOR snaps
+        pos = [r for r in recs if r["kind"] == GAIN and r["gain"] > 0]
+        f = derive(dict(phase=phase_of([r["period"] for r in pos], np.array([r["clock"] for r in pos], float)),
+                        remain=remain_b(m.remain_at(*remain_inputs(pos))), margin=margin_b([r["margin"] for r in pos])))
+        cls = f["endgame3"]
+        m.gain_surv_end = np.tile(m.gain_surv, (SIZES["endgame3"], 1))
+        for c in np.unique(cls):
+            w = cls == c
+            ar = np.bincount(np.minimum(g[w], 100), minlength=101)[::-1].cumsum()[::-1]
+            en = np.bincount(np.minimum(g[w & ~td], 100), minlength=101)
+            hz = (en + SURV_PRIOR * hazard) / (ar + SURV_PRIOR)
+            sv = np.concatenate([[1.0], np.cumprod(1 - hz[:-1])])
+            sv[:2] = 1.0
+            m.gain_surv_end[c] = sv
 
     _build_draws(m, recs, min_records, verbose)
 
@@ -1395,7 +1413,7 @@ def report_build(m, recs=None):
     if recs is not None:
         for line in chains_lines(recs):
             print(line)
-        for line in late_lines(m, recs, real):
+        for line in late_lines(m, recs, real, feats):
             print(line)
     for line in getattr(m, "_trend_lines", []):
         print(line)
@@ -1451,10 +1469,36 @@ def group_rates(b, flag):
     return np.add.reduceat(np.asarray(flag, float), b.start) / np.maximum(1, b.count)
 
 
-def late_lines(m, recs, real=None):
+def td_chance(m, groups, need, cls):
+    """The chance the sim's distance draw ends in a touchdown from each state: its group's real snaps,
+    each a touchdown where its gain reaches the state's goal, or where it was one itself and runs on
+    there (gain_surv_end of the state's endgame3 class)."""
+    b, pay = m.dist, m.dist.payload
+    S = getattr(m, "gain_surv_end", None)
+    S = S if S is not None else np.tile(m.gain_surv, (SIZES["endgame3"], 1))
+    if not len(groups):
+        return np.zeros(0)
+    key = np.stack([groups, need, cls], 1)
+    uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    vals = np.full(len(uniq), np.nan)
+    for k, (g_, nd, c) in enumerate(uniq):
+        if g_ < 0:
+            continue
+        sl = slice(b.start[g_], b.start[g_] + b.count[g_])
+        gain, td, kind = pay["gain"][sl].astype(np.int64), pay["td"][sl], pay["kind"][sl]
+        reach = gain >= nd
+        g0 = np.clip(gain, 0, 100)
+        run = td & ~reach & (gain > 0)
+        p = np.where(reach, 1.0, np.where(run, S[c, min(nd, 100)] / np.maximum(S[c, g0], 1e-12), 0.0))
+        vals[k] = float(np.mean(np.where(kind == GAIN, p, 0.0)))
+    return vals[inv.ravel()]
+
+
+def late_lines(m, recs, real=None, feats=None):
     """Q4's last 2:00, by the lead: the real snaps' touchdowns, losses and seconds against what the
-    league's draws give the same states (their groups' real snaps): a group that mixes the situation
-    parts from the real snaps it stands for."""
+    league's draws give the same states -- their groups' real snaps, and the sim's touchdown chance at
+    the states' own field (td_chance): a group that mixes the situation, or gains that reach further
+    from where the state is, part from the real snaps it stands for."""
     real = real if real is not None else getattr(m, "_real_bins", None)
     if real is None or len(real[1]) != len(recs):
         return []
@@ -1470,15 +1514,18 @@ def late_lines(m, recs, real=None):
     d_loss = group_rates(m.dist, (m.dist.payload["kind"] == GAIN) & (m.dist.payload["gain"] < 0))
     t_mean = np.add.reduceat(m.time.payload["seconds"].astype(float), m.time.start) / np.maximum(1, m.time.count) \
         if len(m.time.start) else np.zeros(0)
-    out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown %, loss %,"
-           " seconds; real / group)"]
+    feats = feats if feats is not None else _features(recs, m)
+    out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown % real / group /"
+           " the sim's chance at the state's own field; loss %, seconds: real / group)"]
     for k, name in enumerate(("behind", "level", "ahead")):
         w = on & (lead == k)
         bd, bt = real[1][w], real[0][w]
         if not w.any() or (bd < 0).all():
             continue
         okd, okt = bd >= 0, bt >= 0
-        out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * d_td[bd[okd]].mean():.1f},"
+        ch = td_chance(m, bd, (100 - field[w]).astype(np.int64), feats["endgame3"][w])
+        out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * d_td[bd[okd]].mean():.1f}"
+                   f" / {100 * np.nanmean(ch):.1f},"
                    f" loss {100 * loss[w].mean():.1f} / {100 * d_loss[bd[okd]].mean():.1f}, seconds"
                    f" {g('seconds')[w].mean():.1f} / {t_mean[bt[okt]].mean() if okt.any() else float('nan'):.1f}")
     return out
@@ -1891,14 +1938,16 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if SMOOTH_YARDS:
             spread = (kind == GAIN) & (gain != 0) & ~td
             gain = np.where(spread, gain + rng.integers(-SMOOTH_YARDS, SMOOTH_YARDS + 1, len(ix)), gain)
-        # a real touchdown drawn from further back runs on with the real chance a gain that long goes on
+        # a real touchdown drawn from further back runs on with the real chance a gain that long goes on,
+        # in the same part of the game (endgame3: at the end of a half by the snaps left and the lead)
         need = 100 - y[ix]
         on = np.flatnonzero(td & (gain > 0) & (gain < need))
         if len(on):
-            S_ = model.gain_surv
+            S_ = model.gain_surv_end[f["endgame3"][on]] if getattr(model, "gain_surv_end", None) is not None \
+                else np.tile(model.gain_surv, (len(on), 1))
             g0 = np.clip(gain[on], 0, 100)
-            t = rng.random(len(on)) * S_[g0]
-            reach = np.searchsorted(-S_, -t, side="right") - 1          # the longest gain with S >= t
+            t = rng.random(len(on)) * S_[np.arange(len(on)), g0]
+            reach = (S_ >= t[:, None]).sum(1) - 1                         # the longest gain with S >= t
             gain[on] = np.maximum(g0, reach)
         # a new set of downs: the real snap's own, where it was to go as far (spots are whole yards: a
         # sneak for inches shows as 0 and moves the chains); else by the yards
