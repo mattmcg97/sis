@@ -134,10 +134,11 @@ KEYS = ("full", "lean")
 BLEND_MIN = 5
 # Field windows (build's field, 0 off): the distance draw takes a real snap of its group from near the
 # state's own field -- within `field` x the yards to go of it (FIELD_YARDS at least), or the FIELD_MIN
-# nearest where fewer are there (Bins.near) -- so a gain made at midfield is not played out at the 12,
-# nor a touchdown from the 12 run on from midfield, and a group's touchdowns stay where they were made.
-# A tilted draw (adjusted) resamples FIELD_CANDIDATES near ones on their place in the whole group.
-FIELD_YARDS = 2
+# nearest where fewer are there (Bins.near) -- and keeps its own result: its touchdown is one, a gain
+# short of its own goal stays short of this one (draw_play), so a gain made at midfield is not played
+# out at the 12, nor a touchdown from the 12 run on from midfield. A tilted draw (adjusted) resamples
+# FIELD_CANDIDATES near ones on their place in the whole group.
+FIELD_YARDS = 1
 FIELD_MIN = 20
 FIELD_CANDIDATES = 6
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
@@ -264,11 +265,12 @@ DECISIONS = {
                            ("togo4", "fg4", "phase"), ("togo10", "dist", "phase"), ("togo10", "dist"),
                            ("togo10",), ())),
     "early_fg": dict(label="field goal on downs 1-3 in the half's last minute", options=("play on", "kick"),
-                     who="offense", features=("left", "range", "down", "margin", "half", "fg4"),
-                     sizes=(6, 4, 3, 7, 3, 4),
-                     levels=(("left", "range", "down", "margin", "fg4", "half"), ("left", "range", "margin", "fg4", "half"),
-                             ("left", "range", "fg4", "half"), ("left", "range", "half"), ("left", "fg4", "half"),
-                             ("left", "half"), ("left",), ())),
+                     who="offense", features=("left", "range", "down", "margin", "half", "fg4", "clock2", "to3"),
+                     sizes=(6, 4, 3, 7, 3, 4, 2, 3),
+                     levels=(("left", "clock2", "to3", "range", "down", "fg4", "half"),
+                             ("left", "clock2", "to3", "range", "fg4", "half"), ("left", "clock2", "to3", "fg4", "half"),
+                             ("left", "clock2", "fg4", "half"), ("left", "range", "fg4", "half"), ("left", "fg4", "half"),
+                             ("fg4", "half"), ("left", "half"), ("left",), ())),
     "kickoff": dict(label="kick-off", options=("return", "touchback", "no landing zone", "kept"), who="kicker",
                     features=("desperate", "late", "lead"), sizes=(2, 2, 3),
                     levels=(("desperate", "late", "lead"), ("desperate", "late"), ("desperate",), ())),
@@ -279,8 +281,9 @@ DECISIONS = {
                    who="defense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
                    levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
     "to_off": dict(label="offense's timeout before a running-clock snap", options=("none", "timeout"),
-                   who="offense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
-                   levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
+                   who="offense", features=("phase", "margin", "left", "range2"), sizes=(7, 7, 6, 2),
+                   levels=(("phase", "margin", "left", "range2"), ("phase", "margin", "left"), ("phase", "margin"),
+                           ("phase",), ())),
 }
 MARGIN_NAMES = ("9+ behind", "4-8 behind", "1-3 behind", "level", "1-3 ahead", "4-8 ahead", "9+ ahead")
 SLICE_NAMES = {
@@ -361,6 +364,11 @@ def early_b(s):
 
 def range_b(k):
     return _cut(k, RANGE_EDGES)
+
+
+def in_range(togo):
+    """1 where a field goal is in reach (the kick FG_MAX yards or less), off the yards to the goal."""
+    return (np.asarray(togo) + 17 <= FG_MAX).astype(np.int64)
 
 
 def lead3(m):
@@ -761,7 +769,9 @@ def fit_leans(base, chosen, who, n_who, prior=DECISION_PRIOR, steps=8):
 
 class Choice:
     """A decision drawn from real ones: the league's share of each option among the real decisions in
-    states alike (Bins over its features), leaned by the deciding gamer's log-odds shift (lean)."""
+    states alike (Bins over its features), leaned by the deciding gamer's log-odds shift (lean). Blended
+    (blend > 0): every cell of BLEND_MIN real decisions or more kept, a state's shares its cells' over
+    the levels, each weighted as Bins.blend_weights has it (a cell of n weighs n / (n + blend))."""
 
     def __init__(self, name, bins, shares, lean, league, n, counts, ruled=0, broke=0):
         self.name, self.bins, self.shares, self.lean, self.league, self.n = name, bins, shares, lean, league, n
@@ -778,10 +788,28 @@ class Choice:
         tot = m.sum(1, keepdims=True)
         return np.where(tot > 0, m / np.where(tot > 0, tot, 1), allowed / allowed.sum(1, keepdims=True))
 
+    def base(self, cols):
+        """(states, options) the league's shares in each state's cells (no lean, no rule)."""
+        n = len(np.asarray(next(iter(cols.values()))))
+        if self.bins is None:
+            return np.tile(self.shares[0], (n, 1))
+        blend = getattr(self, "blend", 0.0)
+        if not blend:
+            return self.shares[self.bins.bin_of(cols)]
+        C = self.bins.chain(cols)
+        W = self.bins.blend_weights(C, blend)
+        out = np.zeros((n, self.shares.shape[1]))
+        for li in range(C.shape[1]):
+            ok = C[:, li] >= 0
+            if ok.any():
+                out[ok] += W[ok, li, None] * self.shares[C[ok, li]]
+        return out
+
     @classmethod
     def build(cls, name, X, chosen, who, n_who, min_records=DECISION_MIN, prior=DECISION_PRIOR, gamers=True,
-              allowed=None):
-        """allowed: (decisions, options) what the rules left each real decision (None: no rules)."""
+              allowed=None, blend=0.0):
+        """allowed: (decisions, options) what the rules left each real decision (None: no rules); blend: the
+        cells blended with this prior (0: the first level with min_records)."""
         spec = DECISIONS[name]
         K = len(spec["options"])
         chosen, who = np.asarray(chosen, np.int64), np.asarray(who, np.int64)
@@ -793,7 +821,7 @@ class Choice:
         league = np.bincount(chosen, minlength=K) / len(chosen)
         X = np.asarray(X, np.int64).reshape(len(chosen), -1)
         bins = Bins.build(spec["features"], spec["sizes"], spec["levels"], X, chosen.astype(float),
-                          {"choice": chosen}, min_records)
+                          {"choice": chosen}, BLEND_MIN if blend else min_records)
         group = np.repeat(np.arange(len(bins.count)), bins.count)
         got = np.zeros((len(bins.count), K))
         np.add.at(got, (group, bins.payload["choice"]), 1)
@@ -807,28 +835,30 @@ class Choice:
             keep = allowed[np.arange(len(chosen)), chosen]
             ruled, broke = int(under.sum()), int((~keep).sum())
         lean = np.zeros((n_who, K))
-        mine = bins.bin_of(cols)
-        if gamers and keep.any():
-            base = cls._masked(shares[mine], None if allowed is None or allowed.all() else allowed)[keep]
-            lean = fit_leans(np.log(np.maximum(base, 1e-9)), chosen[keep], who[keep], n_who, prior)
         out = cls(name, bins, shares, lean, league, len(chosen), counts, ruled, broke)
-        out.real_bins = mine.astype(np.int32)              # the real decisions' groups, for gamer_rate
+        out.blend = float(blend or 0.0)
+        mine = out.base(cols)
+        if gamers and keep.any():
+            base = cls._masked(mine, None if allowed is None or allowed.all() else allowed)[keep]
+            out.lean = fit_leans(np.log(np.maximum(base, 1e-9)), chosen[keep], who[keep], n_who, prior)
+        out.real_base = mine.astype(np.float32)            # the real decisions' shares, for gamer_rate
         return out
 
     def gamer_rate(self, g, opt):
         """How often gamer g would take the option over every real decision's state (their lean on the
         league's shares there)."""
-        bins = getattr(self, "real_bins", None)
-        if bins is None or self.bins is None:
+        base = getattr(self, "real_base", None)
+        if base is None and getattr(self, "real_bins", None) is not None:
+            base = self.shares[self.real_bins]
+        if base is None or self.bins is None:
             return float(self.league[opt])
-        z = np.log(np.maximum(self.shares[bins], 1e-12)) + self.lean[g]
+        z = np.log(np.maximum(base, 1e-12)) + self.lean[g]
         z -= z.max(1, keepdims=True)
         p = np.exp(z)
         return float((p[:, opt] / p.sum(1)).mean())
 
     def probs(self, cols, who, allowed=None):
-        base = self.shares[self.bins.bin_of(cols)] if self.bins is not None else np.tile(self.shares[0], (len(who), 1))
-        base = self._masked(base, allowed)
+        base = self._masked(self.base(cols), allowed)
         z = np.log(np.maximum(base, 1e-12)) + self.lean[who]
         if allowed is not None:
             z = np.where(allowed, z, -np.inf)
@@ -1090,13 +1120,16 @@ def decision_features(name, pts):
         p = g("period")
         mb = margin_b(g("lead"))
         cols = [early_b(g("left")), range_b(g("togo") + 17), g("down") - 1, mb,
-                np.where(p == 2, 0, np.where(p == 4, 1, 2)), fg4_of(g("lead"))]
+                np.where(p == 2, 0, np.where(p == 4, 1, 2)), fg4_of(g("lead")), running_of(g("prev")),
+                np.where(g("own_to") < 0, 2, np.minimum(2, g("own_to")))]          # not known: three, as remain
     elif name == "kickoff":
         cols = [g("desperate"), g("late"), lead3(g("lead"))]
     elif name == "two":
         cols = [g("cell"), np.clip(g("lead"), -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN, conv_late(g("cell"))]
     else:
         cols = [phase_of(g("period"), g("clock")), margin_b(g("off_margin")), left_b(g("left"))]
+        if name == "to_off":
+            cols.append(in_range(g("togo")))
     return np.stack([np.asarray(c, np.int64) for c in cols], axis=1)
 
 
@@ -1167,6 +1200,7 @@ class Model:
         self.key = KEY
         self.blend = 0.0
         self.field = 0.0                   # the distance draws' field windows (0: off)
+        self.decision_blend = 0.0          # the decisions' cells blended (0: off)
         self.time = self.dist = None
         self.own = {}                      # full: {(who, role, "time"|"dist"): Bins}
         self.gamers, self.teams = {}, {}
@@ -1308,12 +1342,13 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0):
+          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0, decision_blend=0.0):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
     global rules, the real shares alone; split: the draws' part of the game (SPLIT); key: the league's
     draws' key (KEY); blend: the league's draws' levels blended with this prior (0: off, BLEND_MIN);
-    field: the distance draws' field windows, this share of the yards to go (0: off, FIELD_YARDS)."""
+    field: the distance draws' field windows, this share of the yards to go (0: off, FIELD_YARDS);
+    decision_blend: the decisions' cells blended with this prior (0: off, Choice)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     draw_spec(split, key)
@@ -1323,6 +1358,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.key = key
     m.blend = float(blend or 0.0)
     m.field = float(field or 0.0)
+    m.decision_blend = float(decision_blend or 0.0)
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -1402,7 +1438,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         chosen = np.array([q["choice"] for q in got], np.int64)
         X = decision_features(name, got)
         allowed = v21_rules.mask(m.rules, name, v21_rules.fine(name, got)) if got else None
-        m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions, allowed=allowed)
+        m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions, allowed=allowed,
+                                       blend=m.decision_blend)
     # kick-offs' outcomes: the field and clock of the returned and the kept ones, by desperate and late
     pool = np.array(dec["kick_pool"], float).reshape(-1, 5)
     for kind in (RETURN, KEPT):
@@ -1446,7 +1483,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
     run = dec["to_def"]
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, blend=m.blend,
-                  field=m.field,
+                  field=m.field, decision_blend=m.decision_blend,
                   timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
@@ -1625,6 +1662,9 @@ def report_build(m, recs=None):
               + ", ".join(f"{DECISIONS[k]['label'].split(' (')[0]} {len(v)}" for k, v in m.rules.items()))
     else:
         print("  no rules: the real shares alone")
+    if getattr(m, "decision_blend", 0.0):
+        print(f"  the decisions' cells blended: a cell of n real decisions weighs n / (n + {m.decision_blend:g}),"
+              f" the rest its parents' (cells of {BLEND_MIN}+ kept)")
     for name, ch in m.choices.items():
         spec = DECISIONS[name]
         opt, need = LEAN_SHOWN[name]
@@ -1674,8 +1714,8 @@ def group_rates(b, flag):
 def td_chance(m, groups, need, cls, share=None):
     """The chance the sim's distance draw ends in a touchdown from each state: its group's real snaps,
     each a touchdown where its gain reaches the state's goal, or where it was one itself and runs on
-    there (gain_surv_end of the state's endgame3 class). share: the field windows' (Bins.near; None the
-    model's own, 0 the whole group)."""
+    there (gain_surv_end of the state's endgame3 class); with field windows (share: Bins.near's; None
+    the model's own, 0 the whole group), the share of the snaps near the state's field that were one."""
     b, pay = m.dist, m.dist.payload
     share = (getattr(m, "field", 0.0) or 0.0) if share is None else share
     S = getattr(m, "gain_surv_end", None)
@@ -1687,7 +1727,11 @@ def td_chance(m, groups, need, cls, share=None):
     vals = np.full(len(uniq), np.nan)
     ok = np.flatnonzero(uniq[:, 0] >= 0)
     if not share:                     # the whole group: every need at once, per group and class
-        for g_, c in np.unique(uniq[ok][:, [0, 2]], axis=0):
+        pairs, pinv = np.unique(uniq[ok][:, [0, 2]], axis=0, return_inverse=True)
+        pinv = pinv.ravel()
+        by = np.argsort(pinv, kind="stable")
+        cut = np.searchsorted(pinv[by], np.arange(len(pairs) + 1))
+        for pi, (g_, c) in enumerate(pairs):
             sl = slice(b.start[g_], b.start[g_] + b.count[g_])
             gain, td = pay["gain"][sl].astype(np.int64), pay["td"][sl]
             pos = (pay["kind"][sl] == GAIN) & (gain > 0)
@@ -1696,21 +1740,14 @@ def td_chance(m, groups, need, cls, share=None):
             ran = np.bincount(gp[td[pos]], 1.0 / np.maximum(S[c, gp[td[pos]]], 1e-12), minlength=101)
             ran = np.r_[0.0, np.cumsum(ran)[:-1]]                                   # touchdowns short of it
             curve = (reach + S[c] * ran) / max(1, len(gain))
-            w = np.flatnonzero((uniq[:, 0] == g_) & (uniq[:, 2] == c))
+            w = ok[by[cut[pi]:cut[pi + 1]]]
             vals[w] = curve[np.clip(uniq[w, 1], 0, 100)]
         return vals[inv.ravel()]
-    if len(ok):
+    if len(ok):                       # near the field: the drawn snap's own touchdown (draw_play)
         order = b.by_field()[0]
         lo, hi = b.near(uniq[ok, 0], 100 - uniq[ok, 1], share)
-    for i, k in enumerate(ok):
-        g_, nd, c = uniq[k]
-        sl = order[lo[i]:hi[i]]
-        gain, td, kind = pay["gain"][sl].astype(np.int64), pay["td"][sl], pay["kind"][sl]
-        reach = gain >= nd
-        g0 = np.clip(gain, 0, 100)
-        run = td & ~reach & (gain > 0)
-        p = np.where(reach, 1.0, np.where(run, S[c, min(nd, 100)] / np.maximum(S[c, g0], 1e-12), 0.0))
-        vals[k] = float(np.mean(np.where(kind == GAIN, p, 0.0)))
+        hit = np.r_[0, np.cumsum(pay["td"][order].astype(np.int64))]
+        vals[ok] = (hit[hi] - hit[lo]) / np.maximum(1, hi - lo)
     return vals[inv.ravel()]
 
 
@@ -1784,7 +1821,8 @@ def late_lines(m, recs, real=None, feats=None):
     drawn = "near it" if getattr(m, "field", 0.0) else "the whole group"
     share = getattr(m, "field", 0.0) or FIELD_SHOWN
     out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown % real / group /"
-           f" the sim's chance at the state's own field from the whole group / from near it, field {share:g};"
+           f" the sim's chance at the state's own field from the whole group / from near it, field {share:g}, its"
+           " own touchdown;"
            f" the sim draws from {drawn}; loss %, seconds: real / group)"]
     for k, name in enumerate(("behind", "level", "ahead")):
         sub = np.flatnonzero(on & (lead == k))
@@ -1815,7 +1853,8 @@ def field_lines(m, recs, feats=None, n_max=FIELD_SAMPLE, seed=0):
     drawn = "near it" if getattr(m, "field", 0.0) else "the whole group"
     share = getattr(m, "field", 0.0) or FIELD_SHOWN
     out = [f"  every snap by the field ({len(sub):,} real ones): touchdown % real / group / the sim's chance at the"
-           f" state's own field from the whole group / from near it, field {share:g} (the sim draws from {drawn})"]
+           f" state's own field from the whole group / from near it, field {share:g}, its own touchdown (the sim"
+           f" draws from {drawn})"]
     got = _td_states(m, recs, feats, sub)
     for name, w in [("all", np.ones(len(sub), bool))] + [(nm, zone == z) for z, nm in enumerate(ZONE_NAMES)]:
         if w.any():
@@ -2029,8 +2068,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
             ch = model.choices[name]          # the league's shares in each decision's cell (no lean, no rule)
-            st.setdefault("_dec_base", []).append(
-                ch.shares[ch.bins.bin_of(cols)] if ch.bins is not None else np.tile(ch.shares[0], (len(who), 1)))
+            st.setdefault("_dec_base", []).append(ch.base(cols))
             if name == "two":                 # the audit's conversions: the clock's cell, the lead after the six
                 st.setdefault("_two", []).append((np.asarray(cols["cell"]).copy(), np.asarray(cols["lead"]) - CONV_MARGIN,
                                                   k.copy(), st["_dec_base"][-1][:, 1].copy()))
@@ -2248,18 +2286,29 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         k = k_dist[ix, off] if k_dist is not None else None
         b = league_bins(model.dist, f)
         j = model.dist.draw_near(b, y[ix], u, field_share, k, rng) if field_share else model.dist.draw(b, u, k)
-        names = ("kind", "gain", "shift", "td", "made", "rdist")
+        names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()
         own("dist", f, ix, off, u, names, out, near=y[ix] if field_share else None)
-        kind, gain, shift, td, made, rdist = (out[x] for x in names)
+        kind, gain, shift, td, made, rdist = (out[x] for x in names[:6])
+        gain = gain.astype(np.int64)
         if SMOOTH_YARDS:
             spread = (kind == GAIN) & (gain != 0) & ~td
             gain = np.where(spread, gain + rng.integers(-SMOOTH_YARDS, SMOOTH_YARDS + 1, len(ix)), gain)
-        # a real touchdown drawn from further back runs on with the real chance a gain that long goes on,
-        # in the same part of the game (endgame3: at the end of a half by the snaps left and the lead)
         need = 100 - y[ix]
-        on = np.flatnonzero(td & (gain > 0) & (gain < need))
+        if field_share:
+            # drawn near the state's own field, the real snap's own result: its touchdown is one here, and
+            # a gain that fell short of its own goal falls short of this one, as far of the way there
+            gain = np.where(td, np.maximum(gain, need), gain)
+            far = (kind == GAIN) & ~td & (gain >= need)
+            r_need = np.maximum(1, 100 - out["field"].astype(np.int64))
+            gain = np.where(far, np.minimum(need - 1, gain * need // r_need), gain)
+            on = np.zeros(0, np.int64)
+        else:
+            far = np.zeros(len(ix), bool)
+            # a real touchdown drawn from further back runs on with the real chance a gain that long goes
+            # on, in the same part of the game (endgame3: at the end of a half by the snaps left and the lead)
+            on = np.flatnonzero(td & (gain > 0) & (gain < need))
         if len(on):
             S_ = model.gain_surv_end[f["endgame3"][on]] if getattr(model, "gain_surv_end", None) is not None \
                 else np.tile(model.gain_surv, (len(on), 1))
@@ -2269,7 +2318,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             gain[on] = np.maximum(g0, reach)
         # a new set of downs: the real snap's own, where it was to go as far (spots are whole yards: a
         # sneak for inches shows as 0 and moves the chains); else by the yards
-        same = (made <= 1) & (rdist == dist[ix])
+        same = (made <= 1) & (rdist == dist[ix]) & ~far
         conv = np.where(same, made == 1, gain >= dist[ix])
         src = np.array([0] + [1 if lay[0] == "team" else 2 for lay in layers[1:]], np.int64)[out["_from"]]
         return kind, gain, shift, conv, made == 2, src
@@ -2287,8 +2336,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                                   fine=state(ix[d_], 1 - off[d_]), ix=ix[d_]) == 1
         o_ = np.flatnonzero(running & ~call_def & (tos[ix, off] > 0))
         if len(o_):
-            call_off[o_] = decide("to_off", {k: v[o_] for k, v in cols.items()}, gamer[ix[o_], off[o_]],
-                                  fine=state(ix[o_], off[o_]), ix=ix[o_]) == 1
+            c_off = dict({k: v[o_] for k, v in cols.items()}, range2=in_range(100 - y[ix[o_]]))
+            call_off[o_] = decide("to_off", c_off, gamer[ix[o_], off[o_]], fine=state(ix[o_], off[o_]), ix=ix[o_]) == 1
         prv = prev[ix].copy()
         tos0 = np.stack([tos[ix, off], tos[ix, 1 - off]], axis=1)      # before any is called for this snap
         tos[ix[call_def], 1 - off[call_def]] -= 1
@@ -2458,7 +2507,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                 mb = margin_b(score[e, off] - score[e, 1 - off])
                 cols = dict(left=early_b(left[can]), range=range_b(kd[can]), down=down[e] - 1, margin=mb,
                             half=np.where(period[e] == 2, 0, np.where(period[e] == 4, 1, 2)),
-                            fg4=fg4_of(score[e, off] - score[e, 1 - off]))
+                            fg4=fg4_of(score[e, off] - score[e, 1 - off]), clock2=running_of(prev[e]),
+                            to3=np.minimum(2, tos[e, off]))
                 lead = score[e, off] - score[e, 1 - off]
                 must = (period[e] >= 5) & ot_done[e, 1 - off] & (lead < 0)
                 now = e[decide("early_fg", cols, gamer[e, off], fine=state(e, off),

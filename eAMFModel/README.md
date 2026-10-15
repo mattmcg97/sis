@@ -2067,9 +2067,14 @@ missing something. Nothing is ever fitted to close those gaps.
   goal the field compresses, so this mixing makes touchdowns: for a level side in Q4's last 2:00,
   the real snaps scored 6.2%, their groups' real snaps 7.0%, the sim's draws 9.1%. With `--field`,
   the distance draw takes its real snap from the group's snaps near the state's own field: within
-  F x the yards to go (2 yards at least), or the 20 nearest where fewer are there, or the whole
+  F x the yards to go (1 yard at least), or the 20 nearest where fewer are there, or the whole
   group where it holds fewer than 20. With F = 0.2, that is ±10 yards at the opposing 50 and ±2 at
-  the 10. A gamer's or team's own draws do the same. An adjusted build's tilt still leans each
+  the 10. A gamer's or team's own draws do the same. The drawn snap keeps its own result: its
+  touchdown is one here, with no run-on, and a gain that fell short of its own goal falls short of
+  this one, as far of the way there (the chains then move by the yards). Windows alone, with the
+  gains replayed at the new field, took the level late-Q4 figure only from 9.1% to 8.3%. Near the
+  goal, any short gain from a yard or two further back still scored: from the opposing 4–1, the
+  real snaps scored 43%, the sim 51%. An adjusted build's tilt still leans each
   draw toward the top of its whole group, by resampling six near snaps on where they sit in the
   group. `--field 0` (the default) draws from anywhere in the group.
 - **Gamers and teams, two ways (`--mode`):**
@@ -2129,10 +2134,10 @@ missing something. Nothing is ever fitted to close those gaps.
   | decision | options | drawn from real decisions alike in |
   |---|---|---|
   | 4th down (the offense) | go for it, field goal, punt | yards to the goal, distance, lead, part of the game, time left in the half |
-  | downs 1-3 in the half's last minute, in range (the offense) | play on, kick now | time left, the kick's length, down, lead, which half |
+  | downs 1-3 in the half's last minute, in range (the offense) | play on, kick now | time left, the clock running or stopped, its own timeouts (0, 1, 2+), the kick's length, down, what a field goal does, which half |
   | kick-off (the kicker) | returned, touchback, no landing zone, kept (onside) | behind late in Q4, the half's last 2:00, lead |
   | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six; then Q4's last 3:00 as one, before the whole game |
-  | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half |
+  | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half; the offense's also whether a field goal is in range |
 
   Each is drawn in three steps:
   - **The rules first**, the same for every gamer. They aren't written by hand: they are the
@@ -2152,6 +2157,21 @@ missing something. Nothing is ever fitted to close those gaps.
     the touchdown, and level they kick to win. In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
     the sim, and a side behind went for it on 90% against 73%, because thin late cells had fallen
     back to every lead.
+
+    The early kick later fell short the same way. From the real states, level or 1–2 behind in Q4,
+    real sides kicked on 23% of in-range snaps in the last minute, and the sim's cells on 17%. Its
+    thin cells fell back to levels without what a field goal does, and none knew the clock or the
+    timeouts. A level side at 0:20 on a running clock with no timeouts kicks now; with two, it can
+    run a play first. So level sides kicked 42% of their drives from 1:00–0:31 against 68% real,
+    and the clock ran out on them twice as often. The early kick now reads the clock running or
+    stopped and its own timeouts, and keeps what a field goal does to the end of its fallbacks. The
+    offense's timeout reads whether a field goal is in range, the timeout a level side calls to
+    kick.
+
+    `--decision-blend K` blends the cells, as `--blend` does the draws. Every cell of 5 real
+    decisions or more is kept, and a state's shares are its cells' over the levels: a cell of n
+    weighs n / (n + K), the rest passes to its parent. `--decision-blend 0` (the default) takes
+    the first level with 25.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
     real decisions against what the league chose in the same states. It is shrunk toward none, so a
     gamer with a handful of decisions decides almost as the league does. This is how earlier

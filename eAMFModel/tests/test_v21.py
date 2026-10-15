@@ -159,6 +159,7 @@ class TestBins(unittest.TestCase):
         for y in (20, 60, 95):
             got = b.payload["field"][b.draw_near(g, np.full(3000, y), u, 0.2)]
             r = max(v21.FIELD_YARDS, round(0.2 * (100 - y)))
+            r = max(r, (v21.FIELD_MIN // 4 + 1) // 2)              # 4 a yard: a thin window widens
             self.assertTrue((np.abs(got - y) <= r).all())
             self.assertAlmostEqual(got.mean(), y, delta=1.0)
         # a thin window widens to the FIELD_MIN nearest
@@ -518,6 +519,33 @@ class TestSimulate(unittest.TestCase):
         self.assertEqual(b.gain_surv_end.shape, (v21.SIZES["endgame3"], 101))
         self.assertTrue((np.diff(b.gain_surv_end, axis=1) <= 1e-12).all())
 
+    def test_near_its_field_a_snap_keeps_its_own_result(self):
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, field=0.2)
+        _fixed_time(m, 7.0)
+
+        def every(gain, td, field):
+            _fixed_play(m, gain, td)
+            for b in [m.dist] + [v for k, v in m.own.items() if k[2] == "dist"]:
+                b.payload["field"][:] = field
+                b.__dict__.pop("_by_field", None)
+
+        first = lambda st: v21.snap_log(st)["gain"][np.flatnonzero(v21.snap_log(st)["path"] == 0)[0]]
+        # 30 yards from its own 40, short of its goal: at the other side's 20 it stops as far of the way
+        every(30, False, 40)
+        st = {}
+        v21.simulate(m, _state(m, y=80), 5, stats=st)
+        self.assertEqual(first(st), 30 * 20 // 60)
+        # a touchdown from the 5, drawn at midfield: a touchdown here, with no run-on chance
+        every(5, True, 95)
+        st = {}
+        v21.simulate(m, _state(m, y=50), 5, stats=st)
+        self.assertEqual(first(st), 50)
+        # a gain short of this goal plays as drawn
+        every(8, False, 40)
+        st = {}
+        v21.simulate(m, _state(m, y=60), 5, stats=st)
+        self.assertEqual(first(st), 8)
+
     def test_inches_move_the_chains_and_a_down_played_again_keeps_its_number(self):
         m = built()
         _fixed_time(m, 7.0)
@@ -576,6 +604,40 @@ class TestDecisions(unittest.TestCase):
         self.assertGreater(few_go, ch.league[v21.GO])
         flat = v21.Choice.build("fourth", X, chosen, who, 5, gamers=False)
         np.testing.assert_allclose(flat.probs(cols, np.array([0, 1, 2, 3]))[:, v21.GO], ch.league[v21.GO], atol=1e-9)
+
+    def test_blended_cells_weigh_a_thin_cell_by_its_decisions(self):
+        # 10 real kick-offs at (desperate, late, lead) = (1, 1, 2), all touchbacks; 400 elsewhere returned
+        X = np.r_[np.tile([1, 1, 2], (10, 1)), np.zeros((400, 3), np.int64)]
+        chosen = np.r_[np.full(10, v21.TOUCHBACK), np.full(400, v21.RETURN)]
+        who = np.zeros(410, np.int64)
+        cols = dict(desperate=np.array([1]), late=np.array([1]), lead=np.array([2]))
+        first = v21.Choice.build("kickoff", X, chosen, who, 1, gamers=False)
+        mixed = v21.Choice.build("kickoff", X, chosen, who, 1, gamers=False, blend=40.0)
+        self.assertLess(first.base(cols)[0, v21.TOUCHBACK], 0.1)             # under 25: the whole pool's
+        p = mixed.base(cols)[0]
+        self.assertAlmostEqual(p.sum(), 1.0)
+        self.assertGreater(p[v21.TOUCHBACK], 0.3)                            # 10 of its own weigh in
+        np.testing.assert_allclose(mixed.probs(cols, np.array([0]))[0], p, atol=1e-9)
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, decision_blend=25.0)
+        self.assertEqual(m.choices["fourth"].blend, 25.0)
+        h, a = v21.simulate(m, v21.kickoff_start(m), 30)
+        self.assertGreater((h + a).mean(), 10)
+
+    def test_the_early_kick_reads_the_clock_and_timeouts(self):
+        spec = v21.DECISIONS["early_fg"]
+        self.assertIn("clock2", spec["features"])
+        self.assertIn("to3", spec["features"])
+        for lv in spec["levels"][:-3]:
+            self.assertIn("fg4", lv)                                     # what a kick does, to the end
+        pts = [dict(left=20.0, togo=20, down=2, lead=0, period=4, prev=v21.SHORT, own_to=0),
+               dict(left=20.0, togo=20, down=2, lead=0, period=4, prev=v21.NOTHING, own_to=3)]
+        X = v21.decision_features("early_fg", pts)
+        f = dict(zip(spec["features"], X.T))
+        self.assertEqual(list(f["clock2"]), [1, 0])
+        self.assertEqual(list(f["to3"]), [0, 2])
+        t = v21.decision_features("to_off", [dict(period=4, clock=20.0, off_margin=0, left=20.0, togo=20),
+                                             dict(period=4, clock=20.0, off_margin=0, left=20.0, togo=60)])
+        self.assertEqual(list(t[:, -1]), [1, 0])                          # in range or not
 
     def test_match_decisions_reads_the_real_choices(self):
         rows = [_r(7, 1, 236, "KICKOFF", "TEAM_A", y=25),                            # the opening kick, returned
