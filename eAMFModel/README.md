@@ -2165,10 +2165,14 @@ missing something. Nothing is ever fitted to close those gaps.
 - **The points nudge (step 3, `v21-report --nudge`, a tilt build).** A switch for pricing: each
   side's offense tilt is moved along the strength direction until the sim's kick-off mean meets
   the side's expected points (the input). The strength direction is the gamers' offense tilts
-  regressed on the points their side really scored a match, so a unit is the tilt of a gamer
-  whose side scores a point a match more. The build prints the direction and how many points a
-  unit gives a side in the sim. Per match, secant steps start from that slope (three steps, each
-  on the same random numbers, capped at ±4 units), and the last run prices the match. The same
+  regressed on the points their side really scored a match, with no component the wrong way (more
+  turnovers or losses, fewer yards, touchdowns or first downs). It is scaled so a unit is a point a
+  side in the sim, and the build prints it and the slope it then has. Per match, secant steps start
+  from that slope (three steps, each on the same random numbers, capped at ±10 points), and the
+  last run prices the match. The first nudged run, on held-out October, priced moneylines at the
+  prior's log loss (+0.001 ± 0.003) and margins and totals better (RPS 5.53 against 5.55, 6.89
+  against 6.92). Its direction moved a side only half a point a unit, so 43% of the nudges stopped
+  at the cap short of the inputs. The same
   nudge carries into the match's real states. The report prints the nudges taken: their mean,
   spread, home and away, and the share at the cap. The base model never sees the inputs. The
   nudge is a separate layer, on only when asked.
@@ -2206,6 +2210,13 @@ missing something. Nothing is ever fitted to close those gaps.
   takes the drawn real snap's own result where it was at the same distance, and otherwise goes by
   the yards. A down played again (a penalty: the same down, short of the line) keeps its number.
   4th downs short of the line that kept the ball are no longer left out.
+- **Scores the rows do not mark.** In September the real games' touchdown, field-goal and
+  conversion rows account for about 33 points a match, and their scores for 34.8: some scores come
+  with no TOUCHDOWN or FIELD_GOAL row. A snap whose next row has 6 or more to one side and nothing
+  to the other is read as that side's touchdown (the offense's own, or a defensive one), and a
+  4th down whose next row in the quarter has 3 more to the side with the ball as its kick. Before,
+  such a touchdown snap was dropped from the draws and the sim scored too little. The build
+  prints how many it read.
 - **The decisions**, each made by the gamer whose call it is:
 
   | decision | options | drawn from real decisions alike in |

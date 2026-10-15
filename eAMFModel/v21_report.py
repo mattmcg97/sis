@@ -96,6 +96,7 @@ def real_census(matches, model=None, history=None):
         ev["snaps"] += len(recs)
         ev["turnovers"] += sum(r["kind"] == v21.TURNOVER for r in recs)
         ev["defensive_tds"] += sum(r["kind"] == v21.DEF_TD for r in recs)
+        ev["touchdowns"] += sum(1 for r in recs if r.get("read_off_score"))   # no TOUCHDOWN row: the score's
         ev["timeouts"] += sum(r.get("timeout_role") is not None for r in recs)
         for a, b in zip(rows, rows[1:]):
             k = b["play_kind"]
@@ -465,13 +466,13 @@ def decision_lines(census, real, names=None):
 
 
 def nudge_lines(results):
-    """The nudges the sim took to meet the inputs (a unit: the strength direction's, a point a match)."""
+    """The nudges the sim took to meet the inputs (a unit: a point a side in the sim)."""
     got = np.array([r["nudge"] for r in results if r.get("nudge") is not None], float).reshape(-1, 2)
     if not len(got):
         return []
     x = got.ravel()
     return [f"  NUDGE: each side's offense moved along the strength direction to meet its expected points"
-            f" (a unit: a gamer whose side scores a point a match more): mean {x.mean():+.2f}, sd {x.std():.2f}, {100 * np.mean(np.abs(x) >= v21.NUDGE_MAX - 1e-9):.1f}%"
+            f" (a unit: a point a side in the sim): mean {x.mean():+.2f}, sd {x.std():.2f}, {100 * np.mean(np.abs(x) >= v21.NUDGE_MAX - 1e-9):.1f}%"
             " at the limit; home {:+.2f}, away {:+.2f}".format(got[:, 0].mean(), got[:, 1].mean()), ""]
 
 

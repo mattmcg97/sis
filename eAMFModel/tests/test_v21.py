@@ -768,6 +768,24 @@ class TestDecisions(unittest.TestCase):
         self.assertEqual(v21.end_points(rows[1], rows[2]), (3, 0))
         self.assertIsNone(v21.end_points(rows[-1], None))
 
+    def test_scores_the_rows_do_not_mark(self):
+        # a snap from the 12, then the conversion with 6 more to the side: its touchdown, no TOUCHDOWN row
+        rows = [_r(7, 1, 200, "SCRIMMAGE", "TEAM_A", 1, 10, 88),
+                _r(14, 1, 195, "CONVERSION", "TEAM_A", a=6),
+                _r(21, 1, 195, "KICKOFF", "TEAM_A", y=35, a=7),
+                _r(28, 1, 190, "SCRIMMAGE", "TEAM_B", 1, 10, 30, a=7),
+                _r(35, 1, 185, "KICKOFF", "TEAM_B", y=35, a=13),               # a pick-six off TEAM_B
+                _r(42, 1, 180, "SCRIMMAGE", "TEAM_B", 4, 8, 75, a=13),
+                _r(49, 1, 175, "KICKOFF", "TEAM_B", y=35, a=13, b=3)]          # its kick, no FIELD_GOAL row
+        recs = v21.snap_records(rows)
+        first = next(r for r in recs if r["start"] == 7)
+        self.assertEqual((first["kind"], first["gain"], first["converted"], first["read_off_score"]),
+                         (v21.GAIN, 12, True, True))
+        pick = next(r for r in recs if r["start"] == 28)
+        self.assertEqual(pick["kind"], v21.DEF_TD)
+        got = v21.decision_points(rows)
+        self.assertEqual([q["choice"] for q in got["fourth"]], [v21.FG])
+
     def test_a_touchback_puts_the_ball_at_the_20_with_no_clock(self):
         m = built()
         m.choices["kickoff"] = _always("kickoff", v21.TOUCHBACK, len(m.gamers) + 1)
@@ -919,8 +937,9 @@ class TestReport(unittest.TestCase):
                       blend=40.0, field=0.2)
         d = np.asarray(m.nudge_dir)
         self.assertEqual(d.shape, (len(v21.PHI_DIST),))
-        self.assertGreaterEqual(float(d @ np.array([1.0, 1.0, -1.0, 1.0, -1.0])), 0.0)
-        self.assertGreater(m.nudge_slope, 0)
+        self.assertTrue((d * np.array([1.0, 1.0, -1.0, 1.0, -1.0]) >= 0).all())   # no component the wrong way
+        self.assertGreater(m.nudge_slope, 0.4)                                 # a unit: about a point a side
+        self.assertLess(m.nudge_slope, 2.5)
         start = v21.kickoff_start(m)
         h0, a0 = v21.simulate(m, start, 300, seed=3)
         target = (h0.mean() + 4.0, a0.mean() - 2.0)

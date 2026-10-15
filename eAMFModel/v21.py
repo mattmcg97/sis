@@ -252,10 +252,11 @@ TILT_CANDIDATES = 16
 TILT_HALF_LIFE = 30.0         # days: a real snap's weight in the fit halves every so many days before the last
 # The points nudge (step 3, a switch for pricing: nudge_solve): each side's offense tilt moved along the
 # strength direction (nudge_direction: the gamers' offense tilts regressed on the points their side really
-# scores a match) until the sim's kick-off mean meets the side's expected points,
+# scores a match, scaled so a unit is a point a side in the sim) until the sim's kick-off mean meets the
+# side's expected points,
 # by secant steps from the build's slope (calibrate_nudge), the same random numbers every step.
 NUDGE_ITERS = 3
-NUDGE_MAX = 4.0
+NUDGE_MAX = 10.0              # points a side
 NUDGE_PATHS = 3000
 YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
 SECOND_BIN_EDGES = np.arange(2, 61, 2)
@@ -1021,7 +1022,7 @@ def snap_records(rows):
                 rec["gain"], rec["converted"] = 100 - y, True
             else:
                 rec["kind"] = DEF_TD
-        elif bk in ("SCRIMMAGE", "TURNOVER_ON_DOWNS"):
+        elif bk in ("SCRIMMAGE", "TURNOVER_ON_DOWNS") and not _scored(a, b):
             if not b["field_position"]:
                 continue
             by = _i(b["field_position"])
@@ -1037,10 +1038,28 @@ def snap_records(rows):
                 rec["kind"] = TURNOVER
                 rec["new_field"] = by
         else:
-            continue
+            # no TOUCHDOWN row, but the score after the snap says one: 6 or more to the side with the ball
+            # (its own touchdown) or to the other (a defensive one), none to the one that did not score
+            pts = _scored(a, b)
+            if not pts:
+                continue
+            if pts[0] >= 6:
+                rec["gain"], rec["converted"] = 100 - y, True
+            else:
+                rec["kind"] = DEF_TD
+            rec["read_off_score"] = True
         s14._timeouts_at(rec, a)
         out.append(rec)
     return out
+
+
+def _scored(a, b):
+    """(the offense's points, the other's) from row a to row b where one side scored a touchdown's 6 or
+    more and the other nothing (a scoring snap whatever row the feed gave it), else None."""
+    pts = end_points(a, b)
+    if pts is None:
+        return None
+    return pts if (pts[0] >= 6 and pts[1] == 0) or (pts[1] >= 6 and pts[0] == 0) else None
 
 
 def match_snaps(rows, pair=None, teams=None):
@@ -1157,6 +1176,9 @@ def decision_points(rows, recs=None, final=None):
         # the half's end after this row: what the score did from here says whether the side kicked
         pts = end_points(a, b, final if b is None else None) if not same and p in (2, 4) else None
         kicked = pts is not None and pts == (3, 0) and float(half_left(p, c)) <= EARLY_LEFT
+        # in the quarter: a kick the feed gave no FIELD_GOAL row, read off the score after it
+        if same and b["play_kind"] not in ("FIELD_GOAL", "PUNT") and end_points(a, b) == (3, 0):
+            kicked = True
         b = b if b is not None else dict(play_kind="", period=None)
         side, left = _side_of(a["offense"], a_home), float(half_left(p, c))
         if b["play_kind"] == "FIELD_GOAL" and same and b.get("clock_seconds"):
@@ -1550,6 +1572,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         print(f"  v2.1: {len(recs):,} real snaps from {len(matches):,} matches ({mode})", flush=True)
         print(f"  kicks at a half's end the feed missed, read off the score after it (3 more to the side with"
               f" the ball, none to the other): {missed_kicks:,}", flush=True)
+        print(f"  scoring snaps with no TOUCHDOWN row, read off the score after them (6 or more to one side, none"
+              f" to the other): {sum(1 for r in recs if r.get('read_off_score')):,}", flush=True)
         try:
             m._trend_lines = trend_lines(dec, ot_games)
         except (ValueError, IndexError):          # codes without a date
@@ -1664,6 +1688,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         fit_model_tilts(m, recs, verbose)
         m._gamer_points = {m.gamers[g]: v for g, v in gamer_points.items() if g in m.gamers}
         m.nudge_dir = nudge_direction(m)
+        slope = calibrate_nudge(m, seed=seed)
+        m.nudge_dir = m.nudge_dir / slope                   # a unit of nudge: a point a side
         m.nudge_slope = calibrate_nudge(m, seed=seed)
     if verbose:
         report_build(m, recs)
@@ -1929,6 +1955,7 @@ def nudge_direction(m):
     th = getattr(m, "etilt", {}).get("dist", {}).get("gamer_off")
     if th is None or len(th) < 4 or not np.any(th[:-1]):
         return 0.05 * sign
+    clip = lambda d: np.where(d * sign > 0, d, 0.0)        # no component the wrong way (more turnovers)
     pts = getattr(m, "_gamer_points", {}) or {}
     ids = np.array([g for g in pts if g < len(th) - 1 and len(pts[g])], np.int64)
     if len(ids) >= 8:
@@ -1937,13 +1964,14 @@ def nudge_direction(m):
         dy = y - np.average(y, weights=n)
         x = th[ids] - np.average(th[ids], axis=0, weights=n)
         if np.sum(n * dy * dy) > 0:
-            d = (n * dy) @ x / np.sum(n * dy * dy)
+            d = clip((n * dy) @ x / np.sum(n * dy * dy))
             if np.any(d):
                 return d
     x = th[:-1] - th[:-1].mean(0)
     _, sv, vt = np.linalg.svd(x, full_matrices=False)
     d = vt[0] * (sv[0] / np.sqrt(len(x)))
-    return d if d @ sign >= 0 else -d
+    d = clip(d if d @ sign >= 0 else -d)
+    return d if np.any(d) else 0.05 * sign
 
 
 def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
@@ -1954,7 +1982,7 @@ def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
         st = dict(start, nudge=np.full((2, 2), a))
         h, w = simulate(m, st, n_paths // 2, seed=seed + 7)
         got.append(0.5 * (h.mean() + w.mean()))
-    return max(0.5, (got[1] - got[0]) / 2.0)
+    return max(0.05, (got[1] - got[0]) / 2.0)
 
 
 def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None):
@@ -2000,7 +2028,7 @@ def etilt_lines(m):
                 for d, f in enumerate(feats_)))
     d = getattr(m, "nudge_dir", None)
     if d is not None:
-        out.append("    the strength direction (a unit: the tilt of a gamer whose side scores a point a match more): " + ", ".join(
+        out.append("    the strength direction (a unit: a point a side in the sim): " + ", ".join(
             f"{f} {v:+.3f}" for f, v in zip(PHI_DIST, d))
                    + f"; a unit of nudge {getattr(m, 'nudge_slope', float('nan')):+.2f} points a side")
     th = t["dist"]["gamer_off"][:-1]
