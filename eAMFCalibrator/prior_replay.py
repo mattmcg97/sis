@@ -7,7 +7,8 @@ the pre-match markets with glmer or NB2 (each with and without the rematch layer
 
 The arms are prior-backtest's (NAME=SOURCE[#MODE]) and are read the same way: each match's expected
 points, its score model, and the layers (prior_backtest.LAYERS: +layer the rematch layer, +infer the
-inference layer, +both the two as one) fitted walk-forward on the arm's own errors. prod -- a third
+inference layer, +both the two as one; with the gamers' stats, +feat the feature layer and +both+feat
+it on +both) fitted walk-forward on the arm's own errors. prod -- a third
 party's price -- is the benchmark: the bets' own prices.
 
 Every pre-match bet (by the operator's in-play flag, and placed before kick-off) on the matches every
@@ -98,7 +99,7 @@ def price_bets(rows, price, n):
 
 
 def variants(ctx, arms, draws):
-    """[([variant names], price)] -- each arm as it is and with each layer (prior_backtest.LAYERS),
+    """[([variant names], price)] -- each arm as it is and with each layer (prior_backtest.active_layers),
     all read off the same simulated scores -- with {match} every one of them priced after the burn-in,
     {match: what its gamers had played that session}, and the layers. prod is the benchmark: the
     bets' own prices, not re-priced."""
@@ -118,7 +119,7 @@ def variants(ctx, arms, draws):
     for _, _, _, _, by in found:
         codes &= set(by)
 
-    out = []
+    out, layered = [], pb.active_layers(ctx)
     for name, mode, own, fits, by in found:
         memo = {}                                       # one match's book and its prices by line
 
@@ -130,9 +131,9 @@ def variants(ctx, arms, draws):
             if key not in memo:
                 r = by[match]
                 memo[key] = (arm_chance(memo["book"], market, line),) + tuple(
-                    arm_chance(memo["book"], market, line, r[mk], r[tk]) for _, mk, tk in pb.LAYERS)
+                    arm_chance(memo["book"], market, line, r[mk], r[tk]) for _, mk, tk in layered)
             return memo[key]
-        out.append(([name] + [name + tag for tag, _, _ in pb.LAYERS], price))
+        out.append(([name] + [name + tag for tag, _, _ in layered], price))
     played = {c: played_label(r) for c, r in prod_rows.items()}
     return out, codes, played, layers
 
@@ -284,11 +285,11 @@ def report(table, idx_all, clean, info, n_boot, played=None):
     return L
 
 
-def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=None):
-    """Replay the window's pre-match bets at every arm's prices, as it is and with each layer.
-    Returns the report's path."""
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=None, features=None):
+    """Replay the window's pre-match bets at every arm's prices, as it is and with each layer
+    (features: player-stats' per-match stats, for the feature layer). Returns the report's path."""
     n_boot = config.SIM_BOOT if n_boot is None else n_boot
-    ctx = pb.prepare(cur, since, until)
+    ctx = pb.prepare(cur, since, until, features)
     window, tl = ctx["window"], ctx["tl"]
     found, codes, played, layers = variants(ctx, arms, draws)
     sql, params, _ = bets.bets_sql()
