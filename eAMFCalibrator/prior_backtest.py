@@ -378,8 +378,9 @@ def parse_arm(spec):
     return source, mode or None
 
 
-def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
-    """Grade prod and every arm, each with and without the rematch layer, over [since, until]."""
+def prepare(cur, since, until=None):
+    """What every arm is read against: the history, the window's matches with their day's meetings,
+    prod's quote timeline and its pre-match prices, and the window's history rows."""
     history = snowflake_io.fetch_history(cur)
     meets = day_meetings(history)
     start, end = _start(since), _start(until) if until else None
@@ -396,20 +397,38 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
         line, over = prematch_total(tl, c)
         prod[c] = dict(p1=prematch_p1(tl, c), line=line, over=over)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
-    sched = [rows_by_code[c] for c in codes if c in rows_by_code]
+    first = min((m["start"] for m in window.values()), default=start)
+    return dict(history=history, window=window, codes=codes, tl=tl, prod=prod,
+                sched=[rows_by_code[c] for c in codes if c in rows_by_code],
+                burn_from=first.replace(hour=0, minute=0, second=0, microsecond=0)
+                + dt.timedelta(days=BURN_IN_DAYS))
+
+
+def fit_arm(name, spec, ctx):
+    """(mode, own score models, layer rows, the last layer) for one arm (prod: spec None): its expected
+    points read, the rematch layer fitted walk-forward on its own errors."""
+    points, own, mode = {}, {}, None
+    codes = ctx["codes"]
+    if spec is not None:
+        source, mode = parse_arm(spec)
+        points, own = read_arm(source, ctx["sched"], ctx["history"])
+        if mode == "own" and not own:
+            raise SystemExit(f"--arm {name}: {source} has no score model of its own (only NB2 and a rolling "
+                             "glmer do); use #fitted or #normal")
+        mode = mode or ("own" if own else "fitted")
+        print(f"  {name}: {sum(1 for c in codes if c in points):,} of {len(codes):,} matches priced ({source}), "
+              f"scores {mode}", flush=True)
+    rows, layer = rematch_layer.walk_forward(items_for(name, points, ctx["prod"], ctx["window"]), BURN_IN_DAYS)
+    return mode, own, rows, layer
+
+
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
+    """Grade prod and every arm, each with and without the rematch layer, over [since, until]."""
+    ctx = prepare(cur, since, until)
+    window, prod = ctx["window"], ctx["prod"]
     prices, layers, models = {}, {}, {}
     for name, spec in [(PROD, None)] + list(arms):
-        points, own, mode = {}, {}, None
-        if spec is not None:
-            source, mode = parse_arm(spec)
-            points, own = read_arm(source, sched, history)
-            if mode == "own" and not own:
-                raise SystemExit(f"--arm {name}: {source} has no score model of its own (only NB2 and a rolling "
-                                 "glmer do); use #fitted or #normal")
-            mode = mode or ("own" if own else "fitted")
-            print(f"  {name}: {sum(1 for c in codes if c in points):,} of {len(codes):,} matches priced ({source}), "
-                  f"scores {mode}", flush=True)
-        rows, layer = rematch_layer.walk_forward(items_for(name, points, prod, window), BURN_IN_DAYS)
+        mode, own, rows, layer = fit_arm(name, spec, ctx)
         layers[name] = layer
         got, fits = readings(name, rows, prod, mode or "normal", own, draws)
         models[name] = describe_model(mode, own, fits)
@@ -421,8 +440,7 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
         s1, s2 = m.get("home_score"), m.get("away_score")
         if s1 is not None and s2 is not None and prod[c]["line"] is not None:
             results[c] = (s1 - s2, s1 + s2, prod[c]["line"])
-    first = min((m["start"] for m in window.values()), default=start)
-    burn_from = first.replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(days=BURN_IN_DAYS)
+    burn_from = ctx["burn_from"]
     lines = report(prices, results, window, layers, burn_from, models)
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
