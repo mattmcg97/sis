@@ -2671,16 +2671,20 @@ the match's first `PLAY_STARTED` in SCOUTING_FULL. Prod's pre-game quotes carry
 a message count. Where the play feed has no first play, the quote must be
 published before the scheduled kick-off.
 
-`prod-early` is prod as this backtest read it before. That was its last quote
-with no message, else its first, which is often its opening price. It is kept
-for comparison with earlier runs, and has no over. The run prints how far the
-two readings of prod's moneyline are apart. The same closing prices are used
-by `prior-replay`, `bets rematches` and `bets inference`.
+Prod is a third party's price, so it is the benchmark only and gets no
+layers. The run prints how far its closing moneyline is from the price these
+tools read before, which was its last quote with no message, else its first.
+The same closing prices are used by `prior-replay`, `bets rematches` and
+`bets inference`.
 
-**How each arm is graded:** each arm, prod included, is graded as it is,
-with the rematch layer on top (`+layer`) and with the inference layer on top
-(`+infer`, below). Each layer is fitted walk-forward on that arm's own
-errors.
+**How each arm is graded:** each arm is graded as it is and with each layer
+on top. Each layer is fitted walk-forward on that arm's own errors.
+
+| suffix | layer |
+|---|---|
+| `+layer` | the rematch layer: the pair's earlier meetings that day |
+| `+infer` | the inference layer (`bets inference`, below): each gamer's form that session, from every match he played against anyone, beside the pair's own effect |
+| `+both` | the two as one layer: a rematch moves by the pair's earlier meetings alone, and a first meeting by what the gamers did against others |
 
 An arm's moneyline and over come from its two scores simulated together
 (`score_model.py`), so the covariance between them is in the price. Choose
@@ -2731,8 +2735,8 @@ python -m eAMFCalibrator prior-replay --since "2026-09-01 00:00:00" --until "202
 
 `prior-backtest` grades the prices. This is what the book would have made
 from them. The arms are `prior-backtest`'s (`NAME=SOURCE[#MODE]`) and are read
-the same way. Each arm runs as it is, with the rematch layer and with the
-inference layer, and prod runs with each layer.
+the same way. Each arm runs as it is and with each layer (`+layer`, `+infer`,
+`+both`). Prod, a third party's price, is the benchmark: the bets' own prices.
 
 **How a bet is re-priced:** the same way `bets prematch` re-prices a
 candidate stream. Every pre-match bet on the matches every arm priced, after
