@@ -311,6 +311,12 @@ CONV_BLEND = 5.0
 # TWO_GOOD_PRIOR tries: September's real ones were made 64-71% of the time before Q4's last 3:00 (239
 # of them), 52.9% in it (493) and 36% in overtime (11), where the sim made 56.6% of all of them.
 TWO_GOOD_PRIOR = 20.0
+# The half's end (LATE_TIMEOUT): a side in field-goal range that a kick puts level or ahead in Q4 or
+# overtime (any lead at Q2's end), with a timeout left, calls it where a running clock would run the
+# half out before or during its snap. Real sides level with the ball with 1:00-0:31 left ran out of
+# clock on 0.3% of their drives (2:00-1:01, 0.4%); the sim's 9.8% (4.2%), and of those 62% (77%) were
+# in range, their last snap with more than 0:05 to go, and 88% (95%) had a timeout left.
+LATE_TIMEOUT = True
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
                    features=("togo10", "dist", "margin", "phase", "left", "fg4", "dist3", "togo4"),
@@ -3021,6 +3027,21 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         tally("timeouts", (call_def | call_off).sum())
         rem = remain_of(ix, prv, tos0)
         secs = draw_time(ix, prv, rem)
+        if LATE_TIMEOUT:
+            # a side in range that a kick puts level or ahead (any lead at Q2's end), with a timeout left, does
+            # not let a running clock run the half out before or during its snap: it calls one, and the snap
+            # comes off a stopped clock (its kick, or not, is the next snap's choice)
+            lead_o = score[ix, off] - score[ix, 1 - off]
+            save = np.flatnonzero((prv <= LOSS) & (secs >= clock[ix]) & (tos[ix, off] > 0)
+                                  & (100 - y[ix] + 17 <= FG_MAX)
+                                  & ((period[ix] == 2) | ((period[ix] >= 4) & (lead_o >= -3) & (lead_o <= 0))))
+            if len(save):
+                tos[ix[save], off[save]] -= 1
+                prv[save] = TIMEOUT
+                rem[save] = remain_of(ix[save], prv[save], tos0[save])
+                secs[save] = draw_time(ix[save], prv[save], rem[save], stopped=True)
+                tally("timeouts", len(save))
+                tally("late_timeouts", len(save))
         ran = secs > STOPPED_MAX
         # a running clock that runs out before the snap: the period is over, no snap
         gone = ran & (secs - PLAY_SECONDS >= clock[ix])

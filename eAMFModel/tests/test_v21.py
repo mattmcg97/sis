@@ -691,6 +691,34 @@ class TestSimulate(unittest.TestCase):
             log = v21.snap_log(st)
             self.assertEqual(nxt(log), want, (made, rdist))
 
+    def test_a_side_in_range_calls_a_timeout_before_the_half_runs_out(self):
+        # Q4 0:20 level, the clock running, at the other side's 20 with a timeout: every running snap takes
+        # 30 seconds and every stopped one 5, every play a 1-yard gain; it never kicks early. The timeout
+        # keeps the half alive; without one left the snap runs it out
+        m = built()
+        for b in [m.time] + [v for k, v in m.own.items() if k[2] == "time"]:
+            b.payload["seconds"][:] = np.where(b.payload["seconds"] > v21.STOPPED_MAX, 30.0, 5.0)
+            b.payload["cut"][:] = False
+        _fixed_play(m, 1, False)
+        n_who = len(m.gamers) + 1
+        m.choices["early_fg"] = _always("early_fg", 0, n_who)
+        m.choices["to_off"] = _always("to_off", 0, n_who)
+        m.choices["to_def"] = _always("to_def", 0, n_who)
+        s = _state(m, period=4, clock=20.0, team=0, down=1, dist=10, y=80, prev=v21.SHORT, home=7, away=7)
+        st = {}
+        v21.simulate(m, s, 20, stats=st, max_steps=1)
+        self.assertGreater(st.get("late_timeouts", 0), 0)                   # each 30-second draw
+        log = v21.snap_log(st)
+        self.assertTrue((log["clock"] - log["seconds"] > 0).all())        # no snap ran the half out
+        s["tos"] = np.array([[0, 3]])
+        st = {}
+        v21.simulate(m, s, 20, stats=st, max_steps=1)
+        self.assertEqual(st.get("late_timeouts", 0), 0)
+        s["tos"], s["home"] = np.array([[3, 3]]), np.array([14])            # ahead: lets it run
+        st = {}
+        v21.simulate(m, s, 20, stats=st, max_steps=1)
+        self.assertEqual(st.get("late_timeouts", 0), 0)
+
     def test_overtime_ends_when_the_second_side_goes_ahead(self):
         m = built()
         _fixed_time(m, 7.0)

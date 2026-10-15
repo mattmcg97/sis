@@ -2295,6 +2295,14 @@ missing something. Nothing is ever fitted to close those gaps.
     offense's timeout reads whether a field goal is in range, the timeout a level side calls to
     kick.
 
+    And a side in range that a kick puts level or ahead in Q4 or overtime (any lead at Q2's end),
+    with a timeout left, calls it where a running clock would run the half out before or during its
+    snap (`LATE_TIMEOUT`); the snap then comes off a stopped clock, and the kick, or not, is the next
+    snap's choice. The timeout before a running-clock snap is drawn from the real ones, which don't
+    know the time the snap is about to take. Real sides level with the ball with 1:00–0:31 left ran
+    out of clock on 0.3% of their drives, the sim's on 9.8%, and of those 62% were in range with more
+    than 0:05 at their last snap and 88% still had a timeout.
+
     The 4th down's fallbacks now keep what a field goal does and the time left to the end, and
     coarsen the field and distance first. From the real states, level or 1–2 behind in Q4's last
     2:00, real sides kicked on 54% of 4th downs and the sim's cells on 49%.
