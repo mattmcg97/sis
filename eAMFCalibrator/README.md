@@ -2707,6 +2707,57 @@ and the first meetings, followed by each layer's last fit. Writes
 `out/prior_backtest.txt` and `out/prior_backtest.csv` (every match, every
 arm's moneyline, total and over).
 
+### The pre-match bets at each prior's prices: `prior-replay`
+
+```bash
+python -m eAMFCalibrator prior-replay --since "2026-09-01 00:00:00" --until "2026-10-15 00:00:00" \
+    --arm "glmer-daily=glmer/out/cadence/cadence_matches.csv@trim:hl60_x0.5:daily" \
+    --arm "nb2=rolling:eAMFModel/out/nb2_daily"
+```
+
+`prior-backtest` grades the prices. This is what the book would have made
+from them. The arms are `prior-backtest`'s (`NAME=SOURCE[#MODE]`) and are read
+the same way. Each arm runs with and without the rematch layer, and prod runs
+with the layer.
+
+**How a bet is re-priced:** the same way `bets prematch` re-prices a
+candidate stream. Every pre-match bet on the matches every arm priced, after
+the layer's burn-in, keeps its selection, stake and line:
+- prod's probability at bet time is swapped for the arm's at that line;
+- the operator's margin is kept, so the odds become odds × prod / arm;
+- the bet settles as it settled.
+
+**An arm's price at a line:**
+- moneyline and spread: its home margin over the line, pushes left out;
+- total: its total over the line, pushes left out.
+
+Prod with the layer moves prod's own probability at bet time by the
+layer's move.
+
+**Clean bets:** an arm prices a match as of kick-off, from every result
+before it. A bet placed before either gamer's previous result was in (36
+minutes after that match's kick-off) would be re-priced with results neither
+the bettor nor prod had at the time. Those bets are reported separately, and
+the headline is the clean bets.
+
+**The bets stay as placed:** nobody bets differently at the arm's prices.
+Only winning bets move the book: a shorter price on one is revenue kept, a
+longer one revenue given away. A losing bet loses its stake at any price.
+Bets that wouldn't have been placed at the arm's price, or that would have
+been placed instead, aren't modelled.
+
+**What it reports:** prod's margin on the bets (revenue / stake) and each
+variant's change against it, in points of stake. Each change comes with a 95%
+interval (resampling matches) and the weeks it came out ahead. The cuts are:
+- the clean bets, overall and by market;
+- the clean bets by meeting, market and meeting, operator, VIP and the rest,
+  and week;
+- every pre-match bet;
+- stake by minutes before kick-off.
+
+Writes `out/prior_replay.txt` and `out/prior_replay.csv` (a row per bet with
+each variant's probability, odds and revenue).
+
 ### Rematches the same day: `bets rematches`
 
 ```bash

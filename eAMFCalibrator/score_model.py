@@ -18,10 +18,12 @@ moments -- a side's squared error less its mean is alpha mu^2, the two sides' er
 shared * alpha * mu_1 mu_2 -- so a prior with no score model of its own (glmer trimmed of its noise
 terms) can be priced with NB2's.
 
-A moneyline splits ties half and half, as NB2 does; the over leaves out pushes. A shift (the rematch
-layer's move) moves the simulated margin or total before it is read, so the layer moves the model's
-own price. Every match draws from its own seed (off its match code): each arm and each variant of a
-match sees the same randomness, so paired comparisons measure the models, not the simulation.
+A moneyline splits ties half and half, as NB2 does; the over leaves out pushes, and so does
+p_margin (the home margin over a line), which prices a bet's moneyline or spread. A shift (the
+rematch layer's move) moves the simulated margin or total before it is read, so the layer moves the
+model's own price. Every match draws from its own seed (off its match code): each arm and each
+variant of a match sees the same randomness, so paired comparisons measure the models, not the
+simulation.
 """
 
 import hashlib
@@ -82,6 +84,12 @@ class Book:
         over, push = float(np.mean(t > line)), float(np.mean(t == line))
         return over / (1 - push) if push < 1 else None
 
+    def p_margin(self, line, shift=0.0):
+        """The home margin over `line`, pushes left out: a bet's moneyline (line 0) or spread."""
+        m = self.margin + shift
+        over, push = float(np.mean(m > line)), float(np.mean(m == line))
+        return over / (1 - push) if push < 1 else None
+
     def mean_total(self, shift=0.0):
         return float(np.mean(self.total)) + shift
 
@@ -97,6 +105,9 @@ class Normal:
 
     def p_over(self, line, shift=0.0):
         return 1 - _N.cdf((line - self.t - shift) / self.tsd)
+
+    def p_margin(self, line, shift=0.0):
+        return 1 - _N.cdf((line - self.m - shift) / self.msd)
 
     def mean_total(self, shift=0.0):
         return self.t + shift

@@ -185,15 +185,21 @@ def cmd_scouting(args):
     return 0
 
 
-def cmd_prior_backtest(args):
-    """Pre-match priors against prod, each with and without the rematch layer."""
-    from . import prior_backtest
+def _arms(args):
+    """[(name, source)] off the --arm NAME=SOURCE options."""
     arms = []
     for spec in args.arm or []:
         name, sep, source = spec.partition("=")
         if not sep or not name or not source:
             raise SystemExit(f"--arm {spec!r}: give it as NAME=SOURCE")
         arms.append((name.strip(), source.strip()))
+    return arms
+
+
+def cmd_prior_backtest(args):
+    """Pre-match priors against prod, each with and without the rematch layer."""
+    from . import prior_backtest
+    arms = _arms(args)
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
@@ -202,6 +208,23 @@ def cmd_prior_backtest(args):
     finally:
         conn.close()
     print(f"\n  -> {path} and prior_backtest.csv")
+    return 0
+
+
+def cmd_prior_replay(args):
+    """The pre-match bets replayed at each prior's prices, with and without the rematch layer."""
+    from . import prior_replay
+    arms = _arms(args)
+    if not arms:
+        raise SystemExit("prior-replay: give at least one --arm NAME=SOURCE")
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            path = prior_replay.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
+                                    draws=args.draws)
+    finally:
+        conn.close()
+    print(f"\n  -> {path} and prior_replay.csv")
     return 0
 
 
@@ -1238,6 +1261,18 @@ def build_parser():
                            help="simulated scorelines per match (default 40000)")
     pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    pr_parser = sub.add_parser(
+        "prior-replay", parents=[shared],
+        help="the window's pre-match bets replayed at each prior's prices (prior-backtest's arms, each with "
+             "and without the rematch layer, and prod with it): the same bets and stakes at the arm's "
+             "chance at each bet's line, the operator's margin kept, the book's margin against prod's "
+             "(-> prior_replay.txt/csv)")
+    pr_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
+                           help="a prior to replay (repeatable), as prior-backtest's --arm")
+    pr_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match (default 40000)")
+    pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     ps_parser = sub.add_parser(
         "player-stats", parents=[shared],
         help="every gamer's stats as h2hggl.com shows them, rebuilt from the match history (played, "
@@ -1374,6 +1409,8 @@ def main(argv=None):
         return cmd_player_stats(args)
     if args.command == "prior-backtest":
         return cmd_prior_backtest(args)
+    if args.command == "prior-replay":
+        return cmd_prior_replay(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
