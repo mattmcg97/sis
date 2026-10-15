@@ -2103,6 +2103,16 @@ missing something. Nothing is ever fitted to close those gaps.
   its snaps say, and nothing jumps at a threshold. The build's level shares, its late-Q4 check and
   `v21-coverage` read the blend: each level's expected share of the draws, and the real snaps
   behind them weighted the same way. `--blend 0` (the default) keeps the first-level rule.
+
+  Blended with field windows, the distance draw weighs each cell by its real snaps near the
+  state's own field, n / (n + K) of those, and never widens a window but the last level's
+  (`NEAR_BLEND`, the model's `near_blend`). Weighed by all it held, a thin cell was drawn from
+  as often as its snaps said, then widened its window to the 20 nearest: a late cell of 2nd and 1
+  at midfield reached its snaps at the goal line, a touchdown kept there and a stuffed run played
+  as no gain. From September's real states at the other side's 49–30 the sim's draws scored 6.0%
+  against 4.3% real (drawing from the whole group, 5.1%). 2nd–4th and 1 moved the chains 64.7%
+  of the time against 67.2%, short in every bucket of the play's time while the times themselves
+  matched the real mix. The tilts' bases and the build's lines weigh the cells the same way.
 - **Field windows (`--field F`).** A group's real snaps come from across its field zone (20 yards
   at midfield), or wider in the coarse fallbacks. A gain is played out at the state's own field,
   so a 35-yard gain made from midfield becomes a touchdown at the opposing 30. And a touchdown
@@ -2305,6 +2315,12 @@ missing something. Nothing is ever fitted to close those gaps.
     reached the whole game's at its lead, where sides kick. After a six in Q4's last 3:00, 2 behind
     went for two 77% of the time in the sim's cells against 87% real, 5 behind 79% against 86%, 10
     behind 72% against all 16 real ones, 1 behind 59% against 62%.
+
+    A two-point try is made with its own chance by the part of the game: before Q4's last 3:00,
+    in it, and in overtime, each shrunk toward the whole game's by 20 tries (`TWO_GOOD_PRIOR`).
+    September's real tries were made 64–71% of the time before the last 3:00 (239 of them),
+    52.9% in it (493) and 36% in overtime (11). The sim had made 56.6% of all of them, so early
+    tries, the first of two touchdowns back among them, failed too often and left more games level.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
     real decisions against what the league chose in the same states. It is shrunk toward none, so a
     gamer with a handful of decisions decides almost as the league does. This is how earlier
@@ -2381,7 +2397,7 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   2:00 is split by the time each play took, too, and the sim's distance draws by where they came
   from (the league's, a team's own, a gamer's own). Conversions before Q4's last 3:00 are split
   the same way, by the part of the game (8 behind after the six: 14 behind, the first of two
-  touchdowns back), with the real two-point tries made by part against the sim's one rate. 2nd–4th
+  touchdowns back), with the real two-point tries made by part against the sim's. 2nd–4th
   downs are split by the time each play took, by the distance (1, 2–3, 4+ to go) and in the halves'
   last 2:00: the share of the snaps in each bucket and the share that moved the chains, real and
   sim, and the sim's own rates on the real snaps' times. Where that last is near the real, the

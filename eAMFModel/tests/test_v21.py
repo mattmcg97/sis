@@ -431,6 +431,29 @@ class TestBuild(unittest.TestCase):
                 self.assertIn("down", lv)
                 self.assertIn("tb", lv)                    # the time the play took, all six buckets
 
+    def test_a_blended_cell_weighs_by_its_snaps_near_the_field(self):
+        # 30 snaps in cell a=1, all at the goal line and touchdowns; 400 others across midfield. A state
+        # in a=1 at midfield has none of its cell's near it: weighed by them, its draws all come from ()
+        X = np.r_[np.ones(30, np.int64), np.zeros(400, np.int64)][:, None]
+        rng = np.random.default_rng(0)
+        field = np.r_[np.full(30, 95), rng.integers(40, 61, 400)]
+        b = v21.Bins.build(("a",), (2,), (("a",), ()), X, field.astype(float), {"field": field}, 5)
+        C = b.chain(dict(a=np.array([1, 1])))
+        y = np.array([50, 95])
+        r = v21.field_radius(0.2, y)
+        W_all = b.blend_weights(C, 40.0)
+        W_near = b.blend_weights(C, 40.0, b.near_counts(C, y, r, "field"))
+        self.assertAlmostEqual(W_all[0, 0], 30 / 70)
+        self.assertEqual(W_near[0, 0], 0.0)                         # none of its 30 near midfield
+        self.assertAlmostEqual(W_near[1, 0], 30 / 70)               # all 30 at the goal line
+        np.testing.assert_allclose(W_near.sum(1), 1.0)
+        g, li = v21.Bins.pick(np.repeat(C[:1], 200, 0), np.repeat(W_near[:1], 200, 0), rng)
+        self.assertTrue((li == 1).all())
+        lo, hi = b.span(np.array([C[0, 0]]), np.array([50]), np.array([10]), "field")
+        self.assertEqual(int((hi - lo)[0]), 0)
+        lo, hi = b.window(np.array([C[0, 0]]), np.array([50]), np.array([10]), "field")
+        self.assertGreaterEqual(int((hi - lo)[0]), 20)             # widened, the old way, to the goal line
+
     def test_field_windows(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
@@ -438,6 +461,7 @@ class TestBuild(unittest.TestCase):
                           key="lean", blend=40.0, field=0.2)
         self.assertEqual(m.field, 0.2)
         self.assertEqual(m.meta["field"], 0.2)
+        self.assertTrue(m.near_blend and m.meta["near_blend"])     # blended with windows: weighed near the field
         text = out.getvalue()
         self.assertIn("every snap by the field", text)
         self.assertIn("the sim draws from near it", text)
@@ -672,6 +696,7 @@ class TestSimulate(unittest.TestCase):
         m.choices["kickoff"] = v21.Choice.build("kickoff", np.zeros((0, 3)), [], [], n_who)  # always returned
         m.kick_pool = {k: (np.array([25]), np.array([4.0])) for k in m.kick_pool}
         m.two_good = m.kick_good = 1.0
+        m.two_good_by = np.ones(3)
         st = {}
         h, a = v21.simulate(m, _state(m, period=5, clock=240.0, team=0, y=50, home=14, away=14), 20, stats=st)
         np.testing.assert_array_equal(h, 21)                               # 6 and the kick
@@ -722,6 +747,14 @@ class TestDecisions(unittest.TestCase):
         m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, decision_blend=25.0)
         self.assertEqual(m.choices["fourth"].blend, 25.0)
         self.assertEqual(m.choices["two"].blend, v21.CONV_BLEND)            # the lead after the six decides
+        # two-point tries made by the part of the game, each shrunk toward the game's
+        conv = [c for code in MATCHES for c in v21.decision_points(v21._with_side(MATCHES[code]))["conv"]]
+        self.assertTrue(all(len(c) == 3 and c[2] in (0, 1, 2) for c in conv))
+        self.assertEqual(m.two_good_by.shape, (3,))
+        for k in range(3):
+            n_k = sum(1 for t, g, l in conv if t and l == k)
+            made = sum(g for t, g, l in conv if t and l == k)
+            self.assertAlmostEqual(m.two_good_by[k], (made + v21.TWO_GOOD_PRIOR * m.two_good) / (n_k + v21.TWO_GOOD_PRIOR))
         self.assertLess(v21.CONV_BLEND, 25.0)
         self.assertEqual(v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False).choices["two"].blend, 0.0)
         h, a = v21.simulate(m, v21.kickoff_start(m), 30)
@@ -764,7 +797,7 @@ class TestDecisions(unittest.TestCase):
         self.assertEqual(got["two"][0][:2], (0, 1))
         self.assertEqual(got["two"][0][3], 3 + v21.CONV_MARGIN)                 # the lead with the six on the board
         self.assertEqual(got["fg_clock"], [(20.0, 5.0)])
-        self.assertEqual(got["conv"], [(True, True)])
+        self.assertEqual(got["conv"], [(True, True, 1)])                 # made, in Q4's last 3:00
 
     def test_a_kick_the_feed_missed_at_the_half_s_end(self):
         # Q2: in range at 0:03, the next row is Q3's kick-off with 3 more to the side: it kicked
@@ -1056,7 +1089,7 @@ class TestAudit(unittest.TestCase):
         self.assertEqual(real["two_part"].sum() + real["two_late"].sum(),
                          sum(q["cell"] != v21.CONV_CELLS - 1 for q in convs))     # all but overtime's
         self.assertEqual(real["two_good"][:, 0].sum(), sum(q["choice"] for q in convs))
-        self.assertEqual(flow["two_sim"][1], 1.0)
+        self.assertEqual(flow["two_sim"][3], 1.0)
         for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
                      "ONE SNAP by the snaps left", "ONE SNAP in Q4's last 2:00", "Q4 STATES", "Q4 STATES, level",
                      "by what a field goal does", "CONVERSIONS in Q4's last 3:00", "by the time its play took",

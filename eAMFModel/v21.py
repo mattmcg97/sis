@@ -154,6 +154,14 @@ BLEND_MIN = 5
 FIELD_YARDS = 1
 FIELD_MIN = 20
 FIELD_CANDIDATES = 6
+# Blended with field windows (NEAR_BLEND, a build's near_blend): a cell weighs by its real snaps near the
+# state's own field, n / (n + blend) of them, not by all it holds, and its window is never widened -- only
+# the last level's, to FIELD_MIN. A thin cell weighed by all its snaps and widened its window to 20 of
+# them: a late cell of 2nd and 1 at midfield reached its snaps at the goal line, a touchdown kept there
+# and a stuffed run played as no gain. From the real states at the other side's 49-30 the sim's draws
+# scored 6.0% against 4.3% real (from the whole group, 5.1%); 2nd-4th and 1 moved the chains 64.7% of
+# the time against 67.2%, short in every bucket of the play's time while the times matched.
+NEAR_BLEND = True
 # Clock windows (build's clock, 0 off): in a half's last CLOCK_LATE seconds the time draw takes a real snap
 # of its group from those with as long left in the half -- within `clock` x the seconds left (CLOCK_SECONDS
 # at least), or the CLOCK_MIN nearest -- so a side at 0:20 on a running clock draws what real sides did at
@@ -297,6 +305,10 @@ DECISION_PRIOR = 3.0
 # two 77% of the time in the sim's cells against 87% real, 5 behind 79% against 86%, 10 behind 72%
 # against all 16 real ones.
 CONV_BLEND = 5.0
+# A two-point try's chance by the part of the game (conv_late), each shrunk toward the whole game's by
+# TWO_GOOD_PRIOR tries: September's real ones were made 64-71% of the time before Q4's last 3:00 (239
+# of them), 52.9% in it (493) and 36% in overtime (11), where the sim made 56.6% of all of them.
+TWO_GOOD_PRIOR = 20.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
                    features=("togo10", "dist", "margin", "phase", "left", "fg4", "dist3", "togo4"),
@@ -393,6 +405,31 @@ def remain_b(r):
 
 def time_b(s):
     return _cut(s, TIME_EDGES)
+
+
+def field_radius(share, y, ymin=FIELD_YARDS):
+    """The field window's reach at field y: share x the yards to go, ymin at least."""
+    return np.maximum(ymin, np.round(share * (100 - np.asarray(y)))).astype(np.int64)
+
+
+def near_blended(m):
+    """Whether the model's blended distance draws weigh their cells by the snaps near the field."""
+    return bool(getattr(m, "near_blend", False) and getattr(m, "field", 0.0) and getattr(m, "blend", 0.0))
+
+
+def dist_weights(m, C, field):
+    """(states, levels) the distance draw's blended weights for states at `field` (chain C): by each
+    group's real snaps near the field where the model blends near (near_blended), else by all of them."""
+    b = m.dist
+    if near_blended(m):
+        return b.blend_weights(C, m.blend, b.near_counts(C, field, field_radius(m.field, field), "field"))
+    return b.blend_weights(C, m.blend)
+
+
+def field_nmin(m, last):
+    """The fewest snaps a level's field window takes before it widens: FIELD_MIN at the last level or
+    where the model does not blend near, else 1 (its cell's weight counted only those near)."""
+    return np.where(np.asarray(last), FIELD_MIN, 1) if near_blended(m) else np.full(np.shape(last), FIELD_MIN)
 
 
 def left_b(s):
@@ -686,15 +723,52 @@ class Bins:
             out[hit, li] = first + k[hit]
         return out
 
-    def blend_weights(self, chain, prior):
+    def blend_weights(self, chain, prior, n=None):
         """(states, levels) the chance each level's group is drawn from when the levels are blended: the
         finest first, each taken with its real records' share n / (n + prior), the rest passed on to the
-        next level there; the last level takes what is left."""
-        n = np.where(chain >= 0, self.count[np.maximum(chain, 0)], 0).astype(float)
-        a = np.where(chain >= 0, n / (n + prior), 0.0)
+        next level there; the last level takes what is left. n: (states, levels) the records each group
+        counts for the state (near_counts), else all of them."""
+        n = (np.where(chain >= 0, self.count[np.maximum(chain, 0)], 0) if n is None else n).astype(float)
+        a = np.where((chain >= 0) & (n > 0), n / (n + prior), 0.0)
         a[:, -1] = np.where(chain[:, -1] >= 0, 1.0, 0.0)
         left = np.cumprod(np.c_[np.ones(len(a)), 1.0 - a[:, :-1]], axis=1)
         return left * a
+
+    @staticmethod
+    def pick(chain, W, rng):
+        """(groups, levels) a level drawn for each state on its weights W (blend_weights), and its group."""
+        cw = np.cumsum(W, 1)
+        u = rng.random(len(W)) * cw[:, -1]
+        li = np.minimum((cw <= u[:, None]).sum(1), W.shape[1] - 1)
+        g = chain[np.arange(len(W)), li]
+        bad = g < 0                                 # a state with no weight anywhere: its last level
+        li[bad] = W.shape[1] - 1
+        g[bad] = chain[bad, -1]
+        return g, li
+
+    def span(self, b, v, r, name):
+        """(lo, hi) each draw's records of its group (b) within r of the state's own value v, in
+        by_value(name) order: the same either side, stopping as far short of a nearer end of the scale on
+        the other side (WINDOW_ENDS), never widened."""
+        _, key = self.by_value(name)
+        b, v = np.asarray(b, np.int64), np.asarray(v, np.int64)
+        lo_end, hi_end = WINDOW_ENDS.get(name, (0, WINDOW_SPAN - 1))
+        rr = np.minimum(np.asarray(r, np.int64), np.maximum(0, np.minimum(v - lo_end, hi_end - v)))
+        base = b * WINDOW_SPAN
+        return (np.searchsorted(key, base + np.clip(v - rr, 0, WINDOW_SPAN - 1), "left"),
+                np.searchsorted(key, base + np.clip(v + rr, 0, WINDOW_SPAN - 1), "right"))
+
+    def near_counts(self, chain, v, r, name):
+        """(states, levels) each level's group's real records within r of the state's own value (span;
+        0 where the level has no group)."""
+        out = np.zeros(chain.shape)
+        v, r = np.asarray(v, np.int64), np.broadcast_to(np.asarray(r, np.int64), np.shape(v))
+        for li in range(chain.shape[1]):
+            ok = np.flatnonzero(chain[:, li] >= 0)
+            if len(ok):
+                lo, hi = self.span(chain[ok, li], v[ok], r[ok], name)
+                out[ok, li] = hi - lo
+        return out
 
     def bin_blend(self, cols, rng, prior):
         """The group each draw takes with the levels blended (blend_weights): a cell of n real records
@@ -770,7 +844,7 @@ class Bins:
         side, so a state at the 1 is not drawn from the 1 to the 5 alone. Where fewer than nmin are in
         it, it widens the same either side, as far as that end allows; only where none are left there,
         to the nearest nmin (nmin: FIELD_MIN, CLOCK_MIN for the time left)."""
-        nmin = nmin if nmin is not None else CLOCK_MIN if name == "left" else FIELD_MIN
+        nmin = np.asarray(nmin if nmin is not None else CLOCK_MIN if name == "left" else FIELD_MIN)
         _, key = self.by_value(name)
         b, v = np.asarray(b, np.int64), np.asarray(v, np.int64)
         lo_end, hi_end = WINDOW_ENDS.get(name, (0, WINDOW_SPAN - 1))
@@ -798,7 +872,7 @@ class Bins:
     def near(self, b, y, share, ymin=FIELD_YARDS, nmin=FIELD_MIN):
         """window on the field: within share x the yards to go (ymin at least) of field y."""
         y = np.asarray(y, np.int64)
-        return self.window(b, y, np.maximum(ymin, np.round(share * (100 - y))).astype(np.int64), "field", nmin)
+        return self.window(b, y, field_radius(share, y, ymin), "field", nmin)
 
     def tilted(self, order, lo, hi, u, theta, rng, m=TILT_CANDIDATES):
         """A record from each draw's span lo..hi of `order` reweighted by exp(theta . phi) (payload
@@ -820,12 +894,12 @@ class Bins:
             order = self.__dict__["_identity"] = np.arange(len(self.payload["phi"]))
         return self.tilted(order, self.start[b], self.start[b] + self.count[b], u, theta, rng)
 
-    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES, theta=None):
-        """The record each draw lands on from its window (window), u uniform; k: leaned toward the top
-        of its group as draw's is, by resampling m of the window on their place in the group; theta:
-        reweighted by it instead (tilted)."""
+    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None):
+        """The record each draw lands on from its window (window, nmin its fewest), u uniform; k: leaned
+        toward the top of its group as draw's is, by resampling m of the window on their place in the
+        group; theta: reweighted by it instead (tilted)."""
         order, _ = self.by_value(name)
-        lo, hi = self.window(b, v, r, name)
+        lo, hi = self.window(b, v, r, name, nmin)
         width = hi - lo
         if theta is not None:
             return self.tilted(order, lo, hi, u, theta, rng)
@@ -840,11 +914,10 @@ class Bins:
         pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
         return cand[np.arange(len(lo)), pick]
 
-    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES, theta=None):
+    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None):
         """draw_window on the field (near)."""
         y = np.asarray(y, np.int64)
-        r = np.maximum(FIELD_YARDS, np.round(share * (100 - y))).astype(np.int64)
-        return self.draw_window(b, y, r, u, "field", k, rng, m, theta)
+        return self.draw_window(b, y, field_radius(share, y), u, "field", k, rng, m, theta, nmin)
 
     def above(self, j, u):
         """A record at or above record j in its group (j's group read off its position), u uniform."""
@@ -1271,7 +1344,7 @@ def decision_points(rows, recs=None, final=None):
         out["two"].append(dict(side=_side_of(scorer, a_home), choice=int(two), period=p, clock=c,
                                left=float(half_left(p, c)), lead=m, own_to=own, opp_to=opp,
                                cell=s14.conversion_cell(p, c), good=int(good), msg=_i(a["message"])))
-        out["conv"].append((two, good))
+        out["conv"].append((two, good, int(conv_late(s14.conversion_cell(p, c)))))
     # timeouts before a running-clock snap, with a timeout left to call: the defense's first, then
     # (the defense not calling) the offense's
     for r in recs:
@@ -1385,6 +1458,7 @@ class Model:
         self.key = KEY
         self.blend = 0.0
         self.field = 0.0                   # the distance draws' field windows (0: off)
+        self.near_blend = False            # blended, the distance draws' cells weighed by their snaps near the field
         self.decision_blend = 0.0          # the decisions' cells blended (0: off)
         self.clock = 0.0                   # the time draws' clock windows at a half's end (0: off)
         self.time = self.dist = None
@@ -1401,6 +1475,7 @@ class Model:
         self.kick_pool = {}                # (RETURN | KEPT, desperate, late) -> (field, seconds)
         self.safety_fields = np.array([35])
         self.two_good, self.kick_good = 0.5, 0.97
+        self.two_good_by = None            # a two-point try made, by conv_late (before Q4's last 3:00, in it, overtime)
         self.rules = {}                    # learned (v21_rules): {decision: [(option, {feature: (lo, hi)})]}
         self.use_rules = True
         self.remain = np.zeros(REMAIN_SHAPE)
@@ -1547,6 +1622,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.key = key
     m.blend = float(blend or 0.0)
     m.field = float(field or 0.0)
+    m.near_blend = bool(NEAR_BLEND and m.field and m.blend)
     m.decision_blend = float(decision_blend or 0.0)
     m.clock = float(clock or 0.0)
     m.tilt_prior = float(tilt_prior)
@@ -1682,13 +1758,18 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.safety_fields = np.array(safeties, np.int64)
     conv = dec["conv"]
     if conv:
-        two = [g for t, g in conv if t]
-        kick = [g for t, g in conv if not t]
+        two = [g for t, g, _ in conv if t]
+        kick = [g for t, g, _ in conv if not t]
         m.two_good = (sum(two) + 5) / (len(two) + 10)
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
+        # by the part of the game, each shrunk toward the whole game's by TWO_GOOD_PRIOR tries
+        m.two_good_n = np.array([sum(1 for t, g, l in conv if t and l == k) for k in range(3)])
+        m.two_good_by = np.array([(sum(g for t, g, l in conv if t and l == k) + TWO_GOOD_PRIOR * m.two_good)
+                                  / (m.two_good_n[k] + TWO_GOOD_PRIOR) for k in range(3)])
     run = dec["to_def"]
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, blend=m.blend,
-                  field=m.field, decision_blend=m.decision_blend, clock=m.clock, tilt_prior=m.tilt_prior,
+                  field=m.field, near_blend=m.near_blend, decision_blend=m.decision_blend, clock=m.clock,
+                  tilt_prior=m.tilt_prior,
                   timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
@@ -1822,15 +1903,17 @@ def _tilt_who(m, recs):
     return who, sizes
 
 
-def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None):
+def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None, near_blend=False):
     """(states, n_bins) what the league's draw gives each state, by histogram bin: its groups' real
     records over the levels as bin_blend weighs them (blend 0: its first group), each group's records
     in the state's window where near is (values, radii, payload name: Bins.window) or all of them;
-    records of bin -1 left out (the time's cut ones: only "at least this long")."""
+    records of bin -1 left out (the time's cut ones: only "at least this long"). near_blend: the levels
+    weighed by their records in the window, no window widened but the last level's (dist_weights)."""
     n = len(np.asarray(feats[b.features[0]]))
+    near_blend = bool(near_blend and blend and near is not None)
     if blend:
         C = b.chain(feats)
-        W = b.blend_weights(C, blend)
+        W = b.blend_weights(C, blend, b.near_counts(C, near[0], near[1], near[2]) if near_blend else None)
     else:
         g = b.bin_of(feats)
         C, W = g[:, None], (g >= 0).astype(float)[:, None]
@@ -1847,7 +1930,8 @@ def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None):
             continue
         g = C[ok, li]
         if near is not None:
-            lo, hi = b.window(g, near[0][ok], near[1][ok], near[2])
+            lo, hi = b.window(g, near[0][ok], near[1][ok], near[2],
+                              1 if near_blend and li < C.shape[1] - 1 else None)
         else:
             lo, hi = b.start[g], b.start[g] + b.count[g]
         cnt = np.zeros((len(ok), n_bins))
@@ -1934,7 +2018,7 @@ def fit_model_tilts(m, recs, verbose=True):
         r = np.maximum(FIELD_YARDS, np.round(share * (100 - field))).astype(np.int64)
         near = (field.astype(np.int64), r, "field")
     fd = {k: v for k, v in feats.items()}
-    H = tilt_bases(m.dist, fd, pbin, DIST_BINS, blend, near)
+    H = tilt_bases(m.dist, fd, pbin, DIST_BINS, blend, near, near_blended(m))
     obs = dist_bin(kind, gain, td, first)
     wts = recency_weights(recs)
     phi_all = pd_["phi"].astype(float)
@@ -2074,7 +2158,9 @@ def report_build(m, recs=None):
                   + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
             continue
         if getattr(m, "blend", 0):                     # blended: each level's expected share of the draws
-            W = b.blend_weights(b.chain(feats), m.blend)
+            C = b.chain(feats)
+            W = dist_weights(m, C, np.array([r["field"] for r in recs], np.int64)) if b is m.dist \
+                else b.blend_weights(C, m.blend)
             rest, late = W[~end].mean(0), W[end].mean(0)
         else:
             rest, late = b.level_shares(real[i][~end]), b.level_shares(real[i][end])
@@ -2135,6 +2221,11 @@ def report_build(m, recs=None):
               + ", ".join(f"{DECISIONS[k]['label'].split(' (')[0]} {len(v)}" for k, v in m.rules.items()))
     else:
         print("  no rules: the real shares alone")
+    by = getattr(m, "two_good_by", None)
+    if by is not None:
+        print("  two-point tries made (shrunk by %g tries toward the game's %.1f%%): " % (TWO_GOOD_PRIOR, 100 * m.two_good)
+              + ", ".join(f"{name} {100 * by[k]:.1f}% ({int(m.two_good_n[k])})" for k, name in
+                          enumerate(("before Q4's last 3:00", "in it", "overtime"))))
     if getattr(m, "decision_blend", 0.0):
         own = ", ".join(f"{DECISIONS[k]['label']}s n / (n + {getattr(ch, 'blend', 0.0):g})"
                         for k, ch in m.choices.items() if getattr(ch, "blend", 0.0) != m.decision_blend)
@@ -2186,7 +2277,7 @@ def group_rates(b, flag):
     return np.add.reduceat(np.asarray(flag, float), b.start) / np.maximum(1, b.count)
 
 
-def td_chance(m, groups, need, cls, share=None):
+def td_chance(m, groups, need, cls, share=None, nmin=FIELD_MIN):
     """The chance the sim's distance draw ends in a touchdown from each state: its group's real snaps,
     each a touchdown where its gain reaches the state's goal, or where it was one itself and runs on
     there (gain_surv_end of the state's endgame3 class); with field windows (share: Bins.near's; None
@@ -2220,16 +2311,17 @@ def td_chance(m, groups, need, cls, share=None):
         return vals[inv.ravel()]
     if len(ok):                       # near the field: the drawn snap's own touchdown (draw_play)
         order = b.by_field()[0]
-        lo, hi = b.near(uniq[ok, 0], 100 - uniq[ok, 1], share)
+        lo, hi = b.near(uniq[ok, 0], 100 - uniq[ok, 1], share, nmin=nmin)
         hit = np.r_[0, np.cumsum(pay["td"][order].astype(np.int64))]
         vals[ok] = (hit[hi] - hit[lo]) / np.maximum(1, hi - lo)
     return vals[inv.ravel()]
 
 
-def _mix(m, b, feats, sub, rates=None, per_group=None):
+def _mix(m, b, feats, sub, rates=None, per_group=None, field=None):
     """Each state's (sub: rows of feats) expected value over the groups the league's draw takes it from:
-    blended, every level's weighted as bin_blend draws them (blend_weights); else its first level's.
-    rates: per group; per_group(groups, rows): the value for some of the states (rows of sub)."""
+    blended, every level's weighted as bin_blend draws them (blend_weights; the distance draw's at the
+    states' own field: dist_weights); else its first level's. rates: per group; per_group(groups, rows,
+    last): the value for some of the states (rows of sub), last whether at the chain's last level."""
     f = {k: v[sub] for k, v in feats.items()}
     blend = getattr(m, "blend", 0)
     if not blend:
@@ -2237,15 +2329,16 @@ def _mix(m, b, feats, sub, rates=None, per_group=None):
         V = np.full(len(g), np.nan)
         okg = g >= 0
         if okg.any():
-            V[okg] = rates[g[okg]] if per_group is None else per_group(g[okg], okg)
+            V[okg] = rates[g[okg]] if per_group is None else per_group(g[okg], okg, True)
         return V
     C = b.chain(f)
-    W = b.blend_weights(C, blend)
+    W = dist_weights(m, C, field) if field is not None and b is m.dist else b.blend_weights(C, blend)
     V = np.zeros(W.shape)
     for li in range(C.shape[1]):
         okl = C[:, li] >= 0
         if okl.any():
-            V[okl, li] = rates[C[okl, li]] if per_group is None else per_group(C[okl, li], okl)
+            V[okl, li] = rates[C[okl, li]] if per_group is None else \
+                per_group(C[okl, li], okl, li == C.shape[1] - 1)
     return (W * V).sum(1)
 
 
@@ -2262,9 +2355,12 @@ def _td_states(m, recs, feats, sub):
     need, cls = (100 - field).astype(np.int64), feats["endgame3"][sub]
     share = getattr(m, "field", 0.0) or FIELD_SHOWN
     d_td = group_rates(m.dist, m.dist.payload["td"])
-    grp = _mix(m, m.dist, feats, sub, d_td)
-    whole = _mix(m, m.dist, feats, sub, per_group=lambda gs, okl: td_chance(m, gs, need[okl], cls[okl], 0.0))
-    near = _mix(m, m.dist, feats, sub, per_group=lambda gs, okl: td_chance(m, gs, need[okl], cls[okl], share))
+    fld = field.astype(np.int64)
+    grp = _mix(m, m.dist, feats, sub, d_td, field=fld)
+    whole = _mix(m, m.dist, feats, sub, field=fld,
+                 per_group=lambda gs, okl, last: td_chance(m, gs, need[okl], cls[okl], 0.0))
+    near = _mix(m, m.dist, feats, sub, field=fld, per_group=lambda gs, okl, last: td_chance(
+        m, gs, need[okl], cls[okl], share, int(field_nmin(m, last))))
     return td, grp, whole, near
 
 
@@ -2304,7 +2400,7 @@ def late_lines(m, recs, real=None, feats=None, period=4):
         if not len(sub) or (real[1][sub] < 0).all():
             continue
         r_td, g_td, whole, near = _pct(_td_states(m, recs, feats, sub))
-        g_loss = _mix(m, m.dist, feats, sub, d_loss)
+        g_loss = _mix(m, m.dist, feats, sub, d_loss, field=g("field")[sub].astype(np.int64))
         g_sec = _mix(m, m.time, feats, sub, t_mean)
         out.append(f"    {name}: {len(sub):,} snaps, touchdown {r_td:.1f} / {g_td:.1f} / {whole:.1f} / {near:.1f},"
                    f" loss {100 * loss[sub].mean():.1f} / {100 * np.nanmean(g_loss):.1f}, seconds"
@@ -2321,13 +2417,13 @@ def level_lines(m, recs, feats, sub):
     b = m.dist
     blend = getattr(m, "blend", 0.0)
     C = b.chain(f)
-    W = b.blend_weights(C, blend) if blend else None
+    field = np.array([recs[i]["field"] for i in sub], np.int64)
+    W = dist_weights(m, C, field) if blend else None
     if W is None:
         g = b.bin_of(f)
         W = np.zeros(C.shape)
         for li in range(C.shape[1]):
             W[(g >= 0) & (C[:, li] == g), li] = 1.0
-    field = np.array([recs[i]["field"] for i in sub], np.int64)
     td = np.array([recs[i]["kind"] == GAIN and recs[i]["gain"] >= 100 - recs[i]["field"] for i in sub])
     share = getattr(m, "field", 0.0) or FIELD_SHOWN
     cls = f["endgame3"]
@@ -2338,7 +2434,8 @@ def level_lines(m, recs, feats, sub):
             continue
         ok = C[:, li] >= 0
         ch = np.zeros(len(sub))
-        ch[ok] = td_chance(m, C[ok, li], (100 - field[ok]), cls[ok], share)
+        ch[ok] = td_chance(m, C[ok, li], (100 - field[ok]), cls[ok], share,
+                           int(field_nmin(m, li == len(b.levels) - 1)))
         parts.append(f"{'+'.join(lv) or 'all'} {100 * w.sum() / len(sub):.0f}% at {100 * np.average(ch, weights=w):.1f}")
     return [f"      by the draw's level (share of the draws at touchdown % near the field; real {100 * td.mean():.1f}): "
             + "; ".join(parts)]
@@ -2670,7 +2767,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                                  late=conv_late(cell)),
                      gamer[ix, side], fine=state(ix, side), ot=ot_mask("two", len(ix), other_done_close=close),
                      ix=ix) == 1
-        good = rng.random(len(ix)) < np.where(two, model.two_good, model.kick_good)
+        by = getattr(model, "two_good_by", None)
+        two_good = by[conv_late(cell)] if by is not None else model.two_good
+        good = rng.random(len(ix)) < np.where(two, two_good, model.kick_good)
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
         tally("two_point_tries", two.sum())
         kick_to(ix, 1 - side)
@@ -2822,9 +2921,16 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                         elapsed=elapsed_b(elapsed[ix]), remain=rem))
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
-        b = league_bins(model.dist, f)
+        nmin = None
+        if near_blended(model):
+            # each cell weighed by its snaps near the field, its window never widened (the last level's aside)
+            C = model.dist.chain(f)
+            b, li = Bins.pick(C, dist_weights(model, C, y[ix]), rng)
+            nmin = field_nmin(model, li == C.shape[1] - 1)
+        else:
+            b = league_bins(model.dist, f)
         th = th_dist[ix, off] if th_dist is not None else None
-        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th) if field_share \
+        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin) if field_share \
             else model.dist.draw_tilted(b, u, th, rng) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
         out = {x: model.dist.payload[x][j].copy() for x in names}

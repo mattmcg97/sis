@@ -76,7 +76,7 @@ def tables():
                 short_tb=np.zeros((len(SHORT_ROWS), len(v21.TIME_BUCKETS), 3)),
                 two_part=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1, 2)),
                 two_part_base=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1)),
-                two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(2))
+                two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(4))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -242,7 +242,8 @@ def _worker(job):
     model_path, items, n_paths, state_paths, every = job
     model = v21.Model.load(model_path)
     real, flow, step = tables(), tables(), tables()
-    flow["two_sim"] += (model.two_good, 1.0)
+    by = getattr(model, "two_good_by", None)
+    flow["two_sim"] += np.r_[by if by is not None else np.full(3, model.two_good), 1.0]
     for code, rows, pair, teams, final in items:
         seed = zlib.crc32(str(code).encode())
         rows = v21._with_side(rows)
@@ -556,10 +557,10 @@ def two_part_lines(real, flow):
                  f" ({int(r[k].sum())})" if r[k].sum() >= 3 else "-" for k in range(len(CONV_PARTS))]
         lines.append(f"  {i - v21.CONV_MARGIN:>+6d}" + "".join(f"{c:>26s}" for c in cells))
     g, sim = real["two_good"], flow["two_sim"]
-    lines.append("  two-point tries made (real, by the part of the game; the sim's one rate "
-                 f"{_pct(sim[0], sim[1]):.1f}%): " + ", ".join(
-                     f"{name} {_pct(g[k, 1], g[k, 0]):.1f}% of {int(g[k, 0])}" for k, name in enumerate(GOOD_PARTS)
-                     if g[k, 0]))
+    lines.append("  two-point tries made (real, by the part of the game; the sim's before Q4's last 3:00 "
+                 f"{_pct(sim[0], sim[3]):.1f}%, in it {_pct(sim[1], sim[3]):.1f}%, overtime {_pct(sim[2], sim[3]):.1f}%): "
+                 + ", ".join(f"{name} {_pct(g[k, 1], g[k, 0]):.1f}% of {int(g[k, 0])}" for k, name in enumerate(GOOD_PARTS)
+                             if g[k, 0]))
     return lines
 
 
