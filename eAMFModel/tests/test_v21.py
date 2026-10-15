@@ -695,6 +695,31 @@ class TestAudit(unittest.TestCase):
             self.assertIn(part, lines)
 
 
+class TestCoverage(unittest.TestCase):
+
+    def test_every_real_state_s_draws_and_the_thinnest_situations(self):
+        from .. import v21_coverage as C
+        model = built()
+        codes = sorted(MATCHES)[:10]
+        with tempfile.TemporaryDirectory() as d:
+            model.save(os.path.join(d, v21.MODEL_FILE))
+            out = C.run(d, {c: MATCHES[c] for c in codes}, HISTORY)
+            lines = C.write(out, os.path.join(d, "cov"))
+            self.assertEqual(sorted(os.listdir(os.path.join(d, "cov"))),
+                             ["coverage.txt", "coverage_decisions.csv", "coverage_states.csv"])
+        n = sum(len([r for r in v21.match_snaps(MATCHES[c]) if r["period"] <= 4 + v21.MAX_OT]) for c in codes)
+        self.assertEqual(len(out["states"]), n)
+        self.assertTrue(all(x["dist_level"] >= 0 and x["dist_n"] >= 20 for x in out["states"]))
+        text = "\n".join(lines)
+        for part in ("by the part of the game and the lead", "by the snaps left in the half", "the thinnest situations",
+                     "the decisions"):
+            self.assertIn(part, text)
+        kind = C.level_kind(model.dist.levels, np.array([False, True]))
+        self.assertEqual(int(kind(0, False)), 0)
+        k_end = [lv for lv, f in enumerate(model.dist.levels) if f == ("tb", "down", "dist", "zone", "endgame3")][0]
+        self.assertEqual([int(kind(k_end, False)), int(kind(k_end, True))], [2, 1])   # the lead only at the end
+
+
 class TestCli(unittest.TestCase):
 
     def test_build_and_report(self):

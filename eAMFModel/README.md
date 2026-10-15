@@ -2133,6 +2133,28 @@ missing something. Nothing is ever fitted to close those gaps.
   hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
   has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
 
+### Coverage (`v21-coverage`)
+
+```powershell
+python -m eAMFModel v21-coverage --model v21_dec --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_coverage
+```
+
+For every real state in the window, how much real data the sim's draws there stand on. It covers
+the time draw at the state and the distance draw at the state with the time its real play took.
+For each draw it gives the fallback level reached, the real snaps in that group and, in full
+mode, whether the gamer's and team's own draws had enough alike. It does the same for every real
+4th down, early kick and conversion and its cell. Each draw is one of:
+- **full:** the whole key;
+- **situation:** the lead and the time of the game kept, but coarser;
+- **no lead:** the time of the game kept, not the lead;
+- **bare:** neither.
+
+`coverage.txt` sums them by the part of the game and the lead, and by the snaps left and the lead,
+with the median group size. It also lists the thinnest situations (by half, lead, down and snaps
+left), where the most states' distance draws lose the lead or the time of the game, for the end of
+a half and the rest of the game apart. `coverage_states.csv` and `coverage_decisions.csv` have one
+row per real state and decision, to look any situation up.
+
 ### Down by down, by the time left (`v21-audit`)
 
 ```powershell

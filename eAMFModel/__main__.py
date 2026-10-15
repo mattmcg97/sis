@@ -393,6 +393,29 @@ def cmd_v21_audit(args):
     return 0
 
 
+def cmd_v21_coverage(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_coverage
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    out = v21_coverage.run(args.model, snaps, history)
+    lines = v21_coverage.write(out, args.out) if args.out else v21_coverage.report(out)
+    print("\n".join(lines))
+    if args.out:
+        print(f"\n  -> {args.out}/coverage.txt, coverage_states.csv, coverage_decisions.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
 def cmd_v21_report(args):
     import datetime as dt
     import time
@@ -821,6 +844,17 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_audit.txt here")
     p.set_defaults(func=cmd_v21_audit)
+
+    p = sub.add_parser("v21-coverage", help="v2.1's coverage: for every real state, the fallback level each draw "
+                                            "reaches and the real snaps behind it; the thinnest situations")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--out", help="write coverage.txt and the per-state CSVs here")
+    p.set_defaults(func=cmd_v21_coverage)
 
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
                                           "every step of the real games, and its draws against the real snaps")
