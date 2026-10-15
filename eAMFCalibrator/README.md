@@ -2822,6 +2822,83 @@ interval (resampling matches) and the weeks it came out ahead. The cuts are:
 Writes `out/prior_replay.txt` and `out/prior_replay.csv` (a row per bet with
 each variant's probability, odds and revenue).
 
+### Every prior variant, audited, graded and replayed: `backtest-suite`
+
+```bash
+python -m eAMFCalibrator backtest-suite --since "2026-08-15 00:00:00" --until "2026-10-15 00:00:00"
+python -m eAMFCalibrator backtest-suite --config suite.json --steps audit,backtest,replay,summary
+```
+
+One command runs the whole pre-match backtest. It makes the daily NB2 fits, checks every input for
+anything a match couldn't have known, runs `prior-backtest` and `prior-replay` on every variant from
+one read of the data, and ranks the variants. Everything goes to `out/suite/`. Each step's output
+is kept, so a step can be rerun on its own.
+
+| step | what it does |
+|---|---|
+| `history` | every settled match, for the fits: `match_history.csv` |
+| `fits` | NB2 refitted every day of the window (`eAMFModel prior-daily`), one directory per half-life: `nb2_hl<D>/`. Days already fitted are kept |
+| `audit` | the inputs checked (below): `suite_audit.txt`. A FAIL stops the run; `--keep-going` carries on |
+| `backtest` | the layers' leak check, then `prior-backtest` on every arm and the controls: `prior_backtest.txt/csv` |
+| `replay` | `prior-replay` on the same arms, from the same read and fits: `prior_replay.txt/csv` |
+| `summary` | every variant ranked: `suite_summary.txt/csv` |
+
+**The arms:** an NB2 arm per half-life (`nb2-hl30`, `nb2-hl60`, `nb2-hl120` by default), the glmer
+arm (`glmer/cadence.R`'s daily trimmed model by default; cadence.R must have been run over the
+window), and any others in the settings. Each comes as it is and with every layer: `+layer`,
+`+infer`, `+both`, and with the gamers' stats `+feat` and `+both+feat`.
+
+**What the audit checks:**
+- **The history:** every match appears once, and the history reaches the window's end.
+- **Each NB2 directory:** fitted at its half-life, with a fit for every day. Every day's training
+  file (and its level scale's) holds only results from before that day.
+- **Each CSV arm:** the file is there and how much of the window it prices (warns below 95%: the
+  backtest grades only the matches every arm priced). cadence.R's daily fits are cut at midnight.
+- **The gamers' stats:** there, fresh (else rerun `player-stats`), and their coverage of the window.
+  How many matches in each period had play detail.
+- **The scramble check on the stats:** the stats from the window's middle day on are shuffled
+  between matches and scaled at random. Every earlier match must read exactly as before.
+
+**The layers' leak check** (the first arm): the results and stats from the window's middle day on
+are scrambled the same way, and every layer is refitted. Every earlier match must move exactly as
+it did, and the fitted score model's fits before that day must be unchanged. A layer reading a later
+result, or a total or average that includes one, would differ. The same refit without the scramble
+must reproduce every move (determinism).
+
+**The controls** are checks on the pipeline, not candidates, and are listed apart:
+
+| control | what it is | what it must show |
+|---|---|---|
+| `echo` | prod's closing moneyline and line read back as an arm (its implied margin and total, the normal reading) | grades as prod does. If not, the matches, sides or grading are out of line |
+| `shuffled` | the first NB2 arm's prices shuffled between matches of the same day | grades well below its source. If not, the grading isn't reading the prices |
+
+**The summary:** every variant is ranked by its moneyline log loss against prod, match by match.
+Each line also gives:
+- the over at prod's line, and the expected total's RMSE;
+- the book's margin on the clean bets at the variant's prices less at prod's, with its 95% interval
+  (resampling matches);
+- the moneyline against prod at first meetings, at rematches, and in each period.
+
+The periods default to before, during and after the play-detail gap (23 Sep – 9 Oct). The clean
+bets follow, by market, then the controls' checks and the audit's tally. The grading is done again
+from `prior_backtest.csv`, apart from `prior-backtest`'s own, and the two agree.
+
+**The settings** (`--config`, a JSON object; anything left out keeps its default,
+`backtest_suite.DEFAULTS`):
+
+| setting | default |
+|---|---|
+| `nb2_half_lives` | `[30, 60, 120]` (days) |
+| `nb2_mode`, `nb2_workers` | the NB2 arms' `#MODE` (`""`: their own score model); fits side by side (2) |
+| `glmer` | `glmer/out/cadence/cadence_matches.csv@trim:hl60_x0.5:daily` (`""`: none) |
+| `arms` | `{}`: more arms, `{"NAME": "SOURCE[#MODE]"}` |
+| `features` | `out/player_match_stats.csv` (`"none"`: no feature layer) |
+| `draws`, `boot` | 40,000 scorelines a match; the replay's resamples (config's) |
+| `controls`, `leak_check` | on |
+| `periods` | `[[label, from, until], ...]`: the detail gap's three |
+
+`suite.json` records the settings, the window, the arms, each step's time and git commit, and the
+audit's tally.
 ### Rematches the same day: `bets rematches`
 
 ```bash

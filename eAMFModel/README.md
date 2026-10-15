@@ -1904,6 +1904,12 @@ python -m eAMFModel prior-daily --prior glmer --history eAMFCalibrator/out/match
 - One directory of fits serves every version attached to it.
 - Only the prior is refitted. The simulation's tables, the shrink and the form spread stay as the
   build fitted them.
+- `--half-life DAYS` (NB2 only) weights each fit's results by 2^(-days old / DAYS), NBRatingTrial's
+  `--half-life-days` (its default is 60). It reaches both of a day's fits (the day's own and its
+  level scale's). A directory keeps one setting: rerunning it with another is refused, so one
+  directory never mixes two models.
+- A match before the first fitted day is priced by the first fit, which has seen that match's
+  result. `prior-backtest` and `prior-replay` leave such matches out.
 
 The trader prices a match as of today, so with a rolling prior attached it uses the latest day's
 fit. To give it an up-to-date pre-match model without rebuilding, refresh the history and fit

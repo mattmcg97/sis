@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from .. import rolling_prior, v12
+from .. import nb2_prior, rolling_prior, v12
 
 
 class FakeFit:
@@ -85,6 +85,35 @@ class TestRollingPrior(unittest.TestCase):
         self.assertTrue(any("2026-09-11 FAILED" in str(c) for c in said.call_args_list))
         self.assertEqual(r.means([_row("b", "2026-09-11 12:00:00")], results=[])["b"][0], 10)
 
+    def test_a_setting_reaches_every_fit_and_a_directory_keeps_one(self):
+        seen = []
+        real = FakeFit.build.__func__
+
+        def build(cls, history, directory, before, half_life=None):
+            seen.append(half_life)
+            return real(cls, history, directory, before)
+
+        with mock.patch.object(FakeFit, "build", classmethod(build)):
+            r = rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 11), verbose=False,
+                                  options={"half_life": 30})
+            self.assertEqual(seen, [30, 30])
+            self.assertEqual(r.options, {"half_life": 30})
+            self.assertIn("half_life 30", r.describe())
+            with self.assertRaises(SystemExit):                    # the same directory, another setting
+                rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 12),
+                                  verbose=False, options={"half_life": 60})
+            with self.assertRaises(SystemExit):                    # the defaults are a setting too
+                rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 12), dt.date(2026, 9, 12), verbose=False)
+            with self.assertRaises(SystemExit):                    # one the prior doesn't have
+                rolling_prior.fit([], "glmer", os.path.join(self.tmp.name, "other"), dt.date(2026, 9, 10),
+                                  dt.date(2026, 9, 10), verbose=False, options={"decay": 2})
+            # a narrower rerun keeps the days fitted before in the index
+            r = rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 11), dt.date(2026, 9, 11), verbose=False,
+                                  options={"half_life": 30})
+        self.assertEqual(r.days, [dt.date(2026, 9, 10), dt.date(2026, 9, 11)])
+        self.assertFalse(r.covers(dt.date(2026, 9, 9)))            # its fit has seen that day's results
+        self.assertTrue(r.covers(dt.date(2026, 9, 10)))
+
     def test_attach_points_a_build_at_the_fits_and_checks_the_kind(self):
         rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 10), verbose=False)
         build = os.path.join(self.tmp.name, "v12_model")
@@ -102,6 +131,29 @@ class TestRollingPrior(unittest.TestCase):
         rolling_prior.detach(build)
         with open(os.path.join(build, v12.PRIOR_FILE)) as fh:
             self.assertNotIn("rolling", json.load(fh))
+
+
+class TestNB2HalfLife(unittest.TestCase):
+
+    def test_the_half_life_reaches_both_of_a_days_fits(self):
+        hist = [{"MATCH_CODE": f"m{k}", "SCHEDULED_START_TIME_UTC": f"2026-09-{1 + k:02d} 12:00:00",
+                 "PLAYER_1_HANDLE": "A", "PLAYER_1_TEAM": "X", "PLAYER_2_HANDLE": "B", "PLAYER_2_TEAM": "Y",
+                 "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "14"} for k in range(20)]
+        calls = []
+        with tempfile.TemporaryDirectory() as d, \
+                mock.patch.object(nb2_prior, "_need_libraries", lambda: None), \
+                mock.patch.object(nb2_prior, "_run", lambda script, args, cwd: calls.append((script, args))), \
+                mock.patch.object(nb2_prior, "predict", lambda directory, schedule, *a, **k: {}):
+            nb2_prior.Prematch.build(hist, os.path.join(d, "fit"), dt.datetime(2026, 9, 15), half_life=30)
+            with open(os.path.join(d, "fit", "level.json")) as fh:
+                self.assertEqual(json.load(fh)["half_life_days"], 30)
+            with open(os.path.join(d, "fit", "history.csv")) as fh:
+                self.assertEqual(sum(1 for _ in fh) - 1, 14)       # the results before the cut-off only
+            nb2_prior.fit(hist, os.path.join(d, "plain"), dt.datetime(2026, 9, 15))
+        fits = [args for script, args in calls if script == nb2_prior.FIT_SCRIPT]
+        self.assertEqual(len(fits), 3)                             # the day's fit, its level scale's, a plain one
+        self.assertTrue(all(a[-2:] == ["--half-life-days", "30"] for a in fits[:2]))
+        self.assertNotIn("--half-life-days", fits[2])
 
 
 if __name__ == "__main__":

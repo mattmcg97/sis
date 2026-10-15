@@ -285,11 +285,12 @@ def report(table, idx_all, clean, info, n_boot, played=None):
     return L
 
 
-def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=None, features=None):
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=None, features=None, ctx=None):
     """Replay the window's pre-match bets at every arm's prices, as it is and with each layer
-    (features: player-stats' per-match stats, for the feature layer). Returns the report's path."""
+    (features: player-stats' per-match stats, for the feature layer; ctx: prior_backtest.prepare()'s,
+    already made). Returns the report's path."""
     n_boot = config.SIM_BOOT if n_boot is None else n_boot
-    ctx = pb.prepare(cur, since, until, features)
+    ctx = ctx or pb.prepare(cur, since, until, features)
     window, tl = ctx["window"], ctx["tl"]
     found, codes, played, layers = variants(ctx, arms, draws)
     sql, params, _ = bets.bets_sql()

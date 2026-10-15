@@ -138,6 +138,11 @@ def read_rolling(directory, rows, history):
     sds."""
     from eAMFModel import nb2_prior, rolling_prior
     prior = rolling_prior.Rolling(directory)
+    # a match before the first fitted day would be priced by a fit that has seen its result
+    early = [r for r in rows if not prior.covers(_day_of(r))]
+    if early:
+        print(f"  {directory}: {len(early):,} matches before its first fit ({prior.days[0]}) left out", flush=True)
+        rows = [r for r in rows if prior.covers(_day_of(r))]
     if prior.kind != "nb2":
         means = prior.means(rows, results=history)
         points = {k: (float(v[0]), float(v[1])) for k, v in means.items()}
@@ -167,6 +172,11 @@ def read_rolling(directory, rows, history):
             if None not in (a1, a2, sh):
                 own[code] = ("nb2", (mu1, mu2, a1, a2, sh))
     return points, own
+
+
+def _day_of(row):
+    start = _start(row.get("SCHEDULED_START_TIME_UTC"))
+    return start.date() if start else None
 
 
 def read_points(spec, rows, history):
@@ -455,7 +465,7 @@ def prepare(cur, since, until=None, features=None):
           f"over 5 points in {sum(1 for x in moved if x > 0.05):,} matches", flush=True)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
     first = min((m["start"] for m in window.values()), default=start)
-    feats = None
+    feats, stat_rows = None, None
     if features and os.path.exists(features):
         with open(features, newline="", encoding="utf-8") as fh:
             stat_rows = list(csv.DictReader(fh))
@@ -465,7 +475,7 @@ def prepare(cur, since, until=None, features=None):
     elif features:
         print(f"  no {features}: run player-stats first for the feature layer", flush=True)
     return dict(history=history, window=window, codes=codes, tl=tl, prod=prod, early=early, first_plays=first_plays,
-                features=feats,
+                features=feats, stat_rows=stat_rows, features_since=first.date(), read={}, fitted={},
                 sched=[rows_by_code[c] for c in codes if c in rows_by_code],
                 burn_from=first.replace(hour=0, minute=0, second=0, microsecond=0)
                 + dt.timedelta(days=BURN_IN_DAYS))
@@ -473,13 +483,24 @@ def prepare(cur, since, until=None, features=None):
 
 def fit_arm(name, spec, ctx):
     """(mode, own score models, layer rows, {"rematch": the last rematch layer, "inference": the last
-    inference layer}) for one arm (prod: spec None): its expected points read, both layers fitted
-    walk-forward on its own errors (the rows carry both moves)."""
+    inference layer, ...}) for one arm (prod: spec None): its expected points read, every layer fitted
+    walk-forward on its own errors (the rows carry the moves). Kept in the ctx, so a backtest and a
+    replay off one prepare() read and fit each arm once."""
+    memo = ctx.setdefault("fitted", {})
+    if (name, spec) not in memo:
+        memo[(name, spec)] = _fit_arm(name, spec, ctx)
+    return memo[(name, spec)]
+
+
+def _fit_arm(name, spec, ctx):
     points, own, mode = {}, {}, None
     codes = ctx["codes"]
     if spec is not None:
         source, mode = parse_arm(spec)
-        points, own = read_arm(source, ctx["sched"], ctx["history"])
+        read = ctx.setdefault("read", {})                  # a source read once, however often refitted
+        if source not in read:
+            read[source] = read_arm(source, ctx["sched"], ctx["history"])
+        points, own = read[source]
         if mode == "own" and not own:
             raise SystemExit(f"--arm {name}: {source} has no score model of its own (only NB2 and a rolling "
                              "glmer do); use #fitted or #normal")
@@ -509,10 +530,11 @@ def fit_arm(name, spec, ctx):
     return mode, own, rows, layers
 
 
-def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, features=None):
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, features=None, ctx=None):
     """Grade every arm, as it is and with each layer (active_layers), against prod over [since,
-    until]; `features`: player-stats' per-match stats, for the feature layer."""
-    ctx = prepare(cur, since, until, features)
+    until]; `features`: player-stats' per-match stats, for the feature layer; `ctx`: prepare()'s,
+    already made (the backtest suite's, shared with the replay)."""
+    ctx = ctx or prepare(cur, since, until, features)
     window, prod = ctx["window"], ctx["prod"]
     prices, layers, models, others = {}, {}, {}, set()
     for name, spec in [(PROD, None)] + list(arms):
