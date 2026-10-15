@@ -41,11 +41,25 @@ class TestCovariances(unittest.TestCase):
         m2, _ = layer.covariances([ab, ab_swapped])
         self.assertAlmostEqual(m2[0, 1], -(2 * 1.0 + 0.5))   # sides swapped: each gamer on the other team
 
-    def test_negative_or_inverted_estimates_are_used_safely(self):
+    def test_negative_estimates_are_used_as_zero(self):
         layer = il.InferenceLayer({"same team": [-1.0, 4.0], "team changed": [3.0, 9.0]})
         self.assertEqual(layer.use_gamer["same team"], [0.0, 4.0])
-        self.assertEqual(layer.use_gamer["team changed"], [0.0, 4.0])
+        self.assertEqual(layer.use_gamer["team changed"], [3.0, 9.0])
         self.assertIn("-1.00", "\n".join(layer.describe()))
+
+    def test_a_rematch_reads_as_the_rematch_layer_does(self):
+        # prod's fits: the rematch layer's same-teams 2.97^2 and changed 2.83^2 against the inference
+        # layer's form (same team 1.63^2, changed 0.78^2) and pair (same teams 1.87^2, changed 2.65^2)
+        layer = il.InferenceLayer({"same team": [1.63 ** 2, 0.0], "team changed": [0.78 ** 2, 0.0]},
+                                  {"same teams": [1.87 ** 2, 0.0], "teams changed": [2.65 ** 2, 0.0]}, [9.26 ** 2, 144])
+        ab = match("1", 0, "A", "B")
+        same = match("2", 40, "A", "B")
+        changed = match("3", 80, "A", "B", teams=("Bills", "Chiefs"))
+        m, _ = layer.covariances([ab, same, changed])
+        self.assertAlmostEqual(m[0, 1], 2.97 ** 2, delta=0.3)
+        self.assertAlmostEqual(m[0, 2], 2.83 ** 2, delta=0.3)
+        won = match("4", 0, "A", "B", margin_err=10)            # A beat the price by 10 the first time
+        self.assertGreater(layer.move(changed, [won])[0], 0.5)
 
 
 class TestInference(unittest.TestCase):
