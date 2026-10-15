@@ -2664,8 +2664,18 @@ the match's kick-off. The sources are:
 | `PATH` | a CSV of `MATCH_CODE` (or `MatchId`) and `Pred_P1_Points` / `Pred_P2_Points` (`NB2_schedule_predict.py`, `glmer/predict.R`), `raw_home` / `raw_away` (eAMFModel `prior-vs-sim`'s CSV) or `exp_p1` / `exp_p2` |
 | `rolling:DIR` | eAMFModel `prior-daily`'s directory of daily fits (NB2 or glmer): each match priced by its own day's fit, as live |
 
-Prod is always included: its last pre-match moneyline and total (the line
-and the over's price).
+Prod is always included: its closing pre-match moneyline and total (the line
+and the over's price). That is its last live quote before the match got under
+way, which `prematch.py` defines as no message count, or a message count below
+the match's first `PLAY_STARTED` in SCOUTING_FULL. Prod's pre-game quotes carry
+a message count. Where the play feed has no first play, the quote must be
+published before the scheduled kick-off.
+
+`prod-early` is prod as this backtest read it before. That was its last quote
+with no message, else its first, which is often its opening price. It is kept
+for comparison with earlier runs, and has no over. The run prints how far the
+two readings of prod's moneyline are apart. The same closing prices are used
+by `prior-replay`, `bets rematches` and `bets inference`.
 
 **How each arm is graded:** each arm, prod included, is graded as it is,
 with the rematch layer on top (`+layer`) and with the inference layer on top
@@ -2727,7 +2737,8 @@ inference layer, and prod runs with each layer.
 **How a bet is re-priced:** the same way `bets prematch` re-prices a
 candidate stream. Every pre-match bet on the matches every arm priced, after
 the layer's burn-in, keeps its selection, stake and line:
-- prod's probability at bet time is swapped for the arm's at that line;
+- prod's probability at bet time (its quote then, whatever its message
+  count) is swapped for the arm's at that line;
 - the operator's margin is kept, so the odds become odds × prod / arm;
 - the bet settles as it settled.
 

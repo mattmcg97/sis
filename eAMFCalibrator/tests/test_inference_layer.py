@@ -98,6 +98,23 @@ class TestInference(unittest.TestCase):
         self.assertLess(layer.move(ad_later, il.earlier_for(ad_later, by_key)[0])[0],
                         layer.move(ad, il.earlier_for(ad, by_key)[0])[0])
 
+    def test_the_gamers_own_matches_come_first_under_the_cap(self):
+        ab = match("1", 0, "A", "B", margin_err=8)                       # the pair's first meeting
+        by_key = {}
+        for it in [ab] + [match(f"O{i}", 1 + i, "B", f"Z{i}") for i in range(5)]:   # B's opponents' sessions...
+            for k in il._keys(it):
+                by_key.setdefault(k, []).append(it)
+        for i in range(5):                                               # ... each with games of their own
+            for j in range(4):
+                it = match(f"Z{i}{j}", 10 + i * 4 + j, f"Z{i}", f"Y{j}")
+                for k in il._keys(it):
+                    by_key.setdefault(k, []).append(it)
+        ab2 = match("2", 200, "A", "B")
+        earlier, near = il.earlier_for(ab2, by_key, max_earlier=8)
+        self.assertEqual(near, 6)
+        self.assertIn("1", [e["match"] for e in earlier])                # kept, though the oldest
+        self.assertEqual(len(earlier), 8)
+
     def test_planted_form_is_found_and_used(self):
         rnd = random.Random(7)
         items, gamers = [], [f"G{i}" for i in range(8)]

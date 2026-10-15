@@ -165,12 +165,16 @@ def elapsed(quarter, clock_left):
 
 # --- prices and ratings ----------------------------------------------------------------------
 
-def prematch_p1(tl, match):
-    """prod's last pre-match probability of player 1 (its first in-play one where it never quoted
-    before the kick-off), or None."""
+def prematch_p1(tl, match, first_play=None, kickoff=None):
+    """prod's last pre-match probability of player 1, or None. With the match's first play or its
+    kick-off: the closing quote (bets.closing_quote -- a message below the first play counts as
+    pre-match). Without: its last quote with no message at all, else its first quote."""
     entry = tl.get((match, 50))
     if not entry or not entry[1]:
         return None
+    if first_play is not None or kickoff is not None:
+        q = bets.closing_quote(tl, match, 50, first_play, kickoff)
+        return None if q is None else q[1]
     quotes = entry[1]
     pre = [q for q in quotes if q[0] is None]
     return (pre[-1] if pre else quotes[0])[1]

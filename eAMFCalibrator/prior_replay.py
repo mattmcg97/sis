@@ -12,7 +12,7 @@ walk-forward on the arm's own errors. prod with each layer is always there too.
 Every pre-match bet (by the operator's in-play flag, and placed before kick-off) on the matches every
 arm priced, after the layer's burn-in, is re-priced as `bets prematch` re-prices a candidate stream
 (bets.join and bets.reprice): the same selection and stake at the same line, prod's probability at
-bet time swapped for the arm's at that line, the operator's margin kept (odds x prod / arm), settled
+bet time (its quote then, whatever its message count) swapped for the arm's at that line, the operator's margin kept (odds x prod / arm), settled
 as the bet settled. An arm's moneyline or spread is its home margin over the line, and its total its
 total over the line, pushes left out (score_model's p_margin and p_over). prod+layer moves prod's own
 probability at bet time by the layer's move, read as a normal (rematch_layer.MARGIN_SD for the
@@ -89,36 +89,25 @@ def moved_chance(p, market, dm=0.0, dt_=0.0):
     return _N.cdf(_N.inv_cdf(min(max(p, 1e-6), 1 - 1e-6)) + DIRECTION[market] * shift)
 
 
-def priced_timelines(tl, codes, price, n):
-    """n candidates' timelines off prod's: each of prod's pre-match quotes on these matches, at its own
-    publish time and line, at each candidate's chance -- price(match, market, line, prod's chance)
-    gives the n of them. Matches are walked one at a time, so a price can keep one match's work."""
-    out = [{} for _ in range(n)]
-    for (match, market), (times, quotes) in sorted(tl.items(), key=lambda kv: (str(kv[0][0]), kv[0][1])):
-        if match not in codes:
-            continue
-        got = [([], []) for _ in range(n)]
-        for t, (msg, prob, line, live) in zip(times, quotes):
-            if msg is not None:
-                continue                                # in play
-            for k, p in enumerate(price(match, market, line, prob)):
-                if p is not None:
-                    got[k][0].append(t)
-                    got[k][1].append((None, _hold(p), line, live))
-        for k, (ts, qs) in enumerate(got):
-            if ts:
-                out[k][(match, market)] = (ts, qs)
-    return out
-
-
-def prematch_only(tl, codes):
-    """prod's timeline cut to these matches' pre-match quotes (no message), for pricing the variants."""
-    out = {}
-    for key, (times, quotes) in tl.items():
-        if key[0] in codes:
-            kept = [(t, q) for t, q in zip(times, quotes) if q[0] is None]
-            if kept:
-                out[key] = ([t for t, _ in kept], [q for _, q in kept])
+def price_bets(rows, price, n):
+    """Each bet (bets.join's row against prod's quote at the bet) re-priced by the n variants a price
+    function gives -- price(match, market, line, prod's chance) -- at the line of the prod quote the
+    bet saw, whatever its message count (prod's pre-match quotes carry one), the operator's margin
+    kept and settled as the bet settled (bets.reprice). Returns n lists, one dict per bet: simulated,
+    candidate_prob, candidate_odds, candidate_revenue. The bets are walked match by match, so a price
+    can keep one match's work."""
+    out = [[None] * len(rows) for _ in range(n)]
+    for i in sorted(range(len(rows)), key=lambda i: str(rows[i]["match_code"])):
+        r = rows[i]
+        p = r["stream_prob"]
+        got = price(r["match_code"], r["feed_market"], r["stream_line"], p) if p is not None else (None,) * n
+        for k, c in enumerate(got):
+            if c is None:
+                out[k][i] = dict(simulated=False, candidate_prob=None, candidate_odds=None, candidate_revenue=None)
+                continue
+            c = _hold(c)
+            out[k][i] = dict(candidate_prob=c,
+                             **bets.reprice(dict(r, candidate_prob=c, candidate_result=r["result"])))
     return out
 
 
@@ -333,17 +322,11 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=N
     finals = {c: (window[c].get("home_score"), window[c].get("away_score")) for c in codes}
     signs = bets.fit_line_signs(pre, tl, {})
     kickoffs = previous_kickoffs(ctx["history"])
-    pre_tl = prematch_only(tl, codes)
+    base = bets.join(pre, {}, signs, tl, {}, None, finals)          # each bet against prod's quote at the bet
     results = []
     for names, price in found:
         print(f"  pricing the bets with {' and '.join(names)}", flush=True)
-        for name, cand_tl in zip(names, priced_timelines(pre_tl, codes, price, len(names))):
-            rows = bets.join(pre, {}, signs, tl, {}, cand_tl, finals)
-            if results:
-                rows = [{k: r[k] for k in ("simulated", "candidate_prob", "candidate_odds", "candidate_revenue")}
-                        for r in rows]
-            results.append((name, rows))
-    base = results[0][1]
+        results += list(zip(names, price_bets(base, price, len(names))))
     for b, r in zip(pre, base):
         m = window[b.match_code]
         minutes = None if b.time is None else (m["start"] - b.time).total_seconds() / 60
@@ -354,7 +337,7 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=N
     table = Table([base[i] for i in idx], names,
                   [rows[i]["candidate_revenue"] for _, rows in results for i in idx])
     clean = [base[i]["_clean"] for i in idx]
-    why = Counter(bets.why_not(r) for r in base)
+    why = Counter(bets.why_not(dict(r, **results[0][1][i])) for i, r in enumerate(base))
     held = sum(1 for _, rows in results for r in rows if r["candidate_prob"] in (PROB_FLOOR, 1 - PROB_FLOOR))
     L = [f"  {len(pre):,} pre-match bets, stake {sum(b.stake for b in pre):,.0f}; re-priced by every variant: "
          f"{len(idx):,} bets, stake {table.stake.sum():,.0f}",

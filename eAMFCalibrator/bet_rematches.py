@@ -78,12 +78,15 @@ def miss_band(x):
             else MISSES[3] if x < 10 else MISSES[4])
 
 
-def prematch_line(tl, match, market=54):
-    """prod's last pre-match line on a market (its first in-play one where it quoted none before the
-    kick-off), or None."""
+def prematch_line(tl, match, market=54, first_play=None, kickoff=None):
+    """prod's last pre-match line on a market, or None. With the match's first play or its kick-off:
+    the closing quote's (bets.closing_quote). Without: its last line with no message, else its first."""
     entry = tl.get((match, market))
     if not entry or not entry[1]:
         return None
+    if first_play is not None or kickoff is not None:
+        q = bets.closing_quote(tl, match, market, first_play, kickoff, need_line=True)
+        return None if q is None else q[2]
     pre = [q for q in entry[1] if q[0] is None and q[2] is not None]
     q = pre[-1] if pre else next((q for q in entry[1] if q[2] is not None), None)
     return q[2] if q else None
@@ -573,14 +576,17 @@ def run(cur, out_dir):
               flush=True)
     prod_tl = bets.timeline(prod_rows)
     del prod_rows
+    # prod's pre-match prices: its closing quotes, before each match's first play (or its kick-off)
+    pre_tl = bets.closing_timeline(prod_tl, snowflake_io.fetch_first_plays(cur, codes),
+                                   {c: meets[c]["start"] for c in codes if c in meets})
     lags = bets.fit_lags(every, prod_tl)
     joined = bets.join(every, lags, bets.fit_line_signs(every, prod_tl, lags), prod_tl, {}, None, {})
     brows = [bet_row(b, r, meets[b.match_code]) for b, r in zip(every, joined)]
     by = defaultdict(list)
     for r in brows:
         by[r["match_code"]].append(r)
-    mrows = [match_row(m, by.get(m["match"], []), prod_tl) for m in window]
-    scored, layer = prod_layer(meets, codes, prod_tl)
+    mrows = [match_row(m, by.get(m["match"], []), pre_tl) for m in window]
+    scored, layer = prod_layer(meets, codes, pre_tl)
     scored = [r for r in scored if r["match"] in in_window]
     lines = report(brows, mrows) + layer_lines(scored, layer, LAYER_MIN_DAYS)
     print("\n".join(lines))
