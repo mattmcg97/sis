@@ -2037,7 +2037,10 @@ missing something. Nothing is ever fitted to close those gaps.
   of real states draw on all of it. The lean key keeps only:
   - the clock into the snap, running or stopped (the time draw), or the time the play took (the
     distance draw);
-  - the period;
+  - the period, with the two-minute warning apart (Q1, Q2, Q2's last 2:00, Q3, Q4, Q4's last 2:00,
+    overtime): a level side with three snaps left at 2:30 attacks, at 1:30 it sets up its kick. With
+    the period alone, the tilt build's level sides in Q4's last 2:00 scored touchdowns on 9.2% of
+    snaps near their field against 6.2% real;
   - the lead (7 groups);
   - down, distance and field;
   - snaps left in the half.
@@ -2141,8 +2144,8 @@ missing something. Nothing is ever fitted to close those gaps.
     and shrunk toward none by 300 snaps. This one is built for thin data.
   - `tilt`, the league's draws for everyone, reweighted per matchup (step 2 of the plan). Every real
     snap a draw can land on is weighted by exp(theta . phi). For the distance draw, phi is its
-    yards / 10 (cut to −10..50), whether it was a touchdown, and whether it was a turnover. For the
-    time draw, phi is its seconds / 10. Theta is the sum of four tilts: the offense's gamer and team,
+    yards / 10 (cut to −10..50), whether it was a touchdown, a turnover, a new set of downs short of a
+    touchdown, and a loss. For the time draw, phi is its seconds / 10. Theta is the sum of four tilts: the offense's gamer and team,
     and the defense's gamer and team (what each allows). The draw keeps its group's shape, field
     window and own result, and leans only as far as the real snaps say. The tilts are fitted by
     maximum likelihood. Each real snap's own outcome is scored against what the league's draw gave
@@ -2153,7 +2156,22 @@ missing something. Nothing is ever fitted to close those gaps.
     takes 16 real snaps evenly from its group or window and keeps one on its weight. The build
     prints each tilt's spread on each feature, the gamers furthest each way and the log-likelihood
     gained a snap. Unlike `adjusted`, the tilt can move touchdowns and turnovers on their own, not
-    only the yards, and is fitted on the whole outcome, not its mean.
+    only the yards, and is fitted on the whole outcome, not its mean. The fit weighs recent form: a
+    real snap's weight halves every 30 days before the build's last match day.
+
+    The first tilt build (yards, touchdowns, turnovers only) on held-out October: a point more
+    expected moved the sim 0.45 (0.27 with `adjusted`; real 0.76), and its moneyline log loss came
+    within 0.006 ± 0.006 of the prior's (0.017 with `adjusted`).
+- **The points nudge (step 3, `v21-report --nudge`, a tilt build).** A switch for pricing: each
+  side's offense tilt is moved along the strength direction until the sim's kick-off mean meets
+  the side's expected points (the input). The strength direction is the gamers' offense tilts
+  regressed on the points their side really scored a match, so a unit is the tilt of a gamer
+  whose side scores a point a match more. The build prints the direction and how many points a
+  unit gives a side in the sim. Per match, secant steps start from that slope (three steps, each
+  on the same random numbers, capped at ±4 units), and the last run prices the match. The same
+  nudge carries into the match's real states. The report prints the nudges taken: their mean,
+  spread, home and away, and the share at the cap. The base model never sees the inputs. The
+  nudge is a separate layer, on only when asked.
 - **Bounds:**
   - The time never passes the play clock, since no real draw does.
   - A running clock that runs out before the snap ends the quarter, and the same ball carries over.

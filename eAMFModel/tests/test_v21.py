@@ -914,6 +914,38 @@ class TestReport(unittest.TestCase):
                 states = list(csv.DictReader(fh))
         return out, states
 
+    def test_the_nudge_meets_the_inputs(self):
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
+                      blend=40.0, field=0.2)
+        d = np.asarray(m.nudge_dir)
+        self.assertEqual(d.shape, (len(v21.PHI_DIST),))
+        self.assertGreaterEqual(float(d @ np.array([1.0, 1.0, -1.0, 1.0, -1.0])), 0.0)
+        self.assertGreater(m.nudge_slope, 0)
+        start = v21.kickoff_start(m)
+        h0, a0 = v21.simulate(m, start, 300, seed=3)
+        target = (h0.mean() + 4.0, a0.mean() - 2.0)
+        (h, a), alpha = v21.nudge_solve(m, start, target, 300, seed=3)
+        self.assertGreater(alpha[0], 0)
+        self.assertLess(alpha[1], 0)
+        self.assertLess(abs(h.mean() - target[0]), 2.0)
+        self.assertLess(abs(a.mean() - target[1]), 2.0)
+        codes = sorted(MATCHES)[:6]
+        means = {c: (12.0, 8.0) for c in codes}
+        with tempfile.TemporaryDirectory() as tmp:
+            m.save(os.path.join(tmp, v21.MODEL_FILE))
+            out = v21_report.run(tmp, {c: MATCHES[c] for c in codes}, HISTORY, means, "2026-10-01", "2026-10-01",
+                                 n_paths=100, state_paths=10, every=8, nudge=True)
+            plain = built()
+            plain.save(os.path.join(tmp, v21.MODEL_FILE))
+            with self.assertRaises(SystemExit):
+                v21_report.run(tmp, {c: MATCHES[c] for c in codes}, HISTORY, means, "2026-10-01", "2026-10-01",
+                               n_paths=20, state_paths=0, nudge=True)
+        lines = "\n".join(v21_report.report(out))
+        self.assertIn("nudged to the inputs", lines)
+        self.assertIn("NUDGE:", lines)
+        kick = np.array([r["kick"] for r in out["results"]])
+        self.assertLess(abs(kick[:, 0].mean() - 12.0), 2.0)
+
     def test_report_sets_the_sim_against_the_inputs(self):
         out, states = self.run_report()
         self.assertEqual(len(out["results"]), 12)

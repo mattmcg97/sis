@@ -439,7 +439,8 @@ def cmd_v21_report(args):
     print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
           f" ({workers} processes)", flush=True)
     out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
-                         state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books)
+                         state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books,
+                         nudge=args.nudge)
     lines = v21_report.report(out)
     print("\n".join(lines))
     if args.out:
@@ -894,6 +895,9 @@ def build_parser():
     p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
     p.add_argument("--paths", type=int, default=1000, help="kick-off games per receiving side (default 1000)")
     p.add_argument("--state-paths", type=int, default=200, help="games from each real state (default 200; 0: none)")
+    p.add_argument("--nudge", action="store_true",
+                   help="a tilt build: each side's offense nudged along the strength direction until the sim's "
+                        "kick-off mean meets its expected points (the switch for pricing), the same nudge in its states")
     p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")

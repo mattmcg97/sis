@@ -122,7 +122,8 @@ SPLIT = "snaps"
 SPLITS = ("snaps", "time")
 # The draws' key (KEY): "full" -- TIME_BASE / DIST_BASE (the play before in its six classes, the part of
 # the game, the snaps played so far); "lean" -- fewer cells, more real snaps in each: the clock into the
-# snap running or stopped (clock2) or the time the play took (tb), the period (qtr), the lead, down,
+# snap running or stopped (clock2) or the time the play took (tb), the period with the two-minute
+# warning apart (phase: a level side with three snaps left at 2:30 attacks, at 1:30 sets up its kick), the lead, down,
 # distance, field and snaps left in the half, and nothing else. Its fallbacks coarsen the time, the
 # field, the snaps left and the distance before the lead (all seven of margin_b's) gives way to behind,
 # level or ahead: a side 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
@@ -157,27 +158,27 @@ CLOCK_SECONDS = 2
 CLOCK_MIN = 5                 # a thin cell's window widens to its 5 nearest only: its 20 nearest at 0:12
                               # could reach back to 0:40 and its 30-second snaps
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
-TIME_LEAN = ("clock2", "qtr", "margin", "down", "dist", "zone", "remain")
-DIST_LEAN = ("tb", "qtr", "margin", "down", "dist", "zone", "remain")
+TIME_LEAN = ("clock2", "phase", "margin", "down", "dist", "zone", "remain")
+DIST_LEAN = ("tb", "phase", "margin", "down", "dist", "zone", "remain")
 TIME_LEAN_FEATURES = TIME_LEAN + ("lead3", "dist3", "zone3", "rem4")
 DIST_LEAN_FEATURES = DIST_LEAN + ("lead3", "tb2", "dist3", "zone3", "rem4")
 TIME_LEAN_LEVELS = (TIME_LEAN,
-                    ("clock2", "qtr", "margin", "down", "dist3", "zone", "remain"),
-                    ("clock2", "qtr", "margin", "down", "dist3", "zone3", "remain"),
-                    ("clock2", "qtr", "margin", "down", "remain"),
-                    ("clock2", "qtr", "margin", "down", "rem4"),
-                    ("clock2", "qtr", "margin", "rem4"),
-                    ("clock2", "qtr", "lead3", "rem4"),
-                    ("clock2", "qtr", "rem4"),
-                    ("clock2", "qtr"),
+                    ("clock2", "phase", "margin", "down", "dist3", "zone", "remain"),
+                    ("clock2", "phase", "margin", "down", "dist3", "zone3", "remain"),
+                    ("clock2", "phase", "margin", "down", "remain"),
+                    ("clock2", "phase", "margin", "down", "rem4"),
+                    ("clock2", "phase", "margin", "rem4"),
+                    ("clock2", "phase", "lead3", "rem4"),
+                    ("clock2", "phase", "rem4"),
+                    ("clock2", "phase"),
                     ("clock2",),
                     ())
 DIST_LEAN_LEVELS = (DIST_LEAN,
-                    ("tb", "qtr", "margin", "down", "dist", "zone3", "remain"),
-                    ("tb", "qtr", "margin", "down", "dist", "remain"),
-                    ("tb", "qtr", "lead3", "down", "dist", "remain"),
-                    ("tb", "qtr", "lead3", "down", "dist", "rem4"),
-                    ("tb", "qtr", "lead3", "down", "dist"),
+                    ("tb", "phase", "margin", "down", "dist", "zone3", "remain"),
+                    ("tb", "phase", "margin", "down", "dist", "remain"),
+                    ("tb", "phase", "lead3", "down", "dist", "remain"),
+                    ("tb", "phase", "lead3", "down", "dist", "rem4"),
+                    ("tb", "phase", "lead3", "down", "dist"),
                     ("tb", "down", "dist", "zone"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),
@@ -243,11 +244,19 @@ MODES = ("full", "adjusted", "tilt")
 # fitted by maximum likelihood on their real snaps against what the league's draws (blended, near the
 # field) gave the same states, each shrunk toward none as if it had TILT_PRIOR league-average snaps.
 # A draw resamples TILT_CANDIDATES real snaps of its group (or window) on their weights.
-PHI_DIST = ("yards", "touchdown", "turnover")
+PHI_DIST = ("yards", "touchdown", "turnover", "first down", "loss")
 PHI_TIME = ("seconds",)
 TILT_PRIOR = 200.0
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
+TILT_HALF_LIFE = 30.0         # days: a real snap's weight in the fit halves every so many days before the last
+# The points nudge (step 3, a switch for pricing: nudge_solve): each side's offense tilt moved along the
+# strength direction (nudge_direction: the gamers' offense tilts regressed on the points their side really
+# scores a match) until the sim's kick-off mean meets the side's expected points,
+# by secant steps from the build's slope (calibrate_nudge), the same random numbers every step.
+NUDGE_ITERS = 3
+NUDGE_MAX = 4.0
+NUDGE_PATHS = 3000
 YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
 SECOND_BIN_EDGES = np.arange(2, 61, 2)
 ADJUST_GRID = np.round(np.linspace(-1.5, 1.5, 31), 3)     # log tilts tried
@@ -548,29 +557,29 @@ def combine(*masks):
 
 # ---------------------------------------------------------------- the draws
 
-def phi_dist(kind, gain):
-    """(records, 3) a real snap's distance features the tilts weigh (PHI_DIST), and its histogram bin."""
+def phi_dist_of(kind, gain, td, first):
+    """(records, 5) a real snap's distance features the tilts weigh (PHI_DIST): its yards / 10 (cut to
+    -10..50; none for a turnover), a touchdown, a turnover (or a defensive touchdown), a new set of
+    downs short of a touchdown (first), a loss."""
     kind, gain = np.asarray(kind), np.asarray(gain, float)
-    g = np.where(kind == GAIN, np.clip(gain, -10, 50), 0.0)
-    return np.stack([g / 10.0, np.zeros(len(g)), (kind != GAIN).astype(float)], axis=1)
+    td, first = np.asarray(td, bool), np.asarray(first, bool)
+    is_gain = kind == GAIN
+    g = np.where(is_gain, np.clip(gain, -10, 50), 0.0)
+    return np.stack([g / 10.0, td.astype(float), (~is_gain).astype(float),
+                     (is_gain & first & ~td).astype(float), (is_gain & (gain < 0)).astype(float)], axis=1)
 
 
-def phi_dist_of(kind, gain, td):
-    phi = phi_dist(kind, gain)
-    phi[:, 1] = np.asarray(td, float)
-    return phi
-
-
-def dist_bin(kind, gain, td):
-    """Each record's histogram bin for the fit: by yards (YARD_BIN_EDGES) for a gain and apart for a
-    touchdown, one bin for a turnover or a defensive touchdown."""
-    kind, gain, td = np.asarray(kind), np.asarray(gain, float), np.asarray(td, bool)
+def dist_bin(kind, gain, td, first):
+    """Each record's histogram bin for the fit: by yards (YARD_BIN_EDGES) and whether it moved the
+    chains for a gain, by yards for a touchdown, one bin for a turnover or a defensive touchdown."""
+    kind, gain = np.asarray(kind), np.asarray(gain, float)
+    td, first = np.asarray(td, bool), np.asarray(first, bool)
     yb = np.digitize(np.clip(gain, -10, 50), YARD_BIN_EDGES)
     nb = len(YARD_BIN_EDGES) + 1
-    return np.where(kind != GAIN, 2 * nb, np.where(td, nb + yb, yb)).astype(np.int64)
+    return np.where(kind != GAIN, 3 * nb, np.where(td, 2 * nb + yb, yb + nb * first)).astype(np.int64)
 
 
-DIST_BINS = 2 * (len(YARD_BIN_EDGES) + 1) + 1
+DIST_BINS = 3 * (len(YARD_BIN_EDGES) + 1) + 1
 TIME_BINS = len(SECOND_BIN_EDGES) + 1
 
 
@@ -1508,6 +1517,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
     missed_kicks = 0
+    gamer_points = defaultdict(list)                 # each gamer's side's real points a match (the nudge)
     dec = {k: [] for k in DECISIONS}
     dec.update(kick_pool=[], fg_clock=[], conv=[])
     ot_games = {}
@@ -1515,7 +1525,14 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         rows = _with_side(rows)
         ot_games[code] = any((s14._i(r.get("period")) or 0) >= 5 for r in rows)
         pair, teams = match_people(code, rows, hist)
+        fin = match_final(hist[code]) if code in hist else None
+        if fin is not None:
+            for side in (0, 1):
+                if pair[side]:
+                    gamer_points[pair[side]].append(fin[side])
         mine = match_snaps(rows, pair, teams)
+        for r in mine:
+            r["code"] = code
         recs += mine
         got = decision_points(rows, mine, match_final(hist[code]) if code in hist else None)
         missed_kicks += got["missed_kicks"]
@@ -1645,6 +1662,9 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
                       f" {np.abs(m.remain - before).mean():.2f} snaps; the draws rebuilt on them", flush=True)
     if m.mode == "tilt":
         fit_model_tilts(m, recs, verbose)
+        m._gamer_points = {m.gamers[g]: v for g, v in gamer_points.items() if g in m.gamers}
+        m.nudge_dir = nudge_direction(m)
+        m.nudge_slope = calibrate_nudge(m, seed=seed)
     if verbose:
         report_build(m, recs)
     return m
@@ -1695,7 +1715,7 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
                 "td": (kind == GAIN) & (gain >= 100 - field), "value": dvalue.astype(np.float32),
                 "field": field.astype(np.int16)}
     if m.mode == "tilt":
-        dist_pay["phi"] = phi_dist_of(kind, gain, dist_pay["td"]).astype(np.float32)
+        dist_pay["phi"] = phi_dist_of(kind, gain, dist_pay["td"], made == 1).astype(np.float32)
     m.dist = Bins.build(dist_f, [SIZES[f] for f in dist_f], dist_l, _cols(feats, dist_f), dvalue, dist_pay,
                         league_min)
 
@@ -1799,14 +1819,29 @@ def tilt_bases(b, feats, payload_bin, n_bins, blend, near=None):
     return np.where(tot > 0, H / np.where(tot > 0, tot, 1), 1.0 / n_bins)
 
 
-def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUNDS):
+def recency_weights(recs, half_life=TILT_HALF_LIFE):
+    """Each real snap's weight in the tilts' fit: halving every half_life days before the build's last
+    match day (1 for all where the codes carry no date, or half_life is 0)."""
+    if not half_life:
+        return np.ones(len(recs))
+    from .remaining import day
+    try:
+        days = np.array([day(r.get("code", "")).toordinal() for r in recs], float)
+    except (ValueError, IndexError, TypeError):
+        return np.ones(len(recs))
+    return np.power(0.5, (days.max() - days) / half_life)
+
+
+def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUNDS, weights=None):
     """({effect: (entities, dims) tilt}, the in-sample log-likelihood gained a snap): each entity's
     theta, fitted in turn by Newton steps on the penalized log-likelihood of its real snaps' own bins
     (obs) under their bases H reweighted by exp(theta . phi_b), theta the summed tilts of the snap's
-    entities; the penalty prior x the league's variance of phi, so an entity with prior snaps' worth
-    of evidence moves half way. The unknown entity (the last) stays at none."""
+    entities, each snap counted at its weight (recency_weights); the penalty prior x the league's
+    variance of phi, so an entity with prior snaps' worth of evidence moves half way. The unknown entity
+    (the last) stays at none."""
     S, B = H.shape
     D = phi_b.shape[1]
+    w8 = np.ones(S) if weights is None else np.asarray(weights, float)
     logH = np.log(np.maximum(H, 1e-300))
     phi_o = phi_b[obs]
     lam = prior * np.maximum(phi_o.var(0), 1e-6)
@@ -1827,16 +1862,16 @@ def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUND
             cov = np.einsum("sb,bij->sij", p, outer) - mu[:, :, None] * mu[:, None, :]
             n_e = sizes[name]
             g = np.zeros((n_e, D))
-            np.add.at(g, ent, phi_o - mu)
+            np.add.at(g, ent, w8[:, None] * (phi_o - mu))
             g -= lam * theta[name]
             Hs = np.zeros((n_e, D, D))
-            np.add.at(Hs, ent, cov)
+            np.add.at(Hs, ent, w8[:, None, None] * cov)
             Hs += np.diag(lam)[None]
             theta[name] = theta[name] + np.linalg.solve(Hs, g[:, :, None])[:, :, 0]
             theta[name][-1] = 0.0
     th = sum(theta[k][who[k]] for k in who)
     _, logZ = moments(th)
-    gain = float(np.mean((th * phi_o).sum(1) - logZ))
+    gain = float(np.average((th * phi_o).sum(1) - logZ, weights=w8))
     return theta, gain
 
 
@@ -1849,8 +1884,9 @@ def fit_model_tilts(m, recs, verbose=True):
     g = lambda k: np.array([r[k] for r in recs])
     kind, gain, field = g("kind"), g("gain"), g("field")
     td = (kind == GAIN) & (gain >= 100 - field)
+    first = np.array([bool(r["converted"]) and not r["replay"] for r in recs])
     pd_ = m.dist.payload
-    pbin = dist_bin(pd_["kind"], pd_["gain"], pd_["td"])
+    pbin = dist_bin(pd_["kind"], pd_["gain"], pd_["td"], pd_["made"] == 1)
     share = getattr(m, "field", 0.0)
     near = None
     if share:
@@ -1858,14 +1894,15 @@ def fit_model_tilts(m, recs, verbose=True):
         near = (field.astype(np.int64), r, "field")
     fd = {k: v for k, v in feats.items()}
     H = tilt_bases(m.dist, fd, pbin, DIST_BINS, blend, near)
-    obs = dist_bin(kind, gain, td)
+    obs = dist_bin(kind, gain, td, first)
+    wts = recency_weights(recs)
     phi_all = pd_["phi"].astype(float)
     phi_b = np.zeros((DIST_BINS, len(PHI_DIST)))
     cnt = np.bincount(pbin, minlength=DIST_BINS)
     for d in range(len(PHI_DIST)):
         phi_b[:, d] = np.bincount(pbin, phi_all[:, d], minlength=DIST_BINS) / np.maximum(cnt, 1)
     m.etilt = {}
-    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes)
+    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes, weights=wts)
     # the time: the uncut real snaps, against their whole groups (the clock windows' late states aside)
     seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
     timed = ~np.array([r["cut"] for r in recs], bool)
@@ -1877,9 +1914,71 @@ def fit_model_tilts(m, recs, verbose=True):
     phi_t = (np.bincount(tbin[keep], pt["seconds"][keep].astype(float), minlength=TIME_BINS)
              / np.maximum(tb_cnt, 1) / 10.0)[:, None]
     m.etilt["time"], gain_t = fit_exp_tilts(Ht, time_bin(seconds[timed]), phi_t,
-                                            {k: v[timed] for k, v in who.items()}, sizes)
+                                            {k: v[timed] for k, v in who.items()}, sizes, weights=wts[timed])
     m._etilt_gain = (gain_d, gain_t)
     return m.etilt
+
+
+def nudge_direction(m):
+    """The strength direction in the distance tilts' space: the gamers' offense tilts regressed on the
+    points their side really scored a match (against the league's mean, matches weighted), so a unit is
+    the tilt of a gamer who scores a point a match more; where too few gamers have points, the tilts'
+    first principal axis turned toward more yards, touchdowns and first downs, fewer turnovers and
+    losses (PHI_DIST's order), one gamer sd a unit; a fixed lean that way where none are fitted."""
+    sign = np.array([1.0, 1.0, -1.0, 1.0, -1.0])
+    th = getattr(m, "etilt", {}).get("dist", {}).get("gamer_off")
+    if th is None or len(th) < 4 or not np.any(th[:-1]):
+        return 0.05 * sign
+    pts = getattr(m, "_gamer_points", {}) or {}
+    ids = np.array([g for g in pts if g < len(th) - 1 and len(pts[g])], np.int64)
+    if len(ids) >= 8:
+        n = np.array([len(pts[g]) for g in ids], float)
+        y = np.array([np.mean(pts[g]) for g in ids], float)
+        dy = y - np.average(y, weights=n)
+        x = th[ids] - np.average(th[ids], axis=0, weights=n)
+        if np.sum(n * dy * dy) > 0:
+            d = (n * dy) @ x / np.sum(n * dy * dy)
+            if np.any(d):
+                return d
+    x = th[:-1] - th[:-1].mean(0)
+    _, sv, vt = np.linalg.svd(x, full_matrices=False)
+    d = vt[0] * (sv[0] / np.sqrt(len(x)))
+    return d if d @ sign >= 0 else -d
+
+
+def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
+    """Points a unit of nudge adds to a side's kick-off mean (both sides nudged alike, unknown gamers)."""
+    start = kickoff_start(m)
+    got = []
+    for a in (-1.0, 1.0):
+        st = dict(start, nudge=np.full((2, 2), a))
+        h, w = simulate(m, st, n_paths // 2, seed=seed + 7)
+        got.append(0.5 * (h.mean() + w.mean()))
+    return max(0.5, (got[1] - got[0]) / 2.0)
+
+
+def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None):
+    """((home, away) final scores, alpha): the sim from `start` with each side's offense nudged along
+    the strength direction by alpha (2,) so its kick-off means meet `target` (home, away): secant steps
+    from the build's slope, each on the same random numbers; the last run's scores (and its stats)."""
+    alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
+    prev = None
+    target = np.asarray(target, float)
+    for it in range(iters + 1):
+        st = dict(start, nudge=np.tile(alpha, (len(start["period"]), 1)))
+        last = it == iters
+        h, a = simulate(model, st, n_paths, seed=seed, stats=stats if last else None)
+        if last:
+            return (h, a), alpha
+        x = np.array([h.mean(), a.mean()])
+        step = np.full(2, slope)
+        if prev is not None:
+            da, dx = alpha - prev[0], x - prev[1]
+            ok = np.abs(da) > 1e-6
+            step = np.where(ok, np.clip(dx / np.where(ok, da, 1.0), 0.3 * slope, 3.0 * slope), slope)
+        prev = (alpha.copy(), x)
+        alpha = np.clip(alpha + (target - x) / step, -NUDGE_MAX, NUDGE_MAX)
+    return (h, a), alpha
 
 
 def etilt_lines(m):
@@ -1899,6 +1998,11 @@ def etilt_lines(m):
             out.append(f"    {kind_} {eff.replace('_', ' ')}: " + ", ".join(
                 f"{f} sd {core[:, d].std():.3f} ({core[:, d].min():+.2f} to {core[:, d].max():+.2f})"
                 for d, f in enumerate(feats_)))
+    d = getattr(m, "nudge_dir", None)
+    if d is not None:
+        out.append("    the strength direction (a unit: the tilt of a gamer whose side scores a point a match more): " + ", ".join(
+            f"{f} {v:+.3f}" for f, v in zip(PHI_DIST, d))
+                   + f"; a unit of nudge {getattr(m, 'nudge_slope', float('nan')):+.2f} points a side")
     th = t["dist"]["gamer_off"][:-1]
     if len(th):
         top = np.argsort(-th[:, 0])[:3]
@@ -2362,6 +2466,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
     kick2, gamer, team_ix = rep(start["kick2"], np.int64), rep(start["gamer"], np.int64), rep(start["team_ix"], np.int64)
     k_time, k_dist = _tilts(model, "time", gamer, team_ix), _tilts(model, "dist", gamer, team_ix)
     th_time, th_dist = _etilts(model, "time", gamer, team_ix), _etilts(model, "dist", gamer, team_ix)
+    if "nudge" in start and th_dist is not None and getattr(model, "nudge_dir", None) is not None:
+        th_dist = th_dist + rep(start["nudge"], float)[:, :, None] * np.asarray(model.nudge_dir)[None, None, :]
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
