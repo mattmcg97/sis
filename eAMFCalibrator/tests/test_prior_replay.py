@@ -1,5 +1,5 @@
-"""The pre-match bet replay: an arm's chance of each selection at its line, prod's moved by the rematch
-layer, the bets placed before a gamer's last result was in, and a run on fake bets."""
+"""The pre-match bet replay: an arm's chance of each selection at its line, the bets placed before a
+gamer's last result was in, each bet priced at the prod quote it saw, and a run on fake bets."""
 
 import csv
 import datetime as dt
@@ -7,7 +7,6 @@ import os
 import random
 import tempfile
 import unittest
-from statistics import NormalDist
 from unittest import mock
 
 import numpy as np
@@ -41,17 +40,6 @@ class TestChances(unittest.TestCase):
         self.assertAlmostEqual(pr.arm_chance(n, 52, -2.5) + pr.arm_chance(n, 53, 2.5), 1.0)
         self.assertAlmostEqual(pr.arm_chance(n, 54, 35.0), 0.5)
         self.assertLess(pr.arm_chance(n, 55, 30.0), 0.5)
-
-    def test_prod_moved_by_the_layer(self):
-        self.assertAlmostEqual(pr.moved_chance(0.6, 50), 0.6)
-        up = pr.moved_chance(0.6, 50, dm=2.0)
-        self.assertGreater(up, 0.6)
-        self.assertAlmostEqual(up + pr.moved_chance(0.4, 51, dm=2.0), 1.0)
-        # prior-backtest's prod+layer: the margin its moneyline implies, moved
-        self.assertAlmostEqual(up, rematch_layer.win_chance(rematch_layer.implied_margin(0.6) + 2.0))
-        self.assertAlmostEqual(pr.moved_chance(0.5, 54, dt_=2.0), NormalDist().cdf(2.0 / 12.0))
-        self.assertAlmostEqual(pr.moved_chance(0.5, 55, dt_=2.0), 1 - NormalDist().cdf(2.0 / 12.0))
-        self.assertIsNone(pr.moved_chance(None, 50))
 
 
 class TestTiming(unittest.TestCase):
@@ -159,8 +147,9 @@ class TestRun(unittest.TestCase):
                 text = fh.read()
             with open(os.path.join(d, "prior_replay.csv"), newline="", encoding="utf-8") as fh:
                 rows = list(csv.DictReader(fh))
-        for name in ("prod+layer", "prod+infer", "model ", "model+layer", "model+infer"):
+        for name in ("model ", "model+layer", "model+infer", "model+both"):
             self.assertIn(name, text)
+        self.assertNotIn("prod+layer", text)                  # prod is the benchmark, not layered
         for part in ("Clean bets", "Clean bets, moneyline", "Clean bets, total", "by meeting", "Every pre-match bet",
                      "The layers' last fits"):
             self.assertIn(part, text)
@@ -174,11 +163,13 @@ class TestRun(unittest.TestCase):
         self.assertEqual(sum(r["market"] == "total" for r in clean), n_matches // 3)
         for r in rows:
             p, odds = float(r["stream_prob"]), float(r["odds"])
-            for name in ("prod+layer", "prod+infer", "model", "model+layer", "model+infer"):
+            for name in ("model", "model+layer", "model+infer", "model+both"):
                 self.assertAlmostEqual(float(r[f"{name}_odds"]), odds * p / float(r[f"{name}_prob"]), places=3)
             if r["meeting"] == "1st":
-                self.assertAlmostEqual(float(r["prod+layer_revenue"]), float(r["revenue"]), places=6)
                 self.assertEqual(r["model_odds"], r["model+layer_odds"])     # no earlier meeting: no move
+                self.assertEqual(r["model+both_odds"], r["model+infer_odds"])
+            else:
+                self.assertEqual(r["model+both_odds"], r["model+layer_odds"])   # a rematch: the pair's alone
 
 
 if __name__ == "__main__":

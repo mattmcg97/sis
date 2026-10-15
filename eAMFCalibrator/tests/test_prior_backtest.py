@@ -1,6 +1,7 @@
 """The prior backtest: reading each arm's expected points, prod's pre-match total, and a run graded
 against prod with and without the rematch layer."""
 
+import csv
 import datetime as dt
 import os
 import random
@@ -134,13 +135,24 @@ class TestRun(unittest.TestCase):
                                       lambda cur, codes: {c: 3 for c in codes if int(c[2:]) % 2 == 0}), \
                     mock.patch.object(config, "MATCH_CHUNK_SIZE", 200):
                 out = pb.run(None, d, [("model", path)], "2026-09-01 00:00:00", None)
+                ctx = pb.prepare(None, "2026-09-01 00:00:00")
                 with open(out, encoding="utf-8") as fh:
                     text = fh.read()
-                self.assertTrue(os.path.exists(os.path.join(d, "prior_backtest.csv")))
-        for arm_name in ("prod ", "prod+layer", "prod+infer", "prod-early", "model ", "model+layer", "model+infer"):
+                with open(os.path.join(d, "prior_backtest.csv"), newline="", encoding="utf-8") as fh:
+                    rows = list(csv.DictReader(fh))
+        for arm_name in ("prod ", "model ", "model+layer", "model+infer", "model+both"):
             self.assertIn(arm_name, text)
-        rows = {line.split()[0]: line.split() for line in text.splitlines()[:20] if line.strip().startswith("prod")}
-        self.assertLess(float(rows["prod"][1]), float(rows["prod-early"][1]))     # the closing price is the sharper
+        for gone in ("prod+layer", "prod-early"):                  # prod is a third party's: the benchmark only
+            self.assertNotIn(gone, text)
+        # prod read at its closing quote (a pre-game message), not its opening one (no message)
+        closing = next(q[3] / 100 for q in by["AF00000"] if q[1] == 50 and q[6] == 1)
+        self.assertAlmostEqual(ctx["prod"]["AF00000"]["p1"], closing)
+        self.assertEqual(ctx["early"]["AF00000"]["p1"], 0.5)
+        # +both: a rematch moves as the rematch layer does, a first meeting as the inference layer does
+        for r in rows:
+            twin = "model+infer" if r["meeting"] == "1st" else "model+layer"
+            self.assertEqual(r["model+both_p_home"], r[f"{twin}_p_home"])
+            self.assertEqual(r["model+both_total"], r[f"{twin}_total"])
         self.assertIn("Rematches", text)
         self.assertIn("The layers' last fits", text)
         self.assertIn("NB2's construction fitted to its errors", text)

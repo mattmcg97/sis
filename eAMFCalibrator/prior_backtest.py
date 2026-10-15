@@ -15,8 +15,8 @@ kick-off:
 prod is always there: its closing pre-match moneyline and total (line and the over's price), from
 GAMEPLAI_STREAM -- the last live quote before the match got under way: no message, or a message below
 the match's first PLAY_STARTED in SCOUTING_FULL (prematch.is_prematch), or, the play feed not having
-one, published before the scheduled kick-off. prod-early is prod as this backtest read it before (its
-last quote with no message, else its first), for comparison.
+one, published before the scheduled kick-off. prod is the benchmark only: it is a third party's
+price, so it is not given layers.
 
 MODE is how an arm's moneyline and over are read off its expected points (score_model.py), each
 match's two scores simulated together:
@@ -31,12 +31,14 @@ match's two scores simulated together:
   normal   the normal about the expected margin (sd 9.35) and total (sd 12): for comparison
 A moneyline splits ties half and half (NB2's way); the over leaves out pushes.
 
-Each arm, prod among them, is graded as it is, with the rematch layer (rematch_layer.py: +layer) and
-with the inference layer (inference_layer.py: +infer -- each gamer's form that session read off every
-match he played, against anyone, beside the pair's own effect), each fitted walk-forward on that
-arm's own errors (each UTC day on the days before it). A layer shifts the arm's simulated margin and
-total, so it moves the model's own price. prod's own are its prices; prod with a layer moves the
-margin its moneyline implies and the mean its total implies.
+Each arm is graded as it is and with each layer, fitted walk-forward on that arm's own errors (each
+UTC day on the days before it):
+  +layer   the rematch layer (rematch_layer.py): the pair's earlier meetings that day
+  +infer   the inference layer (inference_layer.py): each gamer's form that session read off every
+           match he played, against anyone, beside the pair's own effect
+  +both    the two as one layer: a rematch moves by the pair's earlier meetings alone (the rematch
+           layer), a first meeting by what the gamers did against others (the inference layer)
+A layer shifts the arm's simulated margin and total, so it moves the model's own price.
 
 Graded on the matches every arm priced, after the layer's burn-in, by:
   moneyline   log loss and Brier (draws left out)
@@ -62,7 +64,10 @@ from .bet_totals import _start
 TOTAL_SD = 12.0
 BURN_IN_DAYS = 7
 PROD = "prod"
-EARLY = "prod-early"
+# each arm's layered readings: (suffix, its margin move, its total move) off fit_arm's rows
+LAYERS = (("+layer", "move_margin", "move_total"),       # the rematch layer: the pair's earlier meetings
+          ("+infer", "infer_margin", "infer_total"),     # the inference layer: every game that session
+          ("+both", "both_margin", "both_total"))        # the rematch layer at a rematch, else the inference
 POINT_COLUMNS = (("Pred_P1_Points", "Pred_P2_Points"), ("raw_home", "raw_away"), ("exp_p1", "exp_p2"))
 NB2_JOINT = ("P1_Effective_Alpha", "P2_Effective_Alpha", "Shared_Gamma_Fraction")
 MODES = ("own", "fitted", "normal")
@@ -230,29 +235,22 @@ def score_book(r, mode, own, fits, draws):
 
 
 def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS):
-    """{match: {variant: (p home, expected total, p over prod's line)}} for an arm, its +layer (the
-    rematch layer) and its +infer (the inference layer)."""
+    """{match: {variant: (p home, expected total, p over prod's line)}} for an arm as it is and with
+    each layer (LAYERS); prod: its own prices only, the benchmark."""
     own = own or {}
     fits = fitted_by_day(rows) if mode == "fitted" else {}
     out = {}
     for r in rows:
         p = prod.get(r["match"]) or {}
         line, over = p.get("line"), p.get("over")
-        v = {}
         if name == PROD:
-            v[name] = (p.get("p1"), line, over)
-            # prod moved: the margin its moneyline implies, and the mean its total implies
-            base = line + TOTAL_SD * _N.inv_cdf(min(max(over, 1e-6), 1 - 1e-6)) if over is not None else line
-            for tag, dm, dt_ in (("+layer", r["move_margin"], r["move_total"]),
-                                 ("+infer", r.get("infer_margin", 0.0), r.get("infer_total", 0.0))):
-                t = None if base is None else base + dt_
-                v[name + tag] = (rematch_layer.win_chance(r["margin"] + dm), t,
-                                 None if line is None or t is None else over_chance(t, line))
-        else:
-            bk = score_book(r, mode, own, fits, draws)
-            for tag, dm, dt_ in (("", 0.0, 0.0), ("+layer", r["move_margin"], r["move_total"]),
-                                 ("+infer", r.get("infer_margin", 0.0), r.get("infer_total", 0.0))):
-                v[name + tag] = (bk.p_home(dm), r["total"] + dt_, None if line is None else bk.p_over(line, dt_))
+            out[r["match"]] = {name: (p.get("p1"), line, over)}
+            continue
+        bk = score_book(r, mode, own, fits, draws)
+        v = {name: (bk.p_home(), r["total"], None if line is None else bk.p_over(line))}
+        for tag, mk, tk in LAYERS:
+            dm, dt_ = r.get(mk, 0.0), r.get(tk, 0.0)
+            v[name + tag] = (bk.p_home(dm), r["total"] + dt_, None if line is None else bk.p_over(line, dt_))
         out[r["match"]] = v
     return out, fits
 
@@ -432,8 +430,8 @@ def prepare(cur, since, until=None):
         if prod[c]["p1"] is not None and early[c]["p1"] is not None:
             moved.append(abs(prod[c]["p1"] - early[c]["p1"]))
     print(f"  prod's closing pre-match prices: {sum(1 for c in codes if c in first_plays):,} of {len(codes):,} matches "
-          "by their first play's message, the rest by the scheduled kick-off; against the price read before "
-          f"(prod-early) the moneyline moved {100 * sum(moved) / len(moved) if moved else 0:.1f} points on average, "
+          "by their first play's message, the rest by the scheduled kick-off; against the price these tools "
+          f"read before, the moneyline moved {100 * sum(moved) / len(moved) if moved else 0:.1f} points on average, "
           f"over 5 points in {sum(1 for x in moved if x > 0.05):,} matches", flush=True)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
     first = min((m["start"] for m in window.values()), default=start)
@@ -465,12 +463,15 @@ def fit_arm(name, spec, ctx):
     for r in rows:
         x = by[r["match"]]
         r.update(infer_margin=x["infer_margin"], infer_total=x["infer_total"], n_others=x["n_others"])
+        # one layer: a rematch moves by the pair's earlier meetings alone, a first meeting by the others
+        rematch = bool(r["n_earlier"])
+        r.update(both_margin=r["move_margin"] if rematch else r["infer_margin"],
+                 both_total=r["move_total"] if rematch else r["infer_total"])
     return mode, own, rows, dict(rematch=layer, inference=ilayer)
 
 
 def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
-    """Grade prod and every arm, each as it is, with the rematch layer and with the inference layer,
-    over [since, until]."""
+    """Grade every arm, as it is and with each layer (LAYERS), against prod over [since, until]."""
     ctx = prepare(cur, since, until)
     window, prod = ctx["window"], ctx["prod"]
     prices, layers, models, others = {}, {}, {}, set()
@@ -483,11 +484,6 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
         for code, v in got.items():
             for arm, val in v.items():
                 prices.setdefault(arm, {})[code] = val
-            if name == PROD:                        # prod as it was read before: its moneyline and line
-                e = ctx["early"].get(code) or {}
-                prices.setdefault(EARLY, {})[code] = (e.get("p1"), e.get("line"), None)
-    models[EARLY] = ("prod's price as this backtest read it before: its last quote with no message, else its "
-                     "first -- often well before the kick-off (no over: its line may not be prod's closing one)")
     results = {}
     for c, m in window.items():
         s1, s2 = m.get("home_score"), m.get("away_score")

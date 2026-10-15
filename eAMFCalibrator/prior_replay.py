@@ -6,18 +6,18 @@ the pre-match markets with glmer or NB2 (each with and without the rematch layer
         --arm "nb2=rolling:eAMFModel/out/nb2_daily"
 
 The arms are prior-backtest's (NAME=SOURCE[#MODE]) and are read the same way: each match's expected
-points, its score model, and the rematch layer (+layer) and inference layer (+infer) fitted
-walk-forward on the arm's own errors. prod with each layer is always there too.
+points, its score model, and the layers (prior_backtest.LAYERS: +layer the rematch layer, +infer the
+inference layer, +both the two as one) fitted walk-forward on the arm's own errors. prod -- a third
+party's price -- is the benchmark: the bets' own prices.
 
 Every pre-match bet (by the operator's in-play flag, and placed before kick-off) on the matches every
 arm priced, after the layer's burn-in, is re-priced as `bets prematch` re-prices a candidate stream
 (bets.join and bets.reprice): the same selection and stake at the same line, prod's probability at
-bet time (its quote then, whatever its message count) swapped for the arm's at that line, the operator's margin kept (odds x prod / arm), settled
-as the bet settled. An arm's moneyline or spread is its home margin over the line, and its total its
-total over the line, pushes left out (score_model's p_margin and p_over). prod+layer moves prod's own
-probability at bet time by the layer's move, read as a normal (rematch_layer.MARGIN_SD for the
-margin, prior_backtest.TOTAL_SD for the total). An arm's chance is held within [PROB_FLOOR,
-1 - PROB_FLOOR], so a far line can't make the odds run away.
+bet time (its quote then, whatever its message count) swapped for the arm's at that line, the
+operator's margin kept (odds x prod / arm), settled as the bet settled. An arm's moneyline or spread
+is its home margin over the line, and its total its total over the line, pushes left out
+(score_model's p_margin and p_over). An arm's chance is held within [PROB_FLOOR, 1 - PROB_FLOOR], so
+a far line can't make the odds run away.
 
 An arm prices a match as of its kick-off, off every result before it. A bet placed before either
 gamer's previous result was in (bets.RESULT_IN after that match's kick-off) would be re-priced with
@@ -43,17 +43,13 @@ revenue)
 import os
 from bisect import bisect_left
 from collections import Counter, defaultdict
-from statistics import NormalDist
-
 import numpy as np
 
-from . import bets, config, markets, prior_backtest as pb, rematch_layer, score_model
+from . import bets, config, markets, prior_backtest as pb, score_model
 from .snowflake_io import fetch_all
 
 PROB_FLOOR = 0.005
-DIRECTION = {50: 1, 51: -1, 52: 1, 53: -1, 54: 1, 55: -1}     # which way a bigger margin / total moves it
 MINUTE_BANDS = ((5, "under 5 min"), (15, "5-15 min"), (60, "15-60 min"), (None, "an hour or more"))
-_N = NormalDist()
 
 
 def _hold(p):
@@ -79,16 +75,6 @@ def arm_chance(book, market, line, dm=0.0, dt_=0.0):
     return None if p is None else p if market == 54 else 1 - p
 
 
-def moved_chance(p, market, dm=0.0, dt_=0.0):
-    """prod's chance of a selection moved by the layer's move, read as a normal about the margin or
-    total its price implies."""
-    if p is None or market not in DIRECTION:
-        return None
-    total = markets.market_group(market) == markets.TOTAL
-    shift = (dt_ / pb.TOTAL_SD) if total else (dm / rematch_layer.MARGIN_SD)
-    return _N.cdf(_N.inv_cdf(min(max(p, 1e-6), 1 - 1e-6)) + DIRECTION[market] * shift)
-
-
 def price_bets(rows, price, n):
     """Each bet (bets.join's row against prod's quote at the bet) re-priced by the n variants a price
     function gives -- price(match, market, line, prod's chance) -- at the line of the prod quote the
@@ -112,9 +98,10 @@ def price_bets(rows, price, n):
 
 
 def variants(ctx, arms, draws):
-    """[([variant names], price)] -- prod+layer and prod+infer, then each arm with arm+layer and
-    arm+infer, all read off the same simulated scores -- with {match} every one of them priced after
-    the burn-in, {match: what its gamers had played that session}, and the layers."""
+    """[([variant names], price)] -- each arm as it is and with each layer (prior_backtest.LAYERS),
+    all read off the same simulated scores -- with {match} every one of them priced after the burn-in,
+    {match: what its gamers had played that session}, and the layers. prod is the benchmark: the
+    bets' own prices, not re-priced."""
     prod_rows = None
     found, layers = [], {}
     for name, spec in [(pb.PROD, None)] + list(arms):
@@ -131,11 +118,7 @@ def variants(ctx, arms, draws):
     for _, _, _, _, by in found:
         codes &= set(by)
 
-    def prod_price(match, market, line, p):
-        r = prod_rows[match]
-        return (moved_chance(p, market, r["move_margin"], r["move_total"]),
-                moved_chance(p, market, r["infer_margin"], r["infer_total"]))
-    out = [([pb.PROD + "+layer", pb.PROD + "+infer"], prod_price)]
+    out = []
     for name, mode, own, fits, by in found:
         memo = {}                                       # one match's book and its prices by line
 
@@ -146,11 +129,10 @@ def variants(ctx, arms, draws):
             key = (market, line)
             if key not in memo:
                 r = by[match]
-                memo[key] = (arm_chance(memo["book"], market, line),
-                             arm_chance(memo["book"], market, line, r["move_margin"], r["move_total"]),
-                             arm_chance(memo["book"], market, line, r["infer_margin"], r["infer_total"]))
+                memo[key] = (arm_chance(memo["book"], market, line),) + tuple(
+                    arm_chance(memo["book"], market, line, r[mk], r[tk]) for _, mk, tk in pb.LAYERS)
             return memo[key]
-        out.append(([name, name + "+layer", name + "+infer"], price))
+        out.append(([name] + [name + tag for tag, _, _ in pb.LAYERS], price))
     played = {c: played_label(r) for c, r in prod_rows.items()}
     return out, codes, played, layers
 
@@ -303,8 +285,8 @@ def report(table, idx_all, clean, info, n_boot, played=None):
 
 
 def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, n_boot=None):
-    """Replay the window's pre-match bets at prod+layer's and every arm's prices, with and without the
-    layer. Returns the report's path."""
+    """Replay the window's pre-match bets at every arm's prices, as it is and with each layer.
+    Returns the report's path."""
     n_boot = config.SIM_BOOT if n_boot is None else n_boot
     ctx = pb.prepare(cur, since, until)
     window, tl = ctx["window"], ctx["tl"]
