@@ -2051,6 +2051,13 @@ missing something. Nothing is ever fitted to close those gaps.
   first fallback. Its sides 9+ ahead in Q4's 4:00–2:00 then scored a touchdown on 36% of their
   drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
   key, for comparison.
+
+  Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
+  period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
+  a thin 4th-down cell passed some of its draws down the chain to them, so 4th downs were drawn
+  partly from 1st and 2nd downs. From the real states the sim converted fewer at every distance: 2–3
+  to go, 43% against 50% real; 7–10, 35% against 40%. The extra turnovers on downs fell late, where a
+  level side drives for its kick.
 - **Blended levels (`--blend K`).** Without it, a draw takes the first level whose cell holds 40
   real snaps (`--min-records`): a cell of 39 is dropped whole for its parent, one of 40 used whole.
   With it, the league's draws keep every cell of 5 or more, and a draw takes its finest cell

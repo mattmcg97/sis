@@ -408,6 +408,13 @@ class TestBuild(unittest.TestCase):
             first3 = next(i for i, lv in enumerate(levels) if "lead3" in lv)
             self.assertTrue(all("zone" not in lv for lv in levels[first3 - 1:first3 + 1]))
 
+    def test_the_distance_draws_never_let_the_down_go(self):
+        # a blended draw passes weight down the chain: a level without the down would draw a 4th down
+        # from every down's snaps
+        for levels in (v21.DIST_LEVELS, v21.DIST_LEAN_LEVELS):
+            for lv in levels[:-1]:
+                self.assertIn("down", lv)
+
     def test_field_windows(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
