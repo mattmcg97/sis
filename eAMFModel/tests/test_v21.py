@@ -414,6 +414,7 @@ class TestBuild(unittest.TestCase):
         for levels in (v21.DIST_LEVELS, v21.DIST_LEAN_LEVELS):
             for lv in levels[:-1]:
                 self.assertIn("down", lv)
+                self.assertIn("tb", lv)                    # the time the play took, all six buckets
 
     def test_field_windows(self):
         out = io.StringIO()

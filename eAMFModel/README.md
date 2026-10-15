@@ -2052,6 +2052,14 @@ missing something. Nothing is ever fitted to close those gaps.
   drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
   key, for comparison.
 
+  Every distance fallback but the last also keeps the time the play took, all six buckets, in
+  both keys. Most had kept only stopped or running (14 seconds or under, or more), which pools an
+  incomplete pass (6 seconds or less) with a 40-yard gain (10–14 seconds): the time drawn and the
+  distance drawn came apart. In September's real games 10.8% of the 10–14 second snaps gained 40
+  yards or more, in the sim 5.6%; of those of 6 seconds or less, 0.8% real and 2.4% in the sim. The
+  sim made 4% more snaps a game than the real games and 1.6 points fewer (33.2 against 34.8),
+  short in every quarter from Q2.
+
   Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
   period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
   a thin 4th-down cell passed some of its draws down the chain to them, so 4th downs were drawn

@@ -127,7 +127,10 @@ SPLITS = ("snaps", "time")
 # field, the snaps left and the distance before the lead (all seven of margin_b's) gives way to behind,
 # level or ahead: a side 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
 # The distance draw lets the field go before the distance: the field windows find the snaps near the
-# state's own field in a group of every field, and 4th and 1 is not played as 4th and 9.
+# state's own field in a group of every field, and 4th and 1 is not played as 4th and 9. It keeps the
+# time the play took (all six of TIME_BUCKETS) and the down to the end: a 40-yard gain takes 10-14
+# seconds and an incomplete pass 6 or less, and a draw that pools the two (stopped or running alone)
+# gives a 6-second snap the long gains and takes them from the 12-second ones.
 KEY = "full"
 KEYS = ("full", "lean")
 # Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
@@ -169,18 +172,15 @@ TIME_LEAN_LEVELS = (TIME_LEAN,
                     ("clock2",),
                     ())
 DIST_LEAN_LEVELS = (DIST_LEAN,
-                    ("tb2", "qtr", "margin", "down", "dist", "zone", "remain"),
-                    ("tb2", "qtr", "margin", "down", "dist", "zone3", "remain"),
-                    ("tb2", "qtr", "margin", "down", "dist", "zone3", "rem4"),
-                    ("tb2", "qtr", "margin", "down", "dist3", "zone3", "rem4"),
-                    ("tb2", "qtr", "margin", "down", "dist3", "rem4"),
-                    ("qtr", "margin", "down", "dist3", "rem4"),
-                    ("qtr", "lead3", "down", "dist3", "rem4"),
-                    ("qtr", "lead3", "down", "rem4"),
+                    ("tb", "qtr", "margin", "down", "dist", "zone3", "remain"),
+                    ("tb", "qtr", "margin", "down", "dist", "zone3", "rem4"),
+                    ("tb", "qtr", "margin", "down", "dist3", "zone3", "rem4"),
+                    ("tb", "qtr", "margin", "down", "dist3", "rem4"),
+                    ("tb", "qtr", "lead3", "down", "dist3", "rem4"),
+                    ("tb", "qtr", "lead3", "down", "rem4"),
                     ("tb", "down", "dist", "zone"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),
-                    ("down",),
                     ())
 PART_OF = np.array([0, 0, 1, 2, 2, 3, 4])                  # phase -> part
 TIME_BASE = ("prev", "phase", "margin", "down", "dist", "zone", "elapsed", "remain")
@@ -218,18 +218,13 @@ DIST_LEVELS = (DIST_BASE,
                ("tb", "down", "dist", "zone", "lead3", "half", "remain"),
                ("tb", "down", "dist", "zone", "endgame3"),
                ("tb", "down", "dist3", "zone", "endgame3"),
-               ("tb2", "down", "dist3", "zone", "endgame3"),
-               ("tb2", "down", "zone", "endgame3"),
-               ("down", "zone", "endgame3"),
-               ("tb2", "down", "dist3", "zone3", "endgame3"),
-               ("tb2", "down", "zone3", "endgame3"),
-               ("down", "zone3", "endgame3"),
-               ("down", "endgame3"),
+               ("tb", "down", "dist3", "zone3", "endgame3"),
+               ("tb", "down", "zone3", "endgame3"),
+               ("tb", "down", "endgame3"),
                ("tb", "down", "dist", "zone"),
                ("tb", "down", "dist", "zone3"),
                ("tb", "down", "dist"),
                ("tb", "down"),
-               ("down",),
                ())
 # a gamer's or team's own snaps: alike in the situation, or the league's draw -- never their snaps of
 # every down and distance, nor of every part of the game: the end of a half (endgame) apart, by the
