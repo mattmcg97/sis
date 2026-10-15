@@ -131,7 +131,10 @@ SPLITS = ("snaps", "time")
 # state's own field in a group of every field. It keeps the distance (all five of dist: 3rd and 1 is not
 # played from 3rd and 3's snaps), the time the play took (all six of TIME_BUCKETS) and the down to the end: a 40-yard gain takes 10-14
 # seconds and an incomplete pass 6 or less, and a draw that pools the two (stopped or running alone)
-# gives a 6-second snap the long gains and takes them from the 12-second ones.
+# gives a 6-second snap the long gains and takes them from the 12-second ones. The period and the lead
+# hold to the last two: blended, a thin late cell passes its draws down the chain, and a level side in
+# Q4's last 2:00 drew 27% of them from every snap at its down and distance, a touchdown near the field
+# 16-17% of the time against its own 4-9%.
 KEY = "full"
 KEYS = ("full", "lean")
 # Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
@@ -179,7 +182,8 @@ DIST_LEAN_LEVELS = (DIST_LEAN,
                     ("tb", "phase", "lead3", "down", "dist", "remain"),
                     ("tb", "phase", "lead3", "down", "dist", "rem4"),
                     ("tb", "phase", "lead3", "down", "dist"),
-                    ("tb", "down", "dist", "zone"),
+                    ("tb", "phase", "lead3", "down"),
+                    ("tb", "phase", "down"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),
                     ())

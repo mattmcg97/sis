@@ -2074,6 +2074,12 @@ missing something. Nothing is ever fitted to close those gaps.
   sim made 4% more snaps a game than the real games and 1.6 points fewer (33.2 against 34.8),
   short in every quarter from Q2.
 
+  The lean key's distance fallbacks hold the period and the lead to the last two. Blended, a thin
+  late cell passes its draws down the chain: a level side in Q4's last 2:00 drew 27% of them from
+  levels with neither, every snap at its down and distance, where the touchdown chance near its
+  field was 16–17% against 4–9% in the levels that kept the situation. Its snaps scored 9.2% near
+  the field against 6.4% real.
+
   Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
   period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
   a thin 4th-down cell passed some of its draws down the chain to them, so 4th downs were drawn
