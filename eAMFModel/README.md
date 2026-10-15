@@ -2048,8 +2048,8 @@ missing something. Nothing is ever fitted to close those gaps.
   That is 78,400 cells for the time draw. On 172,751 real states, 57% sit in a cell with 40 or
   more real snaps: 82% in Q1, 51% in Q2, 64% in Q3, 40% in Q4. The six classes of the play before
   collapse to running or stopped, since their times split that way (26–29 s against 8–10 s on
-  average). The fallbacks coarsen the distance, the time, the snaps left and the field before
-  the lead gives way to behind, level or ahead. A side 9+ ahead in Q4 runs it out, where one 1–3
+  average). The fallbacks coarsen the field and the snaps left before the lead gives way to
+  behind, level or ahead. A side 9+ ahead in Q4 runs it out, where one 1–3
   ahead still plays for a first down. The first lean build collapsed the lead to those three at its
   first fallback. Its sides 9+ ahead in Q4's 4:00–2:00 then scored a touchdown on 36% of their
   drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
@@ -2074,11 +2074,19 @@ missing something. Nothing is ever fitted to close those gaps.
   sim made 4% more snaps a game than the real games and 1.6 points fewer (33.2 against 34.8),
   short in every quarter from Q2.
 
-  The lean key's distance fallbacks hold the period and the lead to the last two. Blended, a thin
-  late cell passes its draws down the chain: a level side in Q4's last 2:00 drew 27% of them from
-  levels with neither, every snap at its down and distance, where the touchdown chance near its
+  The lean key's distance fallbacks hold the period to the last two. Blended, a thin late cell
+  passes its draws down the chain: a level side in Q4's last 2:00 drew 27% of them from levels
+  without it, every snap of the game at its down and distance, where the touchdown chance near its
   field was 16–17% against 4–9% in the levels that kept the situation. Its snaps scored 9.2% near
-  the field against 6.4% real.
+  the field against 6.4% real. They hold the distance, all five of it, as far: a build whose last
+  levels kept the period and lead but let the distance go played 2nd and 1 off every 2nd down's own
+  results, 44% moving the chains against 51% real (3rd and 1, 47% against 55%).
+
+  The lean time draw keeps the down and all five distances as far too. The distance draw reads the
+  time it was given at the state's own distance, so a time drawn from 1 to 3 to go pooled (or from
+  every distance) gave 2nd and 1 the quick snaps of 2nd and 3 -- its incompletions -- and played
+  them out as 2nd and 1's own quick snaps. Its fallbacks coarsen the field and the snaps left, then
+  the lead to behind, level or ahead, and the period, before the distance.
 
   Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
   period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
@@ -2292,7 +2300,11 @@ missing something. Nothing is ever fitted to close those gaps.
     `--decision-blend K` blends the cells, as `--blend` does the draws. Every cell of 5 real
     decisions or more is kept, and a state's shares are its cells' over the levels: a cell of n
     weighs n / (n + K), the rest passes to its parent. `--decision-blend 0` (the default) takes
-    the first level with 25.
+    the first level with 25. Conversions blend lighter, n / (n + 5) (`CONV_BLEND`): the lead after
+    the six all but makes the choice, and a thin late cell passing 25 tries' worth down the chain
+    reached the whole game's at its lead, where sides kick. After a six in Q4's last 3:00, 2 behind
+    went for two 77% of the time in the sim's cells against 87% real, 5 behind 79% against 86%, 10
+    behind 72% against all 16 real ones, 1 behind 59% against 62%.
   - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
     real decisions against what the league chose in the same states. It is shrunk toward none, so a
     gamer with a handful of decisions decides almost as the league does. This is how earlier
@@ -2367,7 +2379,13 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   shows the league's share in the sim's own cells, before the gamers' leans and the rules: where
   the sim parts from the real choice, that says whether the cells or the leans move it. Q4's last
   2:00 is split by the time each play took, too, and the sim's distance draws by where they came
-  from (the league's, a team's own, a gamer's own).
+  from (the league's, a team's own, a gamer's own). Conversions before Q4's last 3:00 are split
+  the same way, by the part of the game (8 behind after the six: 14 behind, the first of two
+  touchdowns back), with the real two-point tries made by part against the sim's one rate. 2nd–4th
+  downs are split by the time each play took, by the distance (1, 2–3, 4+ to go) and in the halves'
+  last 2:00: the share of the snaps in each bucket and the share that moved the chains, real and
+  sim, and the sim's own rates on the real snaps' times. Where that last is near the real, the
+  time draw is what's off; near the sim's, the draw given the time.
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. It also gives how the drive with the ball ended: a

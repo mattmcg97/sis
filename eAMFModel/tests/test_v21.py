@@ -411,6 +411,18 @@ class TestBuild(unittest.TestCase):
             first3 = next(i for i, lv in enumerate(levels) if "lead3" in lv)
             self.assertTrue(all("zone" not in lv for lv in levels[first3 - 1:first3 + 1]))
 
+    def test_the_lean_draws_keep_the_distance_to_the_end(self):
+        # 2nd and 1 is played from 2nd and 1's snaps, its time too: the distance draw reads the time it was
+        # given at the state's own distance, so neither draw pools the distances before the last two
+        for levels in (v21.TIME_LEAN_LEVELS, v21.DIST_LEAN_LEVELS):
+            for lv in levels:
+                self.assertNotIn("dist3", lv)
+            for lv in levels:
+                if "dist" not in lv:
+                    self.assertLessEqual(len(lv), 2, lv)
+            self.assertTrue(any("phase" in lv and "dist" in lv and "margin" not in lv and "lead3" not in lv
+                                for lv in levels))           # the period holds past the lead
+
     def test_the_distance_draws_never_let_the_down_go(self):
         # a blended draw passes weight down the chain: a level without the down would draw a 4th down
         # from every down's snaps
@@ -709,6 +721,9 @@ class TestDecisions(unittest.TestCase):
         np.testing.assert_allclose(mixed.probs(cols, np.array([0]))[0], p, atol=1e-9)
         m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, decision_blend=25.0)
         self.assertEqual(m.choices["fourth"].blend, 25.0)
+        self.assertEqual(m.choices["two"].blend, v21.CONV_BLEND)            # the lead after the six decides
+        self.assertLess(v21.CONV_BLEND, 25.0)
+        self.assertEqual(v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False).choices["two"].blend, 0.0)
         h, a = v21.simulate(m, v21.kickoff_start(m), 30)
         self.assertGreater((h + a).mean(), 10)
 
@@ -1030,10 +1045,24 @@ class TestAudit(unittest.TestCase):
         # how the drive with the ball ended: one real end per Q4 snap state, the sim's shares sum to one each
         self.assertGreater(real["drives"].sum(), 0)
         np.testing.assert_allclose(step["drives"].sum(), real["drives"].sum(), rtol=1e-6)
+        # 2nd-4th downs by the time the play took: every real one in the distance rows once
+        later = real["step"][1:].sum()
+        self.assertEqual(real["short_tb"][:3, :, 0].sum(), later)
+        self.assertTrue((real["short_tb"][..., 1] <= real["short_tb"][..., 0]).all())
+        self.assertGreater(step["short_tb"][:3, :, 0].sum(), 0)
+        # conversions by the part of the game, before Q4's last 3:00 (the last 3:00 has its own table)
+        convs = [q for c in codes for q in v21.decision_points(v21._with_side(MATCHES[c]))["two"]]
+        self.assertGreater(len(convs), 0)
+        self.assertEqual(real["two_part"].sum() + real["two_late"].sum(),
+                         sum(q["cell"] != v21.CONV_CELLS - 1 for q in convs))     # all but overtime's
+        self.assertEqual(real["two_good"][:, 0].sum(), sum(q["choice"] for q in convs))
+        self.assertEqual(flow["two_sim"][1], 1.0)
         for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
                      "ONE SNAP by the snaps left", "ONE SNAP in Q4's last 2:00", "Q4 STATES", "Q4 STATES, level",
                      "by what a field goal does", "CONVERSIONS in Q4's last 3:00", "by the time its play took",
-                     "the league's share in the sim's cells", "how the drive with the ball ended"):
+                     "the league's share in the sim's cells", "how the drive with the ball ended",
+                     "ONE SNAP on 2nd-4th downs by the time its play took", "CONVERSIONS before Q4's last 3:00",
+                     "two-point tries made"):
             self.assertIn(part, lines)
 
 

@@ -57,6 +57,9 @@ REMAINS = ("0-1 snaps left",) + v21.REMAIN_NAMES[1:]
 LEADS3 = ("behind", "level", "ahead")
 DRIVE_LEADS = ("9+ behind", "4-8 behind", "1-3 behind", "level", "1-3 ahead", "4-8 ahead", "9+ ahead")
 RESULTS = ("won", "overtime", "lost")
+SHORT_ROWS = ("1 to go", "2-3 to go", "4+ to go", "a half's last 2:00")
+CONV_PARTS = ("the first half", "Q3", "Q4 to 3:00")
+GOOD_PARTS = CONV_PARTS + ("Q4's last 3:00", "overtime")
 
 
 def tables():
@@ -69,7 +72,11 @@ def tables():
                 two_late=np.zeros((2 * v21.CONV_MARGIN + 1, 2)), two_base=np.zeros(2 * v21.CONV_MARGIN + 1),
                 fourth_q4_base=np.zeros((4, 3)), early_q4_base=np.zeros((4, 2)),
                 late_tb=np.zeros((3, len(v21.TIME_BUCKETS), 2)), late_src=np.zeros((3, 3, 2)),
-                drives=np.zeros((len(DRIVE_LEADS), 4, len(v21.DRIVE_ENDS))))
+                drives=np.zeros((len(DRIVE_LEADS), 4, len(v21.DRIVE_ENDS))),
+                short_tb=np.zeros((len(SHORT_ROWS), len(v21.TIME_BUCKETS), 3)),
+                two_part=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1, 2)),
+                two_part_base=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1)),
+                two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(2))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -185,6 +192,30 @@ def _late_cell(cell):
     return (cell >= 3) & (cell <= v21.CONV_CELLS - 2)
 
 
+def _good_part(cell):
+    """A conversion cell's part of the game (GOOD_PARTS): the first half, Q3, Q4 to 3:00, its last 3:00,
+    overtime; CONV_PARTS are the first three."""
+    cell = np.asarray(cell)
+    return np.where(cell == v21.CONV_CELLS - 1, 4, np.where(cell >= 3, 3, cell)).astype(np.int64)
+
+
+def _short(t, c, w):
+    """2nd-4th downs by the time the play took (SHORT_ROWS: by the distance over the game, then the
+    halves' last 2:00 at every distance): the snaps, those that moved the chains (a new set of downs or a
+    touchdown) and those that went nowhere."""
+    down, dist, out = np.asarray(c["down"]), np.asarray(c["dist"]), np.asarray(c["out"])
+    p, clk, tb = np.asarray(c["period"]), np.asarray(c["clock"], float), np.asarray(c["tb"])
+    later = down >= 2
+    rows = (later & (dist <= 1), later & (dist >= 2) & (dist <= 3), later & (dist >= 4),
+            later & ((p == 2) | (p == 4)) & (clk <= v21.LATE))
+    moved = ((out == FIRST) | (out == TD)).astype(float)
+    nowhere = (out == 2).astype(float)
+    for k, on in enumerate(rows):
+        np.add.at(t["short_tb"], (k, tb[on], 0), w)
+        np.add.at(t["short_tb"], (k, tb[on], 1), moved[on] * w)
+        np.add.at(t["short_tb"], (k, tb[on], 2), nowhere[on] * w)
+
+
 def _side_lead(s):
     side = int(s["team"][0])
     pts = (int(s["home"][0]), int(s["away"][0]))
@@ -211,6 +242,7 @@ def _worker(job):
     model_path, items, n_paths, state_paths, every = job
     model = v21.Model.load(model_path)
     real, flow, step = tables(), tables(), tables()
+    flow["two_sim"] += (model.two_good, 1.0)
     for code, rows, pair, teams, final in items:
         seed = zlib.crc32(str(code).encode())
         rows = v21._with_side(rows)
@@ -234,10 +266,20 @@ def _worker(job):
             on = _late_cell(cell)
             np.add.at(flow["two_late"], (lead6[on] + v21.CONV_MARGIN, k[on]), 1.0)
             np.add.at(flow["two_base"], lead6[on] + v21.CONV_MARGIN, base[on])
+            # and before Q4's last 3:00: a side two scores behind kicks or goes for two after its first six
+            pt = _good_part(cell)
+            on = pt < len(CONV_PARTS)
+            np.add.at(flow["two_part"], (pt[on], lead6[on] + v21.CONV_MARGIN, k[on]), 1.0)
+            np.add.at(flow["two_part_base"], (pt[on], lead6[on] + v21.CONV_MARGIN), base[on])
         for q in v21.decision_points(rows, recs)["two"]:
+            lead6 = int(np.clip(q["lead"], -v21.CONV_MARGIN, v21.CONV_MARGIN)) + v21.CONV_MARGIN
             if _late_cell(q["cell"]):
-                real["two_late"][int(np.clip(q["lead"], -v21.CONV_MARGIN, v21.CONV_MARGIN)) + v21.CONV_MARGIN,
-                                  int(q["choice"])] += 1
+                real["two_late"][lead6, int(q["choice"])] += 1
+            pt = int(_good_part(q["cell"]))
+            if pt < len(CONV_PARTS):
+                real["two_part"][pt, lead6, int(q["choice"])] += 1
+            if q["choice"]:
+                real["two_good"][pt] += (1.0, float(q.get("good", 0)))
         # the next snap from every real state, against what came of it
         starts = v21.match_starts(model, rows, pair, teams, every=every)
         if not starts or not state_paths:
@@ -259,6 +301,7 @@ def _worker(job):
             auto = np.array([bool(v21.auto_end(s["period"][0], s["clock"][0], _side_lead(s)[2], s["down"][0],
                                                s["tos"][0][1 - _side_lead(s)[0]])) for _, s in pairs])
             _late(real, c, 1.0, auto)
+            _short(real, c, 1.0)
             # by the snaps left the model expects at each real state (its own table, the state's own key)
             rb = v21.remain_b(model.remain_at(*v21.remain_inputs(got)))
             np.add.at(real["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), rb, c["out"]), 1)
@@ -294,6 +337,7 @@ def _worker(job):
             _put(step, "step", c["down"], c["sl"], c["dist"], c["out"], c["gain"], c["secs"], c["kind"], 1.0 / state_paths)
             np.add.at(step["by_rem"], (np.clip(c["down"] - 1, 0, D - 1), c["rem"], c["out"]), 1.0 / state_paths)
             _late(step, c, 1.0 / state_paths)
+            _short(step, c, 1.0 / state_paths)
         for (name, who, k, sl, ix), base in zip(st.get("_dec") or [], st.get("_dec_base") or []):
             if ix is None or name not in ("fourth", "early_fg"):
                 continue
@@ -499,6 +543,47 @@ def two_lines(real, flow):
     return lines
 
 
+def two_part_lines(real, flow):
+    lines = ["", "  CONVERSIONS before Q4's last 3:00, by the lead after the six: go for two (real / the sim's own games /"
+                 " the league's share in the sim's cells, %; n real) -- 8 behind after the six: 14 behind, the first"
+                 " of two touchdowns back",
+             f"  {'lead':>6s}" + "".join(f"{name:>26s}" for name in CONV_PARTS)]
+    for i in range(real["two_part"].shape[1]):
+        r, m, b = real["two_part"][:, i], flow["two_part"][:, i], flow["two_part_base"][:, i]
+        if r.sum() < 5 or i - v21.CONV_MARGIN > 3:
+            continue
+        cells = [f"{_pair(_pct(r[k, 1], r[k].sum()), _pct(m[k, 1], m[k].sum()))}/{_pct(b[k], m[k].sum()):5.1f}"
+                 f" ({int(r[k].sum())})" if r[k].sum() >= 3 else "-" for k in range(len(CONV_PARTS))]
+        lines.append(f"  {i - v21.CONV_MARGIN:>+6d}" + "".join(f"{c:>26s}" for c in cells))
+    g, sim = real["two_good"], flow["two_sim"]
+    lines.append("  two-point tries made (real, by the part of the game; the sim's one rate "
+                 f"{_pct(sim[0], sim[1]):.1f}%): " + ", ".join(
+                     f"{name} {_pct(g[k, 1], g[k, 0]):.1f}% of {int(g[k, 0])}" for k, name in enumerate(GOOD_PARTS)
+                     if g[k, 0]))
+    return lines
+
+
+def short_lines(real, step):
+    lines = ["", "  ONE SNAP on 2nd-4th downs by the time its play took: the share of the snaps in each, then the share"
+                 " that moved the chains (a new set of downs or a touchdown), real / sim, %; moved: all of them, real /"
+                 " sim / the sim's own rates on the real snaps' times (near the real: the time draw is off; near the"
+                 " sim: the draw given the time)",
+             f"  {'':20s}" + "".join(f"{b:>20s}" for b in v21.TIME_BUCKETS) + f"{'moved':>20s}{'nowhere':>14s}"]
+    for k, name in enumerate(SHORT_ROWS):
+        r, m = real["short_tb"][k], step["short_tb"][k]
+        if not r[:, 0].sum() or not m[:, 0].sum():
+            continue
+        f = lambda v, fmt: "-" if v != v else fmt.format(v)
+        cells = [f"{f(_pct(r[b, 0], r[:, 0].sum()), '{:.0f}')}/{f(_pct(m[b, 0], m[:, 0].sum()), '{:.0f}')}% "
+                 f"{f(_pct(r[b, 1], r[b, 0]), '{:.0f}')}/{f(_pct(m[b, 1], m[b, 0]), '{:.0f}')}" for b in range(r.shape[0])]
+        has = m[:, 0] > 0
+        mix = float((r[has, 0] * m[has, 1] / m[has, 0]).sum() / max(r[has, 0].sum(), 1e-9))
+        moved = f"{_pct(r[:, 1].sum(), r[:, 0].sum()):.1f}/{_pct(m[:, 1].sum(), m[:, 0].sum()):.1f}/{100 * mix:.1f}"
+        nowhere = _pair(_pct(r[:, 2].sum(), r[:, 0].sum()), _pct(m[:, 2].sum(), m[:, 0].sum()))
+        lines.append(f"  {name:20s}" + "".join(f"{c:>20s}" for c in cells) + f"{moved:>20s}{nowhere:>14s}")
+    return lines
+
+
 def late_tb_lines(real, step):
     lines = ["", "  Q4's last 2:00, one snap by the time its play took: the share of the snaps in each, then its"
                  " touchdown % (real / sim)",
@@ -630,10 +715,12 @@ def report(out):
     lines += [""] + flow_lines(out["real"], out["flow"])
     lines += step_lines(out["real"], out["step"])
     lines += rem_lines(out["real"], out["step"])
+    lines += short_lines(out["real"], out["step"])
     lines += late_lines(out["real"], out["step"])
     lines += late_tb_lines(out["real"], out["step"])
     lines += choice_lines(out["real"], out["step"])
     lines += two_lines(out["real"], out["flow"])
+    lines += two_part_lines(out["real"], out["flow"])
     lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += q4_lines(out["real"], out["step"])
     lines += drive_lines(out["real"], out["step"])

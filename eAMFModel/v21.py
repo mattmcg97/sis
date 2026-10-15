@@ -124,17 +124,21 @@ SPLITS = ("snaps", "time")
 # the game, the snaps played so far); "lean" -- fewer cells, more real snaps in each: the clock into the
 # snap running or stopped (clock2) or the time the play took (tb), the period with the two-minute
 # warning apart (phase: a level side with three snaps left at 2:30 attacks, at 1:30 sets up its kick), the lead, down,
-# distance, field and snaps left in the half, and nothing else. Its fallbacks coarsen the time, the
-# field, the snaps left and the distance before the lead (all seven of margin_b's) gives way to behind,
-# level or ahead: a side 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
+# distance, field and snaps left in the half, and nothing else. Its fallbacks coarsen the field and
+# the snaps left before the lead (all seven of margin_b's) gives way to behind, level or ahead: a side
+# 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
 # The distance draw lets the field go before the distance: the field windows find the snaps near the
 # state's own field in a group of every field. It keeps the distance (all five of dist: 3rd and 1 is not
 # played from 3rd and 3's snaps), the time the play took (all six of TIME_BUCKETS) and the down to the end: a 40-yard gain takes 10-14
 # seconds and an incomplete pass 6 or less, and a draw that pools the two (stopped or running alone)
-# gives a 6-second snap the long gains and takes them from the 12-second ones. The period and the lead
-# hold to the last two: blended, a thin late cell passes its draws down the chain, and a level side in
-# Q4's last 2:00 drew 27% of them from every snap at its down and distance, a touchdown near the field
-# 16-17% of the time against its own 4-9%.
+# gives a 6-second snap the long gains and takes them from the 12-second ones. The period holds to the
+# last two: blended, a thin late cell passes its draws down the chain, and a level side in Q4's last
+# 2:00 drew 27% of them from every snap of the game at its down and distance, a touchdown near the
+# field 16-17% of the time against its own 4-9%. The distance holds too: levels without it played 2nd
+# and 1 off every 2nd down's own results, 44% moving the chains against 51% real. The time draw keeps
+# the down and all five distances as far: the distance draw reads the time it was given at the state's
+# own distance, so a time pooled over 1 to 3 to go (or every distance) gives 2nd and 1 the quick
+# incompletions of 2nd and 3, played out as 2nd and 1's own quick snaps.
 KEY = "full"
 KEYS = ("full", "lean")
 # Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
@@ -163,17 +167,17 @@ CLOCK_MIN = 5                 # a thin cell's window widens to its 5 nearest onl
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
 TIME_LEAN = ("clock2", "phase", "margin", "down", "dist", "zone", "remain")
 DIST_LEAN = ("tb", "phase", "margin", "down", "dist", "zone", "remain")
-TIME_LEAN_FEATURES = TIME_LEAN + ("lead3", "dist3", "zone3", "rem4")
+TIME_LEAN_FEATURES = TIME_LEAN + ("lead3", "zone3", "rem4")
 DIST_LEAN_FEATURES = DIST_LEAN + ("lead3", "tb2", "dist3", "zone3", "rem4")
 TIME_LEAN_LEVELS = (TIME_LEAN,
-                    ("clock2", "phase", "margin", "down", "dist3", "zone", "remain"),
-                    ("clock2", "phase", "margin", "down", "dist3", "zone3", "remain"),
-                    ("clock2", "phase", "margin", "down", "remain"),
-                    ("clock2", "phase", "margin", "down", "rem4"),
-                    ("clock2", "phase", "margin", "rem4"),
-                    ("clock2", "phase", "lead3", "rem4"),
-                    ("clock2", "phase", "rem4"),
-                    ("clock2", "phase"),
+                    ("clock2", "phase", "margin", "down", "dist", "zone3", "remain"),
+                    ("clock2", "phase", "margin", "down", "dist", "remain"),
+                    ("clock2", "phase", "margin", "down", "dist", "rem4"),
+                    ("clock2", "phase", "lead3", "down", "dist", "rem4"),
+                    ("clock2", "phase", "lead3", "down", "dist"),
+                    ("clock2", "phase", "down", "dist"),
+                    ("clock2", "down", "dist"),
+                    ("clock2", "down"),
                     ("clock2",),
                     ())
 DIST_LEAN_LEVELS = (DIST_LEAN,
@@ -182,8 +186,7 @@ DIST_LEAN_LEVELS = (DIST_LEAN,
                     ("tb", "phase", "lead3", "down", "dist", "remain"),
                     ("tb", "phase", "lead3", "down", "dist", "rem4"),
                     ("tb", "phase", "lead3", "down", "dist"),
-                    ("tb", "phase", "lead3", "down"),
-                    ("tb", "phase", "down"),
+                    ("tb", "phase", "down", "dist"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),
                     ())
@@ -288,6 +291,12 @@ KICK_POOL_MIN = 20
 # option against the first (fitted on their real decisions, shrunk by DECISION_PRIOR).
 DECISION_MIN = 25
 DECISION_PRIOR = 3.0
+# A conversion's cells blend lighter (a spec's own "blend", with the build's decision blend on): the
+# lead after the six all but makes the choice, and a thin late cell passing 25 tries' worth down the
+# chain reached the whole game's at that lead, where sides kick -- 2 behind after a late six went for
+# two 77% of the time in the sim's cells against 87% real, 5 behind 79% against 86%, 10 behind 72%
+# against all 16 real ones.
+CONV_BLEND = 5.0
 DECISIONS = {
     "fourth": dict(label="4th down", options=("go for it", "field goal", "punt"), who="offense",
                    features=("togo10", "dist", "margin", "phase", "left", "fg4", "dist3", "togo4"),
@@ -308,7 +317,7 @@ DECISIONS = {
                     levels=(("desperate", "late", "lead"), ("desperate", "late"), ("desperate",), ())),
     "two": dict(label="conversion", options=("kick", "go for two"), who="scorer", features=("cell", "lead", "late"),
                 sizes=(CONV_CELLS, 2 * CONV_MARGIN + 1, 3),
-                levels=(("cell", "lead"), ("late", "lead"), ("lead",), ())),
+                levels=(("cell", "lead"), ("late", "lead"), ("lead",), ()), blend=CONV_BLEND),
     "to_def": dict(label="defense's timeout before a running-clock snap", options=("none", "timeout"),
                    who="defense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
                    levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
@@ -1261,7 +1270,7 @@ def decision_points(rows, recs=None, final=None):
         own, opp = _tos_left(a, scorer, p)
         out["two"].append(dict(side=_side_of(scorer, a_home), choice=int(two), period=p, clock=c,
                                left=float(half_left(p, c)), lead=m, own_to=own, opp_to=opp,
-                               cell=s14.conversion_cell(p, c), msg=_i(a["message"])))
+                               cell=s14.conversion_cell(p, c), good=int(good), msg=_i(a["message"])))
         out["conv"].append((two, good))
     # timeouts before a running-clock snap, with a timeout left to call: the defense's first, then
     # (the defense not calling) the offense's
@@ -1635,7 +1644,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         X = decision_features(name, got)
         allowed = v21_rules.mask(m.rules, name, v21_rules.fine(name, got)) if got else None
         m.choices[name] = Choice.build(name, X, chosen, who, n_who, gamers=gamer_decisions, allowed=allowed,
-                                       blend=m.decision_blend)
+                                       blend=spec.get("blend", m.decision_blend) if m.decision_blend else 0.0)
     # kick-offs' outcomes: the field and clock of the returned and the kept ones, by desperate and late
     pool = np.array(dec["kick_pool"], float).reshape(-1, 5)
     for kind in (RETURN, KEPT):
@@ -2127,8 +2136,10 @@ def report_build(m, recs=None):
     else:
         print("  no rules: the real shares alone")
     if getattr(m, "decision_blend", 0.0):
+        own = ", ".join(f"{DECISIONS[k]['label']}s n / (n + {getattr(ch, 'blend', 0.0):g})"
+                        for k, ch in m.choices.items() if getattr(ch, "blend", 0.0) != m.decision_blend)
         print(f"  the decisions' cells blended: a cell of n real decisions weighs n / (n + {m.decision_blend:g}),"
-              f" the rest its parents' (cells of {BLEND_MIN}+ kept)")
+              f" the rest its parents' (cells of {BLEND_MIN}+ kept)" + (f"; {own}" if own else ""))
     for name, ch in m.choices.items():
         spec = DECISIONS[name]
         opt, need = LEAN_SHOWN[name]
