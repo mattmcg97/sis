@@ -68,13 +68,27 @@ class TestTiming(unittest.TestCase):
         self.assertEqual([pr.minute_band(m) for m in (2, 10, 30, 90, None)],
                          ["under 5 min", "5-15 min", "15-60 min", "an hour or more", "unknown"])
 
-    def test_the_candidates_quote_where_prod_did_before_kick_off(self):
-        t1 = T0 + dt.timedelta(minutes=1)
-        tl = {("AF1", 50): ([T0, t1], [(None, 0.6, None, True), (5, 0.62, None, True)]),
-              ("AF2", 50): ([T0], [(None, 0.5, None, True)])}
-        a, b = pr.priced_timelines(tl, {"AF1"}, lambda m, k, line, p: (0.9999, p / 2), 2)
-        self.assertEqual(a, {("AF1", 50): ([T0], [(None, 1 - pr.PROB_FLOOR, None, True)])})   # held; in play out
-        self.assertEqual(b, {("AF1", 50): ([T0], [(None, 0.3, None, True)])})
+    def test_each_bet_priced_at_the_prod_quote_it_saw(self):
+        from .test_bets import bet
+        from .. import bets
+        tl = bets.timeline([("AF1", 50, dt.datetime(2026, 9, 1), 60.0, None, None, 1, "open", "true"),
+                            ("AF1", 54, dt.datetime(2026, 9, 1), 50.0, None, "Line 40.5", 1, "open", "true")])
+        on_home = bet("AF1", 0, 1, 1, odds=1.6, stake=10.0, revenue=-6.0)         # won at 1.6
+        over = bet("AF1", 0, 3, 1, odds=1.9, stake=10.0, revenue=10.0, line=40.5)   # lost
+        rows = bets.join([on_home, over], {}, {}, tl, {}, None, {})
+        seen = []
+
+        def price(match, market, line, p):
+            seen.append((market, line, p))
+            return (0.75, None) if market == 50 else (0.9999, 0.4)
+        a, b = pr.price_bets(rows, price, 2)
+        self.assertEqual(sorted(seen), [(50, None, 0.6), (54, 40.5, 0.5)])         # prod's quote, message and all
+        self.assertAlmostEqual(a[0]["candidate_odds"], 1.6 * 0.6 / 0.75)           # the operator's margin kept
+        self.assertAlmostEqual(a[0]["candidate_revenue"], 10.0 - 10.0 * 1.6 * 0.6 / 0.75)
+        self.assertEqual(a[1]["candidate_prob"], 1 - pr.PROB_FLOOR)                 # held
+        self.assertEqual(a[1]["candidate_revenue"], 10.0)                           # a lost bet: its stake, any price
+        self.assertFalse(b[0]["simulated"])
+        self.assertTrue(b[1]["simulated"])
 
 
 class TestRun(unittest.TestCase):
@@ -107,11 +121,13 @@ class TestRun(unittest.TestCase):
                                      PLAYER_1_FINAL_SCORE=str(s1), PLAYER_2_FINAL_SCORE=str(s2)))
                     p = rematch_layer.win_chance(mu1 - mu2)
                     line = round(mu1 + mu2) + 0.5
-                    pre = start - dt.timedelta(minutes=10)
-                    quotes += [(code, 50, pre, 100 * p, None, None, None, "open", "true"),
-                               (code, 51, pre, 100 * (1 - p), None, None, None, "open", "true"),
-                               (code, 54, pre, 50.0, None, f"Line {line}", None, "open", "true"),
-                               (code, 55, pre, 50.0, None, f"Line {line}", None, "open", "true"),
+                    pre, opening = start - dt.timedelta(minutes=10), start - dt.timedelta(minutes=60)
+                    # prod opens with no message; its pre-game quotes carry one, as the real feed's do
+                    quotes += [(code, 50, opening, 50.0, None, None, None, "open", "true"),
+                               (code, 50, pre, 100 * p, None, None, 1, "open", "true"),
+                               (code, 51, pre, 100 * (1 - p), None, None, 1, "open", "true"),
+                               (code, 54, pre, 50.0, None, f"Line {line}", 1, "open", "true"),
+                               (code, 55, pre, 50.0, None, f"Line {line}", 1, "open", "true"),
                                (code, 50, start + dt.timedelta(minutes=1), 100 * p, None, None, 3, "open", "true")]
                     arm.append(f"{code},{mu1:.3f},{mu2:.3f}")
                     if d >= 8:
@@ -136,6 +152,7 @@ class TestRun(unittest.TestCase):
                     mock.patch.object(snowflake_io, "fetch_quotes",
                                       lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
                     mock.patch.object(pr, "fetch_all", lambda cur, sql, params: (cols, bet_rows)), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays", lambda cur, codes: {c: 2 for c in codes}), \
                     mock.patch.object(config, "MATCH_CHUNK_SIZE", 200), mock.patch("builtins.print"):
                 out = pr.run(None, d, [("model", path)], "2026-09-01 00:00:00", None, draws=2000, n_boot=50)
             with open(out, encoding="utf-8") as fh:

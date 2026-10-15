@@ -739,6 +739,39 @@ def _sides(row):
 CLOSING_MARKETS = (50, 51, 52, 53, 54, 55)
 
 
+def closing_quote(tl, match, market, first_play=None, kickoff=None, need_line=False):
+    """The last live quote on timeline `tl` from before the match got under way, as (message,
+    probability, line, live), or None: one with no message, or a message below the match's first
+    play (prematch.is_prematch); with the first play unknown, one published before `kickoff`.
+    need_line: only quotes carrying a line."""
+    entry = tl.get((match, market))
+    if not entry:
+        return None
+    times, quotes = entry
+    for t, q in zip(reversed(times), reversed(quotes)):
+        if need_line and q[2] is None:
+            continue
+        if q[0] is None or (first_play is not None and q[0] < first_play) \
+                or (first_play is None and kickoff is not None and t < kickoff):
+            return q
+    return None
+
+
+def closing_timeline(tl, first_plays, kickoffs):
+    """Timeline `tl` cut to each match's quotes from before it got under way (as closing_quote reads
+    them: no message, a message below the first play, or the first play unknown, published before
+    the kick-off), their messages dropped -- so a reader of "the last quote with no message" reads the
+    closing one. first_plays, kickoffs: {match: ...}."""
+    out = {}
+    for (match, market), (times, quotes) in tl.items():
+        fp, ko = first_plays.get(match), kickoffs.get(match)
+        kept = [(t, (None,) + tuple(q[1:])) for t, q in zip(times, quotes)
+                if q[0] is None or (fp is not None and q[0] < fp) or (fp is None and ko is not None and t < ko)]
+        if kept:
+            out[(match, market)] = ([t for t, _ in kept], [q for _, q in kept])
+    return out
+
+
 def closing_prices(tl, first_plays, codes):
     """match -> market -> (probability, line) of the last live quote on timeline `tl` from before
     the first play: no message, or one below the match's first play."""

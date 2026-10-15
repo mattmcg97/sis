@@ -12,8 +12,11 @@ kick-off:
                 raw_home / raw_away (eAMFModel prior-vs-sim), or exp_p1 / exp_p2
   rolling:DIR   eAMFModel prior-daily's directory of daily fits (NB2 or glmer): each match priced by
                 its own day's fit, as live
-prod is always there: its last pre-match moneyline and total (line and the over's price), from
-GAMEPLAI_STREAM.
+prod is always there: its closing pre-match moneyline and total (line and the over's price), from
+GAMEPLAI_STREAM -- the last live quote before the match got under way: no message, or a message below
+the match's first PLAY_STARTED in SCOUTING_FULL (prematch.is_prematch), or, the play feed not having
+one, published before the scheduled kick-off. prod-early is prod as this backtest read it before (its
+last quote with no message, else its first), for comparison.
 
 MODE is how an arm's moneyline and over are read off its expected points (score_model.py), each
 match's two scores simulated together:
@@ -59,6 +62,7 @@ from .bet_totals import _start
 TOTAL_SD = 12.0
 BURN_IN_DAYS = 7
 PROD = "prod"
+EARLY = "prod-early"
 POINT_COLUMNS = (("Pred_P1_Points", "Pred_P2_Points"), ("raw_home", "raw_away"), ("exp_p1", "exp_p2"))
 NB2_JOINT = ("P1_Effective_Alpha", "P2_Effective_Alpha", "Shared_Gamma_Fraction")
 MODES = ("own", "fitted", "normal")
@@ -73,11 +77,16 @@ def _f(v):
         return None
 
 
-def prematch_total(tl, match):
-    """(prod's last pre-match total line, its over's price), or (None, None)."""
+def prematch_total(tl, match, first_play=None, kickoff=None):
+    """(prod's last pre-match total line, its over's price), or (None, None). With the match's first
+    play or its kick-off: the closing quote's (bets.closing_quote); without, as prod was read before
+    (its last line with no message, else its first)."""
     entry = tl.get((match, 54))
     if not entry or not entry[1]:
         return None, None
+    if first_play is not None or kickoff is not None:
+        q = bets.closing_quote(tl, match, 54, first_play, kickoff, need_line=True)
+        return (q[2], q[1]) if q else (None, None)
     pre = [q for q in entry[1] if q[0] is None and q[2] is not None]
     q = pre[-1] if pre else next((q for q in entry[1] if q[2] is not None), None)
     return (q[2], q[1]) if q else (None, None)
@@ -412,13 +421,23 @@ def prepare(cur, since, until=None):
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], codes[k:k + config.MATCH_CHUNK_SIZE])
     tl = bets.timeline(prod_rows)
     del prod_rows
-    prod = {}
+    first_plays = snowflake_io.fetch_first_plays(cur, codes)
+    prod, early, moved = {}, {}, []
     for c in codes:
-        line, over = prematch_total(tl, c)
-        prod[c] = dict(p1=prematch_p1(tl, c), line=line, over=over)
+        fp, ko = first_plays.get(c), window[c]["start"]
+        line, over = prematch_total(tl, c, fp, ko)
+        prod[c] = dict(p1=prematch_p1(tl, c, fp, ko), line=line, over=over)
+        e_line, e_over = prematch_total(tl, c)
+        early[c] = dict(p1=prematch_p1(tl, c), line=e_line, over=e_over)
+        if prod[c]["p1"] is not None and early[c]["p1"] is not None:
+            moved.append(abs(prod[c]["p1"] - early[c]["p1"]))
+    print(f"  prod's closing pre-match prices: {sum(1 for c in codes if c in first_plays):,} of {len(codes):,} matches "
+          "by their first play's message, the rest by the scheduled kick-off; against the price read before "
+          f"(prod-early) the moneyline moved {100 * sum(moved) / len(moved) if moved else 0:.1f} points on average, "
+          f"over 5 points in {sum(1 for x in moved if x > 0.05):,} matches", flush=True)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
     first = min((m["start"] for m in window.values()), default=start)
-    return dict(history=history, window=window, codes=codes, tl=tl, prod=prod,
+    return dict(history=history, window=window, codes=codes, tl=tl, prod=prod, early=early, first_plays=first_plays,
                 sched=[rows_by_code[c] for c in codes if c in rows_by_code],
                 burn_from=first.replace(hour=0, minute=0, second=0, microsecond=0)
                 + dt.timedelta(days=BURN_IN_DAYS))
@@ -464,6 +483,11 @@ def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
         for code, v in got.items():
             for arm, val in v.items():
                 prices.setdefault(arm, {})[code] = val
+            if name == PROD:                        # prod as it was read before: its moneyline and line
+                e = ctx["early"].get(code) or {}
+                prices.setdefault(EARLY, {})[code] = (e.get("p1"), e.get("line"), None)
+    models[EARLY] = ("prod's price as this backtest read it before: its last quote with no message, else its "
+                     "first -- often well before the kick-off (no over: its line may not be prod's closing one)")
     results = {}
     for c, m in window.items():
         s1, s2 = m.get("home_score"), m.get("away_score")

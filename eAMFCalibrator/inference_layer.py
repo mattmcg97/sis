@@ -30,8 +30,8 @@ At a match, the move is the Gaussian BLUP of its error, c' S^-1 e, off the earli
     a time), and
   - every earlier match of those matches' other gamers that session whose result was in
     (RESULT_LAG_MINUTES after its kick-off) -- they tell a gamer's form apart from his opponent's,
-the most recent MAX_EARLIER of them, with c and S from the fitted variances. walk_forward() fits
-each UTC day on the days before it, as rematch_layer.walk_forward does.
+at most MAX_EARLIER of them (the gamers' own first), with c and S from the fitted variances.
+walk_forward() fits each UTC day on the days before it, as rematch_layer.walk_forward does.
 """
 
 import datetime as dt
@@ -230,7 +230,8 @@ def _sd(v):
 def earlier_for(it, by_key, lag=dt.timedelta(minutes=RESULT_LAG_MINUTES), max_earlier=MAX_EARLIER):
     """(the earlier matches to read `it` off, how many of them are the gamers' own): every earlier
     match of either gamer that session, and their opponents' earlier matches that session whose
-    result was in by `it`'s kick-off; the most recent max_earlier."""
+    result was in by `it`'s kick-off -- at most max_earlier, the gamers' own kept first (the most
+    recent of them if there are more), the opponents' most recent filling the rest."""
     near = {}
     for k in _keys(it):
         for e in by_key.get(k, ()):
@@ -241,8 +242,10 @@ def earlier_for(it, by_key, lag=dt.timedelta(minutes=RESULT_LAG_MINUTES), max_ea
             for f in by_key.get(k, ()):
                 if id(f) not in near and f["start"] + lag <= it["start"]:
                     far[id(f)] = f
-    out = sorted(list(near.values()) + list(far.values()), key=lambda x: x["start"])[-max_earlier:]
-    return out, len(near)
+    # the gamers' own matches first (the pair's earlier meetings among them), their opponents' to fill
+    own = sorted(near.values(), key=lambda x: x["start"])[-max_earlier:]
+    rest = sorted(far.values(), key=lambda x: x["start"])[-(max_earlier - len(own)):] if len(own) < max_earlier else []
+    return sorted(own + rest, key=lambda x: x["start"]), len(near)
 
 
 def walk_forward(items, min_days=7):

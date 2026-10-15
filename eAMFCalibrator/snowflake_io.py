@@ -612,6 +612,27 @@ def scouting_table(cur):
     return table
 
 
+def fetch_first_plays(cur, match_codes):
+    """match -> the message count of its first PLAY_STARTED row in SCOUTING_FULL: a quote with a
+    message count below it was published before the match got under way (prematch.is_prematch). A
+    match the play feed has no PLAY_STARTED for is left out."""
+    from . import scouting
+    table = scouting_table(cur)
+    codes = sorted(set(match_codes))
+    out = {}
+    for k in range(0, len(codes), config.MATCH_CHUNK_SIZE):
+        batch = codes[k:k + config.MATCH_CHUNK_SIZE]
+        _, rows = fetch_all(cur, f"""
+            SELECT MATCH_CODE, MIN(EVENT_MESSAGE_COUNT)
+            FROM {table.qualified}
+            WHERE MATCH_CODE IN ({_in_clause(batch)})
+              AND UPPER(TRIM({scouting.MESSAGE})) = 'PLAY_STARTED'
+            GROUP BY MATCH_CODE
+        """, tuple(batch))
+        out.update({r[0]: int(r[1]) for r in rows if r[1] is not None})
+    return out
+
+
 def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=None, keep=None):
     """match -> PLAY_OVER snapshot rows off SCOUTING_FULL, built exactly as
     `scouting` exports them, and prod's quote rows for the same matches.

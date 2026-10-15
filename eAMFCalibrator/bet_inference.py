@@ -474,7 +474,10 @@ def run(cur, out_dir):
               flush=True)
     prod_tl = bets.timeline(prod_rows)
     del prod_rows
-    mrows = [match_row(m, [], prod_tl, games) for m in window]
+    # prod's pre-match prices: its closing quotes, before each match's first play (or its kick-off)
+    pre_tl = bets.closing_timeline(prod_tl, snowflake_io.fetch_first_plays(cur, codes),
+                                   {c: meets[c]["start"] for c in codes if c in meets})
+    mrows = [match_row(m, [], pre_tl, games) for m in window]
     info = {r["match_code"]: r for r in mrows}
     lags = bets.fit_lags(every, prod_tl)
     joined = bets.join(every, lags, bets.fit_line_signs(every, prod_tl, lags), prod_tl, {}, None, {})
@@ -482,9 +485,9 @@ def run(cur, out_dir):
     by = defaultdict(list)
     for r in brows:
         by[r["match_code"]].append(r)
-    mrows = [match_row(m, by.get(m["match"], []), prod_tl, games) for m in window]
+    mrows = [match_row(m, by.get(m["match"], []), pre_tl, games) for m in window]
     info = {r["match_code"]: r for r in mrows}
-    scored, layers = prod_layers(meets, codes, prod_tl, info)
+    scored, layers = prod_layers(meets, codes, pre_tl, info)
     scored = [r for r in scored if r["match"] in in_window]
     lines = report(brows, mrows) + layer_lines(scored, layers, LAYER_MIN_DAYS)
     print("\n".join(lines))

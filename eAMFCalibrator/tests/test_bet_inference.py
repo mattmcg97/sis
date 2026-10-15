@@ -158,6 +158,7 @@ class TestReport(unittest.TestCase):
                     mock.patch.object(snowflake_io, "fetch_quotes",
                                       lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
                     mock.patch.object(bets, "fetch_all", lambda cur, sql, params: (cols, rows)), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays", lambda cur, codes: {}), \
                     mock.patch.object(config, "CUTOFF_START", str(T0)), mock.patch.object(config, "CUTOFF_END", None), \
                     mock.patch("builtins.print"):
                 path = bi.run(None, d)

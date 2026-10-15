@@ -67,6 +67,23 @@ class TestRead(unittest.TestCase):
         p_prod = pb.readings(pb.PROD, [r], prod)[0]["AF1"]
         self.assertEqual(p_prod[pb.PROD], (0.6, 35.5, 0.5))
 
+    def test_prods_closing_quote_is_the_last_before_the_first_play(self):
+        def q(minutes, p, msg, line=None, market=50):
+            return ("AF1", market, T0 + dt.timedelta(minutes=minutes), 100.0 * p, None,
+                    None if line is None else f"Line {line}", msg, "open", "true")
+        tl = bets.timeline([q(-60, 0.5, None), q(-5, 0.6, 1), q(-1, 0.62, 2), q(2, 0.9, 4),
+                            q(-60, 0.5, None, 40.5, 54), q(-5, 0.55, 1, 38.5, 54), q(2, 0.7, 4, 38.5, 54)])
+        self.assertEqual(pb.prematch_p1(tl, "AF1"), 0.5)                                 # as read before
+        self.assertEqual(pb.prematch_p1(tl, "AF1", first_play=3), 0.62)                  # below the first play
+        self.assertEqual(pb.prematch_p1(tl, "AF1", first_play=2), 0.6)
+        self.assertEqual(pb.prematch_p1(tl, "AF1", kickoff=T0), 0.62)                    # no play feed: kick-off
+        self.assertEqual(pb.prematch_total(tl, "AF1", 3, T0), (38.5, 0.55))
+        self.assertEqual(pb.prematch_total(tl, "AF1"), (40.5, 0.5))
+        pre = bets.closing_timeline(tl, {"AF1": 3}, {})
+        self.assertEqual(pb.prematch_p1(pre, "AF1"), 0.62)                               # messages dropped
+        self.assertEqual(pre[("AF1", 50)][1][-1], (None, 0.62, None, True))
+        self.assertEqual(len(pre[("AF1", 50)][0]), 3)                                    # the in-play one out
+
     def test_prods_closing_total_and_its_over(self):
         def q(line, p, msg=None):
             return ("AF1", 54, T0, 100.0 * p, None, f"Line {line}", msg, "open", "true")
@@ -95,8 +112,14 @@ class TestRun(unittest.TestCase):
                                      PLAYER_2_HANDLE=b, PLAYER_1_TEAM="Ravens", PLAYER_2_TEAM="Lions",
                                      PLAYER_1_FINAL_SCORE=str(s1), PLAYER_2_FINAL_SCORE=str(s2)))
                     p = pb.rematch_layer.win_chance(mu1 - mu2)
-                    quotes += [(code, 50, start, 100 * p, None, None, None, "open", "true"),
-                               (code, 54, start, 50.0, None, f"Line {round(mu1 + mu2) + 0.5}", None, "open", "true")]
+                    opening, closing = start - dt.timedelta(minutes=60), start - dt.timedelta(minutes=5)
+                    line = round(mu1 + mu2) + 0.5
+                    # prod opens at evens with no message, closes on a pre-game message, then goes in play
+                    quotes += [(code, 50, opening, 50.0, None, None, None, "open", "true"),
+                               (code, 54, opening, 50.0, None, f"Line {line + 5}", None, "open", "true"),
+                               (code, 50, closing, 100 * p, None, None, 1, "open", "true"),
+                               (code, 54, closing, 50.0, None, f"Line {line}", 1, "open", "true"),
+                               (code, 50, start + dt.timedelta(minutes=2), 90.0, None, None, 5, "open", "true")]
                     arm.append(f"{code},{mu1:.3f},{mu2:.3f}")
                     k += 1
         by = defaultdict_list(quotes)
@@ -107,13 +130,17 @@ class TestRun(unittest.TestCase):
             with mock.patch.object(snowflake_io, "fetch_history", lambda cur: hist), \
                     mock.patch.object(snowflake_io, "fetch_quotes",
                                       lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays",     # half by the play feed, half by kick-off
+                                      lambda cur, codes: {c: 3 for c in codes if int(c[2:]) % 2 == 0}), \
                     mock.patch.object(config, "MATCH_CHUNK_SIZE", 200):
                 out = pb.run(None, d, [("model", path)], "2026-09-01 00:00:00", None)
                 with open(out, encoding="utf-8") as fh:
                     text = fh.read()
                 self.assertTrue(os.path.exists(os.path.join(d, "prior_backtest.csv")))
-        for arm_name in ("prod ", "prod+layer", "prod+infer", "model ", "model+layer", "model+infer"):
+        for arm_name in ("prod ", "prod+layer", "prod+infer", "prod-early", "model ", "model+layer", "model+infer"):
             self.assertIn(arm_name, text)
+        rows = {line.split()[0]: line.split() for line in text.splitlines()[:20] if line.strip().startswith("prod")}
+        self.assertLess(float(rows["prod"][1]), float(rows["prod-early"][1]))     # the closing price is the sharper
         self.assertIn("Rematches", text)
         self.assertIn("The layers' last fits", text)
         self.assertIn("NB2's construction fitted to its errors", text)
