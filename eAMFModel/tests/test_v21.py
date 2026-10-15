@@ -731,10 +731,13 @@ class TestAudit(unittest.TestCase):
         self.assertGreater(real["pts_ball"].sum() + real["pts_other"].sum(), 0)
         self.assertGreater(step["pts_ball"].sum() + step["pts_other"].sum(), 0)
         np.testing.assert_allclose(step["level"].sum(1), real["level"].sum(1))
+        # how the drive with the ball ended: one real end per Q4 snap state, the sim's shares sum to one each
+        self.assertGreater(real["drives"].sum(), 0)
+        np.testing.assert_allclose(step["drives"].sum(), real["drives"].sum(), rtol=1e-6)
         for part in ("GAME FLOW", "ONE SNAP", "3rd down, by distance", "4th DOWN", "THE LARGEST GAPS", "OVERTIME",
                      "ONE SNAP by the snaps left", "ONE SNAP in Q4's last 2:00", "Q4 STATES", "Q4 STATES, level",
                      "by what a field goal does", "CONVERSIONS in Q4's last 3:00", "by the time its play took",
-                     "the league's share in the sim's cells"):
+                     "the league's share in the sim's cells", "how the drive with the ball ended"):
             self.assertIn(part, lines)
 
 

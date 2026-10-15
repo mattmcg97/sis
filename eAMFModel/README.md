@@ -2211,8 +2211,10 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   from (the league's, a team's own, a gamer's own).
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
-  ball won, went to overtime or lost. Real states of one game share its result, so the real
-  figures move in steps of whole games.
+  ball won, went to overtime or lost. It also gives how the drive with the ball ended: a
+  touchdown, a field goal made or missed, a punt, a turnover, on downs, or the clock running
+  out. Real states of one game share its result, so the real figures move in steps of whole
+  games.
 
 It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
 standard errors of the real one. It ends with overtime: how often a game goes there, from kick-off

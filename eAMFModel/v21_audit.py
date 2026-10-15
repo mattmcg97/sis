@@ -55,6 +55,7 @@ def outcome_of(kind, gain, dist, field, conv=None):
 
 REMAINS = ("0-1 snaps left",) + v21.REMAIN_NAMES[1:]
 LEADS3 = ("behind", "level", "ahead")
+DRIVE_LEADS = ("9+ behind", "4-8 behind", "1-3 behind", "level", "1-3 ahead", "4-8 ahead", "9+ ahead")
 RESULTS = ("won", "overtime", "lost")
 
 
@@ -67,7 +68,8 @@ def tables():
                 level=np.zeros((4, 3)), fourth_q4=np.zeros((4, 3)), early_q4=np.zeros((4, 2)),
                 two_late=np.zeros((2 * v21.CONV_MARGIN + 1, 2)), two_base=np.zeros(2 * v21.CONV_MARGIN + 1),
                 fourth_q4_base=np.zeros((4, 3)), early_q4_base=np.zeros((4, 2)),
-                late_tb=np.zeros((3, len(v21.TIME_BUCKETS), 2)), late_src=np.zeros((3, 3, 2)))
+                late_tb=np.zeros((3, len(v21.TIME_BUCKETS), 2)), late_src=np.zeros((3, 3, 2)),
+                drives=np.zeros((len(DRIVE_LEADS), 4, len(v21.DRIVE_ENDS))))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -128,6 +130,45 @@ def _late(t, c, w, auto=None):
     if "src" in c:
         np.add.at(t["late_src"], (row[on3], c["src"][on3], 0), w)
         np.add.at(t["late_src"], (row[on3], c["src"][on3], 1), td[on3] * w)
+
+
+def real_drive_end(rows, i):
+    """How the drive with the ball at row i ended (v21.DRIVE_ENDS index): the next score, kick, punt,
+    change of side or the half's end after it."""
+    _i = v21.s14._i
+    a = rows[i]
+    off, period = a.get("offense"), _i(a.get("period"))
+    a_home = (a.get("team_a_side") or "home") != "away"
+    mine_home = (off == "TEAM_A") == a_home
+    score = lambda r: ((_i(r.get("score_p1")) or 0), (_i(r.get("score_p2")) or 0))
+    h0, w0 = score(a)
+    for j in range(i + 1, len(rows)):
+        r = rows[j]
+        h, w = score(r)
+        d_me, d_them = (h - h0, w - w0) if mine_home else (w - w0, h - h0)
+        if d_me >= 6:
+            return 0
+        if d_me == 3:
+            return 1
+        if d_them > 0:
+            return 4                          # a defensive touchdown or a safety
+        kind = r.get("play_kind")
+        if kind == "FIELD_GOAL":
+            nxt = rows[j + 1] if j + 1 < len(rows) else r
+            h1, w1 = score(nxt)
+            return 1 if ((h1 - h0) if mine_home else (w1 - w0)) == 3 else 2
+        if kind == "PUNT":
+            return 3
+        if kind == "TURNOVER_ON_DOWNS":
+            return 5
+        if _i(r.get("period")) != period:
+            if period in (1, 3):              # the quarter's end: the drive goes on
+                period = _i(r.get("period"))
+                continue
+            return 6
+        if r.get("offense") in ("TEAM_A", "TEAM_B") and r.get("offense") != off and kind in v21.s14.SNAP_KINDS:
+            return 5 if "TURNOVER_ON_DOWNS" in (rows[j - 1].get("play_messages") or "") else 4
+    return 6
 
 
 def _late_cell(cell):
@@ -259,8 +300,17 @@ def _worker(job):
             v21.simulate(model, v21.concat_starts([s for _, s in q4]), state_paths, seed=seed + 2, stats=st)
             went = st["went_ot"].reshape(len(q4), state_paths).mean(1)
             reg_sim = st["regulation"].reshape(len(q4), state_paths, 2)
+            ends = st["drive_end"].reshape(len(q4), state_paths)
             reg_real = _regulation(rows, final)
             for k, ((j, s), w) in enumerate(zip(q4, went)):
+                if int(s["phase"][0]) == v21.SNAP:   # how the drive with the ball ended
+                    c_ = float(s["clock"][0])
+                    cs_ = 0 if c_ > 120 else 1 if c_ > 60 else 2 if c_ > 30 else 3
+                    lb_ = int(v21.margin_b(_side_lead(s)[2]))
+                    real["drives"][lb_, cs_, real_drive_end(rows, starts[j][0])] += 1
+                    e = ends[k][ends[k] >= 0]
+                    if len(e):
+                        step["drives"][lb_, cs_] += np.bincount(e, minlength=len(v21.DRIVE_ENDS)) / len(e)
                 side, pts, lead = _side_lead(s)
                 c = float(s["clock"][0])
                 cs = 0 if c > 120 else 1 if c > 60 else 2 if c > 30 else 3
@@ -543,6 +593,20 @@ def q4_lines(real, step):
     return lines
 
 
+def drive_lines(real, step):
+    lines = ["", "  Q4 STATES: how the drive with the ball ended, by its lead and the time left (real / sim, % of"
+                 " the states; clock out: the half or the game ran out on it, or it ran out the clock)",
+             f"  {'':28s}{'n real':>7s}" + "".join(f"{e:>14s}" for e in v21.DRIVE_ENDS)]
+    for lb, name in enumerate(DRIVE_LEADS):
+        for cs in range(4):
+            r, m = real["drives"][lb, cs], step["drives"][lb, cs]
+            if r.sum() < 20:
+                continue
+            lines.append(f"  {name + ', ' + OT_CLOCK[cs]:28s}{int(r.sum()):>7d}" + "".join(
+                f"{_pair(_pct(r[e], r.sum()), _pct(m[e], m.sum())):>14s}" for e in range(len(v21.DRIVE_ENDS))))
+    return lines
+
+
 def report(out):
     lines = [f"  v2.1 audit on {out['matches']:,} matches {out['since'] or ''} to {out['until'] or ''}:"
              f" {2 * out['n_paths']:,} kick-off games each; the next snap {out['state_paths']} times from every"
@@ -557,6 +621,7 @@ def report(out):
     lines += two_lines(out["real"], out["flow"])
     lines += ot_lines(out["real"], out["flow"], out["step"])
     lines += q4_lines(out["real"], out["step"])
+    lines += drive_lines(out["real"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
                   " snaps that kept the ball, cut at the goal line; seconds: PLAY_OVER to PLAY_OVER)"]
     return lines

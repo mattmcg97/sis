@@ -357,6 +357,7 @@ def lead3(m):
 
 
 FG4_NAMES = ("4+ behind", "3 behind", "1-2 behind or level", "ahead")
+DRIVE_ENDS = ("touchdown", "field goal", "missed kick", "punt", "turnover", "downs", "clock out")
 
 
 def fg4_of(lead):
@@ -1861,6 +1862,15 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
     reg_score = score.copy()                  # the score when regulation ended (a start in overtime: its own)
+    # how the start's own drive ended (DRIVE_ENDS; -1 not yet): the audit's late drives
+    drive_end = np.full(P, -1, np.int64)
+    start_team = team.copy()
+
+    def mark(ix, code):
+        ix = np.asarray(ix, np.int64)
+        if len(ix):
+            new = ix[drive_end[ix] < 0]
+            drive_end[new] = code
 
     from . import v21_rules
     use_rules = RULES and getattr(model, "use_rules", True)
@@ -1932,6 +1942,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         phase[ix] = SNAP
 
     def touchdown(ix, side):
+        own = np.asarray(side) == start_team[ix]
+        mark(ix[own], 0)
+        mark(ix[~own], 4)                     # the other side's: a defensive touchdown
         score[ix, side] += 6
         tally("touchdowns", len(ix))
         lead = score[ix, side] - score[ix, 1 - side]
@@ -1980,6 +1993,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         clock[ix] = np.maximum(0.0, clock[ix] - used)
         tally("field_goals", made.sum())
         mk, ms = ix[made], ix[~made]
+        mark(mk, 1)
+        mark(ms, 2)
         score[mk, team[mk]] += 3
         kick_to(mk, 1 - team[mk])
         set_ball(ms, 1 - team[ms], np.maximum(20, 100 - y[ms]))
@@ -1998,6 +2013,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         pu, fg = ix[choice == PUNT], ix[choice == FG]
         if len(pu):
             tally("punts", len(pu))
+            mark(pu, 3)
             if model.punts is not None:
                 j = model.punts.draw(model.punts.bin_of(dict(ybin=np.clip(y[pu] // 20, 0, 4))), rng.random(len(pu)))
                 net, secs = model.punts.payload["net"][j], model.punts.payload["seconds"][j]
@@ -2196,6 +2212,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             s = gx[sf]
             tally("safeties", len(s))
             score[s, 1 - team[s]] += 2
+            mark(s, 4)
             set_ball(s, 1 - team[s], model.safety_fields[rng.integers(0, len(model.safety_fields), len(s))])
         on = ~td & ~sf
         ox, og, oy, oc, orp = gx[on], gg[on], y2[on], gconv[on], grep[on]
@@ -2210,14 +2227,17 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         failed = nf[down[nf] > 4]
         if len(failed):
             tally("turnovers_on_downs", len(failed))
+            mark(failed, 5)
             set_ball(failed, 1 - team[failed], 100 - y[failed])
 
     def turnover(ix, side, field):
         tally("turnovers", len(ix))
+        mark(ix, 4)
         set_ball(ix, side, field)
 
     def end_period(ix):
         p = period[ix]
+        mark(ix[(p == 2) | (p >= 4)], 6)       # the half's (the game's) end with the ball
         if st is not None:
             q_points[ix, np.minimum(p, 5) - 1] += (score[ix] - q_score[ix]).sum(1)
         q_score[ix] = score[ix]
@@ -2283,6 +2303,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             if over.any():
                 clock[sn[over]] = 0.0
                 tally("auto_end", over.sum())
+                mark(sn[over], 6)
                 sn = sn[~over]
         if len(sn):
             # downs 1-3 in range in the half's last minute: kick now or play on
@@ -2317,6 +2338,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st["games"] = st.get("games", 0) + P
         st["final"] = score.copy()
         st["regulation"] = reg_score.copy()
+        st["drive_end"] = drive_end.copy()
         st["q_points"] = q_points
         st["unfinished"] = st.get("unfinished", 0) + int((phase != DONE).sum())
     return score[:, 0].reshape(S, n_paths), score[:, 1].reshape(S, n_paths)
