@@ -159,6 +159,8 @@ DIST_LEVELS = (DIST_BASE,
                ("down", "zone", "endgame3"),
                ("tb2", "down", "dist3", "zone3", "endgame3"),
                ("tb2", "down", "zone3", "endgame3"),
+               ("down", "zone3", "endgame3"),
+               ("zone3", "endgame3"),
                ("tb", "down", "dist", "zone"),
                ("tb", "down", "dist", "zone3"),
                ("tb", "down", "dist"),
@@ -218,8 +220,9 @@ DECISIONS = {
     "kickoff": dict(label="kick-off", options=("return", "touchback", "no landing zone", "kept"), who="kicker",
                     features=("desperate", "late", "lead"), sizes=(2, 2, 3),
                     levels=(("desperate", "late", "lead"), ("desperate", "late"), ("desperate",), ())),
-    "two": dict(label="conversion", options=("kick", "go for two"), who="scorer", features=("cell", "lead"),
-                sizes=(CONV_CELLS, 2 * CONV_MARGIN + 1), levels=(("cell", "lead"), ("lead",), ())),
+    "two": dict(label="conversion", options=("kick", "go for two"), who="scorer", features=("cell", "lead", "late"),
+                sizes=(CONV_CELLS, 2 * CONV_MARGIN + 1, 3),
+                levels=(("cell", "lead"), ("late", "lead"), ("lead",), ())),
     "to_def": dict(label="defense's timeout before a running-clock snap", options=("none", "timeout"),
                    who="defense", features=("phase", "margin", "left"), sizes=(7, 7, 6),
                    levels=(("phase", "margin", "left"), ("phase", "margin"), ("phase",), ())),
@@ -321,6 +324,14 @@ def fg4_of(lead):
     sides go for a touchdown rather than settle for), the lead (1-2 behind or level), ahead."""
     lead = np.asarray(lead)
     return np.select([lead <= -4, lead == -3, lead <= 0], [0, 1, 2], 3).astype(np.int64)
+
+
+def conv_late(cell):
+    """A conversion's part of the game as its fallback reads it: 0 before Q4's last 3:00, 1 in it, 2
+    overtime. Where a clock cell has too few real tries for its lead, the try reads Q4's last 3:00 as one
+    before it reads the whole game: 1 behind after a late six goes for two; earlier it kicks."""
+    cell = np.asarray(cell)
+    return np.where(cell == CONV_CELLS - 1, 2, np.where(cell >= 3, 1, 0)).astype(np.int64)
 
 
 def togo4(togo):
@@ -924,7 +935,7 @@ def decision_features(name, pts):
     elif name == "kickoff":
         cols = [g("desperate"), g("late"), lead3(g("lead"))]
     elif name == "two":
-        cols = [g("cell"), np.clip(g("lead"), -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN]
+        cols = [g("cell"), np.clip(g("lead"), -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN, conv_late(g("cell"))]
     else:
         cols = [phase_of(g("period"), g("clock")), margin_b(g("off_margin")), left_b(g("left"))]
     return np.stack([np.asarray(c, np.int64) for c in cols], axis=1)
@@ -1796,7 +1807,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
             for i, edge in reversed(list(enumerate(CONV_CLOCK))):
                 cell = np.where((p == 4) & (c <= edge), 4 + i, cell)
         close = ot & ot_done[ix, 1 - side] & ((lead == -1) | (lead == -2))
-        two = decide("two", dict(cell=cell, lead=np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN),
+        two = decide("two", dict(cell=cell, lead=np.clip(lead, -CONV_MARGIN, CONV_MARGIN) + CONV_MARGIN,
+                                 late=conv_late(cell)),
                      gamer[ix, side], fine=state(ix, side), ot=ot_mask("two", len(ix), other_done_close=close),
                      ix=ix) == 1
         good = rng.random(len(ix)) < np.where(two, model.two_good, model.kick_good)

@@ -2014,7 +2014,10 @@ missing something. Nothing is ever fitted to close those gaps.
   real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
   At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
   distance and the time, then the field, before it lets the lead go. It keeps the half, the snaps
-  left (0–1, 2–4, 5+) and behind / level / ahead. The field keeps its zones as long as it can:
+  left (0–1, 2–4, 5+) and behind / level / ahead, down to the down and the field's three parts
+  (own half, the other half, inside the 10) before it gives the situation up. In September 30% of
+  level sides' Q4-last-2:00 states had drawn from every game's snaps at that spot. The field keeps
+  its zones as long as it can:
   with the other half as one zone, a real touchdown from the 12 drawn at the 45 ran on to a long
   one. The audit showed why: level sides in Q4's last 2:00 scored a
   touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
@@ -2086,7 +2089,7 @@ missing something. Nothing is ever fitted to close those gaps.
   | 4th down (the offense) | go for it, field goal, punt | yards to the goal, distance, lead, part of the game, time left in the half |
   | downs 1-3 in the half's last minute, in range (the offense) | play on, kick now | time left, the kick's length, down, lead, which half |
   | kick-off (the kicker) | returned, touchback, no landing zone, kept (onside) | behind late in Q4, the half's last 2:00, lead |
-  | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six |
+  | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six; then Q4's last 3:00 as one, before the whole game |
   | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half |
 
   Each is drawn in three steps:
