@@ -68,8 +68,9 @@ def _run(script, args, cwd):
         raise SystemExit(f"nb2/{script} failed:\n{done.stdout[-2000:]}\n{done.stderr[-2000:]}")
 
 
-def fit(history, out_dir, before=None):
-    """Fit NB2's ratings on the finished matches before a cut-off."""
+def fit(history, out_dir, before=None, half_life=None):
+    """Fit NB2's ratings on the finished matches before a cut-off; `half_life`: NBRatingTrial's
+    --half-life-days (its own default, 60, when None)."""
     _need_libraries()
     os.makedirs(out_dir, exist_ok=True)
     rows = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
@@ -77,7 +78,8 @@ def fit(history, out_dir, before=None):
     if not rows:
         raise SystemExit("no finished matches to fit the NB2 model on")
     _write(os.path.join(out_dir, "history.csv"), rows, HISTORY_FIELDS)
-    _run(FIT_SCRIPT, ["--input", "history.csv"], out_dir)
+    _run(FIT_SCRIPT, ["--input", "history.csv"]
+         + ([] if half_life is None else ["--half-life-days", f"{float(half_life):g}"]), out_dir)
     return len(rows)
 
 
@@ -106,7 +108,7 @@ def predict(ratings_dir, schedule, n_sims=N_SIMS, full=False):
     return out
 
 
-def level_scale(history, work_dir, before, days=SCALE_DAYS, prior_n=SCALE_PRIOR):
+def level_scale(history, work_dir, before, days=SCALE_DAYS, prior_n=SCALE_PRIOR, half_life=None):
     """How far NB2's totals have run under the real ones lately, shrunk toward 1."""
     start = before - dt.timedelta(days=days)
     week = [r for r in history if r.get("PLAYER_1_FINAL_SCORE") not in ("", None)
@@ -114,7 +116,7 @@ def level_scale(history, work_dir, before, days=SCALE_DAYS, prior_n=SCALE_PRIOR)
     if not week:
         return 1.0, 0, None
     d = os.path.join(work_dir, "level")
-    fit(history, d, before=start)
+    fit(history, d, before=start, half_life=half_life)
     pred = predict(d, week)
     real, expected = 0.0, 0.0
     n = 0
@@ -154,11 +156,12 @@ class Prematch:
         self.meta = meta
 
     @classmethod
-    def build(cls, history, directory, before):
-        """Fit NB2 and its level scale before a cut-off and save them."""
-        n = fit(history, directory, before=before)
-        scale, n_scale, ratio = level_scale(history, directory, before)
-        meta = {"fitted_on": n, "before": before.isoformat(), "scale": scale,
+    def build(cls, history, directory, before, half_life=None):
+        """Fit NB2 and its level scale before a cut-off and save them; `half_life`: the fit's
+        --half-life-days (NBRatingTrial's default when None)."""
+        n = fit(history, directory, before=before, half_life=half_life)
+        scale, n_scale, ratio = level_scale(history, directory, before, half_life=half_life)
+        meta = {"fitted_on": n, "before": before.isoformat(), "half_life_days": half_life, "scale": scale,
                 "scale_matches": n_scale, "scale_raw_ratio": ratio,
                 "league_average": list(league_average(history, before))}
         with open(os.path.join(directory, "level.json"), "w", encoding="utf-8") as fh:

@@ -6,7 +6,7 @@ window of weeks its ratings go stale where a live model's would not. `python -m 
 prior-daily` fits the days of a window into one directory and attaches it to one or more builds;
 their prematch_model() then prices from it (the build's prior shrink is applied on top, as before).
 
-    DIR/rolling.json            {"prior": "glmer", "days": ["2026-08-23", ...]}
+    DIR/rolling.json            {"prior": "glmer", "options": {}, "days": ["2026-08-23", ...]}
     DIR/2026-08-23/             a fitted pre-match model, cut off at 2026-08-23 00:00
 """
 
@@ -31,16 +31,30 @@ def _day(row):
     return start.date() if start is not None else None
 
 
-def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
+def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True, options=None):
     """Fit `prior` once for every day from `since` to `until` (dates), each on the finished matches
     before that day began; days already fitted in `out_dir` are kept. The days are split into
     `workers` runs of consecutive days fitted side by side; within a run each glmer fit warm-starts
-    from the day before's (glmer/fit.R --start), about 2-3x quicker for the same fit. Returns the
-    Rolling model."""
+    from the day before's (glmer/fit.R --start), about 2-3x quicker for the same fit. `options`: the
+    prior's build settings (NB2's half_life), every day alike; a directory already fitted with others
+    is refused, so one directory never mixes two models. Returns the Rolling model."""
+    options = dict(options or {})
+    model = PRIORS[prior]
+    params = inspect.signature(model.build).parameters
+    unknown = [k for k in options if k not in params]
+    if unknown:
+        raise SystemExit(f"the {prior} prior has no setting {', '.join(unknown)}")
+    index = os.path.join(out_dir, INDEX)
+    was = {}
+    if os.path.exists(index):
+        with open(index, encoding="utf-8") as fh:
+            was = json.load(fh)
+        if was.get("prior") != prior or (was.get("options") or {}) != options:
+            raise SystemExit(f"{out_dir} holds {was.get('prior')} fits with {was.get('options') or 'the defaults'},"
+                             f" not {prior} with {options or 'the defaults'}: give another directory")
     os.makedirs(out_dir, exist_ok=True)
     days = [since + dt.timedelta(days=k) for k in range((until - since).days + 1)]
-    model = PRIORS[prior]
-    warm = "start" in inspect.signature(model.build).parameters
+    warm = "start" in params
     n = max(1, min(workers, len(days)))
     size = -(-len(days) // n)
     runs = [days[k:k + size] for k in range(0, len(days), size)]
@@ -53,7 +67,7 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
             path = os.path.join(out_dir, day.isoformat())
             if not model.exists(path):
                 t0 = time.time()
-                kw = {"start": prev} if warm and prev else {}
+                kw = dict(options, **({"start": prev} if warm and prev else {}))
                 try:
                     model.build(history, path, dt.datetime.combine(day, dt.time()), **kw)
                 except BaseException as error:             # R's SystemExit included
@@ -64,17 +78,20 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True):
                     continue
                 if verbose:
                     print(f"  {prior} fitted before {day} ({time.time() - t0:.0f}s"
-                          f"{', warm' if kw else ''})", flush=True)
+                          f"{', warm' if 'start' in kw else ''})", flush=True)
             prev = path
         return chunk
 
     with ThreadPoolExecutor(len(runs)) as pool:
         list(pool.map(run, runs))
-    fitted = [d for d in days if d not in failed]
+    # the days fitted before (a wider window, say) stay in the index
+    kept = {dt.date.fromisoformat(d) for d in was.get("days", [])
+            if model.exists(os.path.join(out_dir, d))}
+    fitted = sorted(kept | {d for d in days if d not in failed})
     if not fitted:
         raise SystemExit(f"every {prior} fit failed; the first: {next(iter(failed.values()))[-1500:]}")
-    with open(os.path.join(out_dir, INDEX), "w", encoding="utf-8") as fh:
-        json.dump({"prior": prior, "days": [d.isoformat() for d in fitted]}, fh, indent=1)
+    with open(index, "w", encoding="utf-8") as fh:
+        json.dump({"prior": prior, "options": options, "days": [d.isoformat() for d in fitted]}, fh, indent=1)
     if failed:
         # a match on a failed day is priced by the latest fit before it; rerun to fill them in
         print(f"  {len(failed)} of {len(days)} fits FAILED ({', '.join(d.isoformat() for d in sorted(failed))});"
@@ -123,6 +140,7 @@ class Rolling:
         with open(os.path.join(directory, INDEX), encoding="utf-8") as fh:
             index = json.load(fh)
         self.kind = index["prior"]
+        self.options = index.get("options") or {}
         self.days = sorted(dt.date.fromisoformat(d) for d in index["days"])
         if not self.days:
             raise SystemExit(f"{directory}: a rolling prior with no days fitted")
@@ -135,6 +153,11 @@ class Rolling:
     def AS_OF(self):
         return getattr(self.fit_for(self.days[0]), "AS_OF", True)
 
+    def covers(self, day):
+        """Whether a match on `day` has a fit made before it: not before the first fitted day (the
+        first fit has seen that day's results)."""
+        return day is not None and day >= self.days[0]
+
     def fit_for(self, day):
         """The fit that prices a match on `day`."""
         pick = max((d for d in self.days if d <= day), default=self.days[0]) if day else self.days[-1]
@@ -143,8 +166,9 @@ class Rolling:
         return self._fits[pick]
 
     def describe(self):
-        return (f"{self.kind} refitted every day, {len(self.days)} fits from {self.days[0]} to "
-                f"{self.days[-1]} ({self.directory})")
+        opts = ", ".join(f"{k} {v}" for k, v in sorted(self.options.items()))
+        return (f"{self.kind}{f' ({opts})' if opts else ''} refitted every day, {len(self.days)} fits from "
+                f"{self.days[0]} to {self.days[-1]} ({self.directory})")
 
     def means(self, schedule, n_sims=None, results=None):
         """Each match's expected (home, away) points from its own day's fit."""

@@ -220,6 +220,30 @@ def cmd_prior_backtest(args):
     return 0
 
 
+def cmd_backtest_suite(args):
+    """Every pre-match prior variant over one window: fitted, audited, graded, replayed, ranked."""
+    from . import backtest_suite, player_stats
+    cfg = backtest_suite.load_config(args.config)
+    if cfg.get("features") is None:
+        cfg["features"] = os.path.join(DEFAULT_OUT, player_stats.CACHE)
+    out = args.out or os.path.join(DEFAULT_OUT, "suite")
+    steps = [s.strip() for s in args.steps.split(",") if s.strip()]
+    needs_db = {"history", "backtest", "replay"} & set(steps)
+    conn = snowflake_io.get_connection() if needs_db else None
+    try:
+        if conn is None:
+            path = backtest_suite.run(None, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps, args.keep_going)
+        else:
+            with conn.cursor() as cur:
+                path = backtest_suite.run(cur, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps,
+                                          args.keep_going)
+    finally:
+        if conn is not None:
+            conn.close()
+    print(f"\n  -> {path} (the suite: {out})")
+    return 0
+
+
 def cmd_prior_replay(args):
     """The pre-match bets replayed at each prior's prices, with and without the rematch layer."""
     from . import prior_replay
@@ -1299,6 +1323,21 @@ def build_parser():
                            help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    bs_parser = sub.add_parser(
+        "backtest-suite", parents=[shared],
+        help="every pre-match prior variant over one window: NB2 refitted daily at each half-life, glmer, each "
+             "with the rematch, inference and feature layers; the inputs audited for leaks, a scramble and "
+             "determinism check on the layers, echo and shuffled controls, prior-backtest and prior-replay off "
+             "one read, and one ranked summary (-> out/suite/)")
+    bs_parser.add_argument("--config", metavar="JSON",
+                           help="the suite's settings (backtest_suite.DEFAULTS: nb2_half_lives, glmer, arms, "
+                                "features, periods, ...)")
+    bs_parser.add_argument("--steps", default="history,fits,audit,backtest,replay,summary",
+                           help="the steps to run, comma-separated (default all: history,fits,audit,backtest,"
+                                "replay,summary)")
+    bs_parser.add_argument("--keep-going", action="store_true", help="carry on past a failed audit check")
+    bs_parser.add_argument("--out", help=f"the suite's directory (default: {DEFAULT_OUT}/suite)")
+
     ps_parser = sub.add_parser(
         "player-stats", parents=[shared],
         help="every gamer's stats as h2hggl.com shows them, rebuilt from the match history (played, "
@@ -1437,6 +1476,8 @@ def main(argv=None):
         return cmd_prior_backtest(args)
     if args.command == "prior-replay":
         return cmd_prior_replay(args)
+    if args.command == "backtest-suite":
+        return cmd_backtest_suite(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
