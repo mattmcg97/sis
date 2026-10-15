@@ -2052,6 +2052,17 @@ missing something. Nothing is ever fitted to close those gaps.
   drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
   key, for comparison.
 
+  The lean key's distance fallbacks keep the distance too, all five buckets (1, 2–3, 4–6, 7–10,
+  11+). Pooling 1 to go with 2–3, a 3rd and 1 drew 3rd-and-3 snaps that kept their own result, a
+  failure, and at 1 to go a failure is no gain: 25% of the sim's 3rd-and-1 snaps against 17% real.
+
+  The field windows keep level with the goal line. Where it is nearer than the window's reach, the
+  window stops as far short on the other side, and a thin one widens the same either side as far
+  as the goal allows. Before, a state at the 1 drew from the 1 to the 5 when the cell had few snaps
+  at the 1. From the real states at the opposing 4–1 the sim scored 40.9% against 43.4% real, and
+  on 1st and goal at the 1, 44.6% against 51.4%. The clock windows keep level with the half's end
+  the same way.
+
   Every distance fallback but the last also keeps the time the play took, all six buckets, in
   both keys. Most had kept only stopped or running (14 seconds or under, or more), which pools an
   incomplete pass (6 seconds or less) with a 40-yard gain (10–14 seconds): the time drawn and the

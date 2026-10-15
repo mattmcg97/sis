@@ -162,10 +162,13 @@ class TestBins(unittest.TestCase):
             r = max(r, (v21.FIELD_MIN // 4 + 1) // 2)              # 4 a yard: a thin window widens
             self.assertTrue((np.abs(got - y) <= r).all())
             self.assertAlmostEqual(got.mean(), y, delta=1.0)
-        # a thin window widens to the FIELD_MIN nearest
+        # a thin window widens the same either side; at the goal line it stays on the yard itself
+        lo, hi = b.near(np.array([0]), np.array([95]), 0.0)
+        got = b.payload["field"][b.by_field()[0][lo[0]:hi[0]]]
+        self.assertGreaterEqual(int(hi[0] - lo[0]), v21.FIELD_MIN)
+        self.assertEqual(float(got.mean()), 95.0)
         lo, hi = b.near(np.array([0]), np.array([99]), 0.0)
-        self.assertEqual(int(hi[0] - lo[0]), v21.FIELD_MIN)
-        self.assertGreaterEqual(int(b.payload["field"][b.by_field()[0][lo[0]]]), 90)
+        self.assertEqual(set(b.payload["field"][b.by_field()[0][lo[0]:hi[0]]].tolist()), {99})
         # a group of 5 draws from all of it; a tilt still leans up
         small = v21.Bins.build(("a",), (1,), ((),), np.zeros((5, 1)), np.arange(5.0),
                                {"field": np.array([10, 30, 50, 70, 90]), "v": np.arange(5.0)}, 1)

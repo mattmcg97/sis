@@ -127,8 +127,8 @@ SPLITS = ("snaps", "time")
 # field, the snaps left and the distance before the lead (all seven of margin_b's) gives way to behind,
 # level or ahead: a side 9+ ahead in Q4 runs it out where one 1-3 ahead still plays for a first down.
 # The distance draw lets the field go before the distance: the field windows find the snaps near the
-# state's own field in a group of every field, and 4th and 1 is not played as 4th and 9. It keeps the
-# time the play took (all six of TIME_BUCKETS) and the down to the end: a 40-yard gain takes 10-14
+# state's own field in a group of every field. It keeps the distance (all five of dist: 3rd and 1 is not
+# played from 3rd and 3's snaps), the time the play took (all six of TIME_BUCKETS) and the down to the end: a 40-yard gain takes 10-14
 # seconds and an incomplete pass 6 or less, and a draw that pools the two (stopped or running alone)
 # gives a 6-second snap the long gains and takes them from the 12-second ones.
 KEY = "full"
@@ -150,11 +150,12 @@ FIELD_CANDIDATES = 6
 # of its group from those with as long left in the half -- within `clock` x the seconds left (CLOCK_SECONDS
 # at least), or the CLOCK_MIN nearest -- so a side at 0:20 on a running clock draws what real sides did at
 # 0:20, not a 30-second snap made at 0:45 that runs the half out before it can kick.
+WINDOW_SPAN = 1024
+WINDOW_ENDS = {"field": (1, 99), "left": (0, WINDOW_SPAN - 1)}     # the scale's ends a window keeps level with
 CLOCK_LATE = 120.0
 CLOCK_SECONDS = 2
 CLOCK_MIN = 5                 # a thin cell's window widens to its 5 nearest only: its 20 nearest at 0:12
                               # could reach back to 0:40 and its 30-second snaps
-WINDOW_SPAN = 1024
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
 TIME_LEAN = ("clock2", "qtr", "margin", "down", "dist", "zone", "remain")
 DIST_LEAN = ("tb", "qtr", "margin", "down", "dist", "zone", "remain")
@@ -174,10 +175,9 @@ TIME_LEAN_LEVELS = (TIME_LEAN,
 DIST_LEAN_LEVELS = (DIST_LEAN,
                     ("tb", "qtr", "margin", "down", "dist", "zone3", "remain"),
                     ("tb", "qtr", "margin", "down", "dist", "zone3", "rem4"),
-                    ("tb", "qtr", "margin", "down", "dist3", "zone3", "rem4"),
-                    ("tb", "qtr", "margin", "down", "dist3", "rem4"),
-                    ("tb", "qtr", "lead3", "down", "dist3", "rem4"),
-                    ("tb", "qtr", "lead3", "down", "rem4"),
+                    ("tb", "qtr", "margin", "down", "dist", "rem4"),
+                    ("tb", "qtr", "lead3", "down", "dist", "rem4"),
+                    ("tb", "qtr", "lead3", "down", "dist"),
                     ("tb", "down", "dist", "zone"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),
@@ -699,22 +699,34 @@ class Bins:
 
     def window(self, b, v, r, name, nmin=None):
         """(lo, hi) each draw's window in by_value(name) order: its group's (b) real records within r of
-        the state's own value v, or the nmin nearest where fewer are there (the whole group where it
-        has fewer; nmin: FIELD_MIN, CLOCK_MIN for the time left)."""
+        the state's own value v, the same either side: where an end of the scale is nearer than r
+        (WINDOW_ENDS: the goal line, the half's end), the window stops as far short of it on the other
+        side, so a state at the 1 is not drawn from the 1 to the 5 alone. Where fewer than nmin are in
+        it, it widens the same either side, as far as that end allows; only where none are left there,
+        to the nearest nmin (nmin: FIELD_MIN, CLOCK_MIN for the time left)."""
         nmin = nmin if nmin is not None else CLOCK_MIN if name == "left" else FIELD_MIN
         _, key = self.by_value(name)
         b, v = np.asarray(b, np.int64), np.asarray(v, np.int64)
-        r = np.asarray(r, np.int64)
+        lo_end, hi_end = WINDOW_ENDS.get(name, (0, WINDOW_SPAN - 1))
+        cap = np.maximum(0, np.minimum(v - lo_end, hi_end - v))
+        rr = np.minimum(np.asarray(r, np.int64), cap)
         base = b * WINDOW_SPAN
-        lo = np.searchsorted(key, base + np.clip(v - r, 0, WINDOW_SPAN - 1), "left")
-        hi = np.searchsorted(key, base + np.clip(v + r, 0, WINDOW_SPAN - 1), "right")
+        find = lambda i, rad: (np.searchsorted(key, base[i] + np.clip(v[i] - rad, 0, WINDOW_SPAN - 1), "left"),
+                               np.searchsorted(key, base[i] + np.clip(v[i] + rad, 0, WINDOW_SPAN - 1), "right"))
+        everyone = np.arange(len(b))
+        lo, hi = find(everyone, rr)
         s, n = self.start[b], self.count[b]
         w = np.minimum(nmin, n)
-        thin = np.flatnonzero(hi - lo < w)
-        if len(thin):
-            p = np.searchsorted(key, base[thin] + v[thin], "left")
-            lo[thin] = np.clip(p - w[thin] // 2, s[thin], s[thin] + n[thin] - w[thin])
-            hi[thin] = lo[thin] + w[thin]
+        thin = np.flatnonzero((hi - lo < w) & (rr < cap))
+        while len(thin):
+            rr[thin] = np.minimum(cap[thin], np.maximum(rr[thin] + 1, 2 * rr[thin]))
+            lo[thin], hi[thin] = find(thin, rr[thin])
+            thin = thin[(hi[thin] - lo[thin] < w[thin]) & (rr[thin] < cap[thin])]
+        empty = np.flatnonzero(hi <= lo)
+        if len(empty):
+            p = np.searchsorted(key, base[empty] + v[empty], "left")
+            lo[empty] = np.clip(p - w[empty] // 2, s[empty], s[empty] + n[empty] - w[empty])
+            hi[empty] = lo[empty] + w[empty]
         return lo, hi
 
     def near(self, b, y, share, ymin=FIELD_YARDS, nmin=FIELD_MIN):
