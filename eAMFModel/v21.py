@@ -1985,10 +1985,11 @@ def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
     return max(0.05, (got[1] - got[0]) / 2.0)
 
 
-def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None):
+def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0):
     """((home, away) final scores, alpha): the sim from `start` with each side's offense nudged along
-    the strength direction by alpha (2,) so its kick-off means meet `target` (home, away): secant steps
-    from the build's slope, each on the same random numbers; the last run's scores (and its stats)."""
+    the strength direction by alpha (2,) so its kick-off means meet `target` (home, away) -- or, share
+    below 1, that share of the way there from the sim's own means: secant steps from the build's slope,
+    each on the same random numbers; the last run's scores (and its stats)."""
     alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
     prev = None
     target = np.asarray(target, float)
@@ -1999,6 +2000,8 @@ def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=
         if last:
             return (h, a), alpha
         x = np.array([h.mean(), a.mean()])
+        if it == 0 and share != 1.0:
+            target = x + share * (target - x)
         step = np.full(2, slope)
         if prev is not None:
             da, dx = alpha - prev[0], x - prev[1]
@@ -2103,7 +2106,8 @@ def report_build(m, recs=None):
     if recs is not None:
         for line in chains_lines(recs):
             print(line)
-        for line in late_lines(m, recs, real, feats) + field_lines(m, recs, feats):
+        for line in late_lines(m, recs, real, feats) + late_lines(m, recs, real, feats, period=2) \
+                + field_lines(m, recs, feats):
             print(line)
     for line in getattr(m, "_trend_lines", []):
         print(line)
@@ -2249,7 +2253,7 @@ def _pct(parts, w=None):
     return tuple(100 * float(np.nanmean(v if w is None else v[w])) for v in parts)
 
 
-def late_lines(m, recs, real=None, feats=None):
+def late_lines(m, recs, real=None, feats=None, period=4):
     """Q4's last 2:00, by the lead: the real snaps' touchdowns, losses and seconds against what the
     league's draws give the same states -- their groups' real snaps, and the sim's touchdown chance at
     the states' own field (td_chance), drawing from the whole group and from near the state's field
@@ -2259,7 +2263,7 @@ def late_lines(m, recs, real=None, feats=None):
     if real is None or len(real[1]) != len(recs):
         return []
     g = lambda k: np.array([r[k] for r in recs])
-    on = (g("period") == 4) & (g("clock") <= LATE)
+    on = (g("period") == period) & (g("clock") <= LATE)
     if not on.any():
         return []
     lead = np.sign(g("margin")).astype(np.int64) + 1
@@ -2271,7 +2275,7 @@ def late_lines(m, recs, real=None, feats=None):
     feats = feats if feats is not None else _features(recs, m)
     drawn = "near it" if getattr(m, "field", 0.0) else "the whole group"
     share = getattr(m, "field", 0.0) or FIELD_SHOWN
-    out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown % real / group /"
+    out = [f"  Q{period}'s last 2:00 by the lead: the real snaps against their league groups (touchdown % real / group /"
            f" the sim's chance at the state's own field from the whole group / from near it, field {share:g}, its"
            " own touchdown;"
            f" the sim draws from {drawn}; loss %, seconds: real / group)"]

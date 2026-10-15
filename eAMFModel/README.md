@@ -2172,7 +2172,11 @@ missing something. Nothing is ever fitted to close those gaps.
   last run prices the match. The first nudged run, on held-out October, priced moneylines at the
   prior's log loss (+0.001 ± 0.003) and margins and totals better (RPS 5.53 against 5.55, 6.89
   against 6.92). Its direction moved a side only half a point a unit, so 43% of the nudges stopped
-  at the cap short of the inputs. The same
+  at the cap short of the inputs. With the unit a point and the cap at 10, the next run met the
+  inputs (within 0.1 a match, none at the cap): margin RPS 5.53 against the prior's 5.55, total
+  RPS level (6.92), moneyline log loss 0.004 ± 0.002 worse. Following the inputs all the way carries
+  their errors too: in October a point more expected was 0.76 more in the real games. `--nudge-share
+  S` goes only S of the way from the sim's own kick-off means to the inputs. The same
   nudge carries into the match's real states. The report prints the nudges taken: their mean,
   spread, home and away, and the share at the cap. The base model never sees the inputs. The
   nudge is a separate layer, on only when asked.

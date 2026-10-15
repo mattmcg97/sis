@@ -131,7 +131,7 @@ def real_census(matches, model=None, history=None):
 
 def _worker(job):
     """Price a list of matches: kick-off and every --every-th real state."""
-    model_path, items, n_paths, state_paths, every = job
+    model_path, items, n_paths, state_paths, every, share = job
     model = v21.Model.load(model_path)
     out, census = {}, None
     for code, rows, pair, teams, target in items:
@@ -139,7 +139,7 @@ def _worker(job):
         start = v21.kickoff_start(model, pair, teams)
         alpha = None
         if target is not None and getattr(model, "nudge_dir", None) is not None:
-            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st)
+            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st, share=share)
         else:
             h, a = v21.simulate(model, start, n_paths, seed=_seed(code), stats=st)
         h, a = h.ravel(), a.ravel()
@@ -164,12 +164,12 @@ def _worker(job):
 
 
 def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFAULT_PATHS,
-        state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False):
+        state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False, nudge_share=1.0):
     """Per match: its row, finals, the inputs, the sim's kick-off and its states; and the census of the
     sim's draws and the real games'. `means` {code: (home, away)} are the inputs; `prior_books`
     {code: (margin pmf, total pmf)} the prior's own price, for grading. nudge (a tilt build): each side's
     offense nudged along the strength direction to meet the inputs at kick-off (v21.nudge_solve), the
-    same nudge carried into its real states."""
+    same nudge carried into its real states; nudge_share: that share of the way from the sim's own means."""
     import os
     model_path = os.path.join(model_dir, v21.MODEL_FILE) if os.path.isdir(model_dir) else model_dir
     model = v21.Model.load(model_path)
@@ -183,7 +183,7 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
     items = [(c, [{k: r.get(k) for k in ROW_KEYS} for r in v21._with_side(matches[c])])
              + v21.match_people(c, matches[c], hist) + (tuple(means[c]) if nudge else None,) for c in codes]
     workers = max(1, min(workers, len(items)))
-    jobs = [(model_path, items[k::workers], n_paths, state_paths, every) for k in range(workers)]
+    jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share) for k in range(workers)]
     if workers == 1:
         parts = [_worker(j) for j in jobs]
     else:
@@ -200,7 +200,7 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
                             prior_book=(prior_books or {}).get(c), **sims[c]))
     return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}, model, history),
                 gamer_names={i: g for g, i in model.gamers.items()}, share=model.share, mode=model.mode, since=since, until=until, every=every,
-                n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge))
+                n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge), nudge_share=float(nudge_share))
 
 
 def _pool():
@@ -478,7 +478,9 @@ def nudge_lines(results):
 
 def report(out):
     res = out["results"]
-    lines = [f"  v2.1 ({out['mode']}{', nudged to the inputs' if out.get('nudge') else ''}) on {len(res):,} settled"
+    nudged = (", nudged to the inputs" if out.get("nudge_share", 1.0) == 1.0
+              else f", nudged {100 * out.get('nudge_share', 1.0):.0f}% of the way to the inputs") if out.get("nudge") else ""
+    lines = [f"  v2.1 ({out['mode']}{nudged}) on {len(res):,} settled"
              f" matches {out['since']} to {out['until']}: {2 * out['n_paths']:,} kick-off games each,"
              f" {out['state_paths']:,} from every {out['every']} real state", ""]
     lines += nudge_lines(res)

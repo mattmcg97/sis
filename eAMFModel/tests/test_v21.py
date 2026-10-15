@@ -948,6 +948,9 @@ class TestReport(unittest.TestCase):
         self.assertLess(alpha[1], 0)
         self.assertLess(abs(h.mean() - target[0]), 2.0)
         self.assertLess(abs(a.mean() - target[1]), 2.0)
+        (hh, _), half = v21.nudge_solve(m, start, target, 300, seed=3, share=0.5)   # half the way there
+        self.assertLess(abs(hh.mean() - (h0.mean() + 2.0)), 1.5)
+        self.assertLess(half[0], alpha[0])
         codes = sorted(MATCHES)[:6]
         means = {c: (12.0, 8.0) for c in codes}
         with tempfile.TemporaryDirectory() as tmp:
