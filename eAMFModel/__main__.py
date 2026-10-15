@@ -329,7 +329,7 @@ def cmd_v21_build(args):
     history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
                       gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split,
-                      key=args.key)
+                      key=args.key, blend=args.blend)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
@@ -809,6 +809,10 @@ def build_parser():
                    help="the league's draws' key: full -- the play before in six classes, the part of the game, the "
                         "snaps played so far; lean -- the clock running or stopped (or the play's time), the period, "
                         "the lead, down, distance, field and snaps left only (default full)")
+    p.add_argument("--blend", type=float, default=0.0,
+                   help="blend the league's draws' levels: a cell of n real snaps is drawn from n / (n + BLEND) of "
+                        "the time, else its parent's (cells of 5+ kept); 0 (default): the first level with "
+                        "--min-records")
     p.add_argument("--split", choices=["snaps", "time"], default="snaps",
                    help="the draws' part of the game: snaps -- the half and the two-minute warning, the snaps "
                         "left in the half the rest; time -- the seven parts of the game (default snaps)")

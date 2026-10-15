@@ -137,6 +137,18 @@ class TestBins(unittest.TestCase):
         self.assertEqual(list(v21.late_of([1, 2, 2, 2, 3, 4, 4, 5], [20, 121, 120, 30, 10, 31, 30, 200])),
                          [0, 0, 1, 2, 0, 1, 2, 3])
 
+    def test_blended_levels_draw_each_cell_by_its_records(self):
+        # a 50-record cell and its parent of 55: drawn from n / (n + prior) of the time, else the parent
+        b = self.bins
+        C = b.chain(dict(a=np.array([0, 2]), b=np.array([0, 1])))
+        W = b.blend_weights(C, 50.0)
+        np.testing.assert_allclose(W.sum(1), 1.0)
+        fine = int(np.flatnonzero(C[0] >= 0)[0])
+        self.assertAlmostEqual(W[0, fine], 50 / 100)
+        got = b.bin_blend(dict(a=np.zeros(20000, np.int64), b=np.zeros(20000, np.int64)), np.random.default_rng(0), 50.0)
+        self.assertAlmostEqual(float(np.mean(got == C[0, fine])), 0.5, delta=0.02)
+        self.assertTrue((got >= 0).all())
+
     def test_strict_has_no_fallback(self):
         X = np.array([[0, 0]] * 50 + [[1, 0]] * 5)
         b = v21.Bins.build(("a", "b"), (3, 2), (("a", "b"),), X, self.value, {"v": self.value}, 10, strict=True)
@@ -322,6 +334,19 @@ class TestBuild(unittest.TestCase):
         self.assertEqual(len(lines), 3)                       # the header, the latest fortnight, an older one
         self.assertIn("go 100.0% (1), kick 100.0% (1), two at -1 100.0% (1)", lines[-1])
         self.assertIn("overtime 100.0% (1)", lines[1])
+
+    def test_a_blended_build(self):
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, blend=40.0)
+        self.assertEqual(m.blend, 40.0)
+        self.assertLessEqual(int(m.dist.count[m.dist.level_of < len(m.dist.levels) - 1].min()), 20)   # thin cells kept
+        h, a = v21.simulate(m, v21.kickoff_start(m), 30)
+        self.assertGreater((h + a).mean(), 10)
+        from .. import v21_coverage as C
+        with tempfile.TemporaryDirectory() as d:
+            m.save(os.path.join(d, v21.MODEL_FILE))
+            out = C.run(d, {c: MATCHES[c] for c in sorted(MATCHES)[:5]}, HISTORY)
+        w = np.array([[x[f"dist_{k.replace(' ', '_')}"] for k in C.KINDS] for x in out["states"]])
+        np.testing.assert_allclose(w.sum(1), 1.0, atol=1e-3)
 
     def test_the_lean_key(self):
         m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, key="lean")

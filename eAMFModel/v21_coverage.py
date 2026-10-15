@@ -60,22 +60,46 @@ def _own_found(model, f, recs):
     return out
 
 
+def kind_weights(bins, f, end, blend=0.0):
+    """((states, 4) each state's draws' weight in each of KINDS, (states,) the real snaps behind its
+    draws -- blended, each level's group weighted by its chance -- and the level drawn from most)."""
+    kind = level_kind(bins.levels, end)
+    n = len(end)
+    out = np.zeros((n, len(KINDS)))
+    if blend:
+        C = bins.chain(f)
+        W = bins.blend_weights(C, blend)
+        K = np.stack([kind(np.full(n, li), end) for li in range(len(bins.levels))], axis=1)
+        for k in range(len(KINDS)):
+            out[:, k] = (W * (K == k)).sum(1)
+        n_eff = (W * np.where(C >= 0, bins.count[np.maximum(C, 0)], 0)).sum(1)
+        return out, n_eff, W.argmax(1)
+    g = bins.bin_of(f)
+    lv = np.where(g >= 0, bins.level_of[np.maximum(g, 0)], -1)
+    kk = np.where(lv >= 0, kind(np.maximum(lv, 0), end), 3)
+    out[np.arange(n), kk] = 1.0
+    return out, np.where(g >= 0, bins.count[np.maximum(g, 0)], 0).astype(float), lv
+
+
 def match_coverage(model, code, rows, pair, teams):
     """(state rows, decision rows) of one match."""
     recs = [r for r in v21.match_snaps(rows, pair, teams) if r["period"] <= 4 + v21.MAX_OT]
     states, decisions = [], []
     if recs:
         f = v21._features(recs, model)
-        tg, dg = model.time.bin_of(f), model.dist.bin_of(f)
+        end = f["endgame"] > 0
+        blend = getattr(model, "blend", 0.0)
+        tw, tn, tl = kind_weights(model.time, f, end, blend)
+        dw, dn, dl = kind_weights(model.dist, f, end, blend)
         own = _own_found(model, f, recs) if model.mode == "full" and model.own else {}
         for i, r in enumerate(recs):
             row = dict(code=code, period=r["period"], clock=r["clock"], down=r["down"], distance=r["distance"],
                        field=r["field"], lead=r["margin"], prev=int(r["prev_cls"]), part=int(f["part"][i]),
                        remain=int(f["remain"][i]), endgame=int(f["endgame"][i]), tb=int(f["tb"][i]),
-                       time_level=int(model.time.level_of[tg[i]]) if tg[i] >= 0 else -1,
-                       time_n=int(model.time.count[tg[i]]) if tg[i] >= 0 else 0,
-                       dist_level=int(model.dist.level_of[dg[i]]) if dg[i] >= 0 else -1,
-                       dist_n=int(model.dist.count[dg[i]]) if dg[i] >= 0 else 0)
+                       time_level=int(tl[i]), time_n=round(float(tn[i]), 1),
+                       dist_level=int(dl[i]), dist_n=round(float(dn[i]), 1),
+                       **{f"time_{k.replace(' ', '_')}": round(float(tw[i, j]), 4) for j, k in enumerate(KINDS)},
+                       **{f"dist_{k.replace(' ', '_')}": round(float(dw[i, j]), 4) for j, k in enumerate(KINDS)})
             for (kind_, role, draw), got in own.items():
                 row[f"{kind_}_{role}_{draw}"] = int(got[i])
             states.append(row)
@@ -113,20 +137,18 @@ def _pct(x, n):
     return 100.0 * x / n if n else float("nan")
 
 
-def _kinds_cells(kinds, sizes):
-    n = len(kinds)
-    cells = [f"{_pct((kinds == k).sum(), n):5.1f}" for k in range(len(KINDS))]
+def _kinds_cells(weights, sizes):
+    n = len(weights)
+    cells = [f"{100 * weights[:, k].mean() if n else float('nan'):5.1f}" for k in range(len(KINDS))]
     return cells + [f"{int(np.median(sizes)) if n else 0:>7d}"]
 
 
 def _table(title, labels, keys, groups, s, model):
     """Rows by `groups` (an int array per state with `labels`), each draw's kinds and median group."""
-    end = np.array([x["endgame"] > 0 for x in s])
-    tk, dk = level_kind(model.time.levels, end), level_kind(model.dist.levels, end)
-    tl, dl = np.array([x["time_level"] for x in s]), np.array([x["dist_level"] for x in s])
+    keys_ = [k.replace(" ", "_") for k in KINDS]
+    tkind = np.array([[x[f"time_{k}"] for k in keys_] for x in s])
+    dkind = np.array([[x[f"dist_{k}"] for k in keys_] for x in s])
     tn, dn = np.array([x["time_n"] for x in s]), np.array([x["dist_n"] for x in s])
-    tkind = np.where(tl >= 0, tk(np.maximum(tl, 0), end), 3)
-    dkind = np.where(dl >= 0, dk(np.maximum(dl, 0), end), 3)
     head = "".join(f"{k:>10s}" for k in KINDS)
     lines = ["", f"  {title}", f"  {'':26s}{'states':>8s}   time draw:{head}{'median':>8s}   distance draw:{head}{'median':>8s}"]
     for k, lab in zip(keys, labels):
@@ -168,14 +190,14 @@ def report(out, top=20):
     mb = v21.margin_b(np.array([x["lead"] for x in s]))
     down = np.array([x["down"] for x in s])
     key = ((part * 7 + mb) * 4 + np.clip(down - 1, 0, 3)) * len(names) + remain
-    lost = dkind >= 2
+    lost = dkind[:, 2] + dkind[:, 3]                  # each state's weight of draws losing the lead or the time
     rows = []
-    for k in np.unique(key[lost]):
+    for k in np.unique(key[lost > 0]):
         w = key == k
         p_, rest = divmod(int(k), 7 * 4 * len(names))
         m_, rest = divmod(rest, 4 * len(names))
         d_, r_ = divmod(rest, len(names))
-        rows.append((int((lost & w).sum()), int(w.sum()), PARTS[p_], v21.MARGIN_NAMES[m_], d_ + 1, names[r_]))
+        rows.append((int(round(lost[w].sum())), int(w.sum()), PARTS[p_], v21.MARGIN_NAMES[m_], d_ + 1, names[r_]))
     rows.sort(key=lambda r: -r[0])
     late = lambda r: "last 2:00" in r[2] or r[2] == "OT" or r[5] in names[:3]
     for title, pick in (("the end of a half (its last 2:00, or under 5 snaps left)", late),

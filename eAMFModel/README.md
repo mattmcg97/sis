@@ -2045,6 +2045,15 @@ missing something. Nothing is ever fitted to close those gaps.
   average). The fallbacks coarsen the time, then the distance, then the field, before they let
   the period, the snaps left or the lead go. `--key full` (the default) keeps the full key, for
   comparison.
+- **Blended levels (`--blend K`).** Without it, a draw takes the first level whose cell holds 40
+  real snaps (`--min-records`): a cell of 39 is dropped whole for its parent, one of 40 used whole.
+  With it, the league's draws keep every cell of 5 or more, and a draw takes its finest cell
+  n / (n + K) of the time, else the next level's for the state, and so on, the last level taking
+  the rest. With K = 40, a cell of 10 real snaps is drawn from 20% of the time, one of 40 half the
+  time, one of 360 nine times in ten. Every draw is still a real snap, a thin cell weighs as much as
+  its snaps say, and nothing jumps at a threshold. The build's level shares, its late-Q4 check and
+  `v21-coverage` read the blend: each level's expected share of the draws, and the real snaps
+  behind them weighted the same way. `--blend 0` (the default) keeps the first-level rule.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the

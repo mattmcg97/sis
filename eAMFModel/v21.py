@@ -125,6 +125,10 @@ SPLITS = ("snaps", "time")
 # the distance, then the field before they let the period, the snaps left or the lead go.
 KEY = "full"
 KEYS = ("full", "lean")
+# Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
+# more, and a draw takes its finest cell n / (n + blend) of the time, else the next level's (Bins.
+# bin_blend), in place of the first level with MIN_RECORDS.
+BLEND_MIN = 5
 QTR_OF = np.array([0, 1, 1, 2, 3, 3, 4])                   # phase -> period (Q1-Q4, overtime)
 TIME_LEAN = ("clock2", "qtr", "margin", "down", "dist", "zone", "remain")
 DIST_LEAN = ("tb", "qtr", "margin", "down", "dist", "zone", "remain")
@@ -571,6 +575,62 @@ class Bins:
             k = np.minimum(np.searchsorted(elig, rc), len(elig) - 1)
             hit = elig[k] == rc
             out[todo[hit]] = first + k[hit]
+        return out
+
+    def chain(self, cols):
+        """(states, levels): each state's group at every level (-1: none there)."""
+        n = len(np.asarray(cols[self.features[0]]))
+        out = np.full((n, len(self.levels)), -1, np.int64)
+        for li, lv in enumerate(self.levels):
+            elig, first = self.codes[li]
+            if not len(elig) or not n:
+                continue
+            if lv:
+                rc = np.ravel_multi_index(tuple(np.asarray(cols[f], np.int64) for f in lv), self._dims(lv), mode="clip")
+            else:
+                rc = np.zeros(n, np.int64)
+            k = np.minimum(np.searchsorted(elig, rc), len(elig) - 1)
+            hit = elig[k] == rc
+            out[hit, li] = first + k[hit]
+        return out
+
+    def blend_weights(self, chain, prior):
+        """(states, levels) the chance each level's group is drawn from when the levels are blended: the
+        finest first, each taken with its real records' share n / (n + prior), the rest passed on to the
+        next level there; the last level takes what is left."""
+        n = np.where(chain >= 0, self.count[np.maximum(chain, 0)], 0).astype(float)
+        a = np.where(chain >= 0, n / (n + prior), 0.0)
+        a[:, -1] = np.where(chain[:, -1] >= 0, 1.0, 0.0)
+        left = np.cumprod(np.c_[np.ones(len(a)), 1.0 - a[:, :-1]], axis=1)
+        return left * a
+
+    def bin_blend(self, cols, rng, prior):
+        """The group each draw takes with the levels blended (blend_weights): a cell of n real records
+        is drawn from n / (n + prior) of the time, else the next level's for the state, and so on, so a
+        thin cell weighs as much as its records say and nothing jumps at a threshold."""
+        n = len(np.asarray(cols[self.features[0]]))
+        out = np.full(n, -1, np.int64)
+        todo = np.arange(n)
+        last = len(self.levels) - 1
+        for li, lv in enumerate(self.levels):
+            if not len(todo):
+                break
+            elig, first = self.codes[li]
+            if not len(elig):
+                continue
+            if lv:
+                rc = np.ravel_multi_index(tuple(np.asarray(cols[f], np.int64)[todo] for f in lv), self._dims(lv),
+                                          mode="clip")
+            else:
+                rc = np.zeros(len(todo), np.int64)
+            k = np.minimum(np.searchsorted(elig, rc), len(elig) - 1)
+            hit = np.flatnonzero(elig[k] == rc)
+            g = first + k[hit]
+            take = np.ones(len(hit), bool) if li == last else rng.random(len(hit)) < self.count[g] / (self.count[g] + prior)
+            out[todo[hit[take]]] = g[take]
+            keep = np.ones(len(todo), bool)
+            keep[hit[take]] = False
+            todo = todo[keep]
         return out
 
     def draw(self, b, u, k=None):
@@ -1042,6 +1102,7 @@ class Model:
         self.mode = "full"
         self.split = SPLIT
         self.key = KEY
+        self.blend = 0.0
         self.time = self.dist = None
         self.own = {}                      # full: {(who, role, "time"|"dist"): Bins}
         self.gamers, self.teams = {}, {}
@@ -1183,11 +1244,11 @@ def match_people(code, rows, hist):
 
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
-          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY):
+          seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
     global rules, the real shares alone; split: the draws' part of the game (SPLIT); key: the league's
-    draws' key (KEY)."""
+    draws' key (KEY); blend: the league's draws' levels blended with this prior (0: off, BLEND_MIN)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     draw_spec(split, key)
@@ -1195,6 +1256,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.mode = mode
     m.split = split
     m.key = key
+    m.blend = float(blend or 0.0)
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -1317,7 +1379,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.two_good = (sum(two) + 5) / (len(two) + 10)
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
     run = dec["to_def"]
-    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, timeouts=bool(run),
+    m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, blend=m.blend,
+                  timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
         for r_ in range(REFINE_ROUNDS):
@@ -1360,8 +1423,9 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
     cut = np.array([r["cut"] for r in recs], bool)
     time_pay = {"seconds": seconds.astype(np.float32), "cut": cut}       # compact: a record sits in a group
                                                                            # at every level that draws on it
+    league_min = BLEND_MIN if getattr(m, "blend", 0) else min_records
     m.time = Bins.build(time_f, [SIZES[f] for f in time_f], time_l, _cols(feats, time_f), seconds, time_pay,
-                        min_records)
+                        league_min)
     kind = np.array([r["kind"] for r in recs])
     gain = np.array([r["gain"] for r in recs], np.int64)
     field = np.array([r["field"] for r in recs], np.int64)
@@ -1372,7 +1436,7 @@ def _build_draws(m, recs, min_records=MIN_RECORDS, verbose=True):
                 "kind": kind.astype(np.int8), "gain": gain.astype(np.int16), "shift": shift.astype(np.int16),
                 "td": (kind == GAIN) & (gain >= 100 - field), "value": dvalue.astype(np.float32)}
     m.dist = Bins.build(dist_f, [SIZES[f] for f in dist_f], dist_l, _cols(feats, dist_f), dvalue, dist_pay,
-                        min_records)
+                        league_min)
 
     who = dict(gamer_off=np.array([m.gamer_index(r["gamer"][0]) for r in recs]),
                gamer_def=np.array([m.gamer_index(r["gamer"][1]) for r in recs]),
@@ -1436,7 +1500,11 @@ def report_build(m, recs=None):
             print(f"  {name} draw: {len(b.count):,} groups; by the features they draw on: "
                   + ", ".join(f"{len(b.levels[k])} {100 * share[k]:.0f}%" for k in range(len(share)) if share[k] >= 0.005))
             continue
-        rest, late = b.level_shares(real[i][~end]), b.level_shares(real[i][end])
+        if getattr(m, "blend", 0):                     # blended: each level's expected share of the draws
+            W = b.blend_weights(b.chain(feats), m.blend)
+            rest, late = W[~end].mean(0), W[end].mean(0)
+        else:
+            rest, late = b.level_shares(real[i][~end]), b.level_shares(real[i][end])
         print(f"  {name} draw: {len(b.count):,} groups; real snaps' states by the features they draw on"
               f" (the rest of the game / the end of a half):")
         for k, lv in enumerate(b.levels):
@@ -1581,17 +1649,39 @@ def late_lines(m, recs, real=None, feats=None):
     feats = feats if feats is not None else _features(recs, m)
     out = ["  Q4's last 2:00 by the lead: the real snaps against their league groups (touchdown % real / group /"
            " the sim's chance at the state's own field; loss %, seconds: real / group)"]
+    blend = getattr(m, "blend", 0)
+
+    def mix(b, rates, sub, per_group=None):
+        """Each blended state's expected value over every level's group it draws from, weighted."""
+        C = b.chain({f_: v[sub] for f_, v in feats.items()})
+        W = b.blend_weights(C, blend)
+        V = np.zeros(W.shape)
+        for li in range(C.shape[1]):
+            okl = C[:, li] >= 0
+            if okl.any():
+                V[okl, li] = rates[C[okl, li]] if per_group is None else per_group(C[okl, li], okl)
+        return (W * V).sum(1)
+
     for k, name in enumerate(("behind", "level", "ahead")):
         w = on & (lead == k)
         bd, bt = real[1][w], real[0][w]
         if not w.any() or (bd < 0).all():
             continue
-        okd, okt = bd >= 0, bt >= 0
-        ch = td_chance(m, bd, (100 - field[w]).astype(np.int64), feats["endgame3"][w])
-        out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * d_td[bd[okd]].mean():.1f}"
+        need, cls = (100 - field[w]).astype(np.int64), feats["endgame3"][w]
+        if blend:
+            sub = np.flatnonzero(w)
+            g_td = mix(m.dist, d_td, sub)
+            g_loss = mix(m.dist, d_loss, sub)
+            g_sec = mix(m.time, t_mean, sub)
+            ch = mix(m.dist, None, sub, lambda gs, okl: td_chance(m, gs, need[okl], cls[okl]))
+        else:
+            okd, okt = bd >= 0, bt >= 0
+            g_td, g_loss, g_sec = d_td[bd[okd]], d_loss[bd[okd]], t_mean[bt[okt]]
+            ch = td_chance(m, bd, need, cls)
+        out.append(f"    {name}: {int(w.sum()):,} snaps, touchdown {100 * td[w].mean():.1f} / {100 * np.nanmean(g_td):.1f}"
                    f" / {100 * np.nanmean(ch):.1f},"
-                   f" loss {100 * loss[w].mean():.1f} / {100 * d_loss[bd[okd]].mean():.1f}, seconds"
-                   f" {g('seconds')[w].mean():.1f} / {t_mean[bt[okt]].mean() if okt.any() else float('nan'):.1f}")
+                   f" loss {100 * loss[w].mean():.1f} / {100 * np.nanmean(g_loss):.1f}, seconds"
+                   f" {g('seconds')[w].mean():.1f} / {np.nanmean(g_sec):.1f}")
     return out
 
 
@@ -1948,6 +2038,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                     out["_from"][sel[ok]] = layers.index((kind_, role, draw))
                     out["_j"][sel[ok]] = jj
 
+    def league_bins(bins, f):
+        """The league's group for each draw: blended (Bins.bin_blend) or the first level with enough."""
+        blend = getattr(model, "blend", 0.0)
+        return bins.bin_blend(f, rng, blend) if blend else bins.bin_of(f)
+
     def remain_of(ix, prv, tos0):
         """The snaps-left bucket of each path's snap: its clock, running or not (prv), the timeouts
         each side had before any was called for it (tos0: own, other's) and the lead."""
@@ -1964,7 +2059,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                         dist=dist_b(dist[ix]), zone=zone_b(y[ix]), elapsed=elapsed_b(elapsed[ix]), remain=rem))
         u = rng.random(len(ix))
         k = k_time[ix, off] if k_time is not None else None
-        b = model.time.bin_of(f)
+        b = league_bins(model.time, f)
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped else model.time.draw(b, u, k)
         out = {"seconds": model.time.payload["seconds"][j].copy(), "cut": model.time.payload["cut"][j].copy(),
                "_from": np.zeros(len(ix), np.int64), "_j": j.copy()}
@@ -1994,7 +2089,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
                         elapsed=elapsed_b(elapsed[ix]), remain=rem))
         u = rng.random(len(ix))
         k = k_dist[ix, off] if k_dist is not None else None
-        j = model.dist.draw(model.dist.bin_of(f), u, k)
+        j = model.dist.draw(league_bins(model.dist, f), u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist")
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()
