@@ -2685,6 +2685,12 @@ on top. Each layer is fitted walk-forward on that arm's own errors.
 | `+layer` | the rematch layer: the pair's earlier meetings that day |
 | `+infer` | the inference layer (`bets inference`, below): each gamer's form that session, from every match he played against anyone, beside the pair's own effect |
 | `+both` | the two as one layer: a rematch moves by the pair's earlier meetings alone, and a first meeting by what the gamers did against others |
+| `+feat` | the feature layer (below): what the two gamers' stats say beyond the arm's price |
+| `+both+feat` | the feature layer fitted on the errors `+both` leaves, on top of `+both` |
+
+The feature layers need the gamers' stats: `player-stats`'
+`out/player_match_stats.csv` by default, another with `--features CSV`, none
+with `--features none`. Without the file, the run says so and leaves them out.
 
 An arm's moneyline and over come from its two scores simulated together
 (`score_model.py`), so the covariance between them is in the price. Choose
@@ -2703,9 +2709,6 @@ how with `#MODE` on the arm:
 - **Randomness:** every match draws from its own seed, so every arm and
   variant of a match sees the same randomness. `--draws` sets the scorelines
   per match (default 40,000).
-- **Prod with the layer:** moves the margin its moneyline implies and the
-  mean its total implies.
-
 For example, to see what the score model alone is worth:
 `--arm "nb2=rolling:nb2_daily" --arm "nb2-normal=rolling:nb2_daily#normal"`.
 
@@ -2720,10 +2723,53 @@ For example, to see what the score model alone is worth:
 These are given for every match, the rematches, the 2nd meetings, the 3rd+
 and the first meetings. The first meetings are also split into those after
 either gamer had played someone else that session (only the inference layer
-moves these) and those where neither had. Each arm's last fit of both layers
+moves these) and those where neither had. Each arm's last fit of every layer
 follows. Writes
 `out/prior_backtest.txt` and `out/prior_backtest.csv` (every match, every
 arm's moneyline, total and over).
+
+#### The gamers' stats as features: the feature layer
+
+`gamer_features.py` turns `player-stats`' per-match rows into each gamer's
+stats as of each day. `feature_layer.py` moves an arm's price by what those
+stats say beyond it.
+
+**The stats**, each gamer's, recalculated every UTC day from the matches
+before that day only:
+
+| stat | read as |
+|---|---|
+| `ypp_for`, `ypp_against` | yards a play made and conceded |
+| `third_pct` | 3rd downs converted over run |
+| `rz_td_pct` | red-zone touchdowns over trips |
+| `giveaways`, `takeaways` | turnovers and turnovers on downs a match, the gamer's own and the opponent's |
+| `top_min` | time of possession a match, minutes |
+| `plays` | scrimmage plays a match (pace) |
+| `points_for`, `points_against` | points scored and conceded a match |
+
+- **Recency:** a gamer's matches are weighted by how recent they are among
+  the gamer's own, 2^(-k/50) for the k-th most recent. Every match the gamer
+  plays ages the rest.
+- **Shrinkage:** towards the league as it stood before the day, by 20
+  matches' worth of its average. A new gamer reads as the league.
+- **The detail gap:** a stat that needs a field position reads only matches
+  with one on 80%+ of the snaps (`player-stats`' rule). Through the 23 Sep – 9
+  Oct gap such a stat stays where the gamer's earlier matches left it.
+- **Nothing from the match's own day:** a match is read with its gamers'
+  stats as of the start of its UTC day.
+
+**The layer:** each UTC day, on every earlier match of the window with a
+result, a ridge regression of the arm's errors on the stats:
+- the margin's error on the home gamer's stats less the away's;
+- the total's error on the two gamers' stats added.
+
+The stats are standardised and the errors centred, so the layer moves a price
+by what the stats say about it, not by the arm's overall bias (as the
+rematch layer is centred). The ridge (50) pulls every coefficient towards 0.
+No move until 400 matches have been seen, and none for a match missing a
+stat. `+both+feat` fits on what `+both` leaves, so the two don't count the
+same thing twice. The report gives each arm's last fit: every stat's
+coefficient in points per standard deviation, with its se and t.
 
 ### The pre-match bets at each prior's prices: `prior-replay`
 
@@ -2735,8 +2781,10 @@ python -m eAMFCalibrator prior-replay --since "2026-09-01 00:00:00" --until "202
 
 `prior-backtest` grades the prices. This is what the book would have made
 from them. The arms are `prior-backtest`'s (`NAME=SOURCE[#MODE]`) and are read
-the same way. Each arm runs as it is and with each layer (`+layer`, `+infer`,
-`+both`). Prod, a third party's price, is the benchmark: the bets' own prices.
+the same way, `--features` too. Each arm runs as it is and with each layer
+(`+layer`, `+infer`, `+both`, and with the gamers' stats `+feat` and
+`+both+feat`). Prod, a third party's price, is the benchmark: the bets' own
+prices.
 
 **How a bet is re-priced:** the same way `bets prematch` re-prices a
 candidate stream. Every pre-match bet on the matches every arm priced, after
@@ -2749,9 +2797,6 @@ the layer's burn-in, keeps its selection, stake and line:
 **An arm's price at a line:**
 - moneyline and spread: its home margin over the line, pushes left out;
 - total: its total over the line, pushes left out.
-
-Prod with the layer moves prod's own probability at bet time by the
-layer's move.
 
 **Clean bets:** an arm prices a match as of kick-off, from every result
 before it. A bet placed before either gamer's previous result was in (36

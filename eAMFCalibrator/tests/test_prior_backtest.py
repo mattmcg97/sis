@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from .. import bets, config, prior_backtest as pb, snowflake_io
+from .. import bets, config, feature_layer, prior_backtest as pb, snowflake_io
 
 T0 = dt.datetime(2026, 9, 1, 18, 0)
 
@@ -93,37 +93,43 @@ class TestRead(unittest.TestCase):
         self.assertEqual(pb.prematch_total(tl, "AF2"), (None, None))
 
 
+def fixture():
+    """(history, prod's quotes by match, the arm's CSV lines): six pairs meeting three times a night
+    for 24 nights, prod opening at evens and closing on a pre-game message."""
+    rnd = random.Random(4)
+    hist, quotes, arm = [], [], ["MATCH_CODE,exp_p1,exp_p2"]
+    k = 0
+    for d in range(24):
+        for pair in range(6):
+            a, b = f"A{pair}", f"B{pair}"
+            um, ut = rnd.gauss(0, 4), rnd.gauss(0, 5)             # each pair's day
+            for j in range(3):
+                code = f"AF{k:05d}"
+                start = T0 + dt.timedelta(days=d, minutes=40 * j + pair)
+                mu1, mu2 = 17 + rnd.gauss(0, 2), 17 + rnd.gauss(0, 2)
+                s1 = max(0, round(mu1 + um / 2 + ut / 2 + rnd.gauss(0, 7)))
+                s2 = max(0, round(mu2 - um / 2 + ut / 2 + rnd.gauss(0, 7)))
+                hist.append(dict(MATCH_CODE=code, SCHEDULED_START_TIME_UTC=str(start), PLAYER_1_HANDLE=a,
+                                 PLAYER_2_HANDLE=b, PLAYER_1_TEAM="Ravens", PLAYER_2_TEAM="Lions",
+                                 PLAYER_1_FINAL_SCORE=str(s1), PLAYER_2_FINAL_SCORE=str(s2)))
+                p = pb.rematch_layer.win_chance(mu1 - mu2)
+                opening, closing = start - dt.timedelta(minutes=60), start - dt.timedelta(minutes=5)
+                line = round(mu1 + mu2) + 0.5
+                # prod opens at evens with no message, closes on a pre-game message, then goes in play
+                quotes += [(code, 50, opening, 50.0, None, None, None, "open", "true"),
+                           (code, 54, opening, 50.0, None, f"Line {line + 5}", None, "open", "true"),
+                           (code, 50, closing, 100 * p, None, None, 1, "open", "true"),
+                           (code, 54, closing, 50.0, None, f"Line {line}", 1, "open", "true"),
+                           (code, 50, start + dt.timedelta(minutes=2), 90.0, None, None, 5, "open", "true")]
+                arm.append(f"{code},{mu1:.3f},{mu2:.3f}")
+                k += 1
+    return hist, defaultdict_list(quotes), arm
+
+
 class TestRun(unittest.TestCase):
 
     def test_prod_and_an_arm_each_with_the_layer(self):
-        rnd = random.Random(4)
-        hist, quotes, arm = [], [], ["MATCH_CODE,exp_p1,exp_p2"]
-        k = 0
-        for d in range(24):
-            for pair in range(6):
-                a, b = f"A{pair}", f"B{pair}"
-                um, ut = rnd.gauss(0, 4), rnd.gauss(0, 5)             # each pair's day
-                for j in range(3):
-                    code = f"AF{k:05d}"
-                    start = T0 + dt.timedelta(days=d, minutes=40 * j + pair)
-                    mu1, mu2 = 17 + rnd.gauss(0, 2), 17 + rnd.gauss(0, 2)
-                    s1 = max(0, round(mu1 + um / 2 + ut / 2 + rnd.gauss(0, 7)))
-                    s2 = max(0, round(mu2 - um / 2 + ut / 2 + rnd.gauss(0, 7)))
-                    hist.append(dict(MATCH_CODE=code, SCHEDULED_START_TIME_UTC=str(start), PLAYER_1_HANDLE=a,
-                                     PLAYER_2_HANDLE=b, PLAYER_1_TEAM="Ravens", PLAYER_2_TEAM="Lions",
-                                     PLAYER_1_FINAL_SCORE=str(s1), PLAYER_2_FINAL_SCORE=str(s2)))
-                    p = pb.rematch_layer.win_chance(mu1 - mu2)
-                    opening, closing = start - dt.timedelta(minutes=60), start - dt.timedelta(minutes=5)
-                    line = round(mu1 + mu2) + 0.5
-                    # prod opens at evens with no message, closes on a pre-game message, then goes in play
-                    quotes += [(code, 50, opening, 50.0, None, None, None, "open", "true"),
-                               (code, 54, opening, 50.0, None, f"Line {line + 5}", None, "open", "true"),
-                               (code, 50, closing, 100 * p, None, None, 1, "open", "true"),
-                               (code, 54, closing, 50.0, None, f"Line {line}", 1, "open", "true"),
-                               (code, 50, start + dt.timedelta(minutes=2), 90.0, None, None, 5, "open", "true")]
-                    arm.append(f"{code},{mu1:.3f},{mu2:.3f}")
-                    k += 1
-        by = defaultdict_list(quotes)
+        hist, by, arm = fixture()
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "arm.csv")
             with open(path, "w", encoding="utf-8") as fh:
@@ -156,6 +162,79 @@ class TestRun(unittest.TestCase):
         self.assertIn("Rematches", text)
         self.assertIn("The layers' last fits", text)
         self.assertIn("NB2's construction fitted to its errors", text)
+        self.assertNotIn("+feat", text)                            # no stats: no feature layer
+
+    def test_with_the_gamers_stats_the_feature_layer(self):
+        hist, by, arm = fixture()
+        with tempfile.TemporaryDirectory() as d:
+            path, stats = os.path.join(d, "arm.csv"), os.path.join(d, "player_match_stats.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(arm) + "\n")
+            write_stats(stats, hist, arm)
+            with mock.patch.object(snowflake_io, "fetch_history", lambda cur: hist), \
+                    mock.patch.object(snowflake_io, "fetch_quotes",
+                                      lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays", lambda cur, codes: {}), \
+                    mock.patch.object(feature_layer, "MIN_TRAIN", 60), \
+                    mock.patch.object(config, "MATCH_CHUNK_SIZE", 200), mock.patch("builtins.print"):
+                out = pb.run(None, d, [("model", path)], "2026-09-01 00:00:00", None, features=stats)
+                with open(out, encoding="utf-8") as fh:
+                    text = fh.read()
+                missing = pb.run(None, os.path.join(d, "again"), [("model", path)], "2026-09-01 00:00:00", None,
+                                 features=os.path.join(d, "nothing.csv"))
+                with open(missing, encoding="utf-8") as fh:
+                    text_missing = fh.read()
+        for name in ("model+feat", "model+both+feat", "feature layer, on the arm alone (+feat)",
+                     "feature layer, on +both (+both+feat)", "points_for"):
+            self.assertIn(name, text)
+        self.assertNotIn("prod+feat", text)                         # the benchmark is not layered
+        self.assertNotIn("+feat", text_missing)                     # no stats file: no feature layer
+
+    def test_the_feature_layer_on_a_rows_errors(self):
+        hist, by, arm = fixture()
+        with tempfile.TemporaryDirectory() as d:
+            path, stats = os.path.join(d, "arm.csv"), os.path.join(d, "player_match_stats.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(arm) + "\n")
+            write_stats(stats, hist, arm)
+            with mock.patch.object(snowflake_io, "fetch_history", lambda cur: hist), \
+                    mock.patch.object(snowflake_io, "fetch_quotes",
+                                      lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays", lambda cur, codes: {}), \
+                    mock.patch.object(feature_layer, "MIN_TRAIN", 60), \
+                    mock.patch.object(config, "MATCH_CHUNK_SIZE", 200), mock.patch("builtins.print"):
+                ctx = pb.prepare(None, "2026-09-01 00:00:00", features=stats)
+                _, _, rows, layers = pb.fit_arm("model", path, ctx)
+                _, _, prod_rows, prod_layers = pb.fit_arm(pb.PROD, None, ctx)
+        self.assertIn("feature", layers)
+        self.assertNotIn("feature", prod_layers)
+        first_day = [r for r in rows if r["start"].date() == T0.date()]
+        self.assertTrue(first_day and all(r["feat_margin"] == 0.0 and r["feat_total"] == 0.0 for r in first_day))
+        self.assertTrue(any(r["feat_margin"] != 0.0 for r in rows))
+        for r in rows:                                              # +both+feat is +both and the stacked fit
+            if r["start"].date() == T0.date():
+                self.assertEqual((r["bf_margin"], r["bf_total"]), (r["both_margin"], r["both_total"]))
+
+
+def write_stats(path, hist, arm):
+    """A player_match_stats.csv for the fixture's matches: each side's yards a play off its expected
+    points (what the arm already knows) and its scoring (what it doesn't)."""
+    mus = {line.split(",")[0]: tuple(map(float, line.split(",")[1:])) for line in arm[1:]}
+    cols = ["match_code", "start", "side", "player", "opponent", "points", "points_against", "scouting", "snaps",
+            "detail_snaps", "plays", "yards", "yards_known", "opp_yards", "opp_yards_known", "third_conv",
+            "third_att", "rz_td", "rz_trips", "turnovers", "tod", "top_s"]
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(cols)
+        for h in hist:
+            mu1, mu2 = mus[h["MATCH_CODE"]]
+            s1, s2 = int(h["PLAYER_1_FINAL_SCORE"]), int(h["PLAYER_2_FINAL_SCORE"])
+            for side, me, them, mu, opp_mu, pts, against in (
+                    ("home", h["PLAYER_1_HANDLE"], h["PLAYER_2_HANDLE"], mu1, mu2, s1, s2),
+                    ("away", h["PLAYER_2_HANDLE"], h["PLAYER_1_HANDLE"], mu2, mu1, s2, s1)):
+                w.writerow([h["MATCH_CODE"], h["SCHEDULED_START_TIME_UTC"], side, me, them, pts, against, 1, 40,
+                            40, 40, round(40 * (4 + mu / 4)), 40, round(40 * (4 + opp_mu / 4)), 40, 4, 8, 2, 3,
+                            1, 0, 480])
 
 
 def defaultdict_list(quotes):

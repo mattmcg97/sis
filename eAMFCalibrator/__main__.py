@@ -196,6 +196,15 @@ def _arms(args):
     return arms
 
 
+def _features(args):
+    """The gamers' per-match stats for the feature layer: --features, else player-stats' cache in the
+    output directory; "none" turns the layer off."""
+    from . import player_stats
+    if getattr(args, "features", None) == "none":
+        return None
+    return args.features or os.path.join(args.out or DEFAULT_OUT, player_stats.CACHE)
+
+
 def cmd_prior_backtest(args):
     """Pre-match priors against prod, each with and without the rematch layer."""
     from . import prior_backtest
@@ -204,7 +213,7 @@ def cmd_prior_backtest(args):
     try:
         with conn.cursor() as cur:
             path = prior_backtest.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
-                                      draws=args.draws)
+                                      draws=args.draws, features=_features(args))
     finally:
         conn.close()
     print(f"\n  -> {path} and prior_backtest.csv")
@@ -221,7 +230,7 @@ def cmd_prior_replay(args):
     try:
         with conn.cursor() as cur:
             path = prior_replay.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
-                                    draws=args.draws)
+                                    draws=args.draws, features=_features(args))
     finally:
         conn.close()
     print(f"\n  -> {path} and prior_replay.csv")
@@ -1270,6 +1279,10 @@ def build_parser():
                                 "fitted to its errors; the default otherwise) or normal")
     pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
                            help="simulated scorelines per match (default 40000)")
+    pb_parser.add_argument("--features", metavar="CSV",
+                           help="the gamers' per-match stats for the feature layer (+feat, +both+feat): "
+                                "player-stats' player_match_stats.csv (default: the one in --out; "
+                                "'none' for no feature layer)")
     pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     pr_parser = sub.add_parser(
@@ -1282,6 +1295,8 @@ def build_parser():
                            help="a prior to replay (repeatable), as prior-backtest's --arm")
     pr_parser.add_argument("--draws", type=int, default=40000, metavar="N",
                            help="simulated scorelines per match (default 40000)")
+    pr_parser.add_argument("--features", metavar="CSV",
+                           help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     ps_parser = sub.add_parser(

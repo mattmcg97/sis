@@ -11,7 +11,9 @@ from unittest import mock
 
 import numpy as np
 
-from .. import config, prior_replay as pr, rematch_layer, score_model, snowflake_io
+from .. import config, feature_layer, prior_backtest as pb, prior_replay as pr, rematch_layer, score_model, \
+    snowflake_io
+from . import test_prior_backtest as tpb
 
 T0 = dt.datetime(2026, 9, 1, 18, 0)
 
@@ -170,6 +172,33 @@ class TestRun(unittest.TestCase):
                 self.assertEqual(r["model+both_odds"], r["model+infer_odds"])
             else:
                 self.assertEqual(r["model+both_odds"], r["model+layer_odds"])   # a rematch: the pair's alone
+
+    def test_with_the_gamers_stats_each_arm_gets_the_feature_layer(self):
+        hist, by, arm = tpb.fixture()
+        with tempfile.TemporaryDirectory() as d:
+            path, stats = os.path.join(d, "arm.csv"), os.path.join(d, "player_match_stats.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("\n".join(arm) + "\n")
+            tpb.write_stats(stats, hist, arm)
+            with mock.patch.object(snowflake_io, "fetch_history", lambda cur: hist), \
+                    mock.patch.object(snowflake_io, "fetch_quotes",
+                                      lambda cur, s, codes: [q for c in codes for q in by.get(c, [])]), \
+                    mock.patch.object(snowflake_io, "fetch_first_plays", lambda cur, codes: {}), \
+                    mock.patch.object(feature_layer, "MIN_TRAIN", 60), \
+                    mock.patch.object(config, "MATCH_CHUNK_SIZE", 200), mock.patch("builtins.print"):
+                ctx = pb.prepare(None, "2026-09-01 00:00:00", features=stats)
+                out, codes, _, layers = pr.variants(ctx, [("model", path)], 2000)
+                rows = {r["match"]: r for r in pb.fit_arm("model", path, ctx)[2]}
+        (names, price), = out
+        self.assertEqual(names, ["model", "model+layer", "model+infer", "model+both", "model+feat", "model+both+feat"])
+        self.assertIn("feature_after_both", layers["model"])
+        moved = [c for c in codes if rows[c]["feat_margin"]]
+        self.assertTrue(moved)
+        c = moved[0]
+        p = price(c, 50, None, None)
+        self.assertEqual(len(p), len(names))
+        self.assertNotEqual(p[0], p[4])                          # the feature layer moves the moneyline
+        self.assertEqual(p[0] > p[4], rows[c]["feat_margin"] < 0)
 
 
 if __name__ == "__main__":

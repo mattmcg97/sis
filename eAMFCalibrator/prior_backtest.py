@@ -38,6 +38,12 @@ UTC day on the days before it):
            match he played, against anyone, beside the pair's own effect
   +both    the two as one layer: a rematch moves by the pair's earlier meetings alone (the rematch
            layer), a first meeting by what the gamers did against others (the inference layer)
+and, with the gamers' stats (--features: player-stats' player_match_stats.csv, read as of each
+match's day by gamer_features.py):
+  +feat       the feature layer (feature_layer.py): a ridge regression of the arm's errors on the
+              two gamers' stats (yards a play, 3rd downs, red zone, turnovers, possession, pace,
+              points), the margin's on the home's less the away's, the total's on the two added
+  +both+feat  the feature layer fitted on the errors +both leaves, on top of +both
 A layer shifts the arm's simulated margin and total, so it moves the model's own price.
 
 Graded on the matches every arm priced, after the layer's burn-in, by:
@@ -56,7 +62,7 @@ import os
 from collections import defaultdict
 from statistics import NormalDist
 
-from . import bets, config, inference_layer, rematch_layer, score_model, snowflake_io
+from . import bets, config, feature_layer, gamer_features, inference_layer, rematch_layer, score_model, snowflake_io
 from .bet_losers import prematch_p1
 from .bet_rematches import day_meetings
 from .bet_totals import _start
@@ -68,11 +74,19 @@ PROD = "prod"
 LAYERS = (("+layer", "move_margin", "move_total"),       # the rematch layer: the pair's earlier meetings
           ("+infer", "infer_margin", "infer_total"),     # the inference layer: every game that session
           ("+both", "both_margin", "both_total"))        # the rematch layer at a rematch, else the inference
+# with the gamers' stats (gamer_features.py, off player-stats' cache): the feature layer, alone and on +both
+FEAT_LAYERS = (("+feat", "feat_margin", "feat_total"),
+               ("+both+feat", "bf_margin", "bf_total"))
 POINT_COLUMNS = (("Pred_P1_Points", "Pred_P2_Points"), ("raw_home", "raw_away"), ("exp_p1", "exp_p2"))
 NB2_JOINT = ("P1_Effective_Alpha", "P2_Effective_Alpha", "Shared_Gamma_Fraction")
 MODES = ("own", "fitted", "normal")
 NB2_PREDICT_SIMS = 2000          # NB2's own simulation is not read here (score_model draws again)
 _N = NormalDist()
+
+
+def active_layers(ctx):
+    """The layered readings a run makes: LAYERS, and FEAT_LAYERS with the gamers' stats to hand."""
+    return LAYERS + (FEAT_LAYERS if ctx.get("features") else ())
 
 
 def _f(v):
@@ -234,9 +248,9 @@ def score_book(r, mode, own, fits, draws):
     return score_model.Normal(r["margin"], r["total"])
 
 
-def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS):
+def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS, layers=LAYERS):
     """{match: {variant: (p home, expected total, p over prod's line)}} for an arm as it is and with
-    each layer (LAYERS); prod: its own prices only, the benchmark."""
+    each layer (LAYERS, or active_layers'); prod: its own prices only, the benchmark."""
     own = own or {}
     fits = fitted_by_day(rows) if mode == "fitted" else {}
     out = {}
@@ -248,7 +262,7 @@ def readings(name, rows, prod, mode="normal", own=None, draws=score_model.DRAWS)
             continue
         bk = score_book(r, mode, own, fits, draws)
         v = {name: (bk.p_home(), r["total"], None if line is None else bk.p_over(line))}
-        for tag, mk, tk in LAYERS:
+        for tag, mk, tk in layers:
             dm, dt_ = r.get(mk, 0.0), r.get(tk, 0.0)
             v[name + tag] = (bk.p_home(dm), r["total"] + dt_, None if line is None else bk.p_over(line, dt_))
         out[r["match"]] = v
@@ -387,13 +401,18 @@ def report(prices, results, meets, layers, burn_from, models=None, others=None):
 
 
 def layer_lines(layers):
-    """Lines: each arm's last fits of the rematch layer and the inference layer."""
+    """Lines: each arm's last fits of the rematch layer, the inference layer and the feature layer."""
     L = ["\n  The layers' last fits (each arm's own errors): +layer the rematch layer, +infer the inference "
-         "layer (each gamer's form that session, from every match he played, and the pair's own effect)"]
+         "layer (each gamer's form that session, from every match he played, and the pair's own effect)"
+         + ("; +feat the feature layer (the gamers' stats as of the day)"
+            if any("feature" in by for by in layers.values()) else "")]
     for name, by in layers.items():
         L.append(f"  {name}:")
         L += ["    rematch layer"] + ["  " + x for x in by["rematch"].describe()]
         L += ["    inference layer"] + ["  " + x for x in by["inference"].describe()]
+        if "feature" in by:
+            L += ["    feature layer, on the arm alone (+feat)"] + feature_layer.describe(*by["feature"])
+            L += ["    feature layer, on +both (+both+feat)"] + feature_layer.describe(*by["feature_after_both"])
     return L
 
 
@@ -405,9 +424,10 @@ def parse_arm(spec):
     return source, mode or None
 
 
-def prepare(cur, since, until=None):
+def prepare(cur, since, until=None, features=None):
     """What every arm is read against: the history, the window's matches with their day's meetings,
-    prod's quote timeline and its pre-match prices, and the window's history rows."""
+    prod's quote timeline and its pre-match prices, the window's history rows, and with `features`
+    (player-stats' player_match_stats.csv) each match's gamer stats as of its day."""
     history = snowflake_io.fetch_history(cur)
     meets = day_meetings(history)
     start, end = _start(since), _start(until) if until else None
@@ -435,7 +455,17 @@ def prepare(cur, since, until=None):
           f"over 5 points in {sum(1 for x in moved if x > 0.05):,} matches", flush=True)
     rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
     first = min((m["start"] for m in window.values()), default=start)
+    feats = None
+    if features and os.path.exists(features):
+        with open(features, newline="", encoding="utf-8") as fh:
+            stat_rows = list(csv.DictReader(fh))
+        feats = gamer_features.daily(stat_rows, since=first.date())
+        print(f"  the gamers' stats: {sum(1 for c in codes if gamer_features.margin_x(feats.get(c))):,} of "
+              f"{len(codes):,} matches with every stat ({features}, as of each match's day)", flush=True)
+    elif features:
+        print(f"  no {features}: run player-stats first for the feature layer", flush=True)
     return dict(history=history, window=window, codes=codes, tl=tl, prod=prod, early=early, first_plays=first_plays,
+                features=feats,
                 sched=[rows_by_code[c] for c in codes if c in rows_by_code],
                 burn_from=first.replace(hour=0, minute=0, second=0, microsecond=0)
                 + dt.timedelta(days=BURN_IN_DAYS))
@@ -467,19 +497,29 @@ def fit_arm(name, spec, ctx):
         rematch = bool(r["n_earlier"])
         r.update(both_margin=r["move_margin"] if rematch else r["infer_margin"],
                  both_total=r["move_total"] if rematch else r["infer_total"])
-    return mode, own, rows, dict(rematch=layer, inference=ilayer)
+    layers = dict(rematch=layer, inference=ilayer)
+    if ctx.get("features") and spec is not None:            # prod is the benchmark: no layers
+        alone, fm, ft = feature_layer.walk_forward(rows, ctx["features"])
+        stacked, fm2, ft2 = feature_layer.walk_forward(rows, ctx["features"], base=("both_margin", "both_total"))
+        for r in rows:
+            a, b = alone.get(r["match"], (0.0, 0.0)), stacked.get(r["match"], (0.0, 0.0))
+            r.update(feat_margin=a[0], feat_total=a[1],
+                     bf_margin=r["both_margin"] + b[0], bf_total=r["both_total"] + b[1])
+        layers.update(feature=(fm, ft), feature_after_both=(fm2, ft2))
+    return mode, own, rows, layers
 
 
-def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS):
-    """Grade every arm, as it is and with each layer (LAYERS), against prod over [since, until]."""
-    ctx = prepare(cur, since, until)
+def run(cur, out_dir, arms, since, until=None, draws=score_model.DRAWS, features=None):
+    """Grade every arm, as it is and with each layer (active_layers), against prod over [since,
+    until]; `features`: player-stats' per-match stats, for the feature layer."""
+    ctx = prepare(cur, since, until, features)
     window, prod = ctx["window"], ctx["prod"]
     prices, layers, models, others = {}, {}, {}, set()
     for name, spec in [(PROD, None)] + list(arms):
         mode, own, rows, layer = fit_arm(name, spec, ctx)
         layers[name] = layer
         others |= {r["match"] for r in rows if r.get("n_others")}
-        got, fits = readings(name, rows, prod, mode or "normal", own, draws)
+        got, fits = readings(name, rows, prod, mode or "normal", own, draws, active_layers(ctx))
         models[name] = describe_model(mode, own, fits)
         for code, v in got.items():
             for arm, val in v.items():
