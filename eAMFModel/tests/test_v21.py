@@ -323,6 +323,24 @@ class TestBuild(unittest.TestCase):
         self.assertIn("go 100.0% (1), kick 100.0% (1), two at -1 100.0% (1)", lines[-1])
         self.assertIn("overtime 100.0% (1)", lines[1])
 
+    def test_the_lean_key(self):
+        m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, key="lean")
+        self.assertEqual(m.key, "lean")
+        self.assertEqual(m.time.levels[0], v21.TIME_LEAN)
+        self.assertEqual(m.dist.levels[0], v21.DIST_LEAN)
+        for lv in m.time.levels[:-1]:
+            self.assertIn("clock2", lv)                         # the clock into the snap, to the end
+        h, a = v21.simulate(m, v21.kickoff_start(m), 30)
+        self.assertEqual(h.shape, (2, 30))
+        self.assertGreater((h + a).mean(), 10)
+        f = v21.derive(dict(prev=np.array([v21.SHORT, v21.NOTHING, v21.TIMEOUT]),
+                            phase=np.array([0, 2, 6]), remain=np.array([6, 1, 3])))
+        self.assertEqual(list(f["clock2"]), [1, 0, 0])
+        self.assertEqual(list(f["qtr"]), [0, 1, 4])
+        self.assertEqual(list(f["rem4"]), [3, 1, 2])
+        with self.assertRaises(ValueError):
+            v21.build(MATCHES, HISTORY, verbose=False, key="other")
+
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
             v21.build(MATCHES, HISTORY, mode="other", verbose=False)

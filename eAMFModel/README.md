@@ -2030,6 +2030,21 @@ missing something. Nothing is ever fitted to close those gaps.
   (going for it 3 behind, kicking level, going for two at −1 and −2) and the overtime rate, by
   fortnight of the build's data: a trend says the players are still learning, and the oldest
   matches weigh too much.
+- **The lean key (`--key lean`).** The full key has close to a million cells, so only about half
+  of real states draw on all of it. The lean key keeps only:
+  - the clock into the snap, running or stopped (the time draw), or the time the play took (the
+    distance draw);
+  - the period;
+  - the lead (7 groups);
+  - down, distance and field;
+  - snaps left in the half.
+
+  That is 78,400 cells for the time draw. On 172,751 real states, 57% sit in a cell with 40 or
+  more real snaps: 82% in Q1, 51% in Q2, 64% in Q3, 40% in Q4. The six classes of the play before
+  collapse to running or stopped, since their times split that way (26–29 s against 8–10 s on
+  average). The fallbacks coarsen the time, then the distance, then the field, before they let
+  the period, the snaps left or the lead go. `--key full` (the default) keeps the full key, for
+  comparison.
 - **Gamers and teams, two ways (`--mode`):**
   - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
     gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the

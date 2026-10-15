@@ -23,7 +23,7 @@ from . import v21
 
 LEAD_F = {"margin", "lead3", "fg4", "lead"}
 END_F = {"endgame", "endgame3"}               # the lead (and snaps left) at the end of a half only
-TIME_F = {"phase", "part", "half", "remain", "left", "cell"}
+TIME_F = {"phase", "part", "half", "qtr", "remain", "rem4", "left", "cell"}
 KINDS = ("full", "situation", "no lead", "bare")
 PARTS = ("H1 to 2:00", "H1 last 2:00", "H2 to 2:00", "H2 last 2:00", "OT")
 LEADS3 = ("behind", "level", "ahead")
@@ -71,7 +71,7 @@ def match_coverage(model, code, rows, pair, teams):
         for i, r in enumerate(recs):
             row = dict(code=code, period=r["period"], clock=r["clock"], down=r["down"], distance=r["distance"],
                        field=r["field"], lead=r["margin"], prev=int(r["prev_cls"]), part=int(f["part"][i]),
-                       remain=int(f["remain"][i]), endgame=int(f["endgame"][i]),
+                       remain=int(f["remain"][i]), endgame=int(f["endgame"][i]), tb=int(f["tb"][i]),
                        time_level=int(model.time.level_of[tg[i]]) if tg[i] >= 0 else -1,
                        time_n=int(model.time.count[tg[i]]) if tg[i] >= 0 else 0,
                        dist_level=int(model.dist.level_of[dg[i]]) if dg[i] >= 0 else -1,
