@@ -47,14 +47,17 @@ def relation(a, b):
 
 
 def item(match, start, day_key, home, away, home_team, away_team, margin=None, total=None,
-         actual_margin=None, actual_total=None):
+         actual_margin=None, actual_total=None, gamer_keys=None):
     """One priced match. day_key: the pair and its day (bet_rematches.day_meetings'), margin and
-    total: the prior's expected home margin and total, actual_*: the result (None if not in)."""
+    total: the prior's expected home margin and total, actual_*: the result (None if not in),
+    gamer_keys: each gamer's session, (home's, away's) -- for the inference layer; without them
+    each gamer's session is taken as the pair's day."""
     first = min(home, away)
+    keys = tuple(gamer_keys) if gamer_keys else ((home, day_key), (away, day_key))
     return dict(match=match, start=start, day_key=day_key, home=home, away=away,
                 teams={home: home_team, away: away_team}, margin=margin, total=total,
                 actual_margin=actual_margin, actual_total=actual_total,
-                sign=1 if home == first else -1)
+                sign=1 if home == first else -1, home_key=keys[0], away_key=keys[1])
 
 
 def _errors(it):

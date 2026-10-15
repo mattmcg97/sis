@@ -401,6 +401,10 @@ def cmd_bets(args):
                 from . import bet_rematches
                 path = bet_rematches.run(cur, out_dir)
                 print(f"\n  -> {path} and bets_rematches.csv")
+            elif args.action == "inference":
+                from . import bet_inference
+                path = bet_inference.run(cur, out_dir)
+                print(f"\n  -> {path} and bets_inference.csv")
             elif args.action == "ml-losers":
                 from . import bet_losers
                 path = bet_losers.run(cur, out_dir)
@@ -1120,7 +1124,7 @@ def build_parser():
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
                                       "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers",
-                                      "rematches"],
+                                      "rematches", "inference"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
                                   "placed before kick-off, each model version priced off its kick-off "
@@ -1132,6 +1136,12 @@ def build_parser():
                                   "meeting, swapped, changed), and where the moneyline, handicap and total "
                                   "money goes against the first meeting's winner and margin, with prod's "
                                   "price of him then and now (out/bets_rematches.txt); "
+                                  "inference: two gamers meeting after either played someone else that "
+                                  "session (A beat B, C beat D, then A v D): the money and results by each "
+                                  "one's last other game (won v lost, both won, ...), the gap between them "
+                                  "and a common opponent, against prod's price of the form side, the "
+                                  "totals carry-over, fits, and prod with the rematch and inference layers "
+                                  "(out/bets_inference.txt); "
                                   "ml-losers: the matches the book loses on the moneyline against "
                                   "the rest (what is targeted, how they played out), every moneyline "
                                   "bet's residual (won less prod's p) by the game at the bet (lead, ball, "
@@ -1245,10 +1255,11 @@ def build_parser():
 
     pb_parser = sub.add_parser(
         "prior-backtest", parents=[shared],
-        help="pre-match priors against prod, each with and without the rematch layer (rematch_layer.py, "
-             "fitted walk-forward on its own errors): the moneyline's log loss and Brier, the total's "
-             "RMSE and the over at prod's line, match by match against prod, for every match, the "
-             "rematches and the first meetings (-> prior_backtest.txt/csv)")
+        help="pre-match priors against prod, each as it is, with the rematch layer (+layer, rematch_layer.py) "
+             "and with the inference layer (+infer, inference_layer.py: each gamer's form that session from "
+             "every match he played), both fitted walk-forward on its own errors: the moneyline's log loss "
+             "and Brier, the total's RMSE and the over at prod's line, match by match against prod, for "
+             "every match, the rematches and the first meetings (-> prior_backtest.txt/csv)")
     pb_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
                            help="a prior to test (repeatable): NAME=PATH@PREFIX (glmer/cadence.R's "
                                 "cadence_matches.csv, columns PREFIX|1 and |2), NAME=PATH (a CSV of "
@@ -1263,8 +1274,8 @@ def build_parser():
 
     pr_parser = sub.add_parser(
         "prior-replay", parents=[shared],
-        help="the window's pre-match bets replayed at each prior's prices (prior-backtest's arms, each with "
-             "and without the rematch layer, and prod with it): the same bets and stakes at the arm's "
+        help="the window's pre-match bets replayed at each prior's prices (prior-backtest's arms, each as it "
+             "is and with each layer, and prod with each layer): the same bets and stakes at the arm's "
              "chance at each bet's line, the operator's margin kept, the book's margin against prod's "
              "(-> prior_replay.txt/csv)")
     pr_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",

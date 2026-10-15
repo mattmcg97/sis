@@ -137,7 +137,8 @@ def sessions_of(games, gap):
 
 def day_meetings(history, gap=None):
     """match -> its place among the day's meetings of its two gamers: the pair, the meeting number,
-    the day's first meeting and the one before, and the teams against the first meeting's."""
+    the day's first meeting and the one before, the teams against the first meeting's, and each
+    gamer's session (gamer_keys: (home, its session), (away, its session))."""
     gap = (config.SESSION_BREAK_MINUTES if gap is None else gap) * 60
     games = []
     for r in history:
@@ -164,7 +165,8 @@ def day_meetings(history, gap=None):
                                    prev=summary(gs[k - 2]) if k > 1 else None,
                                    teams=None if k == 1 else teams_against(g, first),
                                    day_key=key, earlier=[x["match"] for x in gs[:k - 1]],
-                                   home_score=g["home_score"], away_score=g["away_score"])
+                                   home_score=g["home_score"], away_score=g["away_score"],
+                                   gamer_keys=tuple((h, session[(h, g["match"])]) for h in (g["home"], g["away"])))
     return out
 
 

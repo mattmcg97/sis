@@ -142,10 +142,10 @@ class TestRun(unittest.TestCase):
                 text = fh.read()
             with open(os.path.join(d, "prior_replay.csv"), newline="", encoding="utf-8") as fh:
                 rows = list(csv.DictReader(fh))
-        for name in ("prod+layer", "model ", "model+layer"):
+        for name in ("prod+layer", "prod+infer", "model ", "model+layer", "model+infer"):
             self.assertIn(name, text)
         for part in ("Clean bets", "Clean bets, moneyline", "Clean bets, total", "by meeting", "Every pre-match bet",
-                     "The rematch layers' last fits"):
+                     "The layers' last fits"):
             self.assertIn(part, text)
         n_matches = 16 * 18                                   # every match from day 8, two pre-match bets each
         self.assertEqual(len(rows), 2 * n_matches)            # the in-play bets left out, and the late ones
@@ -157,7 +157,7 @@ class TestRun(unittest.TestCase):
         self.assertEqual(sum(r["market"] == "total" for r in clean), n_matches // 3)
         for r in rows:
             p, odds = float(r["stream_prob"]), float(r["odds"])
-            for name in ("prod+layer", "model", "model+layer"):
+            for name in ("prod+layer", "prod+infer", "model", "model+layer", "model+infer"):
                 self.assertAlmostEqual(float(r[f"{name}_odds"]), odds * p / float(r[f"{name}_prob"]), places=3)
             if r["meeting"] == "1st":
                 self.assertAlmostEqual(float(r["prod+layer_revenue"]), float(r["revenue"]), places=6)

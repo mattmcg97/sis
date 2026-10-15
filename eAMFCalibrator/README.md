@@ -2667,9 +2667,10 @@ the match's kick-off. The sources are:
 Prod is always included: its last pre-match moneyline and total (the line
 and the over's price).
 
-**How each arm is graded:** each arm, prod included, is graded as it is
-and with the rematch layer on top. The layer is fitted walk-forward on that
-arm's own errors.
+**How each arm is graded:** each arm, prod included, is graded as it is,
+with the rematch layer on top (`+layer`) and with the inference layer on top
+(`+infer`, below). Each layer is fitted walk-forward on that arm's own
+errors.
 
 An arm's moneyline and over come from its two scores simulated together
 (`score_model.py`), so the covariance between them is in the price. Choose
@@ -2703,7 +2704,10 @@ For example, to see what the score model alone is worth:
   fortnights the arm beat prod.
 
 These are given for every match, the rematches, the 2nd meetings, the 3rd+
-and the first meetings, followed by each layer's last fit. Writes
+and the first meetings. The first meetings are also split into those after
+either gamer had played someone else that session (only the inference layer
+moves these) and those where neither had. Each arm's last fit of both layers
+follows. Writes
 `out/prior_backtest.txt` and `out/prior_backtest.csv` (every match, every
 arm's moneyline, total and over).
 
@@ -2717,8 +2721,8 @@ python -m eAMFCalibrator prior-replay --since "2026-09-01 00:00:00" --until "202
 
 `prior-backtest` grades the prices. This is what the book would have made
 from them. The arms are `prior-backtest`'s (`NAME=SOURCE[#MODE]`) and are read
-the same way. Each arm runs with and without the rematch layer, and prod runs
-with the layer.
+the same way. Each arm runs as it is, with the rematch layer and with the
+inference layer, and prod runs with each layer.
 
 **How a bet is re-priced:** the same way `bets prematch` re-prices a
 candidate stream. Every pre-match bet on the matches every arm priced, after
@@ -2822,6 +2826,81 @@ expected points per side, or a moneyline and a total line.
   a match is priced with comes after its kick-off.
 
 Writes `out/bets_rematches.txt` and `out/bets_rematches.csv` (one row per
+match).
+
+### What the gamers' other games that session say: `bets inference`
+
+```bash
+python -m eAMFCalibrator bets inference --since "2026-09-01 00:00:00"
+```
+
+Punters watch A beat B and C beat D, then back A against D (and C against
+B). This is the same analysis as `bets rematches`, for what each gamer had
+played that session against anyone else.
+
+**What each match is read against:**
+- **Others:** a gamer's earlier matches that session against anyone but
+  this opponent. The last of them is his last other game: won, lost or drew,
+  and by how much, or none (fresh).
+- **The state:** both gamers' last other games, the form side first. "won v
+  lost" is A v D above; "won v won" is both won theirs; "fresh v lost" is one
+  who hadn't played anyone else against one who had lost.
+- **The form side:** the gamer whose last other margin is bigger (0 when
+  fresh). The gap is the difference (1-7, 8-14, 15-21, 22+). Equal margins
+  are "level", with no form side.
+- **A common opponent:** both gamers played the same third gamer earlier
+  that session (the latest such). "beat v lost to" is one beat him and the
+  other lost to him; the side is the gamer who did better against him.
+- **The surprise:** a gamer's last other margin less the margin prod's
+  moneyline implied for him then, so what that game said beyond what prod
+  already knew.
+
+**What it reports:**
+1. **How much is bet,** by what the gamers had played (a rematch, a first
+   meeting after others, or neither had), by the state, and won v lost by
+   the gap.
+2. **Where the moneyline money goes:** prod's price for the form side, how
+   often it won (the residual, won less prod's p, 2se by match), and the
+   share of stake and the book's margin on it and against it. This is cut by
+   state for every match, first meetings and rematches; by the gap; by
+   whether the form side kept the team from his last other game;
+   pre-match, in play, Restricted and VIP.
+3. **A common opponent,** the same way, by how each did against him.
+4. **The handicap and the total:** the handicap money on the form side, and
+   over and under by the gamers' last other games' total less prod's line
+   then. The match's total against prod's line is also given by that.
+5. **Fits on first meetings of the pair:**
+   - the home margin's miss against prod on each gamer's last other
+     surprise;
+   - the total's miss on each gamer's last other total miss;
+   - a logistic of the form side winning on prod's price (as an offset) and
+     the surprise gap.
+6. **The layers on prod's prices, walk-forward:** prod alone, with the
+   rematch layer and with the inference layer. These give log loss and total
+   RMSE match by match, by what the gamers had played, by state (first
+   meetings) and by common opponent.
+7. **The 25 matches with a form side and the most moneyline stake.**
+
+**The inference layer** (`inference_layer.py`) is the rematch layer widened
+to every match the two gamers played that session, against anyone.
+- **The model:** a match's margin error is the home gamer's form that
+  session, less the away gamer's, plus the pair's own effect that day, plus
+  noise. Its total error is both gamers' pace that session plus the pair's
+  plus noise.
+- **What is estimated:** the form's variance comes from pairs of matches
+  the same session sharing one gamer (the margins from his side), split by
+  whether he kept his team. The pair's variance is what two meetings of a
+  pair share beyond both gamers' form. The noise is the rest. A raw estimate
+  below zero is reported, and used as zero.
+- **What it does at a match:** the margin and total move by the best guess
+  of the match's error from the earlier errors that session. These are both
+  gamers' own matches, plus their opponents' other matches whose results were
+  in, which separate a gamer's form from his opponent's. A beating B and D
+  losing to C both move A v D.
+- **How it is fitted:** walk-forward, each UTC day on the days before it, as
+  the rematch layer is. With no form it gives the rematch layer's moves.
+
+Writes `out/bets_inference.txt` and `out/bets_inference.csv` (one row per
 match).
 
 ### The matches the book loses on the moneyline: `bets ml-losers`

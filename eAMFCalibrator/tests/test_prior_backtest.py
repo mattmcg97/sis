@@ -112,10 +112,10 @@ class TestRun(unittest.TestCase):
                 with open(out, encoding="utf-8") as fh:
                     text = fh.read()
                 self.assertTrue(os.path.exists(os.path.join(d, "prior_backtest.csv")))
-        for arm_name in ("prod ", "prod+layer", "model ", "model+layer"):
+        for arm_name in ("prod ", "prod+layer", "prod+infer", "model ", "model+layer", "model+infer"):
             self.assertIn(arm_name, text)
         self.assertIn("Rematches", text)
-        self.assertIn("The rematch layers' last fits", text)
+        self.assertIn("The layers' last fits", text)
         self.assertIn("NB2's construction fitted to its errors", text)
 
 
