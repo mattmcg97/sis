@@ -211,6 +211,16 @@
   ahead, the game's own end    101    1.0/  -     62.4/  -     24.8/  -      8.9/  -      2.0/  -      1.0/  -     25.2/  -  
   (the game's own end: the side ahead with the ball, its downs at the 40-second play clock outlasting the clock, the defense out of timeouts -- the sim ends the game there, no snap)
 
+  Q4's last 2:00, one snap by the time its play took: the share of the snaps in each, then its touchdown % (real / sim)
+                              <=6s                  7-9s                10-14s                15-24s                25-34s                  35s+
+  behind          40/37% 11.0/11.1       20/26% 6.4/11.0      17/17% 12.0/13.2       12/11% 9.4/12.0         6/6% 8.6/10.8        4/3% 10.3/10.5
+  level            38/36% 5.6/12.6       17/22% 1.2/11.1        9/10% 9.1/14.5         8/9% 2.7/14.1        8/7% 13.5/15.0       20/16% 3.1/10.5
+  ahead             46/40% 5.7/6.5        14/18% 2.9/8.0          5/6% 8.0/7.5          7/8% 5.0/6.9          8/8% 2.6/7.9        21/21% 4.0/6.1
+  the sim's distance draws by where they came from: share of the snaps and touchdown %
+  behind    the league's 80% (touchdown 12.9), a team's own 20% (touchdown 6.0), a gamer's own 0% (touchdown 2.8)
+  level     the league's 100% (touchdown 12.4)
+  ahead     the league's 100% (touchdown 6.9)
+
   4th DOWN from the real states: the choice (real / sim, %)
                    n real     go for it    field goal          punt
   Q1                  340    45.0/ 45.5    21.2/ 22.9    33.8/ 31.6
@@ -226,12 +236,12 @@
   OT                    6    50.0/ 58.7    33.3/ 17.7    16.7/ 23.7
   all                2161    49.4/ 50.3    28.4/ 28.2    22.2/ 21.5
 
-  4th DOWN in Q4's last 2:00, by what a field goal does for the side with the ball (real / sim, %)
-                       n real     go for it    field goal          punt
-  4+ behind               177    94.4/ 95.0     4.5/  4.3     1.1/  0.7
-  3 behind                 28    89.3/ 73.9    10.7/ 25.4     0.0/  0.7
-  1-2 behind or level      71    42.3/ 45.4    54.9/ 47.7     2.8/  6.8
-  ahead                   192    30.7/ 29.8    47.4/ 46.6    21.9/ 23.5
+  4th DOWN in Q4's last 2:00, by what a field goal does for the side with the ball (real / sim / the league's share in the sim's cells, before the gamers' leans and the rules, %)
+                       n real           go for it          field goal                punt
+  4+ behind               177    94.4/ 95.0/ 95.3     4.5/  4.3/  3.9     1.1/  0.7/  0.8
+  3 behind                 28    89.3/ 73.9/ 73.5    10.7/ 25.4/ 25.6     0.0/  0.7/  0.9
+  1-2 behind or level      71    42.3/ 45.4/ 40.1    54.9/ 47.7/ 52.9     2.8/  6.8/  7.0
+  ahead                   192    30.7/ 29.8/ 27.4    47.4/ 46.6/ 48.8    21.9/ 23.5/ 23.8
 
   A KICK on downs 1-3 in range, the half's last minute, from the real states (real / sim, %)
                    n real          kick
@@ -240,42 +250,42 @@
   Q4 1:00-0:31        681     1.0/  0.6
   Q4 last 0:30        595     7.4/  8.9
   OT                    8     0.0/  7.3
-  Q4, 4+ behind                   606     0.0/  1.4
-  Q4, 3 behind                    137     2.9/  5.0
-  Q4, 1-2 behind or level         222    18.9/ 16.3
-  Q4, ahead                       311     1.6/  2.0
+  Q4, 4+ behind                   606     0.0/  1.4   (the league's share in the sim's cells 1.7)
+  Q4, 3 behind                    137     2.9/  5.0   (the league's share in the sim's cells 4.9)
+  Q4, 1-2 behind or level         222    18.9/ 16.3   (the league's share in the sim's cells 17.2)
+  Q4, ahead                       311     1.6/  2.0   (the league's share in the sim's cells 2.4)
 
-  CONVERSIONS in Q4's last 3:00, by the lead after the six: go for two (real / the sim's own games, %; -1: a kick ties, two wins; -2: two ties)
-    lead  n real     n sim    go for two
-     -16      17     18348    29.4/ 52.9
-     -15      11     18919    18.2/ 20.8
-     -14       4      4213    25.0/ 23.5
-     -13       3      1410    33.3/ 11.7
-     -12       8      9580    12.5/ 22.3
-     -11      26     19339    42.3/ 23.5
-      -8      32     55368    65.6/ 60.6
-      -7       9     10205    11.1/ 12.5
-      -6       7      5285    28.6/ 35.8
-      -5      26     25567    76.9/ 70.4
-      -4      40     45311    32.5/ 26.3
-      -3       7      6454    42.9/ 24.4
-      -2      13     11039   100.0/ 85.5
-      -1      60    111195    70.0/ 55.0
-      +0      13     18205     0.0/  0.2
-      +1       5      8411    60.0/ 81.4
-      +2      50     50284     2.0/  2.0
-      +3      68     62178     1.5/  0.5
-      +4       5      4449     0.0/  6.2
-      +5       6     18073    66.7/ 69.1
-      +6      48     91871     2.1/  1.3
-      +7       5      8440     0.0/  2.7
-      +8       8      4130    37.5/ 10.0
-      +9      28     31128     0.0/  1.1
-     +10      23     20780     0.0/  0.4
-     +12       8     10904    50.0/ 38.5
-     +13      20     43319     0.0/  0.3
-     +14       5      7320     0.0/  4.0
-     +16      69     73137     4.3/  3.7
+  CONVERSIONS in Q4's last 3:00, by the lead after the six: go for two (real / the sim's own games / the league's share in the sim's cells, %; -1: a kick ties, two wins; -2: two ties)
+    lead  n real     n sim          go for two
+     -16      17     18348    29.4/ 52.9/ 51.1
+     -15      11     18919    18.2/ 20.8/ 17.0
+     -14       4      4213    25.0/ 23.5/ 19.0
+     -13       3      1410    33.3/ 11.7/  7.8
+     -12       8      9580    12.5/ 22.3/ 19.0
+     -11      26     19339    42.3/ 23.5/ 19.4
+      -8      32     55368    65.6/ 60.6/ 60.2
+      -7       9     10205    11.1/ 12.5/  9.7
+      -6       7      5285    28.6/ 35.8/ 29.9
+      -5      26     25567    76.9/ 70.4/ 71.4
+      -4      40     45311    32.5/ 26.3/ 22.4
+      -3       7      6454    42.9/ 24.4/ 18.1
+      -2      13     11039   100.0/ 85.5/ 86.1
+      -1      60    111195    70.0/ 55.0/ 53.6
+      +0      13     18205     0.0/  0.2/  0.1
+      +1       5      8411    60.0/ 81.4/ 81.1
+      +2      50     50284     2.0/  2.0/  2.5
+      +3      68     62178     1.5/  0.5/  0.7
+      +4       5      4449     0.0/  6.2/  7.8
+      +5       6     18073    66.7/ 69.1/ 69.1
+      +6      48     91871     2.1/  1.3/  0.9
+      +7       5      8440     0.0/  2.7/  1.8
+      +8       8      4130    37.5/ 10.0/  8.0
+      +9      28     31128     0.0/  1.1/  0.8
+     +10      23     20780     0.0/  0.4/  0.2
+     +12       8     10904    50.0/ 38.5/ 35.9
+     +13      20     43319     0.0/  0.3/  0.1
+     +14       5      7320     0.0/  4.0/  2.8
+     +16      69     73137     4.3/  3.7/  2.6
 
   OVERTIME: how often a game goes to overtime (real / sim, %)
   from kick-off: 0.9 / 5.2 (7 real games of 747)
