@@ -35,6 +35,9 @@ UPLIFT_FACTOR = None
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
 FETCH_CACHE = False
+# A directory: every query's answer kept there on disk and read back by any later run that asks
+# the same query (the backtest suite's, so a rerun spends no warehouse credits). None: off.
+FETCH_DISK_CACHE = None
 
 # Candidate model was changed on the morning of 2026-09-17, so quotes from
 # before this instant came out of the OLD candidate and would pollute the

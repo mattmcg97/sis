@@ -9,8 +9,10 @@ ranked summary.
 The steps (--steps, default all, in this order; each output kept in the suite directory, so a step
 can be rerun alone):
   history    every settled match (eAMFCalibrator history's), for the daily fits: match_history.csv
+             (--history CSV copies one already made instead, with no Snowflake)
   fits       eAMFModel prior-daily's NB2, refitted each day of the window, one directory a half-life
-             (nb2_hl<D>/); the days already fitted are kept
+             (nb2_hl<D>/); the days already fitted are kept. Only the days the history covers are
+             fitted (a later day's fit would miss results): the rest wait for a fresher history
   audit      the inputs checked (suite_audit.txt): every daily fit made only on results before its
              day, at its half-life; every arm's coverage of the window; the gamers' stats' coverage,
              freshness and a scramble check (below). A FAIL stops the run (--keep-going carries on)
@@ -19,6 +21,10 @@ can be rerun alone):
   replay     prior-replay on the same arms, off the same read and fits: prior_replay.txt/csv
   summary    every variant ranked by its moneyline against prod, with its total, its replay on the
              clean bets and each period: suite_summary.txt/csv
+
+Every Snowflake query's answer is kept on disk (cache/ in the suite directory) and read back by a
+later run asking the same, so a rerun -- another step, another setting -- spends no warehouse
+credits; with every answer there, no connection is made at all. --fresh empties it.
 
 The checks a run makes on itself:
   scramble   the results (and the gamers' stats) from the window's middle day on shuffled between
@@ -47,12 +53,14 @@ The settings (--config, a JSON object; anything left out is DEFAULTS'):
   periods          [[label, from, until], ...] (dates; null: open): the summary's periods
 """
 
+import bisect
 import csv
 import datetime as dt
 import json
 import math
 import os
 import random
+import shutil
 import subprocess
 import time
 from collections import Counter, defaultdict
@@ -78,6 +86,8 @@ DEFAULTS = {
                 ["after the detail gap", "2026-10-09", None]],
 }
 HISTORY = "match_history.csv"
+CACHE_DIR = "cache"
+STALE_SHARE = 0.01                # a fit missing more of the results before its day than this fails
 MANIFEST = "suite.json"
 AUDIT = "suite_audit.txt"
 ECHO, SHUFFLED = "echo", "shuffled"
@@ -189,9 +199,16 @@ class Audit:
 
 # --------------------------------------------------------------------------- history and fits
 
-def step_history(cur, out_dir):
-    rows = snowflake_io.fetch_history(cur)
+def step_history(cur, out_dir, source=None):
     path = os.path.join(out_dir, HISTORY)
+    if source:
+        if os.path.abspath(source) != os.path.abspath(path):
+            shutil.copyfile(source, path)
+        starts = _starts(path)
+        print(f"  {len(starts):,} settled matches, to {max(starts):%Y-%m-%d %H:%M}, from {source} -> {path}"
+              if starts else f"  {source} has no matches", flush=True)
+        return path
+    rows = snowflake_io.fetch_history(cur)
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, snowflake_io.HISTORY_COLUMNS, extrasaction="ignore")
         w.writeheader()
@@ -206,9 +223,20 @@ def step_fits(cfg, out_dir, first, last):
     if not os.path.exists(path):
         raise SystemExit(f"no {path}: run the history step first")
     history = nb2_prior.load_history(path)
+    newest = max((t for t in (nb2_prior._start(r) for r in history) if t), default=None)
+    if newest is None:
+        raise SystemExit(f"{path} has no matches")
+    # a day's fit reads every result before it: the history must run into that day (so the day
+    # before is whole); a later day is left for a fresher history rather than fitted short
+    upto = min(last, newest.date())
+    if upto < first:
+        raise SystemExit(f"{path} ends {newest:%Y-%m-%d %H:%M}, before the window: run the history step")
+    if upto < last:
+        print(f"  the history ends {newest:%Y-%m-%d %H:%M}: fitting {first} to {upto}; the days to {last} "
+              "wait for a fresher history (rerun the history step, then this one)", flush=True)
     for h in cfg["nb2_half_lives"]:
-        print(f"\n  NB2, half-life {float(h):g} days: a fit each day {first} to {last}", flush=True)
-        rolling_prior.fit(history, "nb2", nb2_dir(out_dir, h), first, last, workers=cfg["nb2_workers"],
+        print(f"\n  NB2, half-life {float(h):g} days: a fit each day {first} to {upto}", flush=True)
+        rolling_prior.fit(history, "nb2", nb2_dir(out_dir, h), first, upto, workers=cfg["nb2_workers"],
                           options={"half_life": h})
 
 
@@ -235,8 +263,9 @@ def audit_history(audit, history, first, last):
     return window
 
 
-def audit_rolling(audit, name, directory, first, last, half_life=None):
-    """A prior-daily directory: its setting, its days, and every fit made on results before its day."""
+def audit_rolling(audit, name, directory, first, last, half_life=None, history_starts=None):
+    """A prior-daily directory: its setting, its days, every fit made on results before its day,
+    and (with the history's sorted start times) every fit made on all of them."""
     index = os.path.join(directory, "rolling.json")
     if not os.path.exists(index):
         audit.add("FAIL", f"{name}: daily fits", f"no {index}: run the fits step")
@@ -260,7 +289,7 @@ def audit_rolling(audit, name, directory, first, last, half_life=None):
                   + (" ..." if len(missing) > 6 else ""))
     else:
         audit.add("PASS", f"{name}: a fit for every day", f"{len(want_days)} days")
-    late, wrong, checked = [], [], 0
+    late, wrong, stale, checked = [], [], [], 0
     for day in sorted(days & want_days):
         d = os.path.join(directory, day.isoformat())
         before = dt.datetime.combine(day, dt.time())
@@ -271,18 +300,28 @@ def audit_rolling(audit, name, directory, first, last, half_life=None):
             if _start(lv.get("before")) != before or (half_life is not None
                                                      and lv.get("half_life_days", half_life) != half_life):
                 wrong.append(day)
-        for path, cut in ((os.path.join(d, "history.csv"), before),
-                          (os.path.join(d, "level", "history.csv"), before - dt.timedelta(days=7))):
+        for path, cut, own in ((os.path.join(d, "history.csv"), before, True),
+                               (os.path.join(d, "level", "history.csv"), before - dt.timedelta(days=7), False)):
             if os.path.exists(path):
                 checked += 1
-                newest = max(_starts(path), default=None)
+                starts = _starts(path)
+                newest = max(starts, default=None)
                 if newest is not None and newest >= cut:
                     late.append(f"{day} ({os.path.relpath(path, d)} has {newest:%Y-%m-%d %H:%M})")
+                if own and history_starts is not None:
+                    known = bisect.bisect_left(history_starts, before)
+                    if len(starts) < (1 - STALE_SHARE) * known:
+                        stale.append(f"{day} ({len(starts):,} of {known:,})")
     audit.add("FAIL" if late else "PASS", f"{name}: every fit on results before its day",
               f"{len(late)} not: {'; '.join(late[:4])}" if late else f"{checked} training files read")
     if wrong:
         audit.add("FAIL", f"{name}: each fit's cut-off and half-life as its day says",
                   ", ".join(d.isoformat() for d in wrong[:6]))
+    if history_starts is not None:
+        audit.add("FAIL" if stale else "PASS", f"{name}: every fit on all the results before its day",
+                  (f"{len(stale)} fitted on an older history (results seen of those now known): "
+                   f"{'; '.join(stale[:4])} -- delete those days' directories and rerun the fits step")
+                  if stale else "each saw at least 99% of the results the history has before its day")
 
 
 def audit_csv_arm(audit, name, spec, window_codes):
@@ -693,9 +732,23 @@ def write_summary(out_dir, L, out_rows):
 
 # --------------------------------------------------------------------------- the run
 
-def run(cur, out_dir, cfg, since, until=None, steps=STEPS, keep_going=False):
-    """Run the suite's steps in order. Returns the summary's path (or the last step's output)."""
+def run(cur, out_dir, cfg, since, until=None, steps=STEPS, keep_going=False, history=None, fresh=False):
+    """Run the suite's steps in order, every query's answer kept in the suite's cache. `history`: a
+    match_history.csv to take instead of fetching one; `fresh`: empty the cache first. Returns the
+    summary's path (or the last step's output)."""
     os.makedirs(out_dir, exist_ok=True)
+    cache = os.path.join(out_dir, CACHE_DIR)
+    if fresh and os.path.isdir(cache):
+        shutil.rmtree(cache)
+    was = config.FETCH_DISK_CACHE
+    config.FETCH_DISK_CACHE = cache
+    try:
+        return _run(cur, out_dir, cfg, since, until, steps, keep_going, history_csv=history)
+    finally:
+        config.FETCH_DISK_CACHE = was
+
+
+def _run(cur, out_dir, cfg, since, until, steps, keep_going, history_csv=None):
     unknown = [s for s in steps if s not in STEPS]
     if unknown:
         raise SystemExit(f"no step {', '.join(unknown)}; the steps are {', '.join(STEPS)}")
@@ -724,23 +777,25 @@ def run(cur, out_dir, cfg, since, until=None, steps=STEPS, keep_going=False):
         t0 = time.time()
         print(f"\n== {step}", flush=True)
         if step == "history":
-            path = step_history(cur, out_dir)
+            path = step_history(cur, out_dir, history_csv)
         elif step == "fits":
             step_fits(cfg, out_dir, first, last)
         elif step == "audit":
             history_path = os.path.join(out_dir, HISTORY)
             if not os.path.exists(history_path):
                 audit.add("FAIL", "the history", f"no {history_path}: run the history step")
-                window = []
+                window, history_starts = [], None
             else:
                 from eAMFModel import nb2_prior
-                window = audit_history(audit, nb2_prior.load_history(history_path), first, last)
+                history = nb2_prior.load_history(history_path)
+                window = audit_history(audit, history, first, last)
+                history_starts = sorted(t for t in (nb2_prior._start(r) for r in history) if t)
             codes = [r["MATCH_CODE"] for r in window]
             for name, spec in arms:
                 source = pb.parse_arm(spec)[0]
                 if source.startswith("rolling:"):
                     h = next((x for x in cfg["nb2_half_lives"] if name == f"nb2-hl{float(x):g}"), None)
-                    audit_rolling(audit, name, source[len("rolling:"):], first, last, h)
+                    audit_rolling(audit, name, source[len("rolling:"):], first, last, h, history_starts)
                 else:
                     audit_csv_arm(audit, name, spec, codes)
             audit_features(audit, features, window, first, last, cfg["periods"])
