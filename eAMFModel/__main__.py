@@ -826,9 +826,9 @@ def build_parser():
                    help="clock windows: in a half's last 2:00 the time draw takes its real snap from those with as "
                         "long left in the half, within CLOCK x the seconds left (2 at least; the 20 nearest where "
                         "fewer); 0 (default): anywhere in its group (try 0.2)")
-    p.add_argument("--tilt-prior", type=float, default=v21.TILT_PRIOR,
-                   help=f"--mode tilt: each tilt shrunk toward none as if it had this many league-average snaps "
-                        f"(default {v21.TILT_PRIOR:g})")
+    p.add_argument("--tilt-prior", type=float, default=200.0,
+                   help="--mode tilt: each tilt shrunk toward none as if it had this many league-average snaps "
+                        "(default 200)")
     p.add_argument("--decision-blend", type=float, default=0.0,
                    help="blend the decisions' cells: a cell of n real decisions weighs n / (n + K) of its state's "
                         "shares, the rest its parents' (cells of 5+ kept); 0 (default): the first level with 25")
