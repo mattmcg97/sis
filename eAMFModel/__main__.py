@@ -330,7 +330,7 @@ def cmd_v21_build(args):
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
                       gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split,
                       key=args.key, blend=args.blend, field=args.field, decision_blend=args.decision_blend,
-                      clock=args.clock)
+                      clock=args.clock, tilt_prior=args.tilt_prior)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
@@ -826,6 +826,9 @@ def build_parser():
                    help="clock windows: in a half's last 2:00 the time draw takes its real snap from those with as "
                         "long left in the half, within CLOCK x the seconds left (2 at least; the 20 nearest where "
                         "fewer); 0 (default): anywhere in its group (try 0.2)")
+    p.add_argument("--tilt-prior", type=float, default=v21.TILT_PRIOR,
+                   help=f"--mode tilt: each tilt shrunk toward none as if it had this many league-average snaps "
+                        f"(default {v21.TILT_PRIOR:g})")
     p.add_argument("--decision-blend", type=float, default=0.0,
                    help="blend the decisions' cells: a cell of n real decisions weighs n / (n + K) of its state's "
                         "shares, the rest its parents' (cells of 5+ kept); 0 (default): the first level with 25")

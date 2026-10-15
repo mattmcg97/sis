@@ -1516,14 +1516,15 @@ def match_people(code, rows, hist):
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
           seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0, decision_blend=0.0,
-          clock=0.0):
+          clock=0.0, tilt_prior=TILT_PRIOR):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
     global rules, the real shares alone; split: the draws' part of the game (SPLIT); key: the league's
     draws' key (KEY); blend: the league's draws' levels blended with this prior (0: off, BLEND_MIN);
     field: the distance draws' field windows, this share of the yards to go (0: off, FIELD_YARDS);
     decision_blend: the decisions' cells blended with this prior (0: off, Choice); clock: the time draws'
-    clock windows in a half's last CLOCK_LATE seconds, this share of the seconds left (0: off)."""
+    clock windows in a half's last CLOCK_LATE seconds, this share of the seconds left (0: off); tilt_prior:
+    the tilts' shrinkage, in snaps (TILT_PRIOR)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     draw_spec(split, key)
@@ -1535,6 +1536,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.field = float(field or 0.0)
     m.decision_blend = float(decision_blend or 0.0)
     m.clock = float(clock or 0.0)
+    m.tilt_prior = float(tilt_prior)
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -1673,7 +1675,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
         m.kick_good = (sum(kick) + 9) / (len(kick) + 10)
     run = dec["to_def"]
     m.meta = dict(matches=len(matches), snaps=len(recs), mode=mode, split=split, key=key, blend=m.blend,
-                  field=m.field, decision_blend=m.decision_blend, clock=m.clock,
+                  field=m.field, decision_blend=m.decision_blend, clock=m.clock, tilt_prior=m.tilt_prior,
                   timeouts=bool(run),
                   built=dt.datetime.now().isoformat(timespec="seconds"))
     if refine:
@@ -1928,7 +1930,8 @@ def fit_model_tilts(m, recs, verbose=True):
     for d in range(len(PHI_DIST)):
         phi_b[:, d] = np.bincount(pbin, phi_all[:, d], minlength=DIST_BINS) / np.maximum(cnt, 1)
     m.etilt = {}
-    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes, weights=wts)
+    prior = getattr(m, "tilt_prior", TILT_PRIOR)
+    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes, weights=wts, prior=prior)
     # the time: the uncut real snaps, against their whole groups (the clock windows' late states aside)
     seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
     timed = ~np.array([r["cut"] for r in recs], bool)
@@ -1940,7 +1943,8 @@ def fit_model_tilts(m, recs, verbose=True):
     phi_t = (np.bincount(tbin[keep], pt["seconds"][keep].astype(float), minlength=TIME_BINS)
              / np.maximum(tb_cnt, 1) / 10.0)[:, None]
     m.etilt["time"], gain_t = fit_exp_tilts(Ht, time_bin(seconds[timed]), phi_t,
-                                            {k: v[timed] for k, v in who.items()}, sizes, weights=wts[timed])
+                                            {k: v[timed] for k, v in who.items()}, sizes, weights=wts[timed],
+                                            prior=prior)
     m._etilt_gain = (gain_d, gain_t)
     return m.etilt
 
@@ -2019,7 +2023,8 @@ def etilt_lines(m):
         return []
     names = {i: g for g, i in m.gamers.items()}
     gd, gt = getattr(m, "_etilt_gain", (float("nan"), float("nan")))
-    out = [f"  tilts (exp(theta . phi) on the league's draws, shrunk by {TILT_PRIOR:g} snaps): in-sample log-likelihood"
+    out = [f"  tilts (exp(theta . phi) on the league's draws, shrunk by {getattr(m, 'tilt_prior', TILT_PRIOR):g} snaps):"
+           f" in-sample log-likelihood"
            f" gained a snap, distance {gd:+.4f}, time {gt:+.4f}"]
     for kind_, feats_ in (("dist", PHI_DIST), ("time", PHI_TIME)):
         for eff, th in t[kind_].items():
@@ -2289,7 +2294,39 @@ def late_lines(m, recs, real=None, feats=None, period=4):
         out.append(f"    {name}: {len(sub):,} snaps, touchdown {r_td:.1f} / {g_td:.1f} / {whole:.1f} / {near:.1f},"
                    f" loss {100 * loss[sub].mean():.1f} / {100 * np.nanmean(g_loss):.1f}, seconds"
                    f" {g('seconds')[sub].mean():.1f} / {np.nanmean(g_sec):.1f}")
+        if name == "level":
+            out += level_lines(m, recs, feats, sub)
     return out
+
+
+def level_lines(m, recs, feats, sub):
+    """Where the league's draws take some real states (sub) from: each level's share of the draws (as
+    blended) and its groups' touchdown chance near the states' own field, against the real snaps'."""
+    f = {k: v[sub] for k, v in feats.items()}
+    b = m.dist
+    blend = getattr(m, "blend", 0.0)
+    C = b.chain(f)
+    W = b.blend_weights(C, blend) if blend else None
+    if W is None:
+        g = b.bin_of(f)
+        W = np.zeros(C.shape)
+        for li in range(C.shape[1]):
+            W[(g >= 0) & (C[:, li] == g), li] = 1.0
+    field = np.array([recs[i]["field"] for i in sub], np.int64)
+    td = np.array([recs[i]["kind"] == GAIN and recs[i]["gain"] >= 100 - recs[i]["field"] for i in sub])
+    share = getattr(m, "field", 0.0) or FIELD_SHOWN
+    cls = f["endgame3"]
+    parts = []
+    for li, lv in enumerate(b.levels):
+        w = W[:, li]
+        if w.sum() < 0.005 * len(sub):
+            continue
+        ok = C[:, li] >= 0
+        ch = np.zeros(len(sub))
+        ch[ok] = td_chance(m, C[ok, li], (100 - field[ok]), cls[ok], share)
+        parts.append(f"{'+'.join(lv) or 'all'} {100 * w.sum() / len(sub):.0f}% at {100 * np.average(ch, weights=w):.1f}")
+    return [f"      by the draw's level (share of the draws at touchdown % near the field; real {100 * td.mean():.1f}): "
+            + "; ".join(parts)]
 
 
 ZONE_NAMES = ("own 1-10", "own 11-30", "own 31-50", "opp 49-30", "opp 29-20", "opp 19-11", "opp 10-5", "opp 4-1")

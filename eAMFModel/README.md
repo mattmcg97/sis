@@ -2155,7 +2155,8 @@ missing something. Nothing is ever fitted to close those gaps.
     league's variance, so a gamer with 200 snaps moves half way to their own. In the sim, a draw
     takes 16 real snaps evenly from its group or window and keeps one on its weight. The build
     prints each tilt's spread on each feature, the gamers furthest each way and the log-likelihood
-    gained a snap. Unlike `adjusted`, the tilt can move touchdowns and turnovers on their own, not
+    gained a snap. `--tilt-prior N` sets the shrinkage (snaps; default 200). Unlike `adjusted`, the
+    tilt can move touchdowns and turnovers on their own, not
     only the yards, and is fitted on the whole outcome, not its mean. The fit weighs recent form: a
     real snap's weight halves every 30 days before the build's last match day.
 
@@ -2176,7 +2177,16 @@ missing something. Nothing is ever fitted to close those gaps.
   inputs (within 0.1 a match, none at the cap): margin RPS 5.53 against the prior's 5.55, total
   RPS level (6.92), moneyline log loss 0.004 ± 0.002 worse. Following the inputs all the way carries
   their errors too: in October a point more expected was 0.76 more in the real games. `--nudge-share
-  S` goes only S of the way from the sim's own kick-off means to the inputs. The same
+  S` goes only S of the way from the sim's own kick-off means to the inputs. On held-out October:
+
+  | October | prior | nudge 50% | nudge 75% | nudge 100% |
+  |---|---|---|---|---|
+  | moneyline log loss | 0.6804 | 0.6819 | 0.6806 | 0.6842 |
+  | margin RPS | 5.550 | 5.527 | 5.511 | 5.527 |
+  | total RPS | 6.922 | 6.935 | 6.902 | 6.915 |
+
+  So three quarters of the way prices moneylines at the prior's level and margins and totals
+  better. The default stays the whole way: what the trader sets is what the sim meets. The same
   nudge carries into the match's real states. The report prints the nudges taken: their mean,
   spread, home and away, and the share at the cap. The base model never sees the inputs. The
   nudge is a separate layer, on only when asked.
