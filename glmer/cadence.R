@@ -21,6 +21,13 @@
 #              flat        every match alike
 #              any of them + _x<S>: every weight times S after normalising to mean 1 -- how much
 #              the data counts, and so how hard every rating is shrunk
+#              with --nb2 (eAMFCalibrator nb2-history's nb2_history.csv: NB2 refitted the night before
+#              every match), NB2's expected points for the side as NB2Log = log(points):
+#              nb2_trim    trim + NB2Log: glmer with NB2's view as one more covariate, its weight fitted
+#              nb2_re      NB2Log + the gamer and team effects only: where NB2 is off, gamer by gamer
+#              nb2_off     trim with NB2Log as an offset: glmer fitted on what NB2 leaves
+#              nb2         NB2 itself, no fit: its expected points as they are (a baseline arm)
+#              A match NB2 didn't price is neither fitted on nor priced by these
 #   CADENCE    daily       refitted at each midnight (the default)
 #              game        refitted before every kick-off on every result in by then (RESULT_LAG
 #                          minutes after a match's kick-off); a kick-off with no new result since
@@ -41,6 +48,8 @@
 #   Rscript glmer/cadence.R --history=eAMFCalibrator/out/match_history.csv --days=28 --cores=4 \
 #       --arms=trim:hl60:daily,trim:hl60:game
 #   Rscript glmer/cadence.R --days=56 --arms=trim,trim:hl30,trim:hl60_x0.5,trim:m150,trim_pair,trim_team
+#   Rscript glmer/cadence.R --nb2=eAMFCalibrator/out/nb2_history.csv --test-from=2026-08-15 \
+#       --arms=nb2,trim:hl60_x0.5:daily,nb2_trim:hl60_x0.5:daily,nb2_re:hl60_x0.5:daily,nb2_off:hl60_x0.5:daily
 #
 # Writes (to --out, default glmer/out/cadence/):
 #   cadence_matches.csv   every test match: the result and each arm's expected points
@@ -59,6 +68,7 @@ DEFAULTS <- list(
   trim_nagq = "0",      # the trimmed fits' nAGQ (0: quickest; README's Speed)
   result_lag = "36",    # minutes from kick-off until a result is in (eAMFModel's stream)
   margin_sd = "9.35",
+  nb2 = "",             # nb2_history.csv: NB2's daily prices, for the nb2 models ("" = none)
   cores = "",           # "" = all but one
   progress = "50"       # a line from each stretch every this many fits; "0" = none
 )
@@ -89,6 +99,12 @@ MODELS <- list(
   trim_team = paste(args$trim, "+ (1|Player:Team) + (1|OpponentPlayer:OpponentTeam)"),
   trim_both = paste(args$trim, "+ (1|Player:OpponentPlayer) + (1|Player:Team) + (1|OpponentPlayer:OpponentTeam)")
 )
+NB2_MODELS <- list(
+  nb2_trim = paste(args$trim, "+ NB2Log"),
+  nb2_re = "NB2Log + (1|Player) + (1|OpponentPlayer) + (1|Team) + (1|OpponentTeam)",
+  nb2_off = paste("offset(NB2Log) +", args$trim)
+)
+if (nzchar(args$nb2)) MODELS <- c(MODELS, NB2_MODELS)
 
 # A weighting by name: config.R's, else hl<D> / m<N> / win<D> / flat, each optionally _x<scalar>.
 weighting_spec <- function(name) {
@@ -106,11 +122,16 @@ weighting_spec <- function(name) {
 }
 
 parse_arm <- function(s) {
+  if (s == "nb2") {
+    if (!nzchar(args$nb2)) stop("arm 'nb2': give --nb2 (eAMFCalibrator nb2-history's nb2_history.csv)")
+    return(list(label = "nb2", model = "nb2", weighting = NA, cadence = "none"))
+  }
   p <- strsplit(s, ":", fixed = TRUE)[[1]]
   cadence <- if (length(p) > 1 && p[length(p)] %in% c("daily", "game")) p[length(p)] else "daily"
   if (length(p) > 1 && p[length(p)] %in% c("daily", "game")) p <- p[-length(p)]
   model <- p[1]
   weighting <- if (length(p) > 1) p[2] else "hl60"
+  if (model %in% names(NB2_MODELS) && !nzchar(args$nb2)) stop(sprintf("arm '%s': give --nb2 for the nb2 models", s))
   if (!model %in% c("full", names(MODELS))) stop(sprintf("arm '%s': model is one of full, %s", s, paste(names(MODELS), collapse = ", ")))
   if (model == "full" && cadence == "game") stop("the full model takes minutes a fit: daily only")
   weighting_spec(weighting)                      # fail early on a bad name
@@ -128,6 +149,18 @@ history_path <- resolve_history(args$history, repo_root)
 matches <- load_matches(history_path)
 matches <- matches[!is.na(matches$P1Score), ]
 long <- to_long(matches)
+if (nzchar(args$nb2)) {
+  # each side's NB2 expected points, from the fit made before its match's day
+  nb2 <- read.csv(args$nb2, stringsAsFactors = FALSE, colClasses = c(MATCH_CODE = "character"))
+  for (col in c("MATCH_CODE", "Pred_P1_Points", "Pred_P2_Points")) {
+    if (!col %in% names(nb2)) stop(sprintf("--nb2 %s lacks %s", args$nb2, col))
+  }
+  at <- match(long$MatchId, trimws(nb2$MATCH_CODE))
+  long$NB2Mu <- ifelse(long$Side == "H", nb2$Pred_P1_Points[at], nb2$Pred_P2_Points[at])
+  long$NB2Mu[!is.na(long$NB2Mu) & long$NB2Mu <= 0] <- NA
+  long$NB2Log <- log(long$NB2Mu)
+  log_line("nb2 %s: %d of %d matches priced by NB2", args$nb2, sum(!is.na(long$NB2Mu)) / 2, nrow(long) / 2)
+}
 day0 <- function(t) as.POSIXct(format(t, "%Y-%m-%d", tz = "UTC"), tz = "UTC")
 test_until <- if (nzchar(args$test_until)) as.POSIXct(args$test_until, tz = "UTC") else day0(max(long$Time))
 test_from <- if (nzchar(args$test_from)) as.POSIXct(args$test_from, tz = "UTC") else
@@ -215,6 +248,7 @@ cores <- if (nzchar(args$cores)) as.integer(args$cores) else max(1L, parallel::d
 # per core, a daily arm in fortnights
 tasks <- list()
 for (spec in arm_specs) {
+  if (spec$model == "nb2") next                  # NB2 as it is: no fits
   s <- schedule(spec$cadence)
   parts <- if (spec$cadence == "game") cores else ceiling(nrow(s) / 14)
   parts <- max(1L, min(parts, nrow(s)))
@@ -245,6 +279,9 @@ results <- if (cores > 1 && length(tasks) > 1) {
 log_line("all fits in %.0f min", as.numeric(difftime(Sys.time(), t_all, units = "mins")))
 
 preds <- do.call(rbind, lapply(results, `[[`, "preds"))
+if ("nb2" %in% arms) {
+  preds <- rbind(preds, data.frame(arm = "nb2", MatchId = test$MatchId, Side = test$Side, mu = test$NB2Mu))
+}
 fits <- do.call(rbind, lapply(results, `[[`, "fits"))
 write.csv(fits, file.path(out_dir, "cadence_fits.csv"), row.names = FALSE)
 

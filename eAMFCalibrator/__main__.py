@@ -220,6 +220,21 @@ def cmd_prior_backtest(args):
     return 0
 
 
+def cmd_nb2_history(args):
+    """NB2 refitted daily over a span, every match priced by its own day's fit, into one CSV."""
+    from . import nb2_history
+    out = args.out or DEFAULT_OUT
+    cur = None if args.history else _LazyCursor()
+    try:
+        path = nb2_history.run(out, args.since or "2026-01-01 00:00:00", config.CUTOFF_END, args.history, cur,
+                               args.half_life, args.workers)
+    finally:
+        if cur is not None:
+            cur.close()
+    print(f"\n  -> {path} and {nb2_history.TXT_NAME}")
+    return 0
+
+
 def cmd_backtest_suite(args):
     """Every pre-match prior variant over one window: fitted, audited, graded, replayed, ranked."""
     from . import backtest_suite, player_stats
@@ -1345,6 +1360,21 @@ def build_parser():
                            help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    nh_parser = sub.add_parser(
+        "nb2-history",
+        help="NB2's historical pass: refitted every day from --since (default 2026-01-01) as live, no layers; "
+             "every match priced by its own day's fit (expected points, margin, total, moneyline) beside its "
+             "metadata (-> nb2_history.csv, graded month by month in nb2_history.txt)")
+    nh_parser.add_argument("--since", metavar="DATE", help="the first day priced (default 2026-01-01)")
+    nh_parser.add_argument("--until", metavar="DATE", help="the day after the last priced (default: the history's end)")
+    nh_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv (eAMFCalibrator history's) to fit on: no Snowflake. "
+                                "Without it the history is fetched")
+    nh_parser.add_argument("--half-life", type=float, metavar="DAYS",
+                           help="NB2's half-life (NBRatingTrial --half-life-days; default its own, 60)")
+    nh_parser.add_argument("--workers", type=int, default=4, help="fits run side by side (default 4)")
+    nh_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     bs_parser = sub.add_parser(
         "backtest-suite", parents=[shared],
         help="every pre-match prior variant over one window: NB2 refitted daily at each half-life, glmer, each "
@@ -1505,6 +1535,8 @@ def main(argv=None):
         return cmd_prior_replay(args)
     if args.command == "backtest-suite":
         return cmd_backtest_suite(args)
+    if args.command == "nb2-history":
+        return cmd_nb2_history(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":

@@ -596,6 +596,73 @@ is set against `trim:hl60`, match by match. "Days" counts the days it was better
 
   Cold, the first fit takes 15 s, 35 s, 207 s and 396 s.
 
+## NB2's prices as a glmer input: `cadence.R --nb2` (16 Oct 2026)
+
+Could glmer do better given NB2's view of each match? `eAMFCalibrator nb2-history` refits NB2 every
+day from 1 Jan, on the results before that day, and prices every match with its own day's fit
+(`nb2_history.csv`). Every NB2 price was made before its match's day, so glmer can be fitted on the
+earlier rows' prices and priced on a later day's without seeing anything it couldn't have live.
+`--nb2=nb2_history.csv` adds `NB2Log`, the log of NB2's expected points for the side, and three
+models:
+- **`nb2_trim`:** the trimmed model + `NB2Log`. NB2's view is one more covariate, its weight fitted.
+- **`nb2_re`:** `NB2Log` + the gamer and team effects only: where NB2 is off, gamer by gamer.
+- **`nb2_off`:** the trimmed model with `NB2Log` as an offset: glmer fitted on what NB2 leaves.
+
+The arm `nb2` is NB2's prices as they are, with no fit (a baseline). A match NB2 didn't price is
+neither fitted on nor priced by these.
+
+```bash
+python -m eAMFCalibrator nb2-history --since 2026-01-01 --history nb2/AMFELO.csv
+Rscript glmer/cadence.R --history=nb2/AMFELO.csv --nb2=eAMFCalibrator/out/nb2_history.csv \
+    --test-from=2026-07-16 --test-until=2026-09-10 --cores=4 \
+    --arms=nb2,trim:hl60_x0.5:daily,nb2_trim:hl60_x0.5:daily,nb2_re:hl60_x0.5:daily,nb2_off:hl60_x0.5:daily,nb2_re:hl60_x0.25:daily,nb2_off:hl60_x0.25:daily
+```
+
+**NB2 over the year** (`nb2/AMFELO.csv`, 1 Jan – 10 Sep, 22,119 matches): moneyline log loss
+0.6574 (0.632–0.669 by month), margin RMSE 9.59, total RMSE 12.15. It is well calibrated, but the
+home side beats its margin by 0.35 points on average: between 40% and 60% the home side wins 1–2
+points more often than NB2 says. NB2 gives a tie 3–4%; the games have 6 in 24,000.
+
+**glmer on NB2, daily refits, 16 Jul – 9 Sep** (5,140 matches), each against NB2 match by match
+(the moneyline a normal about the margin, sd 9.35):
+
+| arm | log loss | vs NB2 (t, days better) | margin sq err (t) | total sq err (t) | gamer effect sd |
+|---|---|---|---|---|---|
+| `nb2` | 0.6641 | | | | |
+| `trim:hl60_x0.5` | **0.6622** | **−0.0019 (−1.9, 31/56)** | −0.52 (−2.3) | −2.48 (−5.1) | 0.161 |
+| `nb2_trim:hl60_x0.5` | 0.6631 | −0.0010 (−0.8, 27/56) | −0.35 (−1.3) | −2.35 (−4.7) | 0.113 |
+| `nb2_re:hl60_x0.5` | 0.6652 | +0.0011 (+0.9, 23/56) | +0.01 (+0.0) | −0.46 (−1.3) | 0.093 |
+| `nb2_off:hl60_x0.5` | 0.6654 | +0.0013 (+0.8, 23/56) | +0.35 (+1.0) | −0.25 (−0.4) | 0.038 |
+| `nb2_re:hl60_x0.25` | 0.6660 | +0.0019 (+1.5, 22/56) | +0.09 (+0.3) | −0.83 (−2.5) | 0.048 |
+| `nb2_off:hl60_x0.25` | 0.6643 | +0.0002 (+0.1, 24/56) | +0.04 (+0.1) | −0.61 (−1.2) | 0.035 |
+
+**With the layers** (the rematch, inference and +both layers fitted walk-forward on each arm's own
+errors; 4,464 matches after their 7-day burn-in, 3,074 of them rematches), log loss against NB2:
+
+| | every match | first meetings | rematches |
+|---|---|---|---|
+| glmer (`trim:hl60_x0.5`) | −0.0015 (t −1.4) | +0.0017 | −0.0030 |
+| glmer +both | −0.0016 (t −1.4) | +0.0014 | −0.0030 |
+| glmer on NB2 (`nb2_trim`) +both | −0.0012 (t −0.9) | +0.0016 | −0.0025 |
+| NB2 +infer | −0.0011 (t −1.3) | −0.0009 | −0.0011 |
+| NB2 +both | −0.0008 (t −1.2) | −0.0009 | −0.0007 |
+| NB2 and glmer averaged | −0.0014 (t −2.6) | +0.0002 | −0.0021 |
+| NB2 +infer and glmer +both averaged | **−0.0019 (t −2.1)** | −0.0004 | −0.0026 |
+
+- **NB2's prices add nothing glmer doesn't already have.** glmer on its own beats NB2 (−0.0019,
+  t −1.9). Given NB2's prices as well (`nb2_trim`), it does a little worse than without them
+  (−0.0010). NB2's view takes over part of the gamer effects (their sd falls from 0.16 to 0.11),
+  but what glmer learns from the results is worth more.
+- **NB2's errors aren't a gamer's to correct.** Fitted on what NB2 leaves (`nb2_off`) or on NB2
+  with gamer effects only (`nb2_re`), glmer is level with NB2 or worse. The gamer effects come out
+  small (sd 0.03–0.09). What NB2 gets wrong about a gamer isn't lasting enough to learn.
+- **The two models are good at different matches.** glmer is better at rematches (−0.0030 against
+  NB2): its session form already follows the day. NB2 is better at first meetings (glmer +0.0017),
+  and better still with the inference layer (−0.0009).
+- **So average them rather than stack them.** NB2 +infer and glmer +both, half each, is the best
+  here (−0.0019 against NB2, t −2.1). It is only 0.0004 ahead of glmer alone (t −0.6), so 8 weeks
+  don't settle it.
+
 ## Speed
 
 The global model is the slow part: two very large random effects,
