@@ -112,6 +112,15 @@ V13_LINES = "own"
 V14_MODEL_DIR = None
 V14_PATHS = 2000
 V14_LINES = "own"
+# The same for --candidate v21 (`python -m eAMFModel v21-build`; None: $EAMF_V21_MODEL, then
+# ./v21_model). It prices toward a prior's expected points, as v21-report's --nudge: the prior a
+# v13/v14 build with --history (None: $EAMF_V21_PRIOR, then $EAMF_V14_MODEL, then ./v14_model), each
+# side's offense nudged V21_NUDGE_SHARE of the way there from the sim's own means (0: no prior).
+V21_MODEL_DIR = None
+V21_PATHS = 1000
+V21_LINES = "own"
+V21_PRIOR_MODEL_DIR = None
+V21_NUDGE_SHARE = 0.75
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

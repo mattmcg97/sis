@@ -1161,6 +1161,105 @@ class TestAudit(unittest.TestCase):
         self.assertTrue((step["clock_out"][..., :4].sum(-1) <= step["clock_out"][..., 5] + 1e-9).all())
 
 
+class TestStream(unittest.TestCase):
+    """v2.1 as the calibrator's price stream (v21_stream)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt",
+                          key="lean", blend=40.0, field=0.2, decision_blend=25.0, clock=0.2)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.model = m
+        cls.code = sorted(MATCHES)[0]
+        cls.rows = sorted(MATCHES[cls.code], key=lambda r: int(r["message"]))
+        cls.info = [h for h in HISTORY if h["MATCH_CODE"] == cls.code]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _prod(self):
+        """Prod's quotes on every market at every PLAY_OVER, and three before the first play."""
+        c = self.code
+        lines = ((50, ""), (51, ""), (52, "PLAYER 1 to score over 3.5 points more than PLAYER 2"),
+                 (54, "Total points over 40.5"))
+        out = [(c, k, f"2026-10-01 00:0{k - 50}:00", 50.0, 2.0, line, None, "OPEN", "true")
+               for k, line in lines if k != 51]
+        for r in self.rows:
+            for k, line in lines:
+                out.append((c, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true"))
+        return out
+
+    def test_the_states_it_prices_from(self):
+        from .. import v21_stream as vs
+        starts = vs.state_starts(self.model, self.rows)
+        msgs = [m for m, _ in starts]
+        self.assertEqual(msgs, sorted(msgs))
+        kinds = {int(r["message"]): r["play_kind"] for r in self.rows}
+        phases = {m: int(s["phase"][0]) for m, s in starts}
+        self.assertTrue(all(kinds[m] in ("SCRIMMAGE", "KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
+                            for m, p in phases.items() if p == v21.SNAP))
+        self.assertNotIn("TOUCHDOWN", {kinds[m] for m in phases})          # the conversion still to come
+        kicks = [m for m, p in phases.items() if p == v21.KICK]
+        self.assertTrue(kicks)                                              # after a score, the kick-off
+        self.assertTrue(all(kinds[m] in ("CONVERSION", "FIELD_GOAL") for m in kicks))
+        for m in kicks:
+            s = dict(starts)[m]
+            r = next(x for x in self.rows if int(x["message"]) == m)
+            recv = 0 if r["play_kind"] == "CONVERSION" and "TEAM_B" in (r.get("play_messages") or "") else None
+            if recv is not None:
+                self.assertEqual(int(s["team"][0]), recv)                   # the scorer kicks to the other
+
+    def test_quotes_from_kick_off_and_in_play_shaped_like_prods(self):
+        from .. import v21_stream as vs
+        prod = self._prod()
+        q = vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=40, workers=1,
+                                  match_info=self.info, lines=vs.LINE_MODES, nudge_share=0.0)
+        self.assertEqual(set(q), set(vs.LINE_MODES))
+        own = q[vs.PROD_LINES]
+        self.assertTrue(own)
+        self.assertTrue(all(len(x) == 9 and 0 < x[3] < 100 and x[0] == self.code for x in own))
+        pre = [x for x in own if x[6] is None]
+        self.assertEqual(sorted(x[1] for x in pre), [50, 52, 54])           # the pre-match quotes
+        live = {(x[1], x[6]) for x in own if x[6] is not None}
+        kinds = {int(r["message"]): r["play_kind"] for r in self.rows}
+        self.assertFalse({m for _, m in live if kinds.get(m) == "TOUCHDOWN"})
+        self.assertTrue({m for _, m in live if kinds.get(m) == "CONVERSION"})
+        # home and away moneylines at one state add to one
+        by = {(x[1], x[6]): x[3] for x in own}
+        both = [m for (k, m) in by if k == 50 and (51, m) in by]
+        self.assertTrue(both)
+        for m in both:
+            self.assertAlmostEqual(by[(50, m)] + by[(51, m)], 100.0, delta=0.5)
+
+    def test_the_nudge_moves_the_kick_off_toward_the_prior(self):
+        from .. import v21_stream as vs
+
+        class Prior:
+            league = (15.0, 15.0)
+
+            def __init__(self, means):
+                self._means = means
+
+            def means(self, rows, results=None):
+                return {r["MATCH_CODE"]: self._means for r in rows}
+
+        prod = [p for p in self._prod() if p[6] is None]
+        got = {}
+        for name, means in (("home", (40.0, 5.0)), ("away", (5.0, 40.0))):
+            with mock.patch.object(vs, "prematch_model", lambda _t, m=means: Prior(m)), \
+                    mock.patch.object(vs, "_prior_tables", lambda _d=None: "prior"):
+                q = vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=60, workers=1,
+                                          match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0)
+            got[name] = {x[1]: x[3] for x in q}
+        self.assertGreater(got["home"][50], got["away"][50] + 20)
+        with mock.patch.object(vs, "_prior_tables", lambda _d=None: None), self.assertRaises(SystemExit):
+            vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=20, workers=1,
+                                  match_info=self.info, nudge_share=0.75)
+
+
 class TestCoverage(unittest.TestCase):
 
     def test_every_real_state_s_draws_and_the_thinnest_situations(self):

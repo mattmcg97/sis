@@ -80,12 +80,15 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8`, `v9`, `v10`) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines`; `--v14-model`, `--v14-paths`, `--v14-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12`, `--candidate v13` and `--candidate v14` |
+| `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
+| `--v21-prior-model DIR` | `--candidate v21`: the v13/v14 build (made with `--history`) whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.

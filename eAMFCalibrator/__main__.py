@@ -881,7 +881,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v8 to v14 -- see eAMFModel) priced "
+                             "or a model version (v8 to v14, v21 -- see eAMFModel) priced "
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
@@ -954,6 +954,23 @@ def common_options():
     tuning.add_argument("--v14-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v14: as --v10-lines "
                              f"(default {config.V14_LINES})")
+    tuning.add_argument("--v21-model", metavar="DIR",
+                        help="eAMFModel v21-build's output, for --candidate v21 "
+                             "(default $EAMF_V21_MODEL, then ./v21_model)")
+    tuning.add_argument("--v21-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v21 "
+                             f"(default {config.V21_PATHS}; the kick-off twice that)")
+    tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
+                        help="--candidate v21: as --v10-lines "
+                             f"(default {config.V21_LINES})")
+    tuning.add_argument("--v21-prior-model", metavar="DIR",
+                        help="--candidate v21: the v13/v14 build (made with --history) whose pre-match "
+                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then "
+                             "$EAMF_V14_MODEL, then ./v14_model)")
+    tuning.add_argument("--v21-nudge-share", type=float, metavar="S",
+                        help="--candidate v21: how far toward the prior's expected points each side's "
+                             f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
+                             "0: the sim's own means, no prior)")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -998,7 +1015,12 @@ def apply_overrides(args):
                            ("v13_lines", "V13_LINES"),
                            ("v14_model", "V14_MODEL_DIR"),
                            ("v14_paths", "V14_PATHS"),
-                           ("v14_lines", "V14_LINES")):
+                           ("v14_lines", "V14_LINES"),
+                           ("v21_model", "V21_MODEL_DIR"),
+                           ("v21_paths", "V21_PATHS"),
+                           ("v21_lines", "V21_LINES"),
+                           ("v21_prior_model", "V21_PRIOR_MODEL_DIR"),
+                           ("v21_nudge_share", "V21_NUDGE_SHARE")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)

@@ -24,6 +24,7 @@ The code that runs:
 | `sim8.py` … `sim12.py` | each version's simulation: play tables and the snap-by-snap game |
 | `v8.py` … `v12.py` | each version's build (fits, pre-match grid, profiles) and pricing |
 | `v8_stream.py` … `v12_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
+| `v21.py`, `v21_stream.py` | v2.1's snap sim (build, draws, simulate) and its price stream for the calibrator |
 | `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
 | `stream.py`, `grading.py` | what every stream shares; Brier against prod |
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
@@ -2365,6 +2366,22 @@ missing something. Nothing is ever fitted to close those gaps.
 - **The game's own end.** In Q4 the side ahead with the ball wins there and then when two things
   hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
   has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
+
+### In the calibrator (`--candidate v21`, `v21_stream.py`)
+
+v2.1 prices as v21-report does, and the calibrator pairs it with prod as it pairs any version. From
+kick-off the sim plays the match's gamers and teams, each side's offense nudged `--v21-nudge-share`
+(0.75) of the way from the sim's own means to the prior's expected points. The prior is a v13/v14
+build made with `--history`, given as `--v21-prior-model`; the default is `./v14_model`. Every
+PLAY_OVER the sim can start from is priced from there with the same nudge: a snap, or the kick-off
+after a conversion or a field goal.
+
+A touchdown's PLAY_OVER, with its conversion still to come, has no book, so prod's quotes in that
+window go unpaired. Only the PLAY_OVERs prod's quotes read are simulated, at `--v21-paths` (1000)
+games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`).
+
+    python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
+        --v21-model v21_t10 --v21-prior-model v14_model
 
 ### Coverage (`v21-coverage`)
 

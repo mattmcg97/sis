@@ -1100,6 +1100,69 @@ class TestV8Candidate(unittest.TestCase):
             config.CANDIDATES = saved_candidates
 
 
+class TestV21Candidate(unittest.TestCase):
+    """--candidate v21: the snap sim's quotes off the same snapshots and prod rows as v8's, through
+    eAMFModel.v21_stream (here without a prior, its nudge off)."""
+
+    MC = TestV8Candidate.MC
+
+    @classmethod
+    def setUpClass(cls):
+        import os
+        import tempfile
+        from eAMFModel import v21
+        from eAMFModel.tests.fakes import _matches
+        cls.tmp = tempfile.TemporaryDirectory()
+        matches = _matches(40)
+        history = [dict(MATCH_CODE=c, PLAYER_1_HANDLE=f"G{i % 5}", PLAYER_2_HANDLE=f"G{(i + 2) % 5}",
+                        PLAYER_1_TEAM=f"T{i % 3}", PLAYER_2_TEAM=f"T{(i + 1) % 3}",
+                        PLAYER_1_FINAL_SCORE=matches[c][-1]["score_p1"],
+                        PLAYER_2_FINAL_SCORE=matches[c][-1]["score_p2"],
+                        SCHEDULED_START_TIME_UTC=f"2026-10-01 {i % 24:02d}:00:00")
+                   for i, c in enumerate(sorted(matches))]
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(matches, history, mode="tilt", key="lean", blend=40.0, field=0.2,
+                          decision_blend=25.0, clock=0.2, min_records=20, verbose=False, refine=False)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    scouting_rows = TestPlayOverCandidate.scouting_rows
+    prod_rows = TestPlayOverCandidate.prod_rows
+
+    def test_quotes_off_the_snapshots_shaped_like_prods(self):
+        import importlib
+        from .. import snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        prod_table = config.STREAMS["prod"]
+        scores = [(self.MC, 9, 1, None, 6, 0, 6), (self.MC, 12, 1, None, 1, 0, 7)]
+
+        def fetch_all(cur, sql, params=None):
+            if prod_table in sql:
+                return None, self.prod_rows()
+            raise AssertionError("unexpected query")
+        with mock.patch.multiple(config, V21_MODEL_DIR=self.tmp.name, V21_PATHS=40, MODEL_WORKERS=1,
+                                 V21_LINES="prod", V21_NUDGE_SHARE=0.0, V21_PRIOR_MODEL_DIR=None), \
+                mock.patch.object(stream, "_prior_tables", return_value=None), \
+                mock.patch.object(sio, "fetch_all", side_effect=fetch_all), \
+                mock.patch.object(sio, "fetch_scores", return_value=scores), \
+                mock.patch.object(sio, "fetch_final_scores", return_value={self.MC: (14, 21)}), \
+                mock.patch.object(scouting, "locate", return_value=None), \
+                mock.patch.object(scouting, "fetch_scouting", return_value=self.scouting_rows()), \
+                mock.patch.object(scouting, "fetch_handles", return_value={self.MC: ("ALPHA", "BRAVO")}), \
+                contextlib.redirect_stdout(io.StringIO()):
+            rows = sio.fetch_quotes(RecordingCursor(), "MODEL:v21", [self.MC])
+        self.assertTrue(rows and all(len(r) == 9 and 0 < r[3] < 100 for r in rows))
+        self.assertTrue({r[1] for r in rows} <= {50, 51, 52, 53, 54, 55})
+        paired = directional.index_by_message(self.prod_rows())
+        for r in rows:
+            if r[1] in (52, 54) and r[6] is not None:          # at prod's own line
+                self.assertEqual(markets.parse_line(r[5]),
+                                 markets.parse_line(paired[(self.MC, r[1])][r[6]].description))
+
+
 class TestV9Candidate(TestV8Candidate):
     """--candidate v9: wired as v8 is, off its own model (v9-build)."""
 
@@ -5589,6 +5652,39 @@ class TestSeveralCandidates(unittest.TestCase):
         for bad in ("v9@anchored", "v10@nearest", "v10@key"):
             with self.assertRaises(ValueError):
                 sio.stream_name(bad)
+
+    def test_v21_is_a_candidate_priced_toward_its_prior(self):
+        from ..__main__ import build_parser, apply_overrides
+        from .. import snowflake_io as sio
+        import importlib
+        self.assertEqual(sio.stream_name("v21"), "MODEL:v21")
+        self.assertEqual(sio.stream_name("v21@prod"), "MODEL:v21@prod")
+        self.assertTrue(sio.has_own_lines("MODEL:v21"))
+        saved = (list(config.CANDIDATES), dict(config.STREAMS))
+        try:
+            with mock.patch.object(config, "V21_PRIOR_MODEL_DIR", None), \
+                    mock.patch.object(config, "V21_NUDGE_SHARE", 0.75), \
+                    mock.patch.object(config, "V21_PATHS", 1000), contextlib.redirect_stdout(io.StringIO()):
+                apply_overrides(build_parser().parse_args(
+                    ["report", "--candidate", "v21", "--v21-prior-model", "v14_prior", "--v21-nudge-share", "0.5",
+                     "--v21-paths", "300"]))
+                self.assertEqual((config.V21_PRIOR_MODEL_DIR, config.V21_NUDGE_SHARE, config.V21_PATHS),
+                                 ("v14_prior", 0.5, 300))
+                stream = importlib.import_module("eAMFModel.v21_stream")
+                seen = []
+
+                def fake_paths(model_dir, prior_dir=None):
+                    seen.append((model_dir, prior_dir))
+                    raise RuntimeError("stop")
+                with mock.patch.object(sio, "_need_numpy"), \
+                        mock.patch.object(stream, "model_paths", side_effect=fake_paths):
+                    with self.assertRaises(RuntimeError):
+                        sio._model_quotes(None, "MODEL:v21", ["M1"])
+                self.assertEqual(seen, [(None, "v14_prior")])
+        finally:
+            config.CANDIDATES = saved[0]
+            config.STREAMS.clear()
+            config.STREAMS.update(saved[1])
 
     def test_a_second_build_of_a_version_is_named_with_its_directory(self):
         from ..__main__ import build_parser, apply_overrides

@@ -77,13 +77,14 @@ def stream_name(value):
     return value
 
 
-LINE_MODELS = ("v8", "v9", "v10", "v11", "v12", "v13", "v14")     # versions that quote their own lines
+LINE_MODELS = ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v21")     # versions that quote their own lines
 LINE_RULES = {"v8": ("prod", "even"), "v9": ("prod", "even"),        # their '@' suffixes
               "v10": ("prod", "even", "anchored", "hyst"),
               "v11": ("prod", "even", "anchored", "hyst"),
               "v12": ("prod", "even", "anchored", "hyst"),
               "v13": ("prod", "even", "anchored", "hyst"),
-              "v14": ("prod", "even", "anchored", "hyst")}
+              "v14": ("prod", "even", "anchored", "hyst"),
+              "v21": ("prod", "even", "anchored", "hyst")}
 
 
 def model_version(stream_table):
@@ -670,7 +671,7 @@ _MODEL_QUOTES = {}
 
 
 def _sim_quotes(cur, match_codes, name, lines=None):
-    """An eAMFModel simulation version (v8 to v14), GAMEPLAI-shaped: PLAY_OVER
+    """An eAMFModel simulation version (v8 to v14, v21), GAMEPLAI-shaped: PLAY_OVER
     snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
     with the players' handles attached for the player profiles.
 
@@ -687,16 +688,22 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     paths = getattr(config, f"{key}_PATHS")
     lines = lines or getattr(config, f"{key}_LINES")
     prematch_only = getattr(config, "PREMATCH_ONLY", False)
+    # a version's own options (v21: the prior it nudges toward and how far), where config has them
+    opts = {arg: getattr(config, f"{key}_{attr}") for arg, attr in (("prior_dir", "PRIOR_MODEL_DIR"),
+                                                                     ("nudge_share", "NUDGE_SHARE"))
+            if getattr(config, f"{key}_{attr}", None) is not None}
     cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
-                 prematch_only)
+                 prematch_only, tuple(sorted(opts.items())))
     caching = getattr(config, "FETCH_CACHE", False)
     if caching and cache_key in _MODEL_QUOTES:
         return list(_MODEL_QUOTES[cache_key][lines])
-    tables, _ = stream.model_paths(model_dir)                 # fail early, with instructions
+    found = (stream.model_paths(model_dir, opts["prior_dir"]) if "prior_dir" in opts
+             else stream.model_paths(model_dir))                 # fail early, with instructions
+    tables = found[0]
     t0 = time.time()
-    pre = model.prematch_model(tables)
+    pre = (getattr(stream, "prematch_model", None) or model.prematch_model)(tables)
     nb2 = pre is not None
-    if not nb2:
+    if not nb2 and not hasattr(stream, "prematch_model"):
         print(f"  {name}: this model was built without --history, so its pre-match comes from"
               " prod's quotes; rebuild it with --history for our own (NB2)", flush=True)
     snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
@@ -719,7 +726,7 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
-                                     history=history, prematch_only=prematch_only)
+                                     history=history, prematch_only=prematch_only, **opts)
     took = getattr(stream, "LAST_TIMING", {})
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
