@@ -2394,7 +2394,9 @@ export with no Snowflake connection. It takes a seeded sample of `--matches` (6)
 each as one worker does: the kick-off with its nudge solved (four runs of both sides receiving),
 then every in-play PLAY_OVER state at `--paths` (1000) games in one run. For each match it gives
 the seconds per part, the games and snaps simulated, and the microseconds per snap. It then
-projects the window's run over the workers. A profile of the first match's in-play run follows:
+projects the window's run over the workers. One live price update comes next: a single state
+simulated alone at points through the game, as a live pricer would run it with the model loaded
+and the nudge solved before kick-off. A profile of the first match's in-play run follows:
 simulate's parts and the functions it spends its own time in. The projection covers simulation
 only; reading Snowflake and the prior's predictions come on top.
 

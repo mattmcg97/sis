@@ -2,7 +2,8 @@
 each priced as one worker prices it -- the kick-off (its nudge solved: NUDGE_ITERS + 1 runs of both
 sides receiving) and every in-play PLAY_OVER state at the stream's paths in one run -- each part
 timed, the games and snaps simulated counted, the sim's own parts profiled, and the window's run
-projected over the workers.
+projected over the workers; and one live price update, a single state simulated alone, at a few
+points of the game.
 
     python -m eAMFModel v21-timing --model v21_t10 --since 2026-10-01 --until 2026-10-14
 
@@ -22,6 +23,7 @@ from . import v14, v21, v21_stream as vs
 DEFAULT_MATCHES = 6
 COUNT_PATHS = 20              # games a state for the snaps count (a run apart, untimed)
 TOP = 18                      # the profile's functions shown
+LIVE_AT = ((1, 240), (1, 120), (2, 200), (2, 60), (3, 240), (3, 100), (4, 200), (4, 110), (4, 40), (4, 10))
 # the sim's own parts (simulate's inner functions), by their cumulative time
 PARTS = (("play", "a snap: timeouts, the time and distance draws, what follows"),
          ("draw_time", "  the time draw"), ("draw_play", "  the distance draw"),
@@ -52,6 +54,7 @@ def price_match(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE)
         alpha = None
     v14._distributions(h.ravel(), a.ravel())
     out["kickoff"] = time.perf_counter() - t
+    out["alpha"] = alpha
     runs = v21.NUDGE_ITERS + 1 if nudged else 1
     t = time.perf_counter()
     starts = vs.state_starts(model, [vs._as_text(r) for r in sorted(rows, key=lambda r: int(r["message"]))],
@@ -76,6 +79,44 @@ def price_match(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE)
     out["play_games"] = len(starts) * n_paths
     out["play_snaps"] = _snaps_a_game(model, S, seed=seed + 2) * out["play_games"]
     return out
+
+
+def live_lines(model, rows, pair, teams, n_paths, alpha=None, at=LIVE_AT, repeats=2):
+    """One live price update: a single state of the match simulated alone (the model loaded, the
+    match's nudge solved before kick-off), at a few points of the game, at n_paths and half that."""
+    starts = vs.state_starts(model, [vs._as_text(r) for r in sorted(rows, key=lambda r: int(r["message"]))],
+                             pair, teams)
+    snaps = [s for _, s in starts if int(s["phase"][0]) == v21.SNAP]
+    if not snaps:
+        return []
+    picked = []
+    for p, c in at:
+        s = min(snaps, key=lambda s: (int(s["period"][0]) != p, abs(float(s["clock"][0]) - c)))
+        if int(s["period"][0]) == p and not any(s is x for x in picked):
+            picked.append(s)
+    sizes = (n_paths // 2, n_paths)
+    lines = ["  one live price update: a single state simulated alone (the model loaded, the nudge solved before"
+             " kick-off), the best of a few runs:",
+             f"    {'state':16s}" + "".join(f"{n:>10,} games" for n in sizes)]
+    v21.simulate(model, picked[0], 20, seed=0)                       # warm
+    for s in picked:
+        if alpha is not None:
+            s = dict(s, nudge=np.tile(np.asarray(alpha, float), (1, 1)))
+        cells = []
+        for n in sizes:
+            best = float("inf")
+            for rep in range(repeats):
+                t = time.perf_counter()
+                sh, sa = v21.simulate(model, s, n, seed=rep)
+                v14._distributions(sh[0], sa[0])
+                best = min(best, time.perf_counter() - t)
+            cells.append(best)
+        c = int(float(s["clock"][0]))
+        lines.append(f"    Q{int(s['period'][0])} {c // 60}:{c % 60:02d}{'':10s}"
+                     + "".join(f"{1000 * x:>13,.0f}ms" for x in cells))
+    lines.append("    (the time left to play sets it; half the games is not half the time: much of it is the"
+                 " sim's fixed cost a snap step)")
+    return lines
 
 
 def profile_lines(model, rows, pair, teams, n_paths, seed=0, top=TOP):
@@ -124,12 +165,14 @@ def run(model_dir, snaps, history, n_matches=DEFAULT_MATCHES, n_paths=vs.DEFAULT
     for code in pick:
         pair, teams = v21.match_people(code, snaps[code], hist)
         per.append((code, price_match(model, snaps[code], pair, teams, n_paths, seed=vs._seed(code))))
-    prof = []
-    if profile and pick:
+    prof, live = [], []
+    if pick:
         code = pick[0]
         pair, teams = v21.match_people(code, snaps[code], hist)
-        prof = profile_lines(model, snaps[code], pair, teams, n_paths, seed=vs._seed(code))
-    return dict(per=per, window=len(codes), load=load, n_paths=n_paths, profile=prof,
+        live = live_lines(model, snaps[code], pair, teams, n_paths, alpha=per[0][1].get("alpha"))
+        if profile:
+            prof = profile_lines(model, snaps[code], pair, teams, n_paths, seed=vs._seed(code))
+    return dict(per=per, window=len(codes), load=load, n_paths=n_paths, profile=prof, live=live,
                 workers=workers or max(1, (os.cpu_count() or 2) - 1), cpus=os.cpu_count())
 
 
@@ -169,6 +212,8 @@ def report(out):
               f"  the window's {out['window']:,} matches on {out['workers']} workers ({out['cpus']} cores here):"
               f" about {_mins(secs * out['window'] / out['workers'])} of simulation"
               f" ({_mins(secs * out['window'])} on one core)"]
+    if out.get("live"):
+        lines += [""] + out["live"]
     if out.get("profile"):
         lines += [""] + out["profile"]
     return lines

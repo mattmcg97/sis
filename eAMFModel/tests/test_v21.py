@@ -1296,7 +1296,8 @@ class TestTiming(unittest.TestCase):
             self.assertEqual(t["kick_games"], 2 * 20)                # not a tilt build: one kick-off run
             self.assertGreater(t["play_snaps"], 0)
         text = "\n".join(T.report(out))
-        for part in ("a match on average", "on 3 workers", "simulate's parts", "the distance draw"):
+        for part in ("a match on average", "on 3 workers", "one live price update", "simulate's parts",
+                     "the distance draw"):
             self.assertIn(part, text)
 
 
