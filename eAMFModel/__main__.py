@@ -454,6 +454,25 @@ def cmd_v21_report(args):
     return 0
 
 
+def cmd_v21_timing(args):
+    import datetime as dt
+    from . import strength_check as sc, v21_timing
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    print(f"  pricing {min(args.matches, len(snaps))} of them as the calibrator's v21 stream does", flush=True)
+    out = v21_timing.run(args.model, snaps, history, n_matches=args.matches, n_paths=args.paths,
+                         workers=args.workers, profile=not args.no_profile)
+    print("\n".join(v21_timing.report(out)))
+    return 0
+
+
 def cmd_v14_variants(args):
     import datetime as dt
     from . import nb2_prior, prior_variants
@@ -917,6 +936,20 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
     p.set_defaults(func=cmd_v21_report)
+
+    p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
+                                          "matches timed part by part, the sim profiled, the window's run projected")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--matches", type=int, default=6, help="matches timed, a seeded sample of the window's (default 6)")
+    p.add_argument("--paths", type=int, default=1000, help="games a state, as --v21-paths (default 1000)")
+    p.add_argument("--workers", type=int, help="the calibrator's workers, for the projection (default: all cores but one)")
+    p.add_argument("--no-profile", action="store_true", help="skip the profile of the first match's in-play run")
+    p.set_defaults(func=cmd_v21_timing)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")

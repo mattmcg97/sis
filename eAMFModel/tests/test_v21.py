@@ -1279,6 +1279,27 @@ class TestStream(unittest.TestCase):
         self.assertIsNone(vs.prematch_model(None))
 
 
+class TestTiming(unittest.TestCase):
+
+    def test_a_sample_priced_as_the_stream_prices_it_timed_and_projected(self):
+        from .. import v21_timing as T
+        model = built()
+        codes = sorted(MATCHES)[:4]
+        with tempfile.TemporaryDirectory() as d:
+            model.save(os.path.join(d, v21.MODEL_FILE))
+            out = T.run(d, {c: MATCHES[c] for c in codes}, HISTORY, n_matches=2, n_paths=20, workers=3)
+        self.assertEqual(len(out["per"]), 2)
+        self.assertEqual(out["window"], 4)
+        for _, t in out["per"]:
+            self.assertGreater(t["states"], 0)
+            self.assertEqual(t["play_games"], 20 * t["states"])
+            self.assertEqual(t["kick_games"], 2 * 20)                # not a tilt build: one kick-off run
+            self.assertGreater(t["play_snaps"], 0)
+        text = "\n".join(T.report(out))
+        for part in ("a match on average", "on 3 workers", "simulate's parts", "the distance draw"):
+            self.assertIn(part, text)
+
+
 class TestCoverage(unittest.TestCase):
 
     def test_every_real_state_s_draws_and_the_thinnest_situations(self):

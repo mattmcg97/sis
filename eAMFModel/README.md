@@ -2383,6 +2383,21 @@ games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`
     python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
         --v21-model v21_t10 --v21-prior-model v14_model
 
+### Timing (`v21-timing`)
+
+```powershell
+python -m eAMFModel v21-timing --model v21_t10 --since 2026-10-01 --until 2026-10-14
+```
+
+How long the calibrator's v21 stream takes to price the window, measured off the local snapshot
+export with no Snowflake connection. It takes a seeded sample of `--matches` (6) matches and prices
+each as one worker does: the kick-off with its nudge solved (four runs of both sides receiving),
+then every in-play PLAY_OVER state at `--paths` (1000) games in one run. For each match it gives
+the seconds per part, the games and snaps simulated, and the microseconds per snap. It then
+projects the window's run over the workers. A profile of the first match's in-play run follows:
+simulate's parts and the functions it spends its own time in. The projection covers simulation
+only; reading Snowflake and the prior's predictions come on top.
+
 ### Coverage (`v21-coverage`)
 
 ```powershell
