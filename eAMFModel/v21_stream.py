@@ -83,7 +83,9 @@ def prematch_model(prior_tables):
     version = prior_check.version_of(os.path.dirname(prior_tables))
     m, _ = prior_check._modules(version)
     pre = m.prematch_model(prior_tables)
-    return pre
+    # the base, so a caller reads FOLLOWS_RESULTS off the fit v21 prices with: an NB2 fit under v14's
+    # follow layer says it follows results, its own means don't, and history fetched for it goes unread
+    return None if pre is None else _base(pre)
 
 
 def _base(pre):
