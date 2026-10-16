@@ -272,6 +272,18 @@ TILT_PRIOR = 200.0
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
 TILT_HALF_LIFE = 30.0         # days: a real snap's weight in the fit halves every so many days before the last
+# Two exact speedups, each a switch: on, the same draws bit for bit in less time. TILT_CACHE: a run's
+# tilts (one a side for a match) give every real record its theta . phi once (Bins.tilt_z), and the
+# tilted draws read their candidates' off it rather than working each out again; a run of fewer than
+# TILT_CACHE_PATHS games works them out as before unless an earlier run left them (TILT_CACHE_KEEP sets
+# kept). DECISION_TABLE: a decision's league shares in a cell of its features drawn up the first time
+# the cell comes up and read off a table after (Choice.base), not level by level again at every snap.
+TILT_CACHE = True
+TILT_CACHE_MAX = 8            # distinct tilts in a run, at most (a match's two sides)
+TILT_CACHE_PATHS = 5000
+TILT_CACHE_KEEP = 2            # (a table a run: about 24 MB on a t10-sized build)
+DECISION_TABLE = True
+DECISION_TABLE_MAX = 4_000_000                            # cells (the 4th down's 705,600)
 # The points nudge (step 3, a switch for pricing: nudge_solve): each side's offense tilt moved along the
 # strength direction (nudge_direction: the gamers' offense tilts regressed on the points their side really
 # scores a match, scaled so a unit is a point a side in the sim) until the sim's kick-off mean meets the
@@ -841,7 +853,32 @@ class Bins:
         return self.start[b] + np.minimum(n - 1, (u * n).astype(np.int64))
 
     def __getstate__(self):
-        return {k: v for k, v in self.__dict__.items() if not k.startswith("_by_") and k != "_identity"}
+        return {k: v for k, v in self.__dict__.items()
+                if not k.startswith(("_by_", "_tilt")) and k != "_identity"}
+
+    def tilt_z(self, theta, n_paths):
+        """(Z, ids): theta . phi of every real record for each distinct theta in `theta` (paths, sides,
+        dims), worked out once (TILT_CACHE) and kept for the runs after, and each path and side's row of
+        Z; None where the run is too small to pay for it (and none kept) or has too many thetas. Z's
+        rows are the same einsum tilted runs on its candidates, so its draws come out the same."""
+        if not TILT_CACHE or theta is None:
+            return None
+        flat = np.ascontiguousarray(np.asarray(theta, float).reshape(-1, theta.shape[-1]))
+        uniq, inv = np.unique(flat, axis=0, return_inverse=True)
+        if len(uniq) > TILT_CACHE_MAX:
+            return None
+        key = uniq.tobytes()
+        cache = self.__dict__.setdefault("_tiltz", {})
+        Z = cache.get(key)
+        if Z is None:
+            if n_paths < TILT_CACHE_PATHS:
+                return None
+            phi = self.payload["phi"].astype(float)[None]
+            Z = np.stack([np.einsum("nmd,nd->nm", phi, u[None])[0] for u in uniq])
+            while len(cache) >= TILT_CACHE_KEEP:
+                cache.pop(next(iter(cache)))
+            cache[key] = Z
+        return Z, inv.reshape(theta.shape[:-1])
 
     def by_value(self, name):
         """(order, key): every group's records by a payload value (whole numbers, 0 to WINDOW_SPAN - 1)
@@ -896,35 +933,39 @@ class Bins:
         y = np.asarray(y, np.int64)
         return self.window(b, y, field_radius(share, y, ymin), "field", nmin)
 
-    def tilted(self, order, lo, hi, u, theta, rng, m=TILT_CANDIDATES):
+    def tilted(self, order, lo, hi, u, theta, rng, m=TILT_CANDIDATES, tz=None):
         """A record from each draw's span lo..hi of `order` reweighted by exp(theta . phi) (payload
-        "phi"): m drawn evenly from the span, one of them taken on its weight (u uniform)."""
+        "phi"): m drawn evenly from the span, one of them taken on its weight (u uniform). tz: (Z, ids)
+        each draw's theta . phi already worked out for every record (tilt_z)."""
         width = hi - lo
         U = rng.random((len(lo), m))
         cand = order[lo[:, None] + np.minimum(width[:, None] - 1, (U * width[:, None]).astype(np.int64))]
-        z = np.einsum("nmd,nd->nm", self.payload["phi"][cand].astype(float), np.asarray(theta, float))
+        if tz is not None:
+            z = tz[0][tz[1][:, None], cand]
+        else:
+            z = np.einsum("nmd,nd->nm", self.payload["phi"][cand].astype(float), np.asarray(theta, float))
         w = np.exp(z - z.max(1, keepdims=True))
         c = np.cumsum(w, 1)
         pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
         return cand[np.arange(len(lo)), pick]
 
-    def draw_tilted(self, b, u, theta, rng):
+    def draw_tilted(self, b, u, theta, rng, tz=None):
         """draw from the whole group, reweighted by theta (tilted)."""
         b = np.asarray(b, np.int64)
         order = self.__dict__.get("_identity")
         if order is None or len(order) != len(self.payload["phi"]):
             order = self.__dict__["_identity"] = np.arange(len(self.payload["phi"]))
-        return self.tilted(order, self.start[b], self.start[b] + self.count[b], u, theta, rng)
+        return self.tilted(order, self.start[b], self.start[b] + self.count[b], u, theta, rng, tz=tz)
 
-    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None):
+    def draw_window(self, b, v, r, u, name, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None, tz=None):
         """The record each draw lands on from its window (window, nmin its fewest), u uniform; k: leaned
         toward the top of its group as draw's is, by resampling m of the window on their place in the
-        group; theta: reweighted by it instead (tilted)."""
+        group; theta: reweighted by it instead (tilted; tz its theta . phi worked out)."""
         order, _ = self.by_value(name)
         lo, hi = self.window(b, v, r, name, nmin)
         width = hi - lo
         if theta is not None:
-            return self.tilted(order, lo, hi, u, theta, rng)
+            return self.tilted(order, lo, hi, u, theta, rng, tz=tz)
         if k is None:
             return order[lo + np.minimum(width - 1, (u * width).astype(np.int64))]
         U = rng.random((len(lo), m))
@@ -936,10 +977,10 @@ class Bins:
         pick = np.minimum(m - 1, (c < np.asarray(u)[:, None] * c[:, -1:]).sum(1))
         return cand[np.arange(len(lo)), pick]
 
-    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None):
+    def draw_near(self, b, y, u, share, k=None, rng=None, m=FIELD_CANDIDATES, theta=None, nmin=None, tz=None):
         """draw_window on the field (near)."""
         y = np.asarray(y, np.int64)
-        return self.draw_window(b, y, field_radius(share, y), u, "field", k, rng, m, theta, nmin)
+        return self.draw_window(b, y, field_radius(share, y), u, "field", k, rng, m, theta, nmin, tz)
 
     def above(self, j, u):
         """A record at or above record j in its group (j's group read off its position), u uniform."""
@@ -1006,11 +1047,34 @@ class Choice:
         tot = m.sum(1, keepdims=True)
         return np.where(tot > 0, m / np.where(tot > 0, tot, 1), allowed / allowed.sum(1, keepdims=True))
 
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if k != "_table"}
+
     def base(self, cols):
-        """(states, options) the league's shares in each state's cells (no lean, no rule)."""
+        """(states, options) the league's shares in each state's cells (no lean, no rule); with
+        DECISION_TABLE, each cell's worked out once (_cells) and read off the table after."""
         n = len(np.asarray(next(iter(cols.values()))))
         if self.bins is None:
             return np.tile(self.shares[0], (n, 1))
+        sizes = self.bins.sizes
+        cells = int(np.prod(sizes))
+        if not DECISION_TABLE or cells > DECISION_TABLE_MAX:
+            return self._cells(cols)
+        # a feature off its scale reads its nearest end, as the bins' own lookup clips it
+        idx = np.ravel_multi_index(tuple(np.clip(np.asarray(cols[f], np.int64), 0, s - 1)
+                                         for f, s in zip(self.bins.features, sizes)), sizes)
+        T = self.__dict__.get("_table")
+        if T is None:
+            T = self.__dict__["_table"] = np.full((cells, self.shares.shape[1]), np.nan)
+        new = np.unique(idx[np.isnan(T[idx, 0])])
+        if len(new):
+            at = np.unravel_index(new, sizes)
+            T[new] = self._cells({f: at[i] for i, f in enumerate(self.bins.features)})
+        return T[idx]
+
+    def _cells(self, cols):
+        """base's shares drawn up from the bins, each state on its own (its cells over the levels)."""
+        n = len(np.asarray(next(iter(cols.values()))))
         blend = getattr(self, "blend", 0.0)
         if not blend:
             return self.shares[self.bins.bin_of(cols)]
@@ -2674,6 +2738,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     th_time, th_dist = _etilts(model, "time", gamer, team_ix), _etilts(model, "dist", gamer, team_ix)
     if "nudge" in start and th_dist is not None and getattr(model, "nudge_dir", None) is not None:
         th_dist = th_dist + rep(start["nudge"], float)[:, :, None] * np.asarray(model.nudge_dir)[None, None, :]
+    # every real record's theta . phi for the run's tilts, once (TILT_CACHE; None: each draw works its own out)
+    tz_time = model.time.tilt_z(th_time, P) if th_time is not None else None
+    tz_dist = model.dist.tilt_z(th_dist, P) if th_dist is not None else None
+    tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
@@ -2918,9 +2986,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             r_c = np.where(late, np.maximum(CLOCK_SECONDS, np.round(clock_share * left)), 4 * WINDOW_SPAN)
             near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
         th = th_time[ix, off] if th_time is not None else None
+        tz = tz_of(tz_time, ix, off) if th is not None and not stopped else None
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
-            else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th) if near is not None \
-            else model.time.draw_tilted(b, u, th, rng) if th is not None \
+            else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th, tz=tz) if near is not None \
+            else model.time.draw_tilted(b, u, th, rng, tz=tz) if th is not None \
             else model.time.draw(b, u, k)
         out = {"seconds": model.time.payload["seconds"][j].copy(), "cut": model.time.payload["cut"][j].copy(),
                "_from": np.zeros(len(ix), np.int64), "_j": j.copy()}
@@ -2959,8 +3028,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         else:
             b = league_bins(model.dist, f)
         th = th_dist[ix, off] if th_dist is not None else None
-        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin) if field_share \
-            else model.dist.draw_tilted(b, u, th, rng) if th is not None else model.dist.draw(b, u, k)
+        tz = tz_of(tz_dist, ix, off) if th is not None else None
+        j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin, tz=tz) if field_share \
+            else model.dist.draw_tilted(b, u, th, rng, tz=tz) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
         out = {x: model.dist.payload[x][j].copy() for x in names}
         out["_from"], out["_j"] = np.zeros(len(ix), np.int64), j.copy()

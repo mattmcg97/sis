@@ -119,6 +119,88 @@ def live_lines(model, rows, pair, teams, n_paths, alpha=None, at=LIVE_AT, repeat
     return lines
 
 
+SPEEDUPS = ("TILT_CACHE", "DECISION_TABLE")
+
+
+def _forget(model):
+    """The speedups' tables dropped, as a fresh worker has them."""
+    for b in (model.time, model.dist):
+        b.__dict__.pop("_tiltz", None)
+    for ch in model.choices.values():
+        ch.__dict__.pop("_table", None)
+
+
+def _same(x, y):
+    """Whether two runs' outputs (an array or a tuple of them) are equal, bit for bit."""
+    x, y = (x if isinstance(x, tuple) else (x,)), (y if isinstance(y, tuple) else (y,))
+    return len(x) == len(y) and all(np.array_equal(p, q) for p, q in zip(x, y))
+
+
+def compare_lines(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE):
+    """v21's exact speedups (SPEEDUPS) off, then on twice (the tables built, then kept): one match's
+    kick-off, its in-play run and a live update of its first snap state, timed, and every output of
+    the runs on set against the runs off, bit for bit."""
+    starts = vs.state_starts(model, [vs._as_text(r) for r in sorted(rows, key=lambda r: int(r["message"]))],
+                             pair, teams)
+    if not starts:
+        return []
+    start = v21.kickoff_start(model, pair, teams)
+    nudged = getattr(model, "nudge_dir", None) is not None and share
+    h, a = v21.simulate(model, start, max(20, n_paths // 10), seed=seed)
+    target = (float(h.mean()) + 2.0, float(a.mean()) - 2.0)
+    live = next(s for _, s in starts if int(s["phase"][0]) == v21.SNAP)
+
+    def runs():
+        got, took = {}, {}
+        t = time.perf_counter()
+        if nudged:
+            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=seed, share=share)
+            got["alpha"] = alpha
+        else:
+            (h, a), alpha = v21.simulate(model, start, n_paths, seed=seed), None
+        took["the kick-off"], got["kick"] = time.perf_counter() - t, (h, a)
+        S = v21.concat_starts([s for _, s in starts])
+        one = dict(live)
+        if alpha is not None:
+            S["nudge"] = np.tile(np.asarray(alpha, float), (len(S["period"]), 1))
+            one["nudge"] = np.tile(np.asarray(alpha, float), (1, 1))
+        t = time.perf_counter()
+        got["in play"] = v21.simulate(model, S, n_paths, seed=seed + 1)
+        took["in play"] = time.perf_counter() - t
+        t = time.perf_counter()
+        got["live"] = v21.simulate(model, one, n_paths, seed=seed + 2)
+        took["a live update"] = time.perf_counter() - t
+        return got, took
+
+    saved = {k: getattr(v21, k) for k in SPEEDUPS}
+    try:
+        for k in SPEEDUPS:
+            setattr(v21, k, False)
+        _forget(model)
+        off, t_off = runs()
+        for k in SPEEDUPS:
+            setattr(v21, k, True)
+        _forget(model)
+        cold, t_cold = runs()
+        warm, t_warm = runs()
+    finally:
+        for k, v in saved.items():
+            setattr(v21, k, v)
+    lines = [f"  the exact speedups ({', '.join(SPEEDUPS)}) off and on: one match ({len(starts)} states x {n_paths:,} games),"
+             " every output set against the run with them off, bit for bit:",
+             f"    {'':16s}{'off':>9s}{'on, new':>10s}{'on, kept':>10s}{'saved':>8s}   outputs"]
+    keys = {"the kick-off": "kick", "in play": "in play", "a live update": "live"}
+    for part, key in keys.items():
+        ok = _same(off[key], cold[key]) and _same(off[key], warm[key])
+        lines.append(f"    {part:16s}{t_off[part]:>8.2f}s{t_cold[part]:>9.2f}s{t_warm[part]:>9.2f}s"
+                     f"{100 * (1 - t_warm[part] / max(t_off[part], 1e-9)):>7.0f}%   {'identical' if ok else 'DIFFERENT'}")
+    if "alpha" in off:
+        ok = np.array_equal(off["alpha"], cold["alpha"]) and np.array_equal(off["alpha"], warm["alpha"])
+        lines.append(f"    {'the nudge':16s}{'':37s}   {'identical' if ok else 'DIFFERENT'}")
+    lines.append("    (new: the tables built in the run, as a worker's first match; kept: built already, as its rest)")
+    return lines
+
+
 def profile_lines(model, rows, pair, teams, n_paths, seed=0, top=TOP):
     """The in-play run of one match under cProfile: simulate's parts and the functions it spends in."""
     starts = vs.state_starts(model, [vs._as_text(r) for r in sorted(rows, key=lambda r: int(r["message"]))],
@@ -153,7 +235,7 @@ def profile_lines(model, rows, pair, teams, n_paths, seed=0, top=TOP):
 
 
 def run(model_dir, snaps, history, n_matches=DEFAULT_MATCHES, n_paths=vs.DEFAULT_PATHS, workers=None,
-        seed=0, profile=True):
+        seed=0, profile=True, compare=False):
     """{"per": [(code, timings)], "window": matches in the window, ...} for a seeded sample of matches."""
     t = time.perf_counter()
     model = v21.Model.load(vs._model_file(model_dir))
@@ -172,7 +254,9 @@ def run(model_dir, snaps, history, n_matches=DEFAULT_MATCHES, n_paths=vs.DEFAULT
         live = live_lines(model, snaps[code], pair, teams, n_paths, alpha=per[0][1].get("alpha"))
         if profile:
             prof = profile_lines(model, snaps[code], pair, teams, n_paths, seed=vs._seed(code))
-    return dict(per=per, window=len(codes), load=load, n_paths=n_paths, profile=prof, live=live,
+    cmp_ = compare_lines(model, snaps[pick[0]], *v21.match_people(pick[0], snaps[pick[0]], hist), n_paths,
+                         seed=vs._seed(pick[0])) if compare and pick else []
+    return dict(per=per, window=len(codes), load=load, n_paths=n_paths, profile=prof, live=live, compare=cmp_,
                 workers=workers or max(1, (os.cpu_count() or 2) - 1), cpus=os.cpu_count())
 
 
@@ -214,6 +298,8 @@ def report(out):
               f" ({_mins(secs * out['window'])} on one core)"]
     if out.get("live"):
         lines += [""] + out["live"]
+    if out.get("compare"):
+        lines += [""] + out["compare"]
     if out.get("profile"):
         lines += [""] + out["profile"]
     return lines

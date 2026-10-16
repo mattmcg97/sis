@@ -468,7 +468,7 @@ def cmd_v21_timing(args):
         playover.annotate_timeouts(snaps, timeouts)
     print(f"  pricing {min(args.matches, len(snaps))} of them as the calibrator's v21 stream does", flush=True)
     out = v21_timing.run(args.model, snaps, history, n_matches=args.matches, n_paths=args.paths,
-                         workers=args.workers, profile=not args.no_profile)
+                         workers=args.workers, profile=not args.no_profile, compare=args.compare)
     print("\n".join(v21_timing.report(out)))
     return 0
 
@@ -949,6 +949,9 @@ def build_parser():
     p.add_argument("--paths", type=int, default=1000, help="games a state, as --v21-paths (default 1000)")
     p.add_argument("--workers", type=int, help="the calibrator's workers, for the projection (default: all cores but one)")
     p.add_argument("--no-profile", action="store_true", help="skip the profile of the first match's in-play run")
+    p.add_argument("--compare", action="store_true",
+                   help="also time the first match with v2.1's exact speedups off and on, its outputs set against each "
+                        "other bit for bit")
     p.set_defaults(func=cmd_v21_timing)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
