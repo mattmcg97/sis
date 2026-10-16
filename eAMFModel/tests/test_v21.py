@@ -429,7 +429,9 @@ class TestBuild(unittest.TestCase):
         for levels in (v21.DIST_LEVELS, v21.DIST_LEAN_LEVELS):
             for lv in levels[:-1]:
                 self.assertIn("down", lv)
-                self.assertIn("tb", lv)                    # the time the play took, all six buckets
+                if "tb" not in lv:                         # the time the play took, all six buckets, or
+                    self.assertIn("tb2", lv)               # stopped / running where the lead and period hold
+                    self.assertTrue({"phase", "lead3"} <= set(lv), lv)
 
     def test_a_blended_cell_with_none_near_the_field_passes_its_draws_on(self):
         # cell a=1: 27 snaps at the goal line, 3 at midfield; 400 others across midfield. A state in a=1

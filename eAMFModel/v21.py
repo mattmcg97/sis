@@ -138,7 +138,11 @@ SPLITS = ("snaps", "time")
 # and 1 off every 2nd down's own results, 44% moving the chains against 51% real. The time draw keeps
 # the down and all five distances as far: the distance draw reads the time it was given at the state's
 # own distance, so a time pooled over 1 to 3 to go (or every distance) gives 2nd and 1 the quick
-# incompletions of 2nd and 3, played out as 2nd and 1's own quick snaps.
+# incompletions of 2nd and 3, played out as 2nd and 1's own quick snaps. Before the lead goes, the time
+# the play took coarsens to stopped or running (tb2), the period and lead held: a level side in Q4's
+# last 2:00 drew 25% of its snaps from levels of every lead or the whole game, which scored 13-18% near
+# its field against its own 4-8%, and its drives with 1:00-0:31 left scored a touchdown 19.6% of the
+# time against 10.3% real (a field goal 58% against 78%).
 KEY = "full"
 KEYS = ("full", "lean")
 # Blended levels (build's blend, 0 off): the league's draws store every cell of BLEND_MIN real snaps or
@@ -196,6 +200,7 @@ DIST_LEAN_LEVELS = (DIST_LEAN,
                     ("tb", "phase", "lead3", "down", "dist", "remain"),
                     ("tb", "phase", "lead3", "down", "dist", "rem4"),
                     ("tb", "phase", "lead3", "down", "dist"),
+                    ("tb2", "phase", "lead3", "down", "dist"),
                     ("tb", "phase", "down", "dist"),
                     ("tb", "down", "dist"),
                     ("tb", "down"),

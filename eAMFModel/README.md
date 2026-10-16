@@ -2088,6 +2088,12 @@ missing something. Nothing is ever fitted to close those gaps.
   them out as 2nd and 1's own quick snaps. Its fallbacks coarsen the field and the snaps left, then
   the lead to behind, level or ahead, and the period, before the distance.
 
+  Before the distance draw lets the lead go, the time the play took coarsens to stopped or running,
+  the period and the lead held. A level side in Q4's last 2:00 drew 25% of its snaps from levels of
+  every lead or the whole game, which scored 13–18% near its field against its own 4–8%, and its
+  drives with 1:00–0:31 left scored a touchdown 19.6% of the time against 10.3% real (a field goal
+  58% against 78%): late, a level side plays for its kick.
+
   Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
   period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
   a thin 4th-down cell passed some of its draws down the chain to them, so 4th downs were drawn
@@ -2301,7 +2307,9 @@ missing something. Nothing is ever fitted to close those gaps.
     snap's choice. The timeout before a running-clock snap is drawn from the real ones, which don't
     know the time the snap is about to take. Real sides level with the ball with 1:00–0:31 left ran
     out of clock on 0.3% of their drives, the sim's on 9.8%, and of those 62% were in range with more
-    than 0:05 at their last snap and 88% still had a timeout.
+    than 0:05 at their last snap and 88% still had a timeout. With it (the same model), 5.0%; their
+    field goals 58% from 54% (real 78%), overtime from those states 18% from 22% (real 5%), from
+    kick-off 3.9% from 4.2% (real 2.1%), timeouts 4.17 a game from 4.06 (real 3.98).
 
     The 4th down's fallbacks now keep what a field goal does and the time left to the end, and
     coarsen the field and distance first. From the real states, level or 1–2 behind in Q4's last
