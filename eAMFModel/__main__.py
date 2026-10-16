@@ -42,6 +42,7 @@ The calibrator runs a version as a stream in its own right:
 import argparse
 import json
 import os
+import sys
 
 from . import grading, playover, players
 
@@ -1005,6 +1006,11 @@ def build_parser():
 
 
 def main(argv=None):
+    for stream in (sys.stdout, sys.stderr):          # a pipe's code page lacking a character prints ?
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     args = build_parser().parse_args(argv)
     args.func(args)
 

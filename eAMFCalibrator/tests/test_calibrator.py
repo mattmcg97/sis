@@ -5937,3 +5937,140 @@ class TestRefresh(unittest.TestCase):
         self.assertEqual(timeouts.call_args[0][2], "x_out")
         self.assertEqual(history.call_args[0][1], "x_out")
         conn.close.assert_called_once()
+
+
+class TestSafeConsole(unittest.TestCase):
+    """A report piped on Windows (Tee-Object) prints in cp1252: a character it lacks prints as ?
+    rather than stopping the report (a report once stopped at its cross-section's DBRIER header)."""
+
+    def test_a_character_the_pipe_lacks_prints_as_a_question_mark(self):
+        import sys
+        from ..__main__ import safe_console
+        buf = io.BytesIO()
+        pipe = io.TextIOWrapper(buf, encoding="cp1252", errors="strict")
+        with mock.patch.object(sys, "stdout", pipe), mock.patch.object(sys, "stderr", pipe):
+            safe_console()
+            print("ΔBRIER ±")
+            pipe.flush()
+        self.assertEqual(buf.getvalue(), "?BRIER ±\n".encode("cp1252").replace(b"\n", os.linesep.encode()))
+
+    def test_the_report_s_own_headers_are_plain_ascii(self):
+        import inspect
+        from .. import report as rep
+        self.assertTrue(inspect.getsource(rep).isascii())
+
+
+class TestV21Grouped(unittest.TestCase):
+    """A match-seeded model (v21) prices several of the pairing's chunks in one pool: every chunk's
+    quotes the same, row for row and in the same order, as when each chunk was priced on its own --
+    the pre-match quotes too, whose earlier states read their own chunk's ends of play."""
+
+    @classmethod
+    def setUpClass(cls):
+        import datetime as dt_
+        import tempfile
+        from eAMFModel import v21
+        from eAMFModel.tests.test_v21 import MATCHES, HISTORY
+        cls.tmp = tempfile.TemporaryDirectory()
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, mode="tilt", key="lean", blend=40.0, field=0.2, decision_blend=25.0,
+                          clock=0.2, min_records=20, verbose=False, refine=False)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.codes = sorted(MATCHES)[:6]
+        t0 = dt_.datetime(2026, 10, 2, 12, 0, 0)
+        fmt = lambda t: t.strftime("%Y-%m-%d %H:%M:%S")
+        cls.starts = {c: t0 + dt_.timedelta(minutes=30 * i) for i, c in enumerate(cls.codes)}
+        # one gamer in every match, 30 minutes apart: each match's feed ends 15 minutes in, its
+        # kick-off-plus-36-minutes reckoning (a match outside the call) says it is still going
+        cls.history = [dict(MATCHES_ROW, MATCH_CODE=c, PLAYER_1_HANDLE="GX", PLAYER_2_HANDLE=f"O{i}",
+                            PLAYER_1_TEAM="T0", PLAYER_2_TEAM="T1", SCHEDULED_START_TIME_UTC=fmt(cls.starts[c]))
+                       for i, c in enumerate(cls.codes) for MATCHES_ROW in [{}]]
+        cls.snaps = {}
+        for c in cls.codes:
+            rows = [dict(r) for r in sorted(MATCHES[c], key=lambda r: int(r["message"]))]
+            for r in rows:
+                r["file_time"] = fmt(cls.starts[c] + dt_.timedelta(minutes=15))
+            cls.snaps[c] = rows
+        cls.prod = []
+        for c in cls.codes:
+            pub = fmt(cls.starts[c] - dt_.timedelta(minutes=10))
+            for k, line in ((50, ""), (52, "PLAYER 1 to score over 3.5 points more than PLAYER 2"),
+                            (54, "Total points over 40.5")):
+                cls.prod.append((c, k, pub, 50.0, 2.0, line, None, "OPEN", "true"))
+            for r in cls.snaps[c][::4]:
+                for k, line in ((50, ""), (51, ""), (54, "Total points over 40.5")):
+                    cls.prod.append((c, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true"))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _priced(self, plan):
+        """{chunk: {line mode: rows}} and the stream's calls, the chunks priced with the plan or not."""
+        import importlib
+        from .. import snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+
+        class Prior:                                # follows results; an earlier state its own points
+            league = (15.0, 15.0)
+            FOLLOWS_RESULTS = True
+            AS_OF = True
+
+            def means(self, rows, results=None):
+                return {r["MATCH_CODE"]: (21.0 + 3.0 * ("@" in r["MATCH_CODE"]), 17.0) for r in rows}
+
+        chunks = [self.codes[k:k + 3] for k in range(0, 6, 3)]  # dealt 1, 3, 2 to 2 workers
+        calls = []
+        real = stream.quotes_for_matches
+
+        def counted(*a, **k):
+            calls.append(sorted(a[0]))
+            return real(*a, **k)
+
+        snaps_for = lambda cur, codes, **k: ({c: self.snaps[c] for c in codes}, [q for q in self.prod if q[0] in codes])
+        with mock.patch.multiple(config, V21_MODEL_DIR=self.tmp.name, V21_PATHS=30, MODEL_WORKERS=2,
+                                 V21_LINES="own", V21_NUDGE_SHARE=0.75, V21_PRIOR_MODEL_DIR="prior",
+                                 FETCH_CACHE=True, MATCH_CHUNK_SIZE=3, MODEL_CHUNK_SIZE=6, PREMATCH_ONLY=False), \
+                mock.patch.object(stream, "_prior_tables", lambda _d=None: "prior"), \
+                mock.patch.object(stream, "prematch_model", lambda _t: Prior()), \
+                mock.patch.object(stream, "quotes_for_matches", counted), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: [h for h in self.history if h["MATCH_CODE"] in codes]), \
+                mock.patch.object(sio, "fetch_history", lambda cur, until=None: list(self.history)), \
+                contextlib.redirect_stdout(io.StringIO()):
+            sio.clear_fetch_cache()
+            if plan:
+                sio.plan_chunks(chunks)
+            out = {}
+            for b in chunks:
+                rows = sio._sim_quotes(None, b, "v21", "own")
+                key = next(k for k in sio._MODEL_QUOTES if k[1] == tuple(b))
+                out[tuple(b)] = {mode: list(r) for mode, r in sio._MODEL_QUOTES[key].items()}
+                self.assertEqual(rows, out[tuple(b)]["own"])
+            sio.clear_fetch_cache()
+        return out, calls
+
+    def test_grouped_chunks_quote_as_each_chunk_alone(self):
+        alone, calls_alone = self._priced(plan=False)
+        grouped, calls_grouped = self._priced(plan=True)
+        self.assertEqual(len(calls_alone), 2)
+        self.assertEqual(calls_grouped, [sorted(self.codes)])            # one pool for both chunks
+        self.assertEqual(set(alone), set(grouped))
+        for b in alone:
+            self.assertEqual(alone[b], grouped[b], b)                   # every mode, row for row, in order
+        self.assertTrue(all(alone[b]["own"] for b in alone))
+
+    def test_the_case_is_one_naive_grouping_would_change(self):
+        """Read off the whole group's ends, a chunk's first match would lose an earlier state its own
+        chunk's call gives it: what the per-chunk reading keeps."""
+        from eAMFModel import stream as st, v21_stream as vs
+        publish = {c: vs.prematch_publish_times([q for q in self.prod if q[0] == c], None) for c in self.codes}
+        rows = [h for h in self.history]
+        whole = st.known_states(rows, publish, self.history, st.match_ends(self.snaps))[1]
+        per_chunk = {}
+        for k in range(0, 6, 3):
+            part = self.codes[k:k + 3]
+            per_chunk.update(st.known_states([r for r in rows if r["MATCH_CODE"] in part],
+                                             {c: publish[c] for c in part}, self.history,
+                                             st.match_ends({c: self.snaps[c] for c in part}))[1])
+        self.assertNotEqual(whole, per_chunk)

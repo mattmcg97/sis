@@ -231,6 +231,10 @@ EXCLUDE_ZERO_PROBABILITY = True
 # Process the match universe in chunks so memory stays flat as the window
 # grows. Each chunk pulls its own plays, scores and quotes.
 MATCH_CHUNK_SIZE = 50
+# A model seeded by match (v21) prices this many matches' chunks in one pool of MODEL_WORKERS, each
+# chunk's quotes kept for its turn: a chunk of 50 on 15 workers left them idle half the time. Its
+# quotes are the same either way. 0: a chunk at a time.
+MODEL_CHUNK_SIZE = 300
 
 # Score-difference buckets, as (low, high, label) with both ends inclusive.
 # None means unbounded. Read in the PLAYER_1 (home) frame: positive means

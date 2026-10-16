@@ -908,7 +908,7 @@ def print_calibration_cells(title, cells, order=None, label_width=SCORE_WIDTH,
     print("  construction, since the sides are complements.")
     print(f"\n  {'CELL':<{label_width}}{'MARKET':<11}{'SEL':<6}{'N':>6}{'MATCH':>6}"
           f"{'REAL':>8}{'PROD':>8}{'P_GAP':>8}{'CAND':>8}{'C_GAP':>8}"
-          f"{'ΔBRIER':>9}{'P':>8}{'CLOSER':>7}")
+          f"{'DBRIER':>9}{'P':>8}{'CLOSER':>7}")
 
     wanted = markets_shown or MARKET_PRINT_ORDER
     cell_labels = order if order is not None else sorted({k[0] for k in cells}, key=str)
@@ -929,7 +929,7 @@ def print_calibration_cells(title, cells, order=None, label_width=SCORE_WIDTH,
                   f"{_fmt(row['brier_delta'], '+.4f'):>9}{_p(row['p_value']):>8}{closer:>7}")
     print("\n  P_GAP / C_GAP are realized minus predicted: positive means that stream")
     print("  underpriced the selection. CLOSER is whichever gap is smaller in size.")
-    print("  ΔBRIER is prod minus candidate, match-clustered; positive favours the")
+    print("  DBRIER is prod minus candidate, match-clustered; positive favours the")
     print("  candidate. P is the clustered test.")
 
 
@@ -942,7 +942,7 @@ def print_line_cells(title, cells, order=None, label_width=SCORE_WIDTH):
     print("  Lines differ here, so the probabilities are not comparable and the")
     print("  line decides. Errors are in points from the actual margin or total.")
     print(f"\n  {'CELL':<{label_width}}{'N':>7}{'MATCH':>6}{'GAP':>7}"
-          f"{'PROD_ERR':>10}{'CAND_ERR':>10}{'ΔPOINTS':>9}"
+          f"{'PROD_ERR':>10}{'CAND_ERR':>10}{'DPOINTS':>9}"
           f"{'95% CI':>20}{'P':>8}")
     keys = order if order is not None else sorted(cells, key=str)
     for key in keys:
@@ -956,7 +956,7 @@ def print_line_cells(title, cells, order=None, label_width=SCORE_WIDTH):
               f"{row['mean_line_gap']:>7.2f}"
               f"{row['prod_line_error']:>10.3f}{row['candidate_line_error']:>10.3f}"
               f"{_fmt(row['points_delta'], '+.3f'):>9}{ci:>20}{_p(row['p_value']):>8}")
-    print("\n  GAP is the mean distance between the two lines. ΔPOINTS is prod minus")
+    print("\n  GAP is the mean distance between the two lines. DPOINTS is prod minus")
     print("  candidate line error, so positive means the candidate's line was closer.")
 
 
@@ -1101,7 +1101,7 @@ def print_daily(daily):
         print("\n  No same-line pairs.")
         return
     print(f"\n  {'DAY':<12}{'PAIRS':>8}{'MATCH':>7}{'WIN%':>8}"
-          f"{'ΔBRIER':>10}{'95% CI':>22}{'P':>8}")
+          f"{'DBRIER':>10}{'95% CI':>22}{'P':>8}")
     for day, row in sorted(daily.items()):
         brier = row["brier"]
         print(f"  {day:<12}{row['pairs']:>8,}{row['matches']:>7,}"
@@ -1110,7 +1110,7 @@ def print_daily(daily):
     means = [r["brier"].get("mean") for r in daily.values()
              if r["brier"].get("mean") is not None]
     if len(means) > 1:
-        print(f"\n  spread of daily ΔBrier: {min(means):+.4f} to {max(means):+.4f}")
+        print(f"\n  spread of daily DBrier: {min(means):+.4f} to {max(means):+.4f}")
         signs = {m > 0 for m in means}
         print("  all days agree on direction." if len(signs) == 1
               else "  days disagree on direction -- the effect is not stable yet.")
