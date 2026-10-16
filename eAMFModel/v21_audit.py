@@ -88,6 +88,7 @@ def tables():
 
 OT_LEADS = v21.MARGIN_NAMES
 OT_CLOCK = ("Q4 to 2:00", "Q4 2:00-1:01", "Q4 1:00-0:31", "Q4 last 0:30")
+Q2_CLOCK = tuple(c.replace("Q4", "Q2") for c in OT_CLOCK)
 
 
 def _add(a, b):
@@ -604,7 +605,7 @@ def two_lines(real, flow):
 def q2_lines(real, step):
     lines = ["", "  Q2 STATES, the half's last 2:00: each side's points still to come in the half, by the lead of the"
                  " side with the ball and the time left (real / sim; the side with the ball, then the other)",
-             f"  {'':16s}" + "".join(f"{OT_CLOCK[cs]:>26s}" for cs in (1, 2, 3))]
+             f"  {'':16s}" + "".join(f"{Q2_CLOCK[cs]:>26s}" for cs in (1, 2, 3))]
     for lb, name in enumerate(OT_LEADS):
         n = real["n2"][lb]
         if not n[1:].sum():
@@ -624,7 +625,7 @@ def q2_lines(real, step):
             r, m = real["drives2"][lb, cs], step["drives2"][lb, cs]
             if r.sum() < 20:
                 continue
-            lines.append(f"  {name + ', ' + OT_CLOCK[cs]:28s}{int(r.sum()):>7d}" + "".join(
+            lines.append(f"  {name + ', ' + Q2_CLOCK[cs]:28s}{int(r.sum()):>7d}" + "".join(
                 f"{_pair(_pct(r[e], r.sum()), _pct(m[e], m.sum())):>14s}" for e in range(len(v21.DRIVE_ENDS))))
     return lines
 
