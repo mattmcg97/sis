@@ -31,13 +31,14 @@ def _day(row):
     return start.date() if start is not None else None
 
 
-def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True, options=None):
+def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True, options=None, on_fit=None):
     """Fit `prior` once for every day from `since` to `until` (dates), each on the finished matches
     before that day began; days already fitted in `out_dir` are kept. The days are split into
     `workers` runs of consecutive days fitted side by side; within a run each glmer fit warm-starts
     from the day before's (glmer/fit.R --start), about 2-3x quicker for the same fit. `options`: the
     prior's build settings (NB2's half_life), every day alike; a directory already fitted with others
-    is refused, so one directory never mixes two models. Returns the Rolling model."""
+    is refused, so one directory never mixes two models. `on_fit(day, seconds)` is called after each
+    day fitted here (from the run's thread). Returns the Rolling model."""
     options = dict(options or {})
     model = PRIORS[prior]
     params = inspect.signature(model.build).parameters
@@ -79,6 +80,8 @@ def fit(history, prior, out_dir, since, until, workers=WORKERS, verbose=True, op
                 if verbose:
                     print(f"  {prior} fitted before {day} ({time.time() - t0:.0f}s"
                           f"{', warm' if 'start' in kw else ''})", flush=True)
+                if on_fit is not None:
+                    on_fit(day, time.time() - t0)
             prev = path
         return chunk
 

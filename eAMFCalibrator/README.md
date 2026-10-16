@@ -2903,6 +2903,89 @@ priced on a later day's sees nothing it couldn't have live. `glmer/cadence.R --n
 (glmer/README.md). `out/nb2_history.txt` grades NB2 month by month (the moneyline's log loss and
 Brier, the margin's and total's RMSE and bias) with the moneyline's calibration.
 
+### The pre-match variants for the sims: `walkthrough`
+
+```bash
+python -m eAMFCalibrator walkthrough --history eAMFCalibrator/out/match_history.csv --since 2026-01-01
+```
+
+Prices every match of a span with the best pre-match variants, walk-forward, and writes one table
+of expected points per variant. A sim can then be pointed at any variant without pricing the
+pre-match again. No Snowflake is needed: the history comes from a CSV.
+
+**Progress:** before it starts, it prints a first estimate of the whole run. Each step then prints
+a line as it goes: units done, its pace, the time it and the run have left, and the run's estimated
+finish. For example:
+`NB2 fits: 37/253 days to fit (15%), 9m12s in, ~53m45s left; the run ~1h12m left, finishing about 15:46`.
+A step's own pace rescales the steps still to come, and the estimate settles after the first few
+fits.
+
+| step | what it does |
+|---|---|
+| NB2 fits | NB2 refitted every day, each on the results before its day (`nb2_fits/`). The days already fitted are kept |
+| NB2 prices | every match priced by its own day's fit (`nb2.csv`) |
+| glmer fits | glmer refitted every day (`glmer/cadence.R`, `trim:hl60_x0.5:daily`, `glmer/`). Needs `Rscript` |
+| layers | the rematch and inference layers fitted walk-forward on each model's own errors |
+| variants | each variant's expected points and moneyline for every match (`priors/`) |
+| report | every variant graded against NB2 on the results (`walkthrough.txt`) |
+
+A step whose output is already there for the same history and span is kept, so a rerun after a
+stop picks up where it was. From scratch, a year takes about an hour and a half on 4 cores, most of
+it the NB2 fits (`--workers`, default 4).
+
+**The variants**, each a table `priors/<variant>.csv`:
+
+| variant | expected points |
+|---|---|
+| `nb2` | NB2 as it is |
+| `nb2+infer` | NB2 moved by the inference layer |
+| `nb2+both` | NB2 moved by the rematch layer at a rematch, else the inference layer |
+| `glmer` | glmer as it is |
+| `glmer+both` | glmer moved as `nb2+both` |
+| `avg` | `nb2+infer` and `glmer+both` averaged side by side: the best pre-match model in `prior-offline`'s tests |
+| `avg-plain` | `nb2` and `glmer` averaged |
+
+A layer moves the expected margin and total; a side's points are (total ± margin) / 2. Each table
+also has:
+- the match, its score and its meeting number;
+- the moneyline off the variant's points: NB2's own joint score model for `nb2`, its layers and
+  the averages (the averages' points with NB2's dispersions), and NB2's construction fitted to
+  glmer's errors for glmer;
+- the score model's parameters, the layer's move, and whether the match is in the layers' 7-day
+  burn-in (no move there).
+
+Every value was priced before its match, as it would have been live.
+
+**Pointing a sim at a variant:** give its table where a prior build would go:
+
+```bash
+python -m eAMFCalibrator report --candidate v21 --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+python -m eAMFModel v21-report ... --prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+v21 then nudges toward that variant's expected points (eAMFModel's `table_prior.py`). A match the
+table doesn't have gets no nudge. `walkthrough.json` records the span, the history, each variant's
+file and each step's time.
+
+**On the repo's history** (`nb2/AMFELO.csv`, 1 Jan – 10 Sep, 21,638 matches after the burn-in).
+Moneyline log loss, NB2 alone 0.6581; the other variants against it:
+
+| variant | moneyline | t | fortnights better | total sq err (t) |
+|---|---|---|---|---|
+| `avg` | −0.0028 | −5.4 | 17/18 | −1.90 (−8.8) |
+| `glmer+both` | −0.0020 | −2.8 | 11/18 | −1.86 (−7.2) |
+| `nb2+infer` | −0.0018 | −3.2 | 13/18 | −1.33 (−6.5) |
+| `avg-plain` | −0.0018 | −6.7 | 17/18 | −1.26 (−12.0) |
+| `glmer` | −0.0016 | −2.9 | 15/18 | −1.74 (−8.3) |
+| `nb2+both` | −0.0012 | −2.6 | 13/18 | −0.79 (−5.0) |
+
+`avg` leads at rematches (−0.0032) and first meetings (−0.0019) alike. On 4 cores, with the NB2 fits
+already made, the run took 19 minutes:
+- NB2 prices 5 min;
+- glmer fits 5 min;
+- layers 3 min;
+- variants 6 min.
+
 ### The priors against each other, offline: `prior-offline`
 
 ```bash

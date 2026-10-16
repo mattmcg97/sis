@@ -916,7 +916,8 @@ def build_parser():
                                           "every step of the real games, and its draws against the real snaps")
     p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
     p.add_argument("--prior-model", default="v14_model",
-                   help="a v13/v14 build whose pre-match model gives the expected points (default v14_model)")
+                   help="a v13/v14 build whose pre-match model gives the expected points, or a walkthrough "
+                        "variant's table (eAMFCalibrator walkthrough's priors/VARIANT.csv) (default v14_model)")
     p.add_argument("--inputs", choices=["raw", "priced"], default="raw",
                    help="raw: the pre-match model's own expected points; priced: with the build's layers")
     p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")

@@ -52,8 +52,11 @@ def _model_file(model_dir=None):
 
 
 def _prior_tables(prior_dir=None):
-    """The prior build's tables (its pre-match model), or None where none is found."""
-    from . import prior_check
+    """The prior build's tables (its pre-match model), or a prior table (a walkthrough variant's CSV,
+    table_prior.py) as it is; None where none is found."""
+    from . import prior_check, table_prior
+    if table_prior.is_table(prior_dir):
+        return prior_dir
     candidates = [prior_dir] if prior_dir else [
         os.environ.get("EAMF_V21_PRIOR"), os.environ.get("EAMF_V14_MODEL"), DEFAULT_PRIOR_DIR,
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", DEFAULT_PRIOR_DIR)]
@@ -79,7 +82,9 @@ def prematch_model(prior_tables):
     v21-report's raw inputs), or None without a prior."""
     if prior_tables is None:
         return None
-    from . import prior_check
+    from . import prior_check, table_prior
+    if table_prior.is_table(prior_tables):        # a walkthrough variant's expected points, as they are
+        return table_prior.TablePrior(prior_tables)
     version = prior_check.version_of(os.path.dirname(prior_tables))
     m, _ = prior_check._modules(version)
     pre = m.prematch_model(prior_tables)

@@ -219,12 +219,15 @@ def _finals(r):
 
 def prior_inputs(model_dir, rows, history, which="raw"):
     """({code: (home, away) expected points}, {code: (margin pmf, total pmf)}) off a v13/v14 build's
-    pre-match model: its own means (raw) or the means the build prices with (priced), and the prior's own
-    score model on them."""
-    from . import prior_check
-    version = prior_check.version_of(model_dir)
-    m, st = prior_check._modules(version)
-    pre = m.prematch_model(st.model_paths(model_dir)[0])
+    pre-match model -- its own means (raw) or the means the build prices with (priced) -- or a prior table
+    (a walkthrough variant's CSV), and the prior's own score model on them."""
+    from . import prior_check, table_prior
+    if table_prior.is_table(model_dir):              # a walkthrough variant's table
+        pre = table_prior.TablePrior(model_dir)
+    else:
+        version = prior_check.version_of(model_dir)
+        m, st = prior_check._modules(version)
+        pre = m.prematch_model(st.model_paths(model_dir)[0])
     if pre is None:
         raise SystemExit(f"{model_dir}: no pre-match model to read the expected points from")
     base = prior_check.base_prior(pre)

@@ -2726,6 +2726,24 @@ python -m eAMFCalibrator history
 python -m eAMFModel prior-daily --prior nb2 --history eAMFCalibrator/out/match_history.csv --since 2026-10-06 --until 2026-10-06 --out nb2_live --attach v12_model
 ```
 
+## A walkthrough variant as v21's prior (`table_prior.py`)
+
+`eAMFCalibrator walkthrough` prices every match with the best pre-match variants and writes one
+table of expected points per variant (`priors/<variant>.csv`). Wherever v21 takes a prior build, it
+also takes one of those tables:
+
+```bash
+python -m eAMFCalibrator report --candidate v21 --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+python -m eAMFModel v21-report ... --prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+Each match's expected points are read as the table has them. They were priced as of its kick-off,
+so the table doesn't follow results itself, and a match it doesn't have gets no nudge.
+
+Each NB2 fit now keeps only its training rows' codes and kick-offs once fitted, and drops
+NB2_schedule_predict.py's market tables after each prediction. A day of fits (the day's and its
+level scale's) was about 19 MB, and is now about 2 MB: a year of daily fits about 0.6 GB, not 5.
+
 ## Following the results since the fit (`follow.py`, v10–v13)
 
 A build's pre-match model (NB2 or glmer) is fitted once. Between fits its ratings stay put while

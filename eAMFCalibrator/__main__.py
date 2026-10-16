@@ -220,6 +220,16 @@ def cmd_prior_backtest(args):
     return 0
 
 
+def cmd_walkthrough(args):
+    """The best pre-match variants priced for every match, walk-forward, one table each for the sims."""
+    from . import walkthrough
+    out = args.out or os.path.join(DEFAULT_OUT, "walkthrough")
+    path = walkthrough.run(out, args.history, args.since or "2026-01-01 00:00:00", args.until, workers=args.workers,
+                           cores=args.cores, draws=args.draws, half_life=args.half_life)
+    print(f"\n  -> {path}; the tables in {os.path.join(out, 'priors')}")
+    return 0
+
+
 def cmd_prior_offline(args):
     """The priors and their layers graded against each other on the results: no prod, no Snowflake."""
     from . import prior_offline
@@ -1093,8 +1103,9 @@ def common_options():
     tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v21: as --v10-lines "
                              f"(default {config.V21_LINES})")
-    tuning.add_argument("--v21-prior-model", metavar="DIR",
-                        help="--candidate v21: the v13/v14 build (made with --history) whose pre-match "
+    tuning.add_argument("--v21-prior-model", metavar="DIR|CSV",
+                        help="--candidate v21: a walkthrough variant's table (walkthrough's priors/VARIANT.csv), "
+                             "or the v13/v14 build (made with --history) whose pre-match "
                              "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then "
                              "$EAMF_V14_MODEL, then ./v14_model)")
     tuning.add_argument("--v21-nudge-share", type=float, metavar="S",
@@ -1446,6 +1457,23 @@ def build_parser():
                            help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    wt_parser = sub.add_parser(
+        "walkthrough",
+        help="the best pre-match variants priced for every match of a span, walk-forward (NB2 and glmer refitted "
+             "daily, the rematch and inference layers, their averages), one table of expected points each for a "
+             "sim to read (--v21-prior-model TABLE), with progress and an estimated finish (-> out/walkthrough/)")
+    wt_parser.add_argument("--history", required=True, metavar="CSV",
+                           help="a match_history.csv (eAMFCalibrator history's, or nb2/AMFELO.csv): no Snowflake")
+    wt_parser.add_argument("--since", metavar="DATE", help="the first day priced (default 2026-01-01)")
+    wt_parser.add_argument("--until", metavar="DATE", help="the day after the last priced (default: the history's end)")
+    wt_parser.add_argument("--workers", type=int, default=4, help="NB2 fits side by side (default 4)")
+    wt_parser.add_argument("--cores", type=int, help="glmer's cores (default: all but one)")
+    wt_parser.add_argument("--draws", type=int, default=20000, metavar="N",
+                           help="simulated scorelines per match for the moneylines (default 20000)")
+    wt_parser.add_argument("--half-life", type=float, metavar="DAYS",
+                           help="NB2's half-life (default its own, 60); a new value needs a new --out")
+    wt_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/walkthrough)")
+
     po_parser = sub.add_parser(
         "prior-offline",
         help="the pre-match priors graded against each other on the results alone, no prod and no Snowflake: "
@@ -1651,6 +1679,8 @@ def main(argv=None):
         return cmd_nb2_history(args)
     if args.command == "prior-offline":
         return cmd_prior_offline(args)
+    if args.command == "walkthrough":
+        return cmd_walkthrough(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
