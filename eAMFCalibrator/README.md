@@ -2700,6 +2700,440 @@ career totals):
 
 Writes `out/player_stats.txt` and `out/player_stats_check.csv`.
 
+### Pre-match priors against prod, with and without the rematch layer: `prior-backtest`
+
+```bash
+python -m eAMFCalibrator prior-backtest --since 2026-09-01 --until 2026-10-14 \
+    --arm "glmer-trim=glmer/out/cadence/cadence_matches.csv@trim:hl60:game" \
+    --arm "nb2=rolling:nb2_daily"
+```
+
+An arm is `NAME=SOURCE`: its expected points per side for every match, as of
+the match's kick-off. The sources are:
+
+| source | what it reads |
+|---|---|
+| `PATH@PREFIX` | `glmer/cadence.R`'s `cadence_matches.csv`, columns `PREFIX\|1` and `PREFIX\|2` (e.g. the trimmed model refitted after every result, `trim:hl60:game`) |
+| `PATH` | a CSV of `MATCH_CODE` (or `MatchId`) and `Pred_P1_Points` / `Pred_P2_Points` (`NB2_schedule_predict.py`, `glmer/predict.R`), `raw_home` / `raw_away` (eAMFModel `prior-vs-sim`'s CSV) or `exp_p1` / `exp_p2` |
+| `rolling:DIR` | eAMFModel `prior-daily`'s directory of daily fits (NB2 or glmer): each match priced by its own day's fit, as live |
+
+Prod is always included: its closing pre-match moneyline and total (the line
+and the over's price). That is its last live quote before the match got under
+way, which `prematch.py` defines as no message count, or a message count below
+the match's first `PLAY_STARTED` in SCOUTING_FULL. Prod's pre-game quotes carry
+a message count. Where the play feed has no first play, the quote must be
+published before the scheduled kick-off.
+
+Prod is a third party's price, so it is the benchmark only and gets no
+layers. The run prints how far its closing moneyline is from the price these
+tools read before, which was its last quote with no message, else its first.
+The same closing prices are used by `prior-replay`, `bets rematches` and
+`bets inference`.
+
+**How each arm is graded:** each arm is graded as it is and with each layer
+on top. Each layer is fitted walk-forward on that arm's own errors.
+
+| suffix | layer |
+|---|---|
+| `+layer` | the rematch layer: the pair's earlier meetings that day |
+| `+infer` | the inference layer (`bets inference`, below): each gamer's form that session, from every match he played against anyone, beside the pair's own effect |
+| `+both` | the two as one layer: a rematch moves by the pair's earlier meetings alone, and a first meeting by what the gamers did against others |
+| `+feat` | the feature layer (below): what the two gamers' stats say beyond the arm's price |
+| `+both+feat` | the feature layer fitted on the errors `+both` leaves, on top of `+both` |
+
+The feature layers need the gamers' stats: `player-stats`'
+`out/player_match_stats.csv` by default, another with `--features CSV`, none
+with `--features none`. Without the file, the run says so and leaves them out.
+
+An arm's moneyline and over come from its two scores simulated together
+(`score_model.py`), so the covariance between them is in the price. Choose
+how with `#MODE` on the arm:
+
+| mode | the score model |
+|---|---|
+| `own` | the prior's own (the default where it has one). For NB2, each side is negative binomial with its gamers' dispersions, and the two share a gamma pace factor, which gives the covariance. This is read off NB2's prediction rows: a `rolling:` NB2 directory, or a CSV with `P1_Effective_Alpha`, `P2_Effective_Alpha` and `Shared_Gamma_Fraction`. For glmer, each side is Poisson about a log-normal mean with a shared match noise, read from a `rolling:` glmer directory. |
+| `fitted` | NB2's construction with one dispersion and shared fraction fitted to the arm's own errors by the method of moments, walk-forward. This is the default for a prior with no score model of its own, e.g. the trimmed glmer. |
+| `normal` | the normal about the expected margin (sd 9.35) and total (sd 12): no covariance, shape or ties. For comparison. |
+
+- **Ties:** a moneyline splits them half and half, as NB2 does; the over
+  leaves out pushes.
+- **The layer:** shifts the simulated margin and total, so it moves the
+  model's own price.
+- **Randomness:** every match draws from its own seed, so every arm and
+  variant of a match sees the same randomness. `--draws` sets the scorelines
+  per match (default 40,000).
+For example, to see what the score model alone is worth:
+`--arm "nb2=rolling:nb2_daily" --arm "nb2-normal=rolling:nb2_daily#normal"`.
+
+**What it reports**, on the matches every arm priced, after the layer's
+7-day burn-in:
+- **moneyline:** log loss and Brier;
+- **total:** the expected total's RMSE and bias, and the log loss of the
+  over at prod's line;
+- **each against prod, match by match:** the difference, its t, and the
+  fortnights the arm beat prod.
+
+These are given for every match, the rematches, the 2nd meetings, the 3rd+
+and the first meetings. The first meetings are also split into those after
+either gamer had played someone else that session (only the inference layer
+moves these) and those where neither had. Each arm's last fit of every layer
+follows. Writes
+`out/prior_backtest.txt` and `out/prior_backtest.csv` (every match, every
+arm's moneyline, total and over).
+
+#### The gamers' stats as features: the feature layer
+
+`gamer_features.py` turns `player-stats`' per-match rows into each gamer's
+stats as of each day. `feature_layer.py` moves an arm's price by what those
+stats say beyond it.
+
+**The stats**, each gamer's, recalculated every UTC day from the matches
+before that day only:
+
+| stat | read as |
+|---|---|
+| `ypp_for`, `ypp_against` | yards a play made and conceded |
+| `third_pct` | 3rd downs converted over run |
+| `rz_td_pct` | red-zone touchdowns over trips |
+| `giveaways`, `takeaways` | turnovers and turnovers on downs a match, the gamer's own and the opponent's |
+| `top_min` | time of possession a match, minutes |
+| `plays` | scrimmage plays a match (pace) |
+| `points_for`, `points_against` | points scored and conceded a match |
+
+- **Recency:** a gamer's matches are weighted by how recent they are among
+  the gamer's own, 2^(-k/50) for the k-th most recent. Every match the gamer
+  plays ages the rest.
+- **Shrinkage:** towards the league as it stood before the day, by 20
+  matches' worth of its average. A new gamer reads as the league.
+- **The detail gap:** a stat that needs a field position reads only matches
+  with one on 80%+ of the snaps (`player-stats`' rule). Through the 23 Sep – 9
+  Oct gap such a stat stays where the gamer's earlier matches left it.
+- **Nothing from the match's own day:** a match is read with its gamers'
+  stats as of the start of its UTC day.
+
+**The layer:** each UTC day, on every earlier match of the window with a
+result, a ridge regression of the arm's errors on the stats:
+- the margin's error on the home gamer's stats less the away's;
+- the total's error on the two gamers' stats added.
+
+The stats are standardised and the errors centred, so the layer moves a price
+by what the stats say about it, not by the arm's overall bias (as the
+rematch layer is centred). The ridge (50) pulls every coefficient towards 0.
+No move until 400 matches have been seen, and none for a match missing a
+stat. `+both+feat` fits on what `+both` leaves, so the two don't count the
+same thing twice. The report gives each arm's last fit: every stat's
+coefficient in points per standard deviation, with its se and t.
+
+### The pre-match bets at each prior's prices: `prior-replay`
+
+```bash
+python -m eAMFCalibrator prior-replay --since "2026-09-01 00:00:00" --until "2026-10-15 00:00:00" \
+    --arm "glmer-daily=glmer/out/cadence/cadence_matches.csv@trim:hl60_x0.5:daily" \
+    --arm "nb2=rolling:eAMFModel/out/nb2_daily"
+```
+
+`prior-backtest` grades the prices. This is what the book would have made
+from them. The arms are `prior-backtest`'s (`NAME=SOURCE[#MODE]`) and are read
+the same way, `--features` too. Each arm runs as it is and with each layer
+(`+layer`, `+infer`, `+both`, and with the gamers' stats `+feat` and
+`+both+feat`). Prod, a third party's price, is the benchmark: the bets' own
+prices.
+
+**How a bet is re-priced:** the same way `bets prematch` re-prices a
+candidate stream. Every pre-match bet on the matches every arm priced, after
+the layer's burn-in, keeps its selection, stake and line:
+- prod's probability at bet time (its quote then, whatever its message
+  count) is swapped for the arm's at that line;
+- the operator's margin is kept, so the odds become odds × prod / arm;
+- the bet settles as it settled.
+
+**An arm's price at a line:**
+- moneyline and spread: its home margin over the line, pushes left out;
+- total: its total over the line, pushes left out.
+
+**Clean bets:** an arm prices a match as of kick-off, from every result
+before it. A bet placed before either gamer's previous result was in (36
+minutes after that match's kick-off) would be re-priced with results neither
+the bettor nor prod had at the time. Those bets are reported separately, and
+the headline is the clean bets.
+
+**The bets stay as placed:** nobody bets differently at the arm's prices.
+Only winning bets move the book: a shorter price on one is revenue kept, a
+longer one revenue given away. A losing bet loses its stake at any price.
+Bets that wouldn't have been placed at the arm's price, or that would have
+been placed instead, aren't modelled.
+
+**What it reports:** prod's margin on the bets (revenue / stake) and each
+variant's change against it, in points of stake. Each change comes with a 95%
+interval (resampling matches) and the weeks it came out ahead. The cuts are:
+- the clean bets, overall and by market;
+- the clean bets by meeting, market and meeting, operator, VIP and the rest,
+  and week;
+- every pre-match bet;
+- stake by minutes before kick-off.
+
+Writes `out/prior_replay.txt` and `out/prior_replay.csv` (a row per bet with
+each variant's probability, odds and revenue).
+
+### NB2 refitted daily over the year, every match priced: `nb2-history`
+
+```bash
+python -m eAMFCalibrator nb2-history --since 2026-01-01 --history eAMFCalibrator/out/match_history.csv
+```
+
+NB2 is refitted every day from `--since`, each fit on every result settled before that day began,
+as it would run live, with no layers. Every match is priced by its own day's fit. It needs no
+Snowflake given `--history`. The fits are kept in `out/nb2_history/` (`nb2_history_hl<D>/` with
+`--half-life`), so a rerun fits only the days it lacks. Only the days the history covers are fitted.
+About 20 s a fit, two a day (the day's and its level scale's): `--workers 4` (the default) does the
+year in under an hour.
+
+`out/nb2_history.csv` has a row per match:
+- **The match:** code, kick-off, stream, gamers, teams, the pair's meeting number that day, each
+  gamer's settled matches before the day, the score.
+- **NB2's price:** expected points (`Pred_P1_Points`, `Pred_P2_Points`), margin and total, and the
+  moneyline from NB2's own joint score model (`p_home` splits a tie half and half; the home win,
+  draw and away win are given apart). NB2 gives ties 3–4%; the games have almost none (6 in 24,000:
+  overtime settles them).
+- **The fit:** its day, the matches it was fitted on, its level scale, and the gamers' dispersions
+  and shared fraction. These let `prior-backtest` read the CSV as an arm with NB2's own score model.
+
+Every price was made before its match's day, so a model fitted on the CSV's earlier rows and
+priced on a later day's sees nothing it couldn't have live. `glmer/cadence.R --nb2` fits glmer on it
+(glmer/README.md). `out/nb2_history.txt` grades NB2 month by month (the moneyline's log loss and
+Brier, the margin's and total's RMSE and bias) with the moneyline's calibration.
+
+### Every prior variant, audited, graded and replayed: `backtest-suite`
+
+```bash
+python -m eAMFCalibrator backtest-suite --since "2026-08-15 00:00:00" --until "2026-10-15 00:00:00"
+python -m eAMFCalibrator backtest-suite --config suite.json --steps audit,backtest,replay,summary
+```
+
+One command runs the whole pre-match backtest. It makes the daily NB2 fits, checks every input for
+anything a match couldn't have known, runs `prior-backtest` and `prior-replay` on every variant from
+one read of the data, and ranks the variants. Everything goes to `out/suite/`. Each step's output
+is kept, so a step can be rerun on its own.
+
+| step | what it does |
+|---|---|
+| `history` | every settled match, for the fits: `match_history.csv`. `--history CSV` copies one you already have instead, with no Snowflake |
+| `fits` | NB2 refitted every day of the window (`eAMFModel prior-daily`), one directory per half-life: `nb2_hl<D>/`. Days already fitted are kept. Only the days the history covers are fitted; a later day waits for a fresher history rather than being fitted short |
+| `audit` | the inputs checked (below): `suite_audit.txt`. A FAIL stops the run; `--keep-going` carries on |
+| `backtest` | the layers' leak check, then `prior-backtest` on every arm and the controls: `prior_backtest.txt/csv` |
+| `replay` | `prior-replay` on the same arms, from the same read and fits: `prior_replay.txt/csv` |
+| `summary` | every variant ranked: `suite_summary.txt/csv` |
+
+**Warehouse credits:** every Snowflake query's answer is kept on disk in `out/suite/cache/`. A
+later run asking the same query reads it from there, so rerunning a step or changing a setting
+spends no credits. When every answer is already there, no connection is made at all. `--fresh`
+empties the cache. The fits and the audit never touch Snowflake, so they can run while the
+warehouse is unavailable:
+
+```bash
+python -m eAMFCalibrator backtest-suite --since "2026-08-15 00:00:00" --until "2026-10-15 00:00:00" \
+    --steps history,fits --history eAMFCalibrator/out/match_history.csv
+```
+
+**The arms:** an NB2 arm per half-life (`nb2-hl30`, `nb2-hl60`, `nb2-hl120` by default), the glmer
+arm (`glmer/cadence.R`'s daily trimmed model by default; cadence.R must have been run over the
+window), and any others in the settings. Each comes as it is and with every layer: `+layer`,
+`+infer`, `+both`, and with the gamers' stats `+feat` and `+both+feat`.
+
+**What the audit checks:**
+- **The history:** every match appears once, and the history reaches the window's end.
+- **Each NB2 directory:** fitted at its half-life, with a fit for every day. Every day's training
+  file (and its level scale's) holds only results from before that day. Every fit saw at least 99%
+  of the results the current history has before its day; a fit made on an older history fails, and
+  its day's directory should be deleted and refitted.
+- **Each CSV arm:** the file is there and how much of the window it prices (warns below 95%: the
+  backtest grades only the matches every arm priced). cadence.R's daily fits are cut at midnight.
+- **The gamers' stats:** there, fresh (else rerun `player-stats`), and their coverage of the window.
+  How many matches in each period had play detail.
+- **The scramble check on the stats:** the stats from the window's middle day on are shuffled
+  between matches and scaled at random. Every earlier match must read exactly as before.
+
+**The layers' leak check** (the first arm): the results and stats from the window's middle day on
+are scrambled the same way, and every layer is refitted. Every earlier match must move exactly as
+it did, and the fitted score model's fits before that day must be unchanged. A layer reading a later
+result, or a total or average that includes one, would differ. The same refit without the scramble
+must reproduce every move (determinism).
+
+**The controls** are checks on the pipeline, not candidates, and are listed apart:
+
+| control | what it is | what it must show |
+|---|---|---|
+| `echo` | prod's closing moneyline and line read back as an arm (its implied margin and total, the normal reading) | grades as prod does. If not, the matches, sides or grading are out of line |
+| `shuffled` | the first NB2 arm's prices shuffled between matches of the same day | grades well below its source. If not, the grading isn't reading the prices |
+
+**The summary:** every variant is ranked by its moneyline log loss against prod, match by match.
+Each line also gives:
+- the over at prod's line, and the expected total's RMSE;
+- the book's margin on the clean bets at the variant's prices less at prod's, with its 95% interval
+  (resampling matches);
+- the moneyline against prod at first meetings, at rematches, and in each period.
+
+The periods default to before, during and after the play-detail gap (23 Sep – 9 Oct). The clean
+bets follow, by market, then the controls' checks and the audit's tally. The grading is done again
+from `prior_backtest.csv`, apart from `prior-backtest`'s own, and the two agree.
+
+**The settings** (`--config`, a JSON object; anything left out keeps its default,
+`backtest_suite.DEFAULTS`):
+
+| setting | default |
+|---|---|
+| `nb2_half_lives` | `[30, 60, 120]` (days) |
+| `nb2_mode`, `nb2_workers` | the NB2 arms' `#MODE` (`""`: their own score model); fits side by side (2) |
+| `glmer` | `glmer/out/cadence/cadence_matches.csv@trim:hl60_x0.5:daily` (`""`: none) |
+| `arms` | `{}`: more arms, `{"NAME": "SOURCE[#MODE]"}` |
+| `features` | `out/player_match_stats.csv` (`"none"`: no feature layer) |
+| `draws`, `boot` | 40,000 scorelines a match; the replay's resamples (config's) |
+| `controls`, `leak_check` | on |
+| `periods` | `[[label, from, until], ...]`: the detail gap's three |
+
+`suite.json` records the settings, the window, the arms, each step's time and git commit, and the
+audit's tally.
+### Rematches the same day: `bets rematches`
+
+```bash
+python -m eAMFCalibrator bets rematches --since "2026-10-01 00:00:00"
+```
+
+This looks at what happens to the money when two gamers meet again the same
+day. A day is the gamers' session (no gap over `SESSION_BREAK_MINUTES`), so a
+night that runs past midnight UTC counts as one day. Each pair's meetings that
+day are numbered 1st, 2nd, 3rd, 4th+.
+
+Each rematch's teams are read against the day's first meeting:
+- **same teams:** each gamer on the team he had then (the exact matchup);
+- **swapped teams:** each gamer on the other's;
+- **teams changed:** anything else.
+
+The report has these parts:
+1. **Money per match by meeting, teams and the first margin:** stake per
+   match on the moneyline, handicap and total, and the book's margin. The
+   first meeting's margin of victory is banded draw, 1–3, 4–7, 8–13, 14–20
+   and 21+.
+2. **The moneyline in rematches, against the first meeting's winner:**
+   - prod's pre-match price for him at the first meeting and now (whether
+     prod moved after the result), and how often he won again;
+   - the share of the stake on him;
+   - the book's margin and the residual (won less prod's p at the bet) on
+     him and on his opponent.
+
+   This is shown by the first margin, by teams, by meeting, pre-match
+   against in play, and for restricted and VIP accounts.
+3. **The handicap and the total:** the handicap money on the first winner,
+   and the over and under money by the first meeting's total and margin.
+4. **Prod's total line in rematches:** the line at the first meeting and at
+   the rematch, and how far each total landed from it (its miss). This is
+   shown by the first meeting's total and by the first meeting's miss.
+5. **The fits: how far to move a rematch.** Each slope is the points per
+   point of the earlier miss:
+   - the rematch's total miss on the first meeting's (and, from the 3rd
+     meeting on, the previous meeting's);
+   - the first winner's margin miss on the first meeting's margin surprise.
+     Prod's moneyline is read as a margin, with `MARGIN_SD` 9.35;
+   - a logistic of the first winner winning again on prod's price (as an
+     offset) and the first meeting's margin surprise.
+6. **The rematch layer on prod's prices, walk-forward:** what
+   `rematch_layer.py` moves, and the log loss, Brier and total RMSE of prod
+   with and without it. These are compared match by match on rematches, by
+   meeting and by teams.
+7. **The 25 rematches with the most moneyline stake.**
+
+**The rematch layer** (`rematch_layer.py`) works on any pre-match price:
+expected points per side, or a moneyline and a total line.
+- **The model:** each meeting's error against the price (margin and total)
+  is the pair's effect that day plus noise. Two meetings the same day share
+  the effect, so the covariance of their errors is its variance.
+- **What is estimated:** that variance separately for meetings with the
+  same teams and with teams changed. The rest of an error's variance is the
+  noise.
+- **What it does at a rematch:** the margin and the total move by the
+  effect's best guess from the day's earlier errors (the posterior mean).
+- **How it is fitted:** walk-forward, refitted each UTC day on the days
+  before it, with every error centred on the price's own mean error. Nothing
+  a match is priced with comes after its kick-off.
+
+Writes `out/bets_rematches.txt` and `out/bets_rematches.csv` (one row per
+match).
+
+### What the gamers' other games that session say: `bets inference`
+
+```bash
+python -m eAMFCalibrator bets inference --since "2026-09-01 00:00:00"
+```
+
+Punters watch A beat B and C beat D, then back A against D (and C against
+B). This is the same analysis as `bets rematches`, for what each gamer had
+played that session against anyone else.
+
+**What each match is read against:**
+- **Others:** a gamer's earlier matches that session against anyone but
+  this opponent. The last of them is his last other game: won, lost or drew,
+  and by how much, or none (fresh).
+- **The state:** both gamers' last other games, the form side first. "won v
+  lost" is A v D above; "won v won" is both won theirs; "fresh v lost" is one
+  who hadn't played anyone else against one who had lost.
+- **The form side:** the gamer whose last other margin is bigger (0 when
+  fresh). The gap is the difference (1-7, 8-14, 15-21, 22+). Equal margins
+  are "level", with no form side.
+- **A common opponent:** both gamers played the same third gamer earlier
+  that session (the latest such). "beat v lost to" is one beat him and the
+  other lost to him; the side is the gamer who did better against him.
+- **The surprise:** a gamer's last other margin less the margin prod's
+  moneyline implied for him then, so what that game said beyond what prod
+  already knew.
+
+**What it reports:**
+1. **How much is bet,** by what the gamers had played (a rematch, a first
+   meeting after others, or neither had), by the state, and won v lost by
+   the gap.
+2. **Where the moneyline money goes:** prod's price for the form side, how
+   often it won (the residual, won less prod's p, 2se by match), and the
+   share of stake and the book's margin on it and against it. This is cut by
+   state for every match, first meetings and rematches; by the gap; by
+   whether the form side kept the team from his last other game;
+   pre-match, in play, Restricted and VIP.
+3. **A common opponent,** the same way, by how each did against him.
+4. **The handicap and the total:** the handicap money on the form side, and
+   over and under by the gamers' last other games' total less prod's line
+   then. The match's total against prod's line is also given by that.
+5. **Fits on first meetings of the pair:**
+   - the home margin's miss against prod on each gamer's last other
+     surprise;
+   - the total's miss on each gamer's last other total miss;
+   - a logistic of the form side winning on prod's price (as an offset) and
+     the surprise gap.
+6. **The layers on prod's prices, walk-forward:** prod alone, with the
+   rematch layer and with the inference layer. These give log loss and total
+   RMSE match by match, by what the gamers had played, by state (first
+   meetings) and by common opponent.
+7. **The 25 matches with a form side and the most moneyline stake.**
+
+**The inference layer** (`inference_layer.py`) is the rematch layer widened
+to every match the two gamers played that session, against anyone.
+- **The model:** a match's margin error is the home gamer's form that
+  session, less the away gamer's, plus the pair's own effect that day, plus
+  noise. Its total error is both gamers' pace that session plus the pair's
+  plus noise.
+- **What is estimated:** the form's variance comes from pairs of matches
+  the same session sharing one gamer (the margins from his side), split by
+  whether he kept his team. The pair's variance is what two meetings of a
+  pair share beyond both gamers' form. The noise is the rest. A raw estimate
+  below zero is reported, and used as zero.
+- **What it does at a match:** the margin and total move by the best guess
+  of the match's error from the earlier errors that session. These are both
+  gamers' own matches, plus their opponents' other matches whose results were
+  in, which separate a gamer's form from his opponent's. A beating B and D
+  losing to C both move A v D.
+- **How it is fitted:** walk-forward, each UTC day on the days before it, as
+  the rematch layer is. With no form it gives the rematch layer's moves.
+
+Writes `out/bets_inference.txt` and `out/bets_inference.csv` (one row per
+match).
+
 ### The matches the book loses on the moneyline: `bets ml-losers`
 
 ```bash

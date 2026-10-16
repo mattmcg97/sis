@@ -185,6 +185,119 @@ def cmd_scouting(args):
     return 0
 
 
+def _arms(args):
+    """[(name, source)] off the --arm NAME=SOURCE options."""
+    arms = []
+    for spec in args.arm or []:
+        name, sep, source = spec.partition("=")
+        if not sep or not name or not source:
+            raise SystemExit(f"--arm {spec!r}: give it as NAME=SOURCE")
+        arms.append((name.strip(), source.strip()))
+    return arms
+
+
+def _features(args):
+    """The gamers' per-match stats for the feature layer: --features, else player-stats' cache in the
+    output directory; "none" turns the layer off."""
+    from . import player_stats
+    if getattr(args, "features", None) == "none":
+        return None
+    return args.features or os.path.join(args.out or DEFAULT_OUT, player_stats.CACHE)
+
+
+def cmd_prior_backtest(args):
+    """Pre-match priors against prod, each with and without the rematch layer."""
+    from . import prior_backtest
+    arms = _arms(args)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            path = prior_backtest.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
+                                      draws=args.draws, features=_features(args))
+    finally:
+        conn.close()
+    print(f"\n  -> {path} and prior_backtest.csv")
+    return 0
+
+
+def cmd_nb2_history(args):
+    """NB2 refitted daily over a span, every match priced by its own day's fit, into one CSV."""
+    from . import nb2_history
+    out = args.out or DEFAULT_OUT
+    cur = None if args.history else _LazyCursor()
+    try:
+        path = nb2_history.run(out, args.since or "2026-01-01 00:00:00", config.CUTOFF_END, args.history, cur,
+                               args.half_life, args.workers)
+    finally:
+        if cur is not None:
+            cur.close()
+    print(f"\n  -> {path} and {nb2_history.TXT_NAME}")
+    return 0
+
+
+def cmd_backtest_suite(args):
+    """Every pre-match prior variant over one window: fitted, audited, graded, replayed, ranked."""
+    from . import backtest_suite, player_stats
+    cfg = backtest_suite.load_config(args.config)
+    if cfg.get("features") is None:
+        cfg["features"] = os.path.join(DEFAULT_OUT, player_stats.CACHE)
+    out = args.out or os.path.join(DEFAULT_OUT, "suite")
+    steps = [s.strip() for s in args.steps.split(",") if s.strip()]
+    cur = _LazyCursor()                     # connects on the first query the suite's cache can't answer
+    try:
+        path = backtest_suite.run(cur, out, cfg, config.CUTOFF_START, config.CUTOFF_END, steps, args.keep_going,
+                                  history=args.history, fresh=args.fresh)
+    finally:
+        cur.close()
+    print(f"\n  -> {path} (the suite: {out})" + ("" if cur.opened else "; no Snowflake connection needed"))
+    return 0
+
+
+class _LazyCursor:
+    """A Snowflake cursor opened on the first query that runs (none at all when every answer is
+    already in a query cache, so no warehouse is woken)."""
+
+    def __init__(self):
+        self.conn = self.cur = None
+        self.opened = False
+
+    def execute(self, *args, **kwargs):
+        if self.cur is None:
+            self.conn = snowflake_io.get_connection()
+            self.cur = self.conn.cursor()
+            self.opened = True
+        return self.cur.execute(*args, **kwargs)
+
+    @property
+    def description(self):
+        return self.cur.description
+
+    def fetchall(self):
+        return self.cur.fetchall()
+
+    def close(self):
+        if self.conn is not None:
+            self.cur.close()
+            self.conn.close()
+
+
+def cmd_prior_replay(args):
+    """The pre-match bets replayed at each prior's prices, with and without the rematch layer."""
+    from . import prior_replay
+    arms = _arms(args)
+    if not arms:
+        raise SystemExit("prior-replay: give at least one --arm NAME=SOURCE")
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            path = prior_replay.run(cur, args.out or DEFAULT_OUT, arms, config.CUTOFF_START, config.CUTOFF_END,
+                                    draws=args.draws, features=_features(args))
+    finally:
+        conn.close()
+    print(f"\n  -> {path} and prior_replay.csv")
+    return 0
+
+
 def cmd_player_stats(args):
     """Every gamer's h2hggl stats off our history and SCOUTING_FULL, and the check against the site."""
     from . import player_stats
@@ -366,6 +479,14 @@ def cmd_bets(args):
             elif args.action == "sessions":
                 from . import bet_sessions
                 print(f"\n  -> {bet_sessions.run(cur, out_dir)}")
+            elif args.action == "rematches":
+                from . import bet_rematches
+                path = bet_rematches.run(cur, out_dir)
+                print(f"\n  -> {path} and bets_rematches.csv")
+            elif args.action == "inference":
+                from . import bet_inference
+                path = bet_inference.run(cur, out_dir)
+                print(f"\n  -> {path} and bets_inference.csv")
             elif args.action == "ml-losers":
                 from . import bet_losers
                 path = bet_losers.run(cur, out_dir)
@@ -1137,13 +1258,25 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers"],
+                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers",
+                                      "rematches", "inference"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
                                   "placed before kick-off, each model version priced off its kick-off "
                                   "alone (cheap over many weeks), margins week by week and each "
                                   "candidate against the first with a bootstrap interval "
                                   "(out/bets_prematch.txt); "
+                                  "rematches: two gamers meeting again the same day (their session): the "
+                                  "money by meeting (1st, 2nd, 3rd, 4th+) and teams (the same as the first "
+                                  "meeting, swapped, changed), and where the moneyline, handicap and total "
+                                  "money goes against the first meeting's winner and margin, with prod's "
+                                  "price of him then and now (out/bets_rematches.txt); "
+                                  "inference: two gamers meeting after either played someone else that "
+                                  "session (A beat B, C beat D, then A v D): the money and results by each "
+                                  "one's last other game (won v lost, both won, ...), the gap between them "
+                                  "and a common opponent, against prod's price of the form side, the "
+                                  "totals carry-over, fits, and prod with the rematch and inference layers "
+                                  "(out/bets_inference.txt); "
                                   "ml-losers: the matches the book loses on the moneyline against "
                                   "the rest (what is targeted, how they played out), every moneyline "
                                   "bet's residual (won less prod's p) by the game at the bet (lead, ball, "
@@ -1266,6 +1399,78 @@ def build_parser():
                            help="table name, or DATABASE.SCHEMA.TABLE")
     ck_parser.add_argument("--break", dest="break_day", default="2026-09-23", metavar="DATE",
                            help="the first day after the baseline (default 2026-09-23)")
+
+    pb_parser = sub.add_parser(
+        "prior-backtest", parents=[shared],
+        help="pre-match priors against prod, each as it is, with the rematch layer (+layer, rematch_layer.py) "
+             "and with the inference layer (+infer, inference_layer.py: each gamer's form that session from "
+             "every match he played), both fitted walk-forward on its own errors: the moneyline's log loss "
+             "and Brier, the total's RMSE and the over at prod's line, match by match against prod, for "
+             "every match, the rematches and the first meetings (-> prior_backtest.txt/csv)")
+    pb_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
+                           help="a prior to test (repeatable): NAME=PATH@PREFIX (glmer/cadence.R's "
+                                "cadence_matches.csv, columns PREFIX|1 and |2), NAME=PATH (a CSV of "
+                                "MATCH_CODE and Pred_P1_Points / Pred_P2_Points, raw_home / raw_away or "
+                                "exp_p1 / exp_p2), or NAME=rolling:DIR (eAMFModel prior-daily's fits). "
+                                "#MODE reads its moneyline and over: own (NB2's or glmer's own joint "
+                                "score model; the default where there is one), fitted (NB2's construction "
+                                "fitted to its errors; the default otherwise) or normal")
+    pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match (default 40000)")
+    pb_parser.add_argument("--features", metavar="CSV",
+                           help="the gamers' per-match stats for the feature layer (+feat, +both+feat): "
+                                "player-stats' player_match_stats.csv (default: the one in --out; "
+                                "'none' for no feature layer)")
+    pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    pr_parser = sub.add_parser(
+        "prior-replay", parents=[shared],
+        help="the window's pre-match bets replayed at each prior's prices (prior-backtest's arms, each as it "
+             "is and with each layer, and prod with each layer): the same bets and stakes at the arm's "
+             "chance at each bet's line, the operator's margin kept, the book's margin against prod's "
+             "(-> prior_replay.txt/csv)")
+    pr_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
+                           help="a prior to replay (repeatable), as prior-backtest's --arm")
+    pr_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match (default 40000)")
+    pr_parser.add_argument("--features", metavar="CSV",
+                           help="as prior-backtest's --features")
+    pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    nh_parser = sub.add_parser(
+        "nb2-history",
+        help="NB2's historical pass: refitted every day from --since (default 2026-01-01) as live, no layers; "
+             "every match priced by its own day's fit (expected points, margin, total, moneyline) beside its "
+             "metadata (-> nb2_history.csv, graded month by month in nb2_history.txt)")
+    nh_parser.add_argument("--since", metavar="DATE", help="the first day priced (default 2026-01-01)")
+    nh_parser.add_argument("--until", metavar="DATE", help="the day after the last priced (default: the history's end)")
+    nh_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv (eAMFCalibrator history's) to fit on: no Snowflake. "
+                                "Without it the history is fetched")
+    nh_parser.add_argument("--half-life", type=float, metavar="DAYS",
+                           help="NB2's half-life (NBRatingTrial --half-life-days; default its own, 60)")
+    nh_parser.add_argument("--workers", type=int, default=4, help="fits run side by side (default 4)")
+    nh_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    bs_parser = sub.add_parser(
+        "backtest-suite", parents=[shared],
+        help="every pre-match prior variant over one window: NB2 refitted daily at each half-life, glmer, each "
+             "with the rematch, inference and feature layers; the inputs audited for leaks, a scramble and "
+             "determinism check on the layers, echo and shuffled controls, prior-backtest and prior-replay off "
+             "one read, and one ranked summary (-> out/suite/)")
+    bs_parser.add_argument("--config", metavar="JSON",
+                           help="the suite's settings (backtest_suite.DEFAULTS: nb2_half_lives, glmer, arms, "
+                                "features, periods, ...)")
+    bs_parser.add_argument("--steps", default="history,fits,audit,backtest,replay,summary",
+                           help="the steps to run, comma-separated (default all: history,fits,audit,backtest,"
+                                "replay,summary)")
+    bs_parser.add_argument("--keep-going", action="store_true", help="carry on past a failed audit check")
+    bs_parser.add_argument("--history", metavar="CSV",
+                           help="the history step takes this match_history.csv (eAMFCalibrator history's) "
+                                "instead of fetching one: no Snowflake")
+    bs_parser.add_argument("--fresh", action="store_true",
+                           help="empty the suite's query cache first (every query asked of Snowflake again)")
+    bs_parser.add_argument("--out", help=f"the suite's directory (default: {DEFAULT_OUT}/suite)")
 
     ps_parser = sub.add_parser(
         "player-stats", parents=[shared],
@@ -1405,6 +1610,14 @@ def main(argv=None):
         return cmd_scouting_check(args)
     if args.command == "player-stats":
         return cmd_player_stats(args)
+    if args.command == "prior-backtest":
+        return cmd_prior_backtest(args)
+    if args.command == "prior-replay":
+        return cmd_prior_replay(args)
+    if args.command == "backtest-suite":
+        return cmd_backtest_suite(args)
+    if args.command == "nb2-history":
+        return cmd_nb2_history(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":

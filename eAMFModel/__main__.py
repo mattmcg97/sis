@@ -511,7 +511,13 @@ def cmd_prior_daily(args):
         raise SystemExit("prior-daily needs --history, --since, --until and --out (or --detach)")
     history = nb2_prior.load_history(args.history)
     since, until = dt.date.fromisoformat(args.since), dt.date.fromisoformat(args.until)
-    rolling = rolling_prior.fit(history, args.prior, args.out, since, until, workers=args.workers)
+    options = {}
+    if args.half_life is not None:
+        if args.prior != "nb2":
+            raise SystemExit("--half-life is NB2's (glmer's weighting is glmer/config.R's)")
+        options["half_life"] = args.half_life
+    rolling = rolling_prior.fit(history, args.prior, args.out, since, until, workers=args.workers,
+                                options=options)
     print(f"  {rolling.describe()}")
     for m in (args.attach or "").split(","):
         if m:
@@ -738,6 +744,9 @@ def build_parser():
                                     "with the same --prior)")
     p.add_argument("--detach", help="builds to return to their own single fit, comma-separated")
     p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
+    p.add_argument("--half-life", type=float, metavar="DAYS",
+                   help="NB2 only: each fit's results weighted 2^(-days old / DAYS) (NBRatingTrial's "
+                        "--half-life-days; default its own, 60). A directory keeps one setting")
     p.set_defaults(func=cmd_prior_daily)
 
     p = sub.add_parser("prior-vs-sim", help="calibration: a window's matches priced by the pre-match prior "

@@ -468,6 +468,201 @@ match or two out. That is worth a fraction of a point, so its builds still price
 quote off the results in when it was published (`glmer_prior.ROUGH_CLOCK_TERMS`). `form_shift`
 stays an option.
 
+## Refitting after every result: `cadence.R` (14 Oct 2026)
+
+Form already follows every game without a refit. `FormFor` and `FormAgainst` are recomputed from
+every result before a match whenever it is priced. What a refit adds is fresh gamer and team
+effects and coefficients. Refitting the production model after every result isn't possible, because
+one fit takes minutes. So `cadence.R` trims the model to something that fits in seconds and
+compares three arms match by match:
+- **`full_daily`:** the production model (`form_clock`), refitted at each midnight.
+- **`trim_daily`:** the trimmed model, refitted at each midnight.
+- **`trim_game`:** the trimmed model, refitted before every kick-off on every result in by then
+  (36 minutes after a match's kick-off). A kick-off with no new result since the last fit reuses
+  that fit.
+
+The trimmed model is the production formula without the per-match and per-row noise terms, the
+stream and the time of day:
+
+```
+Score ~ IsHome + FormFor + FormAgainst + OppFormFor + OppFormAgainst + ExpLog + OppExpLog +
+        SessLate + OppSessLate + (1|Player) + (1|OpponentPlayer) + (1|Team) + (1|OpponentTeam)
+```
+
+It's fitted with nAGQ 0, each fit warm-started from the one before. Every arm prices with the same
+features and the experience floor. The moneyline is a normal around the expected margin (sd 9.35).
+
+```bash
+Rscript glmer/cadence.R --days=14 --cores=4                                     # full, trim, trim:game
+Rscript glmer/cadence.R --days=28 --arms=trim:hl60:daily,trim:hl60:game --cores=4
+```
+
+The fits run in stretches, one per core for a per-game arm. Each stretch prints a line every 50
+fits (`--progress`, `0` for none): fits done, seconds a fit and the time left, e.g.
+`trim:hl60_x0.5:game 2/4: 150/678 fits, 4.1 s a fit, ~36 min left`.
+
+Each arm is `MODEL[:WEIGHTING][:CADENCE]`, and the first arm is the baseline every other is compared
+with:
+- **Models:** `full` (production, daily only), `trim`, `trim_pair` (+ gamer v gamer),
+  `trim_team` (+ each gamer with the team they play as) and `trim_both`.
+- **Weightings:** any name in `WEIGHTINGS`, or `hl<days>`, `m<matches>`, `win<days>` or `flat`,
+  each optionally `_x<scalar>`.
+- **Cadences:** `daily` or `game`.
+
+The last 14 full days of `nb2/AMFELO.csv` (27 Aug – 9 Sep, 1,238 matches):
+
+| | full_daily | trim_daily | trim_game |
+|---|---|---|---|
+| fits | 14 | 14 | 962 |
+| seconds a fit (4 busy cores) | 1,147 | 6.7 | 3.8 |
+| moneyline log loss | 0.6659 | 0.6670 | 0.6662 |
+| moneyline Brier | 0.2370 | 0.2374 | 0.2371 |
+| margin RMSE | 9.537 | 9.511 | 9.512 |
+| total RMSE | 12.166 | 12.139 | 12.147 |
+
+Paired, match by match:
+- **What trimming costs (`trim_daily` − `full_daily`): nothing measurable.** Log loss +0.0011
+  (t +0.7, better on 6 of 14 days). Margin and total squared errors are slightly better (t −1.4,
+  −1.0).
+- **What refitting after every result gains (`trim_game` − `trim_daily`).** Log loss −0.0008
+  (t −1.9, better on 8 of 14 days) and Brier −0.0004 (t −1.9, better on 9 of 14). There's no gain
+  on the margin (t +0.2), and the total is a touch worse (t +1.3).
+  - The gain grows with how stale the day's fit has become. By the later gamer's game of the day,
+    the log-loss change is:
+    - games 1–2: +0.0002 (284 matches);
+    - games 3–5: −0.0011 (463);
+    - games 6–8: −0.0013 (328);
+    - games 9+: −0.0007 (163).
+  - Per-game refits move a price only a little: the expected margin by 0.12 points on average (95%
+    within 0.35), the total by 0.14.
+- **The trimmed model refitted after every result, against production daily: level.** Log loss
+  +0.0003 (t +0.2). Margin and total errors are slightly better (n.s.).
+
+So the trimmed model costs nothing measurable, and refitting it after every result buys a small
+moneyline gain. That gain appears where it should, later in the day, but at t −1.9 over 14 days
+it isn't settled. It needs a longer window (the match history up to today) before it's worth
+building. A refit takes about 4 seconds, so live per-result refits would be cheap.
+
+### The trimmed model's weighting and matchups (14 Oct 2026)
+
+Every row is weighted by its age in days, 2^(−days ago / 60), and then normalised to a mean of 1.
+That's separate from form, which is an average of a gamer's last matches with a half-life of 10
+matches. This run tests other weightings and the matchup terms on the trimmed model.
+
+The test is 8 weeks of daily refits on `nb2/AMFELO.csv` (16 Jul – 9 Sep, 5,140 matches). Each arm
+is set against `trim:hl60`, match by match. "Days" counts the days it was better on log loss.
+
+| arm | s a fit | log loss vs hl60 (t, days) | margin sq err (t) | total sq err (t) |
+|---|---|---|---|---|
+| `hl14` | 6 | +0.0046 (+3.6, 19/56) | +0.99 (+3.4) | +1.20 (+2.4) |
+| `hl30` | 7 | +0.0009 (+1.7, 23/56) | +0.13 (+1.1) | +0.17 (+0.9) |
+| `hl120` | 7 | +0.0002 (+0.5, 26/56) | +0.18 (+2.0) | +0.04 (+0.3) |
+| `hl60_x0.5` | 6 | +0.0001 (+0.8, 25/56) | −0.03 (−0.9) | **−0.09 (−3.1)** |
+| `hl60_x0.25` | 6 | +0.0007 (+1.6, 24/56) | +0.00 (+0.0) | **−0.23 (−2.9)** |
+| `hl30_x0.25` | 7 | +0.0020 (+2.8, 21/56) | +0.22 (+1.4) | −0.06 (−0.3) |
+| `hl120_x0.25` | 6 | +0.0004 (+0.8, 25/56) | +0.05 (+0.4) | −0.18 (−1.2) |
+| `m150` (each gamer's own matches) | 7 | +0.0011 (+2.7, 19/56) | +0.28 (+3.1) | −0.15 (−1.2) |
+| `m300` | 7 | +0.0007 (+1.6, 24/56) | +0.31 (+3.0) | +0.00 (+0.0) |
+| `win60` (last 60 days, flat) | 1 | +0.0047 (+4.0, 18/56) | +1.11 (+4.2) | +1.14 (+2.6) |
+| `trim_pair:hl60` | 17 | +0.0110 (+4.1, 20/56) | +3.69 (+6.1) | +7.45 (+7.2) |
+| `trim_pair:hl60_x0.25` | 11 | +0.0005 (+0.5, 28/56) | +0.02 (+0.1) | +0.18 (+0.5) |
+| `trim_team:hl60` | 57 | +0.0132 (+5.9, 16/56) | +3.36 (+6.6) | +3.70 (+4.3) |
+| `trim_team:hl60_x0.25` | 41 | +0.0026 (+3.0, 19/56) | +0.39 (+2.0) | −0.20 (−0.6) |
+
+- **The 60-day half-life in days stays.**
+  - 120 days is level.
+  - 30 days is a little worse, and 14 days clearly so.
+  - A flat 60-day window throws away too much.
+  - Counting each gamer's own matches (`m150`, `m300`) instead of days is worse on the moneyline
+    and the margin.
+- **The scalar helps the totals.** The trimmed model has no per-row noise term, so Poisson treats
+  each score as about three times more informative than it is (real scores vary well beyond
+  Poisson). Counting the data at half (`_x0.5`) is level on the moneyline and better on totals
+  (t −3.1). At a quarter, totals improve more but the moneyline slips (t +1.6). `hl60_x0.5` is
+  the best of these.
+- **Matchups soak up noise.**
+  - **At full weight, both hurt badly.** Gamer v gamer fits an sd of 0.13 on the log scale (the
+    full model, with its noise term, gave 0.06), and log loss rises by 0.011.
+  - **Gamer v gamer at a quarter's weight is level** (+0.0005, t +0.5).
+  - **Gamer with team at a quarter's weight is still worse** (+0.0026, t +3.0).
+
+  As in the full model ("Gamer-v-gamer and team-v-team matchups"), neither earns a place.
+- **What the matchups cost to refit after every result.** Warm-started, at a quarter's weight,
+  the median fit takes:
+  - trim: 5 s;
+  - + gamer v gamer: 9 s;
+  - + gamer with team: 33 s;
+  - both: 77 s.
+
+  Cold, the first fit takes 15 s, 35 s, 207 s and 396 s.
+
+## NB2's prices as a glmer input: `cadence.R --nb2` (16 Oct 2026)
+
+Could glmer do better given NB2's view of each match? `eAMFCalibrator nb2-history` refits NB2 every
+day from 1 Jan, on the results before that day, and prices every match with its own day's fit
+(`nb2_history.csv`). Every NB2 price was made before its match's day, so glmer can be fitted on the
+earlier rows' prices and priced on a later day's without seeing anything it couldn't have live.
+`--nb2=nb2_history.csv` adds `NB2Log`, the log of NB2's expected points for the side, and three
+models:
+- **`nb2_trim`:** the trimmed model + `NB2Log`. NB2's view is one more covariate, its weight fitted.
+- **`nb2_re`:** `NB2Log` + the gamer and team effects only: where NB2 is off, gamer by gamer.
+- **`nb2_off`:** the trimmed model with `NB2Log` as an offset: glmer fitted on what NB2 leaves.
+
+The arm `nb2` is NB2's prices as they are, with no fit (a baseline). A match NB2 didn't price is
+neither fitted on nor priced by these.
+
+```bash
+python -m eAMFCalibrator nb2-history --since 2026-01-01 --history nb2/AMFELO.csv
+Rscript glmer/cadence.R --history=nb2/AMFELO.csv --nb2=eAMFCalibrator/out/nb2_history.csv \
+    --test-from=2026-07-16 --test-until=2026-09-10 --cores=4 \
+    --arms=nb2,trim:hl60_x0.5:daily,nb2_trim:hl60_x0.5:daily,nb2_re:hl60_x0.5:daily,nb2_off:hl60_x0.5:daily,nb2_re:hl60_x0.25:daily,nb2_off:hl60_x0.25:daily
+```
+
+**NB2 over the year** (`nb2/AMFELO.csv`, 1 Jan – 10 Sep, 22,119 matches): moneyline log loss
+0.6574 (0.632–0.669 by month), margin RMSE 9.59, total RMSE 12.15. It is well calibrated, but the
+home side beats its margin by 0.35 points on average: between 40% and 60% the home side wins 1–2
+points more often than NB2 says. NB2 gives a tie 3–4%; the games have 6 in 24,000.
+
+**glmer on NB2, daily refits, 16 Jul – 9 Sep** (5,140 matches), each against NB2 match by match
+(the moneyline a normal about the margin, sd 9.35):
+
+| arm | log loss | vs NB2 (t, days better) | margin sq err (t) | total sq err (t) | gamer effect sd |
+|---|---|---|---|---|---|
+| `nb2` | 0.6641 | | | | |
+| `trim:hl60_x0.5` | **0.6622** | **−0.0019 (−1.9, 31/56)** | −0.52 (−2.3) | −2.48 (−5.1) | 0.161 |
+| `nb2_trim:hl60_x0.5` | 0.6631 | −0.0010 (−0.8, 27/56) | −0.35 (−1.3) | −2.35 (−4.7) | 0.113 |
+| `nb2_re:hl60_x0.5` | 0.6652 | +0.0011 (+0.9, 23/56) | +0.01 (+0.0) | −0.46 (−1.3) | 0.093 |
+| `nb2_off:hl60_x0.5` | 0.6654 | +0.0013 (+0.8, 23/56) | +0.35 (+1.0) | −0.25 (−0.4) | 0.038 |
+| `nb2_re:hl60_x0.25` | 0.6660 | +0.0019 (+1.5, 22/56) | +0.09 (+0.3) | −0.83 (−2.5) | 0.048 |
+| `nb2_off:hl60_x0.25` | 0.6643 | +0.0002 (+0.1, 24/56) | +0.04 (+0.1) | −0.61 (−1.2) | 0.035 |
+
+**With the layers** (the rematch, inference and +both layers fitted walk-forward on each arm's own
+errors; 4,464 matches after their 7-day burn-in, 3,074 of them rematches), log loss against NB2:
+
+| | every match | first meetings | rematches |
+|---|---|---|---|
+| glmer (`trim:hl60_x0.5`) | −0.0015 (t −1.4) | +0.0017 | −0.0030 |
+| glmer +both | −0.0016 (t −1.4) | +0.0014 | −0.0030 |
+| glmer on NB2 (`nb2_trim`) +both | −0.0012 (t −0.9) | +0.0016 | −0.0025 |
+| NB2 +infer | −0.0011 (t −1.3) | −0.0009 | −0.0011 |
+| NB2 +both | −0.0008 (t −1.2) | −0.0009 | −0.0007 |
+| NB2 and glmer averaged | −0.0014 (t −2.6) | +0.0002 | −0.0021 |
+| NB2 +infer and glmer +both averaged | **−0.0019 (t −2.1)** | −0.0004 | −0.0026 |
+
+- **NB2's prices add nothing glmer doesn't already have.** glmer on its own beats NB2 (−0.0019,
+  t −1.9). Given NB2's prices as well (`nb2_trim`), it does a little worse than without them
+  (−0.0010). NB2's view takes over part of the gamer effects (their sd falls from 0.16 to 0.11),
+  but what glmer learns from the results is worth more.
+- **NB2's errors aren't a gamer's to correct.** Fitted on what NB2 leaves (`nb2_off`) or on NB2
+  with gamer effects only (`nb2_re`), glmer is level with NB2 or worse. The gamer effects come out
+  small (sd 0.03–0.09). What NB2 gets wrong about a gamer isn't lasting enough to learn.
+- **The two models are good at different matches.** glmer is better at rematches (−0.0030 against
+  NB2): its session form already follows the day. NB2 is better at first meetings (glmer +0.0017),
+  and better still with the inference layer (−0.0009).
+- **So average them rather than stack them.** NB2 +infer and glmer +both, half each, is the best
+  here (−0.0019 against NB2, t −2.1). It is only 0.0004 ahead of glmer alone (t −0.6), so 8 weeks
+  don't settle it.
+
 ## Speed
 
 The global model is the slow part: two very large random effects,

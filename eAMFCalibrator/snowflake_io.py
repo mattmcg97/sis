@@ -11,6 +11,9 @@ detect_play_time_column() is kept anyway: if the feed ever gains a real
 timestamp, it is preferred over the reconstruction automatically.
 """
 
+import hashlib
+import os
+import pickle
 import sys
 import time
 from pathlib import Path
@@ -121,16 +124,39 @@ def source_table(stream_table):
 _FETCH_CACHE = {}
 
 
+def _disk_path(key):
+    """The file a query's answer is kept in under config.FETCH_DISK_CACHE (None when off)."""
+    directory = getattr(config, "FETCH_DISK_CACHE", None)
+    if not directory:
+        return None
+    digest = hashlib.sha256(repr((" ".join(key[0].split()), key[1])).encode("utf-8")).hexdigest()
+    return os.path.join(directory, f"{digest[:40]}.pkl")
+
+
 def fetch_all(cur, sql, params=None):
     key = (sql, tuple(params or ()))
     if getattr(config, "FETCH_CACHE", False) and key in _FETCH_CACHE:
         cols, rows = _FETCH_CACHE[key]
         return list(cols), list(rows)
+    disk = _disk_path(key)
+    if disk and os.path.exists(disk):
+        with open(disk, "rb") as fh:
+            cols, rows = pickle.load(fh)
+        return list(cols), list(rows)
+    if cur is None:
+        raise SystemExit("this needs Snowflake, and its answer isn't in the query cache "
+                         f"({getattr(config, 'FETCH_DISK_CACHE', None) or 'no cache'})")
     cur.execute(sql, params or ())
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     if getattr(config, "FETCH_CACHE", False):
         _FETCH_CACHE[key] = (list(cols), list(rows))
+    if disk:
+        os.makedirs(os.path.dirname(disk), exist_ok=True)
+        tmp = disk + ".part"
+        with open(tmp, "wb") as fh:
+            pickle.dump((list(cols), list(rows)), fh, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, disk)                         # whole or not at all, even if stopped mid-write
     return cols, rows
 
 
@@ -611,6 +637,27 @@ def scouting_table(cur):
     table = _SCOUTING_TABLE.get(config.SCOUTING_TABLE) or scouting.locate(cur, config.SCOUTING_TABLE)
     _SCOUTING_TABLE[config.SCOUTING_TABLE] = table
     return table
+
+
+def fetch_first_plays(cur, match_codes):
+    """match -> the message count of its first PLAY_STARTED row in SCOUTING_FULL: a quote with a
+    message count below it was published before the match got under way (prematch.is_prematch). A
+    match the play feed has no PLAY_STARTED for is left out."""
+    from . import scouting
+    table = scouting_table(cur)
+    codes = sorted(set(match_codes))
+    out = {}
+    for k in range(0, len(codes), config.MATCH_CHUNK_SIZE):
+        batch = codes[k:k + config.MATCH_CHUNK_SIZE]
+        _, rows = fetch_all(cur, f"""
+            SELECT MATCH_CODE, MIN(EVENT_MESSAGE_COUNT)
+            FROM {table.qualified}
+            WHERE MATCH_CODE IN ({_in_clause(batch)})
+              AND UPPER(TRIM({scouting.MESSAGE})) = 'PLAY_STARTED'
+            GROUP BY MATCH_CODE
+        """, tuple(batch))
+        out.update({r[0]: int(r[1]) for r in rows if r[1] is not None})
+    return out
 
 
 def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=None, keep=None):
