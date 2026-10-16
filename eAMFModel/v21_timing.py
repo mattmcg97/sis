@@ -136,10 +136,11 @@ def _same(x, y):
     return len(x) == len(y) and all(np.array_equal(p, q) for p, q in zip(x, y))
 
 
-def compare_lines(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE):
-    """v21's exact speedups (SPEEDUPS) off, then on twice (the tables built, then kept): one match's
-    kick-off, its in-play run and a live update of its first snap state, timed, and every output of
-    the runs on set against the runs off, bit for bit."""
+def compare_lines(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE, repeats=3):
+    """v21's exact speedups (SPEEDUPS) on with the tables built in the run, then off and on (the tables
+    kept) in turn `repeats` times, the best of each taken: one match's kick-off, its in-play run and a
+    live update of its first snap state, timed, and every run's outputs set against the first off,
+    bit for bit."""
     starts = vs.state_starts(model, [vs._as_text(r) for r in sorted(rows, key=lambda r: int(r["message"]))],
                              pair, teams)
     if not starts:
@@ -172,32 +173,42 @@ def compare_lines(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHAR
         took["a live update"] = time.perf_counter() - t
         return got, took
 
+    def switched(on):
+        for k in SPEEDUPS:
+            setattr(v21, k, on)
+
     saved = {k: getattr(v21, k) for k in SPEEDUPS}
     try:
-        for k in SPEEDUPS:
-            setattr(v21, k, False)
+        switched(True)
         _forget(model)
-        off, t_off = runs()
-        for k in SPEEDUPS:
-            setattr(v21, k, True)
-        _forget(model)
-        cold, t_cold = runs()
-        warm, t_warm = runs()
+        cold, t_cold = runs()                      # the tables built in the run
+        offs, warms = [], []
+        for _ in range(repeats):                   # then off and on in turn: the best of each, so what
+            switched(False)                        # else the machine is doing weighs on both alike
+            offs.append(runs())
+            switched(True)
+            warms.append(runs())
     finally:
         for k, v in saved.items():
             setattr(v21, k, v)
+    off, warm = offs[0][0], warms[0][0]
+    t_off = {p: min(t[p] for _, t in offs) for p in t_cold}
+    t_warm = {p: min(t[p] for _, t in warms) for p in t_cold}
+    agree = {key: all(_same(off[key], g[key]) for g, _ in offs + warms + [(cold, None)])
+             for key in ("kick", "in play", "live")}
     lines = [f"  the exact speedups ({', '.join(SPEEDUPS)}) off and on: one match ({len(starts)} states x {n_paths:,} games),"
              " every output set against the run with them off, bit for bit:",
              f"    {'':16s}{'off':>9s}{'on, new':>10s}{'on, kept':>10s}{'saved':>8s}   outputs"]
     keys = {"the kick-off": "kick", "in play": "in play", "a live update": "live"}
     for part, key in keys.items():
-        ok = _same(off[key], cold[key]) and _same(off[key], warm[key])
+        ok = agree[key]
         lines.append(f"    {part:16s}{t_off[part]:>8.2f}s{t_cold[part]:>9.2f}s{t_warm[part]:>9.2f}s"
                      f"{100 * (1 - t_warm[part] / max(t_off[part], 1e-9)):>7.0f}%   {'identical' if ok else 'DIFFERENT'}")
     if "alpha" in off:
-        ok = np.array_equal(off["alpha"], cold["alpha"]) and np.array_equal(off["alpha"], warm["alpha"])
+        ok = all(np.array_equal(off["alpha"], g["alpha"]) for g, _ in offs + warms + [(cold, None)])
         lines.append(f"    {'the nudge':16s}{'':37s}   {'identical' if ok else 'DIFFERENT'}")
-    lines.append("    (new: the tables built in the run, as a worker's first match; kept: built already, as its rest)")
+    lines.append(f"    (off and kept: the best of {repeats} runs each, taken in turn; new: the tables built in the run, as a"
+                 " worker's first match; kept: built already, as its rest)")
     return lines
 
 

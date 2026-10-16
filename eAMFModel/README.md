@@ -2400,7 +2400,8 @@ and the nudge solved before kick-off. A profile of the first match's in-play run
 simulate's parts and the functions it spends its own time in. The projection covers simulation
 only; reading Snowflake and the prior's predictions come on top.
 
-`--compare` also runs the first match with v2.1's two exact speedups off and then on. It times
+`--compare` also runs the first match with v2.1's two exact speedups off and on, in turn three
+times, keeping the best of each so other work on the machine weighs on both alike. It times
 the kick-off, the in-play run and a live update, and sets every output against the run with them
 off, bit for bit.
 
