@@ -411,6 +411,16 @@ def cmd_expected_points(args):
     return 0
 
 
+def read_match_list(value):
+    """Match codes from a file (one a line, the first word; # starts a comment) or a comma-separated
+    list."""
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as fh:
+            codes = [line.split("#", 1)[0].split() for line in fh]
+        return [c[0] for c in codes if c]
+    return [c.strip() for c in value.split(",") if c.strip()]
+
+
 def cmd_bets(args):
     """The betting simulation: every in-play bet in the window with prod's and the candidate's
     probability at the moment it was priced (`probe` first checks the names it reads)."""
@@ -446,6 +456,8 @@ def cmd_bets(args):
         config.BET_TABLE = args.bet_table
     if getattr(args, "gamer", None):
         config.GAMERS = [g.strip() for g in args.gamer if g.strip()]
+    if getattr(args, "only_matches", None):
+        config.ONLY_MATCHES = read_match_list(args.only_matches)
     if args.gap is not None:
         config.MAX_SCOUTING_GAP = args.gap
     if args.max_lag is not None:
@@ -518,15 +530,41 @@ def cmd_bets(args):
 def cmd_history(args):
     """Every settled match before --until (default: now), shaped like
     nb2/AMFELO.csv: what v4's own pre-match model (NB2) is fitted on."""
-    import csv
     out_dir = args.out or DEFAULT_OUT
     os.makedirs(out_dir, exist_ok=True)
     conn = snowflake_io.get_connection()
     try:
         with conn.cursor() as cur:
-            rows = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
+            _write_history(cur, out_dir)
     finally:
         conn.close()
+    return 0
+
+
+def cmd_refresh(args):
+    """The data every build and report reads, in one go: SCOUTING_FULL's PLAY_OVER snapshots and
+    every timeout from --since (default config.REFRESH_SINCE) to --until, and every settled match
+    before --until -- scouting_playover.csv, timeouts.csv and match_history.csv in --out."""
+    from . import timeouts
+    out_dir = args.out or DEFAULT_OUT
+    os.makedirs(out_dir, exist_ok=True)
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            table = scouting.locate(cur, args.scouting_table)
+            scouting.export(cur, table, os.path.join(out_dir, "scouting_playover.csv"))
+            timeouts.run(cur, table, out_dir)
+            _write_history(cur, out_dir)
+    finally:
+        conn.close()
+    print(f"\n  refreshed {out_dir}: scouting_playover.csv, timeouts.csv, match_history.csv")
+    return 0
+
+
+def _write_history(cur, out_dir):
+    """match_history.csv: every settled match before config.CUTOFF_END."""
+    import csv
+    rows = snowflake_io.fetch_history(cur, until=config.CUTOFF_END)
     path = os.path.join(out_dir, "match_history.csv")
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, snowflake_io.HISTORY_COLUMNS)
@@ -535,7 +573,7 @@ def cmd_history(args):
     first = rows[0]["SCHEDULED_START_TIME_UTC"] if rows else "-"
     last = rows[-1]["SCHEDULED_START_TIME_UTC"] if rows else "-"
     print(f"\n  {len(rows):,} settled {config.SPORT_CODE} matches, {first} -> {last}: {path}")
-    return 0
+    return path
 
 
 def run_one(stream_key, out_dir):
@@ -964,7 +1002,7 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v8 to v14 -- see eAMFModel) priced "
+                             "or a model version (v8 to v14, v21 -- see eAMFModel) priced "
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
@@ -1037,6 +1075,23 @@ def common_options():
     tuning.add_argument("--v14-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v14: as --v10-lines "
                              f"(default {config.V14_LINES})")
+    tuning.add_argument("--v21-model", metavar="DIR",
+                        help="eAMFModel v21-build's output, for --candidate v21 "
+                             "(default $EAMF_V21_MODEL, then ./v21_model)")
+    tuning.add_argument("--v21-paths", type=int, metavar="N",
+                        help=f"games simulated per snapshot for --candidate v21 "
+                             f"(default {config.V21_PATHS}; the kick-off twice that)")
+    tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
+                        help="--candidate v21: as --v10-lines "
+                             f"(default {config.V21_LINES})")
+    tuning.add_argument("--v21-prior-model", metavar="DIR",
+                        help="--candidate v21: the v13/v14 build (made with --history) whose pre-match "
+                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then "
+                             "$EAMF_V14_MODEL, then ./v14_model)")
+    tuning.add_argument("--v21-nudge-share", type=float, metavar="S",
+                        help="--candidate v21: how far toward the prior's expected points each side's "
+                             f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
+                             "0: the sim's own means, no prior)")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -1081,7 +1136,12 @@ def apply_overrides(args):
                            ("v13_lines", "V13_LINES"),
                            ("v14_model", "V14_MODEL_DIR"),
                            ("v14_paths", "V14_PATHS"),
-                           ("v14_lines", "V14_LINES")):
+                           ("v14_lines", "V14_LINES"),
+                           ("v21_model", "V21_MODEL_DIR"),
+                           ("v21_paths", "V21_PATHS"),
+                           ("v21_lines", "V21_LINES"),
+                           ("v21_prior_model", "V21_PRIOR_MODEL_DIR"),
+                           ("v21_nudge_share", "V21_NUDGE_SHARE")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
@@ -1128,6 +1188,11 @@ def apply_uplift(args):
     config.UPLIFT_FACTOR = getattr(args, "uplift_factor", None)
     if config.UPLIFT_CHART and not os.path.exists(config.UPLIFT_CHART):
         raise SystemExit(f"--margin-chart {config.UPLIFT_CHART}: no such file")
+    if config.UPLIFT_CHART:                     # read it now: a bad chart stops the run before the long part
+        from . import margin_uplift
+        chart = margin_uplift.load_chart(config.UPLIFT_CHART)
+        print(f"  margin chart {config.UPLIFT_CHART}: {len(chart):,} prices, probability"
+              f" {min(chart) / 1000:.3f} to {max(chart) / 1000:.3f}")
 
 
 def build_parser():
@@ -1254,6 +1319,9 @@ def build_parser():
                                   "with each one's closing pre-match prices -- prod against each "
                                   "candidate -- the result, and what its bets returned the book both "
                                   "ways (out/bets_gamers.txt); one night of one gamer is quick, in play too")
+    bets_parser.add_argument("--only-matches", metavar="FILE|CODES",
+                             help="run, prematch: only these matches' bets -- a file of match codes (one a "
+                                  "line, # comments), or codes comma-separated; a quick test on a chosen few")
     bets_parser.add_argument("--matches", type=int, default=12, metavar="N",
                              help="lines: draw the N matches with the most spread and total bets")
     bets_parser.add_argument("--match", action="append", metavar="CODE",
@@ -1295,6 +1363,15 @@ def build_parser():
                              help="bet-table columns to carry into the output, comma-separated "
                                   "(e.g. the customer and VIP columns)")
     bets_parser.set_defaults(func=cmd_bets)
+
+    rf_parser = sub.add_parser(
+        "refresh", parents=[shared],
+        help="the data every build and report reads, in one go: the PLAY_OVER snapshots and timeouts "
+             f"from --since (default {config.REFRESH_SINCE}) and every settled match to --until "
+             "(-> scouting_playover.csv, timeouts.csv, match_history.csv)")
+    rf_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+    rf_parser.add_argument("--scouting-table", default=scouting.DEFAULT_TABLE, metavar="NAME",
+                           help="table name, or DATABASE.SCHEMA.TABLE")
 
     sc_parser = sub.add_parser(
         "scouting", parents=[shared],
@@ -1510,7 +1587,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     if args.command in ("scouting", "timeouts") and not (args.days or args.since):
         args.days = 30          # the scouting export defaults to the last month
+    if args.command == "refresh" and not (args.days or args.since):
+        args.since = config.REFRESH_SINCE
     apply_overrides(args)
+    if args.command == "refresh":
+        return cmd_refresh(args)
     if args.command == "preflight":
         return cmd_preflight(args)
     if args.command == "run":

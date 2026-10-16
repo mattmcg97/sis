@@ -26,6 +26,8 @@ PREMATCH_ONLY = False
 # `bets --gamer NAME`: only the matches these gamers played, with each match's closing pre-match
 # prices and what its bets returned, prod against each candidate.
 GAMERS = []
+# `bets --only-matches FILE`: only these matches' bets (a quick test on a chosen few).
+ONLY_MATCHES = []
 # The margin uplift every betting simulation runs (margin_uplift.py, the partner's dummy-bet
 # method): prod against each candidate over the window, priced off UPLIFT_CHART (a margin chart
 # CSV: probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
@@ -50,6 +52,9 @@ FETCH_DISK_CACHE = None
 # time, set this to 09:00:00 instead.
 CUTOFF_START = "2026-09-17 10:00:00"
 CUTOFF_END = None  # None = up to the latest data available
+# Where `refresh` starts the snapshots and timeouts when given no --since: the first day the
+# builds read (the match history always runs from the start).
+REFRESH_SINCE = "2026-08-24 00:00:00"
 
 SPORT_CODE = "AF"
 
@@ -110,6 +115,15 @@ V13_LINES = "own"
 V14_MODEL_DIR = None
 V14_PATHS = 2000
 V14_LINES = "own"
+# The same for --candidate v21 (`python -m eAMFModel v21-build`; None: $EAMF_V21_MODEL, then
+# ./v21_model). It prices toward a prior's expected points, as v21-report's --nudge: the prior a
+# v13/v14 build with --history (None: $EAMF_V21_PRIOR, then $EAMF_V14_MODEL, then ./v14_model), each
+# side's offense nudged V21_NUDGE_SHARE of the way there from the sim's own means (0: no prior).
+V21_MODEL_DIR = None
+V21_PATHS = 1000
+V21_LINES = "own"
+V21_PRIOR_MODEL_DIR = None
+V21_NUDGE_SHARE = 0.75
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

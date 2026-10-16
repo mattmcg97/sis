@@ -5,8 +5,10 @@ import csv
 import datetime as dt
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 
 NB2_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "nb2")
 FIT_SCRIPT = "NBRatingTrial.py"
@@ -89,8 +91,18 @@ def predict(ratings_dir, schedule, n_sims=N_SIMS, full=False):
     _need_libraries()
     if not schedule:
         return {}
-    work = os.path.join(ratings_dir, "predict")
-    os.makedirs(work, exist_ok=True)
+    # a folder of its own: NB2's script writes fixed names, and two predictions off the same fit at
+    # once (a report and a test side by side) would write over each other's
+    base = os.path.join(ratings_dir, "predict")
+    os.makedirs(base, exist_ok=True)
+    work = tempfile.mkdtemp(prefix="call_", dir=base)
+    try:
+        return _predict_in(work, ratings_dir, schedule, n_sims, full)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def _predict_in(work, ratings_dir, schedule, n_sims, full=False):
     rows = [{"Player 1 Name": r["PLAYER_1_HANDLE"], "Player 1 Team": r["PLAYER_1_TEAM"],
              "Player 2 Name": r["PLAYER_2_HANDLE"], "Player 2 Team": r["PLAYER_2_TEAM"],
              "Match Id": r["MATCH_CODE"], "Stream": r.get("STREAM_NUMBER", "")} for r in schedule]

@@ -6,6 +6,7 @@ into cells, and asks the only question that matters for a probability:
 **when the model said 30%, did it happen 30% of the time?**
 
 ```
+py -m eAMFCalibrator refresh --until 2026-10-12   # the data the builds and reports read, in one go
 py -m eAMFCalibrator preflight              # check tables + the play clock
 py -m eAMFCalibrator report                 # everything, one HTML (start here)
 py -m eAMFCalibrator report --days 7        # rolling window, no config edit
@@ -17,6 +18,11 @@ py -m eAMFCalibrator run candidate
 py -m eAMFCalibrator run both               # runs both, then diffs them
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
+
+`refresh` writes `scouting_playover.csv` and `timeouts.csv` (the snapshots and timeouts from
+`--since`, default `REFRESH_SINCE`, 24 Aug) and `match_history.csv` (every settled match before
+`--until`) into `out/` over one connection: what `scouting`, `timeouts` and `history` write one at a
+time, and what `eAMFModel v14-build` reads with no options (see eAMFModel's README, "Run it").
 
 Four views:
 
@@ -74,12 +80,15 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8`, `v9`, `v10`) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines`; `--v14-model`, `--v14-paths`, `--v14-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12`, `--candidate v13` and `--candidate v14` |
+| `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
+| `--v21-prior-model DIR` | `--candidate v21`: the v13/v14 build (made with `--history`) whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -1834,6 +1843,20 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### A chosen few matches: `bets --only-matches`
+
+```bash
+python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --candidate v14,v14-raw=v14_model_raw --v14-model v14_model --out eAMFCalibrator/out_worst15
+```
+
+`--only-matches` takes a file of match codes (one a line, the first word; `#` starts a comment) or
+codes comma-separated, and keeps only those matches' bets, so a handful is priced in minutes, in play
+included. `match_lists/` holds the lists: `v14_worst15_oct.txt`, the 15 matches where v14's re-priced
+bets fell furthest short of its markup over 1-11 Oct (96% of its shortfall on 4.5% of the stake), and
+`v14_control15_oct.txt`, 15 others with as much money on them, drawn at random. A list chosen for
+losing flatters any model that disagrees with the one it was chosen on, so read the two together.
+`eAMFModel v14-priors` lays the same matches out by each prior (see its README).
+
 ### One gamer's night: `bets --gamer`
 
 ```bash
@@ -1877,8 +1900,8 @@ than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) sho
 
 Every `bets` run (and so `report --bets`) also runs the dummy-bet method from the partner's
 eBasketball notebook. It's applied to AF as they applied it, weaknesses and all, but as a direct
-comparison: prod against each candidate over the report window, on the matches that every feed has
-in-play ticks for. It reuses the quotes the simulation has already fetched, so it costs nothing
+comparison: prod against each candidate over the report window, on matched ticks only (below). It
+reuses the quotes the simulation has already fetched, so it costs nothing
 extra.
 
 ```
@@ -1888,7 +1911,9 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Dummy bets.** Every live in-play tick on the moneyline (50/51, home is their side A) and
   totals (54/55) is a bet to win 100. It's priced at the margin chart's price for the probability
   rounded to 3 places: their `FD_109_BALANCED.csv`, probability then `numerator`, `denominator`,
-  so the price is numerator / denominator + 1. Without `--margin-chart`, a proportional 109% book
+  so the price is numerator / denominator + 1. The file can have a header naming those columns, or,
+  as theirs does, no header with the three in that order. The chart is read when the run starts, so
+  a chart it can't use stops the run at once. Without `--margin-chart`, a proportional 109% book
   stands in.
 - **Per bet.**
   - Stake = 100 / (price − 1).
@@ -1909,9 +1934,14 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - **Checkpoints.** At 54, 45, 36, 30, 21 and 15 minutes left (their 18, 15, 12, 10, 7 and 5),
   each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
   feed; its margin needs more than 50.
-
-The feeds can tick at different rates, so each one's tick count is shown. The matches are the ones
-the simulation covers: those with at least one bet.
+- **Matched ticks only.** The feeds tick at different rates, so every table bets at prod's ticks
+  alone. At each one, each candidate's latest live price for the same match, market and selection
+  is taken (no more than `PAIR_MAX_AGE`, 2 minutes, old). A prod tick without one in every
+  candidate is dropped from every feed, and so is one where any feed's probability is outside
+  `PROB_RANGE` (0.05 to 0.95). The moments and bets are the same for all, only the probabilities
+  differ, so the uplift is the model's alone. Each feed's matched ticks are shown against all its
+  ticks. The clock factor is still fitted on all of prod's ticks. The matches are the ones
+  the simulation covers: those with at least one bet.
 
 The page's betting simulation has three panels:
 - **Re-pricing:** the real bets at each candidate's probability.
@@ -1920,6 +1950,29 @@ The page's betting simulation has three panels:
 
 `margin_uplift.csv` holds the sums behind every table: one row per feed, market, minute,
 selection and band.
+
+- **Brier and log loss, same ticks.** The headline also scores every feed on exactly the matched
+  ticks with more than 6 game minutes left, every tick alike (lower is better). It's a proper
+  score: it's best when the probabilities are right. The dummy-bet margin isn't:
+  - A bet to win 100 at a short price carries a big stake. At a 0.92 favourite, the 1.01 floor of
+    the proportional book makes it a stake of 10,000.
+  - So a book keeps a lot when it was sure of a side that lost, and the margin rewards confidence.
+  - At a true 75% for one side, pricing it 80% scores about 12.9%, pricing it 75% scores 8.3%, and
+    pricing it 70% scores 4.6%.
+  - Read the uplift next to the Brier score: a candidate behind on the uplift but ahead on Brier
+    is the less confident book, not the worse one.
+- **By match: `margin_uplift_matches.txt` and `.csv`.**
+  - **Contents.** Every match with its start, players, final score and dummy bets (ticks) per
+    market. Each feed has its share of the handle (wt), GGR, margin, Brier and "sure": the highest
+    probability it gave a selection that lost.
+  - **Part.** Each candidate's part of the uplift: the match's GGR over the candidate's whole
+    handle, less prod's over prod's. The parts add up to the uplift exactly.
+  - **Order.** Matches are sorted so the ones that cost the candidate most come first, with a
+    running sum.
+  - **Summary.** `margin_uplift.txt` (and the page's "By match" fold) sums it up for each market:
+    - the 10 matches that cost the candidate most and the 10 that gain it most;
+    - the uplift without them;
+    - how many matches hold half of prod's handle.
 
 ### The operators' margin
 

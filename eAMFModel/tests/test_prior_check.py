@@ -160,3 +160,30 @@ class TestRun(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestV14(unittest.TestCase):
+    """prior-vs-sim on a v14 build: v14's own kick-off, named for it."""
+
+    def test_a_v14_build_is_priced_by_v14(self):
+        from .. import v14, v14_stream
+        history = [row("M1", 0, 24, 17)]
+        pre = mock.Mock(spec=["means"])
+        pre.means.side_effect = lambda rows, results=None: {r["MATCH_CODE"]: (21.0, 17.0) for r in rows}
+        seen = []
+
+        def worker(job):
+            seen.append(job)
+            return {code: point_books(4, 38) for code, _, _ in job[1]}
+        with tempfile.TemporaryDirectory() as d:
+            open(os.path.join(d, "v14tables.npz"), "w").close()
+            self.assertEqual(prior_check.version_of(d), "v14")
+            with mock.patch.object(v14_stream, "model_paths", return_value=("t.npz", "g.npz")), \
+                    mock.patch.object(v14, "prematch_model", return_value=pre) as made, \
+                    mock.patch.object(prior_check, "profiles", side_effect=lambda dd, rows: {r["MATCH_CODE"]: None for r in rows}), \
+                    mock.patch.object(prior_check, "_sim_worker", side_effect=worker):
+                out = prior_check.run(d, history, DAY.date(), DAY.date())
+        self.assertTrue(made.called)
+        self.assertEqual(seen[0][4], "v14")
+        self.assertIn("v14 sim", "\n".join(prior_check.report(out, DAY.date(), DAY.date(), "v14")))
+        self.assertEqual(prior_check.version_of("no_such_build"), "v13")

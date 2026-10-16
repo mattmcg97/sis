@@ -38,13 +38,14 @@ TOTAL_LADDER = 4
 INTERFACE = ("MARGIN_MAX", "PriorGrid", "Variant", "prior_theta", "price_states", "price_kickoff",
              "market_prob", "key_line", "even_line", "players_book", "prematch_model", "match_seed")
 STREAM_INTERFACE = ("model_paths", "sim")
+NOT_TRADED = {"v21"}             # the v2.1 snap sim: priced by v21_stream, with none of the trader's tables
 
 
 def versions():
-    """Every model version with a stream, oldest first: v8, v9, v10, ..."""
+    """Every model version with a stream the trader prices with, oldest first: v8, v9, v10, ..."""
     here = os.path.dirname(os.path.abspath(__file__))
     names = [f[:-len("_stream.py")] for f in os.listdir(here) if re.fullmatch(r"v\d+_stream\.py", f)]
-    return sorted(names, key=lambda n: int(n[1:]))
+    return sorted((n for n in names if n not in NOT_TRADED), key=lambda n: int(n[1:]))
 
 
 def load_version(version):
@@ -100,6 +101,7 @@ class Trader:
         self.prior_takes_pace = len(inspect.signature(self.m.prior_theta).parameters) >= 3
         self.paths, self.margin = paths, margin
         self.lock = threading.Lock()
+        self._held = {}                                 # v14's held strengths by setup
 
     # -- what the page offers to choose from ---------------------------------------------------
 
@@ -182,7 +184,15 @@ class Trader:
             prof = self.m.with_big(prof, self.big, (home.upper(), away.upper()),
                                    setup.get("home_team") or "", setup.get("away_team") or "")
         means = tuple(float(x) for x in setup["means"])
-        if self.prior_takes_pace:
+        if hasattr(self.m, "held_theta"):
+            # v14: the match's strengths hold the prior's points with its sides' own rates, as the
+            # stream prices it; the same for every state of a setup, so worked out once
+            key = (home, away, means, setup.get("home_team"), setup.get("away_team"))
+            if key not in self._held:
+                self._held[key] = self.m.held_theta(self.tables, self.grid, means, prof, self.variant,
+                                                    seed=self.m.match_seed(f"{home}|{away}|{means}"))
+            theta0 = self._held[key]
+        elif self.prior_takes_pace:
             theta0 = self.m.prior_theta(self.grid, means,
                                         prof if getattr(self.variant, "pace", False) else None)
         else:

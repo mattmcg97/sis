@@ -6,3 +6,8 @@ venv/
 eAMFCalibrator/out/
 glmer/out/
 scrapes/
+eAMFCalibrator/out_*/
+/v21_*/
+/v21_*.txt
+/v14_*.log
+/AMFELO_*.csv

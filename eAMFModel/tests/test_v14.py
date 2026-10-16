@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import follow, glmer_prior, nb2_prior, players, sim9, sim14, v14, v14_stream
+from .. import follow, glmer_prior, nb2_prior, players, rolling_prior, sim9, sim14, v14, v14_stream
 from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
@@ -1268,12 +1268,14 @@ class TestBuild(unittest.TestCase):
         self.assertFalse(hasattr(v14.PriorGrid, "fit"))
 
     def test_the_build_needs_history_on_the_command_line(self):
-        from ..__main__ import main
+        from .. import __main__ as cli
         path = os.path.join(self.tmp.name, "snaps_cli.csv")
         with open(path, "w") as fh:
             fh.write("match_code\n")
-        with self.assertRaises(SystemExit) as caught:
-            main(["v14-build", path, "--out", os.path.join(self.tmp.name, "cli")])
+        # no refreshed history for the optimum build to find either
+        nowhere = {k: os.path.join(self.tmp.name, "none", os.path.basename(v)) for k, v in cli.DATA.items()}
+        with mock.patch.dict(cli.DATA, nowhere), self.assertRaises(SystemExit) as caught:
+            cli.main(["v14-build", path, "--out", os.path.join(self.tmp.name, "cli")])
         self.assertIn("--history", str(caught.exception))
 
     def test_handles_come_off_the_export(self):
@@ -1808,11 +1810,27 @@ class TestGlmerPrior(unittest.TestCase):
         self.assertFalse(glmer_prior.Prematch.exists(self.tmp.name))
         self.assertIn("glmer form / hl60", pre.describe())
 
+    def test_predictions_side_by_side_off_one_fit_keep_to_their_own_matches(self):
+        from concurrent.futures import ThreadPoolExecutor
+        history = self.history()
+        out = os.path.join(self.tmp.name, "model")
+        pre = glmer_prior.Prematch.build(history, out, self.BEFORE)
+        late = [r for r in history if nb2_prior._start(r) >= self.BEFORE]
+        groups = [late[k::4] for k in range(4)]
+        with ThreadPoolExecutor(4) as pool:
+            got = list(pool.map(lambda rows: glmer_prior.predict(out, rows, results=history), groups * 3))
+        for rows, g in zip(groups * 3, got):
+            self.assertEqual(set(g), {r["MATCH_CODE"] for r in rows})
+        left = os.listdir(os.path.join(out, "predict"))
+        self.assertFalse([f for f in left if f.endswith(".csv")])       # each call cleans up after itself
+        self.assertTrue(pre.means(late[:2]))
+
     def test_predict_gets_the_models_history_and_skips_the_simulation(self):
         out = os.path.join(self.tmp.name, "model")
         pre = glmer_prior.Prematch.build(self.history(), out, self.BEFORE)
         last = self.history()[-1]
-        pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
+        with mock.patch.object(glmer_prior, "KEEP_FILES", True):
+            pre.means([dict(last, MATCH_CODE="NEW1")], n_sims=1000)
         with open(os.path.join(out, "predict", "args.json")) as fh:
             args = json.load(fh)
         self.assertEqual(args["n_sims"], "0")                 # expected points only
@@ -2656,3 +2674,246 @@ class TestReconcile(unittest.TestCase):
             items = fn(matches, grid, priors, held=held)
             self.assertTrue(items)
             self.assertTrue(all(isinstance(it[2], v14.Held) for it in items))
+
+
+class TestOptimumBuild(unittest.TestCase):
+    """v14's build is the optimum build by default: glmer, the calibrator's refreshed inputs, and
+    the pre-match model refitted every day from the cut-off."""
+
+    def setUp(self):
+        from .test_rolling_prior import FakeFit as Base
+
+        class FakeFit(Base):
+            """A fit that, like the real ones, records its cut-off in meta."""
+            built = []
+
+            def __init__(self, directory):
+                super().__init__(directory)
+                self.meta = {"before": f"{self.day}T00:00:00"}
+        self.Fake = FakeFit
+        FakeFit.built = []
+        self.tmp = tempfile.TemporaryDirectory()
+        self.model = os.path.join(self.tmp.name, "v14_model")
+        os.makedirs(self.model)
+        with open(os.path.join(self.model, v14.PRIOR_FILE), "w") as fh:
+            json.dump({"prior": "glmer"}, fh)
+        self.patches = [mock.patch.dict(rolling_prior.PRIORS, {"glmer": FakeFit}),
+                        mock.patch.dict(v14.PRIORS, {"glmer": FakeFit})]
+        for p in self.patches:
+            p.start()
+        FakeFit.build([], os.path.join(self.model, "glmer"), dt.datetime(2026, 9, 10))
+        FakeFit.built = []
+        self.history = [{"MATCH_CODE": f"M{d}", "SCHEDULED_START_TIME_UTC": f"2026-09-{d:02d} 12:00:00"}
+                        for d in (8, 9, 10, 11, 12)]
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_every_day_from_the_cut_off_is_fitted_and_the_build_attached(self):
+        from .. import __main__ as cli
+        cli._daily(self.model, self.history, "glmer", dt.date(2026, 9, 10))
+        # the cut-off day is the build's own fit, copied; the days after it are fitted
+        self.assertEqual(sorted(self.Fake.built), [dt.datetime(2026, 9, 11), dt.datetime(2026, 9, 12)])
+        with open(os.path.join(self.model, v14.PRIOR_FILE)) as fh:
+            meta = json.load(fh)
+        self.assertEqual(meta["rolling"], os.path.abspath(os.path.join(self.model, "glmer_daily")))
+        days = rolling_prior.Rolling(meta["rolling"]).days
+        self.assertEqual(days, [dt.date(2026, 9, d) for d in (10, 11, 12)])
+        # brought up to a later day, only the new day is fitted
+        self.Fake.built = []
+        cli._daily(self.model, self.history + [{"MATCH_CODE": "M13", "SCHEDULED_START_TIME_UTC":
+                                                "2026-09-13 12:00:00"}], "glmer", dt.date(2026, 9, 10))
+        self.assertEqual(self.Fake.built, [dt.datetime(2026, 9, 13)])
+
+    def test_a_history_that_ends_before_the_cut_off_fits_no_day(self):
+        from .. import __main__ as cli
+        self.assertIsNone(cli._daily(self.model, self.history[:2], "glmer", dt.date(2026, 9, 10)))
+        self.assertEqual(self.Fake.built, [])
+
+    def test_v14_builds_glmer_on_every_snapshot_and_the_others_as_before(self):
+        from .. import __main__ as cli
+        parser = cli.build_parser()
+        a = parser.parse_args(["v14-build"])
+        self.assertEqual((a.snapshots, a.prior, a.half, a.no_daily),
+                         (cli.DATA["snapshots"], "glmer", "all", False))
+        b = parser.parse_args(["v13-build", "snaps.csv"])
+        self.assertEqual((b.prior, b.half), ("nb2", "train"))
+
+
+class TestKeptFits(unittest.TestCase):
+    """v14: a rebuild keeps the pre-match fit made from the same history before the same cut-off."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.tmp.name, "glmer")
+        os.makedirs(self.dir)
+        self.before = dt.datetime(2026, 10, 1)
+        self.history = [{"MATCH_CODE": f"AF{k}", "SPORT_CODE": "AF", "STREAM_NUMBER": "1",
+                         "SCHEDULED_START_TIME_UTC": f"2026-09-{10 + k:02d} 12:00:00",
+                         "PLAYER_1_HANDLE": "ANN", "PLAYER_1_TEAM": "T1", "PLAYER_2_HANDLE": "BOB",
+                         "PLAYER_2_TEAM": "T2", "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "14"}
+                        for k in range(5)]
+        # a glmer fit as fit() leaves it, from before the key was recorded
+        nb2_prior._write(os.path.join(self.dir, glmer_prior.HISTORY), self.history, nb2_prior.HISTORY_FIELDS)
+        with open(os.path.join(self.dir, glmer_prior.META), "w") as fh:
+            json.dump({"before": self.before.isoformat(), "scale": 1.0, "league_average": [17, 17]}, fh)
+        with open(os.path.join(self.dir, glmer_prior.MODEL), "w") as fh:
+            fh.write("x")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def kept(self, history, before=None):
+        before = before or self.before
+        return v14._reusable_fit(self.dir, v14._fit_key(history, before, "glmer"), "glmer", before)
+
+    def test_the_same_history_before_the_cut_off_keeps_the_fit(self):
+        later = dict(self.history[0], MATCH_CODE="AF9", SCHEDULED_START_TIME_UTC="2026-10-02 12:00:00")
+        self.assertTrue(self.kept(self.history))
+        self.assertTrue(self.kept(self.history + [later]))          # after the cut-off: not in the fit
+
+    def test_another_history_or_cut_off_refits(self):
+        moved = [dict(self.history[0], PLAYER_1_FINAL_SCORE="28")] + self.history[1:]
+        self.assertFalse(self.kept(moved))
+        self.assertFalse(self.kept(self.history, dt.datetime(2026, 9, 30)))
+        self.assertFalse(v14._reusable_fit(self.dir, v14._fit_key(self.history, self.before, "nb2"), "nb2",
+                                           self.before))
+
+    def test_a_recorded_key_decides(self):
+        key = v14._fit_key(self.history, self.before, "glmer")
+        with open(os.path.join(self.dir, v14.FIT_KEY), "w") as fh:
+            json.dump(dict(key, history="other"), fh)
+        self.assertFalse(v14._reusable_fit(self.dir, key, "glmer", self.before))
+
+
+class TestSpawnedWorkers(unittest.TestCase):
+    """par_simulate where workers are spawned (Windows): the same games as one run, the switches kept."""
+
+    def test_spawned_blocks_play_as_one_run(self):
+        import multiprocessing as mp
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        st = sim14.Start(8)
+        st.theta = np.tile([[0.1, -0.1]], (8, 1))
+        st.team = (np.arange(8) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        saved = sim14.STRENGTH_BOOM
+        try:
+            sim14.STRENGTH_BOOM = not saved                       # a switch set at run time
+            one = sim14.simulate(tables, st, 20, np.random.default_rng(3), seed=3)
+            with mock.patch.object(v14, "pool_context", lambda: mp.get_context("spawn")):
+                got = v14.par_simulate(tables, st, 20, seed=3, workers=2)
+        finally:
+            sim14.STRENGTH_BOOM = saved
+        for a, b in zip(one, got):
+            np.testing.assert_array_equal(a, b)
+
+
+class TestSweepFixes(unittest.TestCase):
+    """The v14 sweep: a half's end is no choice to kick, a held touchdown's redraw is warped as the
+    first draw, Q4's early-kick target counts the close sides, and the build's simulations play the
+    same games on any number of processes."""
+
+    def test_a_state_at_the_halfs_end_is_not_a_choice_to_kick(self):
+        rows = [_row("SCRIMMAGE", 2, 6, "TEAM_A", 75, 0, 0, down="2"),
+                _row("SCRIMMAGE", 2, 0, "TEAM_A", 78, 0, 0, down="3"),
+                _row("KICKOFF", 3, 236, "TEAM_B", 25, 0, 0)]
+        got = sim14.early_kicks(rows)
+        self.assertEqual(got, [(0, 1, 0, False)])         # 0:06 chose not to kick; 0:00 is left out
+
+    def test_a_held_touchdown_is_redrawn_through_the_boom_warp(self):
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        self.assertIsNotNone(tables.n_loss_stop)
+        st = sim14.Start(4)
+        st.team = (np.arange(4) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        warps, steps = [], []
+        real_warp, real_cells = sim14.zone_warp, sim14._cells_np
+
+        def counting_warp(u, *a):
+            warps.append(1)
+            return real_warp(u, *a)
+
+        def counting_cells(*a):
+            steps.append(1)
+            return real_cells(*a)
+
+        tables.td_hold[:] = 1.0                           # every touchdown drawn is held and redrawn
+        with mock.patch.object(sim14, "zone_warp", counting_warp), \
+                mock.patch.object(sim14, "_cells_np", counting_cells):
+            sim14.simulate(tables, st, 50, np.random.default_rng(1), seed=1)
+        self.assertTrue(sim14.STRENGTH_BOOM)
+        self.assertGreater(len(warps), len(steps))        # the redraws too, not the first draws alone
+
+    def test_q4s_early_kick_target_counts_the_close_sides(self):
+        rows = [_row("SCRIMMAGE", 4, 20, "TEAM_A", 80, 17, 10),       # 7 ahead
+                _row("SCRIMMAGE", 4, 20, "TEAM_A", 80, 10, 10),       # level
+                _row("SCRIMMAGE", 4, 20, "TEAM_B", 80, 13, 10),       # 3 behind
+                _row("SCRIMMAGE", 4, 20, "TEAM_B", 80, 17, 10)]       # 7 behind
+        self.assertEqual([v14._counted_kick("4", r) for r in rows], [False, True, True, False])
+        self.assertTrue(v14._counted_kick("2", rows[0]))
+        with mock.patch.object(v14, "MANAGE_Q4_CLOSE", False):
+            self.assertTrue(v14._counted_kick("4", rows[0]))
+
+    def test_distinct_paths_play_as_one_run_on_any_number_of_processes(self):
+        tables = sim14.Tables.build(_matches(), min_records=20)
+        st = sim14.Start(8)
+        st.theta = np.tile([[0.1, -0.1]], (8, 1))
+        st.team = (np.arange(8) % 2).astype(np.int8)
+        st.kicks_second_half = 1 - st.team
+        one = sim14.simulate(tables, st, 20, np.random.default_rng(3), seed=3, distinct=True)
+        for workers in (2, 3):
+            got = v14.par_simulate(tables, st, 20, seed=3, workers=workers, distinct=True)
+            for a, b in zip(one, got):
+                np.testing.assert_array_equal(a, b)
+
+    def test_sim_workers_set_the_builds_processes(self):
+        from .. import __main__ as cli
+        seen = []
+        saved = v14.BUILD_WORKERS
+        try:
+            with mock.patch.object(cli.playover, "load", return_value={"M1": []}), \
+                    mock.patch.object(nb2_prior, "load_history", return_value=[]), \
+                    mock.patch.object(cli.players, "load_handles", return_value={}), \
+                    mock.patch.object(v14, "build", lambda *a, **k: seen.append(v14.BUILD_WORKERS)), \
+                    mock.patch("builtins.print"):
+                args = cli.build_parser().parse_args(["v14-build", "snaps.csv", "--history", "h.csv",
+                                                      "--no-daily", "--sim-workers", "12"])
+                cli.cmd_sim_build(args)
+        finally:
+            v14.BUILD_WORKERS = saved
+        self.assertEqual(seen, [12])
+
+
+class TestTimeoutsRead(unittest.TestCase):
+    """The optimum build reads the calibrator's timeouts.csv before it fits when sides call them, and a
+    build that has none never fits every call rate to nothing."""
+
+    def test_the_optimum_build_places_the_real_calls(self):
+        from .. import __main__ as cli
+        with tempfile.TemporaryDirectory() as d:
+            paths = {k: os.path.join(d, os.path.basename(v)) for k, v in cli.DATA.items()}
+            for p in paths.values():
+                open(p, "w").close()
+            placed = []
+            with mock.patch.dict(cli.DATA, paths), \
+                    mock.patch.object(cli.playover, "load", return_value={"M1": []}), \
+                    mock.patch.object(cli.playover, "annotate_timeouts",
+                                      side_effect=lambda data, path: placed.append(path) or 0), \
+                    mock.patch.object(nb2_prior, "load_history", return_value=[]), \
+                    mock.patch.object(cli.players, "load_handles", return_value={}), \
+                    mock.patch.object(v14, "build"), mock.patch("builtins.print"):
+                args = cli.build_parser().parse_args(["v14-build", "--no-daily"])
+                cli.cmd_sim_build(args)
+        self.assertEqual(placed, [paths["timeouts"]])
+
+    def test_timeouts_used_without_the_calls_fall_back_to_the_real_rates(self):
+        matches = _matches(20)
+        for rows in matches.values():
+            for r in rows:
+                r["timeouts_used_a"], r["timeouts_used_b"] = "0", "0"
+        with mock.patch("builtins.print"):
+            tables = sim14.Tables.build(matches, min_records=20)
+        self.assertFalse(tables.call_fitted)
+        np.testing.assert_allclose(tables.call_p, np.array(sim14.DEFAULT_CALL_P))

@@ -24,6 +24,7 @@ The code that runs:
 | `sim8.py` … `sim12.py` | each version's simulation: play tables and the snap-by-snap game |
 | `v8.py` … `v12.py` | each version's build (fits, pre-match grid, profiles) and pricing |
 | `v8_stream.py` … `v12_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
+| `v21.py`, `v21_stream.py` | v2.1's snap sim (build, draws, simulate) and its price stream for the calibrator |
 | `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
 | `stream.py`, `grading.py` | what every stream shares; Brier against prod |
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
@@ -41,6 +42,7 @@ The code that runs:
 | v12 | v11 with level sides' late drives run down to the kick (Q4 level RPS 2.090 → 2.042; held out RPS 3.829 → 3.825) |
 | v13 | v12 with each side's big-play rate: its gamer's, its team's and what the other side allows, boom or bust (held out in-play RPS 3.821 → 3.811; totals' spread follows the big-play sides) |
 | v14 | v13 played closer to the real game -- strength as boom or bust, the clock as played, long plays, losses and kick-offs by side, the go curve's field shape -- and built in one joint fit with a calibration report (first downs 37.6% → 41.5% of snaps, real 41.0%; field goals 1.51 → 1.22 a game, real 1.15; held out RPS level) |
+| v2.1 | apart from v8–v14: each snap's time drawn from real snaps, then its distance given that time, with no strength -- the pre-match expected points are only what its report measures it against (`v21-build`, `v21-report`) |
 
 The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
 removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
@@ -1317,11 +1319,123 @@ real games, each simulated at its own expectations) set v13's play-by-play again
    tables, real against simulated, with misses beyond `REPORT_TOL` (5%) marked. Each round also
    prints its seconds by stage.
 
+The long simulations (the grid, the responses, the held strengths, the two-minute fits and the rubber
+band) run on `--sim-workers` processes (default 4; `BUILD_WORKERS`). Each start's paths draw the same
+random numbers wherever they run, so any number of processes builds the same model; on a 16-core
+machine `--sim-workers 12` leaves room for the daily glmer fits.
+
 On the held-out build (before 10 Sep) the build takes about 100 minutes. The report's points by
 quarter, from real quarter starts and from the two-minute marks, are within 0.6%. Still marked: the
 rubber band (+8% to +20%), the settle cells' touchdowns (+12%) and Q4's seconds a snap (-8%) move
 after they are fitted; the level side's late field goals (50% of drives, real 68%) and Q4's field
 goals on downs 1-3 from 2:00 (0.076, real 0.094) sit at the edge of what their fits may move.
+
+### The strength refit (13 Oct)
+
+Three changes, all in the build. The next `v14-build` makes all three, and a build from before plays
+as it did.
+
+- **The lead with TEAM_A on either side** (`sim14._margin`).
+  - The export's scoreboard is home's (`score_p1`) and away's. TEAM_A is whichever side
+    `team_a_side` says.
+  - Every lead the tables read off the snaps assumed TEAM_A was home. So on a match where it is
+    away, the lead had the wrong sign in the modes, settle, kneels, 4th downs, kick-offs,
+    conversions and the close endings.
+  - The rest of v14 (the 4th-down players, kick styles, big-play records, pricing) already read
+    `team_a_side`. The build now prints how many matches have TEAM_A on each side.
+- **How strength reaches the snaps, fitted** (`v14.STRENGTH_FIT`, `fit_strength`).
+  - **Before:** with `BOOM` 3 and `TILT_SCALE` 0.5, strength worked almost all through the 40+
+    yard plays. From kick-off, a side expected at 10 points drew them on 0.2% of its snaps and one
+    at 25 on 19%. Its first downs under 20 yards fell from 25% to 14.5%, and its snaps from 25 a
+    game to 16.
+  - **Real sides** (`strength-check`, 1-12 Oct, 1,494 sides), from under 13 expected points to
+    over 21:
+    - the 40+ plays only double (2.3% to 4.8%; the sim 0.6% to 8.1%);
+    - the plays short of the line fall (27.9% to 23.7%);
+    - the 20-39 yard plays rise (9.1% to 11.7%);
+    - the first downs under 20 hold at 28-29%;
+    - the snaps rise (20 to 24 a game).
+  - **The fit.** The build tries each boom (`STRENGTH_BOOMS`) with each tilt (`STRENGTH_TILTS`),
+    then the steps around the best. For each:
+    - it finds the strengths on a coarse grid of the candidate's own;
+    - it plays its newest 1,500 matches from kick-off at them, with the players' own profiles;
+    - it scores their snaps by class against the real ones in each band of the side's expected
+      points (`STRENGTH_BANDS`) by the multinomial deviance.
+  - **Kept with the tables.** The best boom and tilt are kept (`Tables.boom`, `tilt_scale`), and
+    the build prints the deviance of each candidate and the real, fitted and old snap mix by band.
+    The prior grid then spans the strengths that give 6 to 34 points against a league side
+    (`Tables.theta_grid`), and the day's spread is read at those for 10 to 26 (`Tables.form_grid`).
+  - **Order.** It runs before the joint fit, so everything after it fits on the new strength.
+- **The day's spread, through the priced sim** (`v14.SPREAD_FIT`, `fit_spread`).
+  - **Before:** priced, the draw made the total too wide (central 50% holding 53.4% of results, 80%
+    holding 83.8%) and the margin a touch narrow.
+  - **The fit.** After the first round's form fit, the build prices its newest 600 matches as the
+    stream does: held strengths, own profiles, and the total off its in-play run, read as if
+    centred on the prior's.
+    - It scales the shared swing (x0, 0.25, 0.5 or 1) to the best margin RPS plus total RPS.
+    - Then it scales each player's own form (x1 to x4) the same way.
+  - **Kept with the tables.** The scales are kept (`Tables.spread_scale`) and applied to every
+    later form fit, and the build prints each candidate's scores and coverage.
+  - **Caveat.** The prior's means on those matches are in-sample, so if anything the fit leans a
+    little narrow; `strength-check` part C and `prior-vs-sim` grade it out of sample.
+
+The fits add about 15-25 minutes to the build. `strength-check` reads a build's own boom and tilt;
+its sweep's "tilt alone" and "boom alone" switch the build's own off.
+
+**The first refit, out of sample** (1-12 Oct, `v14_fit`):
+- **What it chose:** boom 0 and tilt 0.75 (deviance 409, against 892 for the old setting), and the
+  shared swing went to 0. TEAM_A was home in all 2,960 build matches, so the lead fix changed
+  nothing there.
+- **What improved:** the averages landed on the prior (margin 0.00, total +0.01). The margin and
+  total covered close to 50% and 80% (51.4% / 80.2%, 51.8% / 81.3%). The moneyline was unchanged
+  (log loss 0.6817).
+- **What didn't:** priced, the strongest sides (21+ points) still drew too many 40+ yard plays
+  (7.2%, real 4.8%) and too few first downs under 20 (23.2%, real 28.8%). Their share short of the
+  line stayed at 27.6% (real 23.7%).
+
+So the fit was extended (13 Oct, the second refit):
+- **A conversion** (`sim14.CONVERT`, `Tables.convert`, `ZERO_SPLIT`).
+  - Each bin keeps its no-gain plays below its short gains (`Tables.n_zero_stop/run`).
+  - A side's strength multiplies the odds of a first down against a short gain by
+    exp(convert x theta). Turnovers, losses, no gains and big plays stay where the tilt and boom
+    put them; real strong sides convert, and those hardly move.
+  - `zone_warp` takes six parts. With no conversion it plays exactly as before.
+- **The fit reads the ratings as pricing does, and holds the points.**
+  - It runs in the joint fit's first round, once the grid's responses have given the big-play and
+    lost-yardage ratings their elasticity. Then the grid and its responses are made again on the
+    fitted strength.
+  - Each candidate's sides are held to their priors by one step along its strength curve before
+    their snaps are counted. In the first refit the strongest band ran 2.4 points over.
+- **One knob at a time** (`STRENGTH_START`, `STRENGTH_AXES`, `STRENGTH_CYCLES`).
+  - The search starts from the first refit's boom 0, tilt 0.75 and convert 0, and tries the boom
+    from -1 to 1, the tilt from 0.25 to 1.25 and the conversion from 0 to 3, two cycles round.
+  - The build prints every candidate's deviance and, by band, the real snap mix against the
+    fitted one, the first refit's and the old one.
+
+### Fixed in the sweep (12 Oct)
+
+- **End-of-half kicks** (`sim14.early_kicks`). A state at 0:00 is the half's end, not a choice, but
+  `EARLY_FG_HALF_END` counted it as a side that chose not to kick: 264 at Q2's end, in range on downs
+  1-3. Left out, Q2's last-five-seconds kick rates by range go from 36/44/31% to 47/58/47%.
+- **Held touchdowns' redraws** (`sim14.simulate`). A would-be touchdown held back (`td_hold`) was
+  redrawn without the boom warp where neither side had a big-play or lost-yardage rate of its own, so
+  the redraw ignored the strengths' boom or bust.
+- **Q4's early-kick target** (`v14.manage_states`, `MANAGE_Q4_CLOSE`). The sim's fourth-quarter early
+  kicks are the close sides' alone (level or 1-3 behind), but the target counted every side's: 26 of
+  the 207 real kicks were by sides ahead or 4+ behind, which no stage makes, and `fit_manage` held the
+  close sides' clock at its limit chasing them. That was the report's Q4 miss (15.5% short).
+- **Distinct paths split across processes** (`par_simulate`). Each block now numbers its paths where
+  its rows start (`path_offset`), so the held strengths no longer change with the number of processes.
+- **The default build never read the timeouts** (13 Oct). `v14-build` with no `--timeouts` finds the
+  calibrator's `timeouts.csv` itself, but looked for it after placing the calls, so none were placed:
+  the export says how many timeouts each side has used, not who called one, and every call rate was
+  fitted at nothing (the report: 2.26 timeouts from Q2's two-minute mark, simulated 0.006). It reads
+  them first now, and a build with timeouts used but no calls placed warns and takes the real rates in
+  `DEFAULT_CALL_P`. Builds since 12 Oct, the 1-12 Oct report's among them, played without timeouts.
+- **Faster**: the rubber band (about half of each round), the timeout calls' fit and the quarters'
+  scoring levels run on the build's processes, and the close-level fit no longer plays out every grid
+  point's games for an overtime share that weighs nothing: a round took 30 and 21 minutes on 12
+  processes, against 64 and 53 on one.
 
 ### Held out
 
@@ -1858,7 +1972,601 @@ to 0.02: 18 of 18), by +0.3 to +1.2. Each one alone is inside the noise. The shi
 the middle of that grid, not its best. Its lines have about half the chance next to them that the
 even line's do.
 
-## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13)
+## v2.1: each snap's time, then its distance, from real snaps (`v21-build`, `v21-report`)
+
+v2.1 is a separate model, not a v14 variant. It is still a snap simulation, but every snap is two
+draws from real snaps, and it has no strength. The pre-match expected points are not an input to
+any draw. The report sets the sim's output against them, so the gaps show where the draws are
+missing something. Nothing is ever fitted to close those gaps.
+
+- **Inputs:**
+  - the fixture: the gamers and teams;
+  - the state: clock, down, distance, field, score and timeouts;
+  - the action log: what the play before did to the clock, and the snaps so far.
+- **The time draw.** The clock from the end of the play before to the end of this one, covering the
+  wait for the snap and the play itself. It is drawn from real snaps alike in:
+  - the play before: nothing gained, a short gain, a first down, a loss, a fresh possession or a
+    timeout;
+  - the half (first, second, overtime) and whether the two-minute warning has passed;
+  - the offense's lead, down, distance and field zone (8 zones: the own 10, to the 30, to midfield,
+    to the other 30, the other 29–20 and 19–11 apart as field-goal range, the 10 to the 5, inside
+    the 5);
+  - the snaps played so far and the snaps left in the half (below).
+
+  Snaps left stands in for the time left (`--split snaps`, the default): it tells Q1 from Q2 and the
+  start of a half from its middle. Two things it can't tell stay in. The half: at the end of Q2 a
+  level side attacks, at the end of Q4 it plays for the kick. The audit showed this when a fallback
+  mixed the two: level sides in Q4's last 2:00 scored a touchdown on 15% of the sim's snaps against
+  5% real. The two-minute warning: the clock's rules change there. `--split time` keeps the seven
+  parts of the game (Q1, Q2 and Q4 each side of 2:00, Q3, overtime) for comparison.
+
+  This draw is where the bimodal split lives. A stopped clock gives a play's own 5–8 seconds, a
+  running one 25–40, and the play before (from the action log) sets the mix. So from any point in
+  play the first snap can come off a running or a stopped clock in the real proportions for that
+  state.
+- **The distance draw.** What came of the snap (the yards, a turnover or a defensive touchdown),
+  drawn from real snaps alike in the time just drawn (6 buckets) and the same state. A snap over in
+  5 seconds can only have gone so far.
+- **Backoff for thin data.** Where too few real snaps share every feature (40, `--min-records`), a
+  draw falls back level by level to fewer features. The build prints how deep the real states fall.
+  The fallbacks keep the situation to the end: the down, the distance, the field and the snaps left
+  in the half, plus coarsely the half and the lead. So a 3rd down is never drawn from
+  1st downs, and a side with time for one snap never from one with time for ten, while there are
+  real snaps alike enough to draw from. (Before the down audit, the part of the game went first.)
+  At the end of a half (its last 2:00, or under 5 snaps left) the distance draw coarsens the
+  distance and the time, then the field, before it lets the lead go. It keeps the half, the snaps
+  left (0–1, 2–4, 5+) and behind / level / ahead, down to the down and the field's three parts
+  (own half, the other half, inside the 10) before it gives the situation up. In September 30% of
+  level sides' Q4-last-2:00 states had drawn from every game's snaps at that spot. The field keeps
+  its zones as long as it can:
+  with the other half as one zone, a real touchdown from the 12 drawn at the 45 ran on to a long
+  one. The audit showed why: level sides in Q4's last 2:00 scored a
+  touchdown on 15% of the sim's snaps against 5% real. Real sides there play for the kick, and
+  sides ahead run the clock out, while the sim had drawn from every lead at that spot. The build
+  prints how deep real states fall, for the rest of the game and the end of a half apart. It
+  also sets Q4's last 2:00, by the lead, against the league groups those real snaps draw from:
+  touchdowns, losses and seconds. For touchdowns it also gives the sim's own chance at each state's
+  field: the group's gains that reach the goal from there, plus its touchdowns that run on. It
+  gives it twice, drawing from the whole group and from near the state's field (`--field`, below).
+  A group that mixes situations shows up as a gap there, apart from the game flow and the
+  decisions. The same four figures follow for every snap of the game by field zone, on a sample
+  of 8,000 real snaps. Last, the late choices that settle a game in regulation
+  (going for it 3 behind, kicking level, going for two at −1 and −2) and the overtime rate, by
+  fortnight of the build's data: a trend says the players are still learning, and the oldest
+  matches weigh too much.
+- **The lean key (`--key lean`).** The full key has close to a million cells, so only about half
+  of real states draw on all of it. The lean key keeps only:
+  - the clock into the snap, running or stopped (the time draw), or the time the play took (the
+    distance draw);
+  - the period, with the two-minute warning apart (Q1, Q2, Q2's last 2:00, Q3, Q4, Q4's last 2:00,
+    overtime): a level side with three snaps left at 2:30 attacks, at 1:30 it sets up its kick. With
+    the period alone, the tilt build's level sides in Q4's last 2:00 scored touchdowns on 9.2% of
+    snaps near their field against 6.2% real;
+  - the lead (7 groups);
+  - down, distance and field;
+  - snaps left in the half.
+
+  That is 78,400 cells for the time draw. On 172,751 real states, 57% sit in a cell with 40 or
+  more real snaps: 82% in Q1, 51% in Q2, 64% in Q3, 40% in Q4. The six classes of the play before
+  collapse to running or stopped, since their times split that way (26–29 s against 8–10 s on
+  average). The fallbacks coarsen the field and the snaps left before the lead gives way to
+  behind, level or ahead. A side 9+ ahead in Q4 runs it out, where one 1–3
+  ahead still plays for a first down. The first lean build collapsed the lead to those three at its
+  first fallback. Its sides 9+ ahead in Q4's 4:00–2:00 then scored a touchdown on 36% of their
+  drives, against 23% real, the same as sides 1–3 ahead. `--key full` (the default) keeps the full
+  key, for comparison.
+
+  The lean key's distance fallbacks keep the distance too, all five buckets (1, 2–3, 4–6, 7–10,
+  11+). Pooling 1 to go with 2–3, a 3rd and 1 drew 3rd-and-3 snaps that kept their own result, a
+  failure, and at 1 to go a failure is no gain: 25% of the sim's 3rd-and-1 snaps against 17% real.
+
+  The field windows keep level with the goal line. Where it is nearer than the window's reach, the
+  window stops as far short on the other side, and a thin one widens the same either side as far
+  as the goal allows. Before, a state at the 1 drew from the 1 to the 5 when the cell had few snaps
+  at the 1. From the real states at the opposing 4–1 the sim scored 40.9% against 43.4% real, and
+  on 1st and goal at the 1, 44.6% against 51.4%. The clock windows keep level with the half's end
+  the same way.
+
+  Every distance fallback but the last also keeps the time the play took, all six buckets, in
+  both keys. Most had kept only stopped or running (14 seconds or under, or more), which pools an
+  incomplete pass (6 seconds or less) with a 40-yard gain (10–14 seconds): the time drawn and the
+  distance drawn came apart. In September's real games 10.8% of the 10–14 second snaps gained 40
+  yards or more, in the sim 5.6%; of those of 6 seconds or less, 0.8% real and 2.4% in the sim. The
+  sim made 4% more snaps a game than the real games and 1.6 points fewer (33.2 against 34.8),
+  short in every quarter from Q2.
+
+  The lean key's distance fallbacks hold the period to the last two. Blended, a thin late cell
+  passes its draws down the chain: a level side in Q4's last 2:00 drew 27% of them from levels
+  without it, every snap of the game at its down and distance, where the touchdown chance near its
+  field was 16–17% against 4–9% in the levels that kept the situation. Its snaps scored 9.2% near
+  the field against 6.4% real. They hold the distance, all five of it, as far: a build whose last
+  levels kept the period and lead but let the distance go played 2nd and 1 off every 2nd down's own
+  results, 44% moving the chains against 51% real (3rd and 1, 47% against 55%).
+
+  The lean time draw keeps the down and all five distances as far too. The distance draw reads the
+  time it was given at the state's own distance, so a time drawn from 1 to 3 to go pooled (or from
+  every distance) gave 2nd and 1 the quick snaps of 2nd and 3 -- its incompletions -- and played
+  them out as 2nd and 1's own quick snaps. Its fallbacks coarsen the field and the snaps left, then
+  the lead to behind, level or ahead, and the period, before the distance.
+
+  Before the distance draw lets the lead go, the time the play took coarsens to stopped or running,
+  the period and the lead held. A level side in Q4's last 2:00 drew 25% of its snaps from levels of
+  every lead or the whole game, which scored 13–18% near its field against its own 4–8%, and its
+  drives with 1:00–0:31 left scored a touchdown 19.6% of the time against 10.3% real (a field goal
+  58% against 78%): late, a level side plays for its kick.
+
+  Every distance fallback but the last keeps the down, in both keys. Two did not: the lean key's
+  period, lead, field zone and snaps left, and the full key's field zone and end of the half. Blended,
+  a thin 4th-down cell passed some of its draws down the chain to them, so 4th downs were drawn
+  partly from 1st and 2nd downs. From the real states the sim converted fewer at every distance: 2–3
+  to go, 43% against 50% real; 7–10, 35% against 40%. The extra turnovers on downs fell late, where a
+  level side drives for its kick.
+- **Blended levels (`--blend K`).** Without it, a draw takes the first level whose cell holds 40
+  real snaps (`--min-records`): a cell of 39 is dropped whole for its parent, one of 40 used whole.
+  With it, the league's draws keep every cell of 5 or more, and a draw takes its finest cell
+  n / (n + K) of the time, else the next level's for the state, and so on, the last level taking
+  the rest. With K = 40, a cell of 10 real snaps is drawn from 20% of the time, one of 40 half the
+  time, one of 360 nine times in ten. Every draw is still a real snap, a thin cell weighs as much as
+  its snaps say, and nothing jumps at a threshold. The build's level shares, its late-Q4 check and
+  `v21-coverage` read the blend: each level's expected share of the draws, and the real snaps
+  behind them weighted the same way. `--blend 0` (the default) keeps the first-level rule.
+
+  Blended with field windows, the distance draw never widens a window but the last level's, and a
+  cell with none of its snaps near the state's own field passes all its weight on (`NEAR_BLEND`,
+  the model's `near_blend`). A thin cell had widened its window to the 20 nearest: a late cell of
+  2nd and 1 at midfield reached its snaps at the goal line, a touchdown kept there and a stuffed
+  run played as no gain. From September's real states at the other side's 49–30 the sim's draws
+  scored 6.0% against 4.3% real (drawing from the whole group, 5.1%). A cell still weighs by all
+  its snaps: weighed by those near the field alone, the thin late cells passed their draws to the
+  levels without the lead or the period. A level side in Q4's last 2:00 then drew 36% of them from
+  levels with both, against 61%, and its snaps scored 9.4% against 6.1% real, while 1 to go moved
+  the chains 63.2% against 67.2%. The tilts' bases and the build's lines weigh the cells the same way.
+- **Field windows (`--field F`).** A group's real snaps come from across its field zone (20 yards
+  at midfield), or wider in the coarse fallbacks. A gain is played out at the state's own field,
+  so a 35-yard gain made from midfield becomes a touchdown at the opposing 30. And a touchdown
+  from the 12, drawn at midfield, runs on with the league's chance of a gain that long. Near the
+  goal the field compresses, so this mixing makes touchdowns: for a level side in Q4's last 2:00,
+  the real snaps scored 6.2%, their groups' real snaps 7.0%, the sim's draws 9.1%. With `--field`,
+  the distance draw takes its real snap from the group's snaps near the state's own field: within
+  F x the yards to go (1 yard at least), or the 20 nearest where fewer are there, or the whole
+  group where it holds fewer than 20. With F = 0.2, that is ±10 yards at the opposing 50 and ±2 at
+  the 10. A gamer's or team's own draws do the same. The drawn snap keeps its own result: its
+  touchdown is one here, with no run-on, and a gain that fell short of its own goal falls short of
+  this one, as far of the way there (the chains then move by the yards). The line too: a snap
+  drawn from another distance keeps its own result against the line. A new set of downs stays one,
+  past the line by as far; a snap short of it stays short, as far of the way there (rounded, and a
+  gain stays at least a yard where the line leaves room for one). Before, the
+  yards were replayed: a 4th-and-1 sneak that gained a yard failed at 4th and 3, and a 3rd-and-3
+  throw for 2 moved the chains at 3rd and 1. Short yardage isn't played like a longer distance, so
+  from the real states the sim converted fewer 4th downs at every distance (2–3 to go, 44% against
+  50% real). With the field windows doing the field's work, the lean key's distance fallbacks now
+  let the field go before the distance. Windows alone, with the
+  gains replayed at the new field, took the level late-Q4 figure only from 9.1% to 8.3%. Near the
+  goal, any short gain from a yard or two further back still scored: from the opposing 4–1, the
+  real snaps scored 43%, the sim 51%. An adjusted build's tilt still leans each
+  draw toward the top of its whole group, by resampling six near snaps on where they sit in the
+  group. `--field 0` (the default) draws from anywhere in the group.
+- **Clock windows (`--clock C`).** The time draw's cell knows the snaps left, not the clock. In a
+  half's last 2:00, a side at 0:20 on a running clock could draw a 30-second snap a real side made
+  at 0:45, and the half ran out before it could kick. After the buzzer-kick fix, the clock ran out
+  on level sides in Q4's 1:00–0:31 on 15.5% of their drives in the sim, against 0.3% real. With
+  `--clock`, the time draw there takes its real snap from the cell's snaps with as long left in
+  the half: within C x the seconds left (2 at least), or the 20 nearest where fewer. With C = 0.2,
+  that is ±4 seconds at 0:20 and ±24 at 2:00. A thin cell's window widens to its 5 nearest only:
+  its 20 nearest at 0:12 could reach back to 0:40 and the 30-second snaps made there. A gamer's or
+  team's own draws do the same.
+  `--clock 0` (the default) draws from anywhere in the cell.
+- **Gamers and teams, two ways (`--mode`):**
+  - `full`, straight from what was seen. Half of each draw takes the offense's own real snaps: its
+    gamer's where it has 30 alike, else its team's, else the league's. The other half takes what the
+    defending gamer, else its team, allowed. "Alike" always means the same down. For the time it
+    also means the same play before, part of the game and (at least coarsely) lead; for the
+    distance, the same time drawn, distance and field, at least coarsely. The end of a half stands
+    apart in both: the half's last 2:00, or under 5 snaps left, split by the half, snaps left
+    (0–1, 2–4, 5+) and lead (the 7 lead buckets, so 1–3 ahead apart from 9+ ahead), with
+    overtime by lead. There a side's own snaps come from its own ends
+    of halves, else the league's draw, which keeps the full situation. The build prints how often
+    real snaps find enough of their own, for the rest of the game and the end of a half. A
+    gamer's own draw gives way to the league's rather than drop the situation. Before the down
+    audit, it fell back to all the gamer's snaps with that time, whatever the down, so 3rd downs
+    played like 1st downs.
+  - `adjusted`, the league's draws for everyone, then leaned. Each draw is pushed toward its longer
+    or shorter end by a tilt for each of: the offense's gamer, the defense's gamer and both teams.
+    The tilts are fitted on their real snaps against what the league's draws gave the same states,
+    and shrunk toward none by 300 snaps. This one is built for thin data.
+  - `tilt`, the league's draws for everyone, reweighted per matchup (step 2 of the plan). Every real
+    snap a draw can land on is weighted by exp(theta . phi). For the distance draw, phi is its
+    yards / 10 (cut to −10..50), whether it was a touchdown, a turnover, a new set of downs short of a
+    touchdown, and a loss. For the time draw, phi is its seconds / 10. Theta is the sum of four tilts: the offense's gamer and team,
+    and the defense's gamer and team (what each allows). The draw keeps its group's shape, field
+    window and own result, and leans only as far as the real snaps say. The tilts are fitted by
+    maximum likelihood. Each real snap's own outcome is scored against what the league's draw gave
+    its state: blended over the levels, near the field, as a histogram by yards, touchdown and
+    turnover (the time's cut snaps left out). Each tilt is fitted in turn by Newton steps, the others
+    held, over four rounds. Each is shrunk toward none by a penalty of 200 snaps' worth of the
+    league's variance, so a gamer with 200 snaps moves half way to their own. In the sim, a draw
+    takes 16 real snaps evenly from its group or window and keeps one on its weight. The build
+    prints each tilt's spread on each feature, the gamers furthest each way and the log-likelihood
+    gained a snap. `--tilt-prior N` sets the shrinkage (snaps; default 200). Unlike `adjusted`, the
+    tilt can move touchdowns and turnovers on their own, not
+    only the yards, and is fitted on the whole outcome, not its mean. The fit weighs recent form: a
+    real snap's weight halves every 30 days before the build's last match day.
+
+    The first tilt build (yards, touchdowns, turnovers only) on held-out October: a point more
+    expected moved the sim 0.45 (0.27 with `adjusted`; real 0.76), and its moneyline log loss came
+    within 0.006 ± 0.006 of the prior's (0.017 with `adjusted`).
+- **The points nudge (step 3, `v21-report --nudge`, a tilt build).** A switch for pricing: each
+  side's offense tilt is moved along the strength direction until the sim's kick-off mean meets
+  the side's expected points (the input). The strength direction is the gamers' offense tilts
+  regressed on the points their side really scored a match, with no component the wrong way (more
+  turnovers or losses, fewer yards, touchdowns or first downs). It is scaled so a unit is a point a
+  side in the sim, and the build prints it and the slope it then has. Per match, secant steps start
+  from that slope (three steps, each on the same random numbers, capped at ±10 points), and the
+  last run prices the match. The first nudged run, on held-out October, priced moneylines at the
+  prior's log loss (+0.001 ± 0.003) and margins and totals better (RPS 5.53 against 5.55, 6.89
+  against 6.92). Its direction moved a side only half a point a unit, so 43% of the nudges stopped
+  at the cap short of the inputs. With the unit a point and the cap at 10, the next run met the
+  inputs (within 0.1 a match, none at the cap): margin RPS 5.53 against the prior's 5.55, total
+  RPS level (6.92), moneyline log loss 0.004 ± 0.002 worse. Following the inputs all the way carries
+  their errors too: in October a point more expected was 0.76 more in the real games. `--nudge-share
+  S` goes only S of the way from the sim's own kick-off means to the inputs. On held-out October:
+
+  | October | prior | nudge 50% | nudge 75% | nudge 100% |
+  |---|---|---|---|---|
+  | moneyline log loss | 0.6804 | 0.6819 | 0.6806 | 0.6842 |
+  | margin RPS | 5.550 | 5.527 | 5.511 | 5.527 |
+  | total RPS | 6.922 | 6.935 | 6.902 | 6.915 |
+
+  So three quarters of the way prices moneylines at the prior's level and margins and totals
+  better. The default stays the whole way: what the trader sets is what the sim meets. The same
+  nudge carries into the match's real states. The report prints the nudges taken: their mean,
+  spread, home and away, and the share at the cap. The base model never sees the inputs. The
+  nudge is a separate layer, on only when asked.
+- **Bounds:**
+  - The time never passes the play clock, since no real draw does.
+  - A running clock that runs out before the snap ends the quarter, and the same ball carries over.
+  - A running clock reaching 2:00 of Q2 or Q4 stops there. The snap then takes a time from the
+    stopped-clock part of the same draw.
+  - A play under way when time runs out is finished.
+  - Some real snaps were cut short: the quarter ran out on them, or a running clock crossed 2:00.
+    These are kept as "at least this long". Where one is drawn with more time to go than it took,
+    the draw moves to a real snap at least as long.
+  - The distance stops at the end zones: past the goal line is a touchdown, behind its own a
+    safety.
+  - A real touchdown drawn from further back runs on with the real chance that a gain that long
+    goes further, in the same part of the game: at the end of a half by the half, snaps left and
+    lead, each shrunk toward the league's by 200 snaps. A level side late plays for the kick, and
+    its gains go less far than the league's.
+- **Snaps left in the half** is a core split of both draws, in place of a cut at 0:30. It is
+  the expected count, never the count that actually followed, read off a table by:
+  - the half and its 10-second slice of time left;
+  - the clock running into the snap (a short gain, a first down, a loss) or stopped (nothing gained,
+    a fresh possession, a timeout);
+  - the timeouts of the side with the ball and of the other side (0–3);
+  - the lead (behind, level, ahead).
+
+  Each cell is shrunk toward its slice's figure for that clock, and that toward the slice's alone,
+  by 20 snaps. Real snaps and sim states read the table the same way. The real games' counts come
+  first. Then, 3 times over, the build plays 6,000 games from kick-off, replaces the table with the
+  sim's own counts and rebuilds the draws on it. The draws bucket it as 0–1, 2, 3–4, 5–7, 8–12,
+  13–17 and 18+. The build prints the table at a few late states.
+- **First downs come from the next row's down.** Spots are whole yards and a distance of inches
+  reads as 1, so a sneak for inches shows as a 0-yard gain that moves the chains, and a gain of the
+  yards to go can be spotted short. The build prints how often each happens by distance. The sim
+  takes the drawn real snap's own result where it was at the same distance, and otherwise goes by
+  the yards. A down played again (a penalty: the same down, short of the line) keeps its number.
+  4th downs short of the line that kept the ball are no longer left out.
+- **Scores the rows do not mark.** In September the real games' touchdown, field-goal and
+  conversion rows account for about 33 points a match, and their scores for 34.8: some scores come
+  with no TOUCHDOWN or FIELD_GOAL row. A snap whose next row has 6 or more to one side and nothing
+  to the other is read as that side's touchdown (the offense's own, or a defensive one), and a
+  4th down whose next row in the quarter has 3 more to the side with the ball as its kick. Before,
+  such a touchdown snap was dropped from the draws and the sim scored too little. The build
+  prints how many it read.
+- **The decisions**, each made by the gamer whose call it is:
+
+  | decision | options | drawn from real decisions alike in |
+  |---|---|---|
+  | 4th down (the offense) | go for it, field goal, punt | yards to the goal, distance, lead, part of the game, time left in the half |
+  | downs 1-3 in the half's last minute, in range (the offense) | play on, kick now | time left, the clock running or stopped, its own timeouts (0, 1, 2+), the kick's length, down, what a field goal does, which half |
+  | kick-off (the kicker) | returned, touchback, no landing zone, kept (onside) | behind late in Q4, the half's last 2:00, lead |
+  | conversion (the scorer) | kick, go for two | v14's cells by the clock, lead after the six; then Q4's last 3:00 as one, before the whole game |
+  | timeouts before a running-clock snap (the defense, then the offense) | call one or not | part of the game, lead, time left in the half; the offense's also whether a field goal is in range |
+
+  Each is drawn in three steps:
+  - **The rules first**, the same for every gamer. They aren't written by hand: they are the
+    situations where real sides never take an option, or all but never, learned from the real
+    decisions (see `v21-sweep` below). In those situations the option is struck out. Real decisions
+    that took a struck-out option anyway are left out of the gamers' leans. `--no-rules` builds
+    without them.
+
+    Overtime's own logic stays as a rule. Once the other side has had the ball, a side behind can't
+    punt or kick a field goal 4+ behind, and after a touchdown 1 or 2 behind it goes for two.
+  - **The league's share of each option** among real decisions in similar states. Like the snap
+    draws, it falls back to fewer features where fewer than 25 real decisions share all of them.
+    The 4th down and the early kick coarsen the distance, and the 4th down the field too (inside
+    the 20, an easy kick, a long one, out of range), before they let the lead go. The lead they
+    keep is what a field goal does: not enough (4+ behind), a tie (3 behind), the lead (1–2
+    behind or level), or more of it (ahead). Real sides avoid overtime: 3 behind late they go for
+    the touchdown, and level they kick to win. In Q4's last 2:00 a level side kicked on 57% of real 4th downs against 34% in
+    the sim, and a side behind went for it on 90% against 73%, because thin late cells had fallen
+    back to every lead.
+
+    The early kick later fell short the same way. From the real states, level or 1–2 behind in Q4,
+    real sides kicked on 23% of in-range snaps in the last minute, and the sim's cells on 17%. Its
+    thin cells fell back to levels without what a field goal does, and none knew the clock or the
+    timeouts. A level side at 0:20 on a running clock with no timeouts kicks now; with two, it can
+    run a play first. So level sides kicked 42% of their drives from 1:00–0:31 against 68% real,
+    and the clock ran out on them twice as often. The early kick now reads the clock running or
+    stopped and its own timeouts, and keeps what a field goal does to the end of its fallbacks. The
+    offense's timeout reads whether a field goal is in range, the timeout a level side calls to
+    kick.
+
+    And a side that a kick puts level or ahead in Q4 or overtime, wherever it is (at Q2's end, any
+    lead, in field-goal range), with a timeout left, calls it where a running clock would run the
+    half out before or during its snap (`LATE_TIMEOUT`); the snap then comes off a stopped clock, and the kick, or not, is the next
+    snap's choice. The timeout before a running-clock snap is drawn from the real ones, which don't
+    know the time the snap is about to take. Real sides level with the ball with 1:00–0:31 left ran
+    out of clock on 0.3% of their drives, the sim's on 9.8%, and of those 62% were in range with more
+    than 0:05 at their last snap and 88% still had a timeout. With it (the same model), 5.0%; their
+    field goals 58% from 54% (real 78%), overtime from those states 18% from 22% (real 5%), from
+    kick-off 3.9% from 4.2% (real 2.1%), timeouts 4.17 a game from 4.06 (real 3.98). In range
+    alone, 5.3% still ran out (t10), 41% of them out of range at their last snap and 74% with a
+    timeout left; real level sides almost never let the clock run out wherever they are.
+
+    The 4th down's fallbacks now keep what a field goal does and the time left to the end, and
+    coarsen the field and distance first. From the real states, level or 1–2 behind in Q4's last
+    2:00, real sides kicked on 54% of 4th downs and the sim's cells on 49%.
+
+    The feed can also miss a half's last play, a kick at the buzzer, though never the score it
+    left: the next half's rows have it, and at the game's end the history's final score. In the
+    September audit, level sides with the ball in Q4's last 0:30 went on to win 81% of the time,
+    yet their drives read as only 68% scored and 24% run out of clock. So the build reads a kick
+    off the score after a half's last row: 3 more to the side with the ball and none to the other,
+    with a minute or less left, is a kick it took and made. Before, that state counted as a side
+    that let the half run out. It prints how many such kicks it found. The audit reads the real
+    drive endings and choices the same way.
+
+    `--decision-blend K` blends the cells, as `--blend` does the draws. Every cell of 5 real
+    decisions or more is kept, and a state's shares are its cells' over the levels: a cell of n
+    weighs n / (n + K), the rest passes to its parent. `--decision-blend 0` (the default) takes
+    the first level with 25. Conversions blend lighter, n / (n + 5) (`CONV_BLEND`): the lead after
+    the six all but makes the choice, and a thin late cell passing 25 tries' worth down the chain
+    reached the whole game's at its lead, where sides kick. After a six in Q4's last 3:00, 2 behind
+    went for two 77% of the time in the sim's cells against 87% real, 5 behind 79% against 86%, 10
+    behind 72% against all 16 real ones, 1 behind 59% against 62%.
+
+    A two-point try is made with its own chance by the part of the game: before Q4's last 3:00,
+    in it, and in overtime, each shrunk toward the whole game's by 20 tries (`TWO_GOOD_PRIOR`).
+    September's real tries were made 64–71% of the time before the last 3:00 (239 of them),
+    52.9% in it (493) and 36% in overtime (11). The sim had made 56.6% of all of them, so early
+    tries, the first of two touchdowns back among them, failed too often and left more games level.
+  - **The deciding gamer's lean on top:** a log-odds shift for each option, fitted on their own
+    real decisions against what the league chose in the same states. It is shrunk toward none, so a
+    gamer with a handful of decisions decides almost as the league does. This is how earlier
+    versions handled 4th-down aggression and kickers' touchback rates. A gamer's lean applies in
+    every state, even ones where they have no decisions of their own.
+
+  `--no-gamer-decisions` builds without the leans, so every gamer decides as the league does, for
+  comparison.
+
+  The build prints each decision's real shares and the gamers who lean furthest each way.
+
+  What follows a decision is real data too:
+  - a returned or kept kick-off's field and clock, from real kicks in the same situation;
+  - touchbacks at the 20 and no landing zone at the 35, with no clock;
+  - field goals made by distance, and the clock they take. A kick with 40 seconds or less left in the
+    half takes it as the real ones did, so one that ran the clock out runs it out;
+  - punts' net yards;
+  - safety free kicks.
+
+  A timeout moves only the time draw.
+
+  Overtime is played as in v14.
+- **The game's own end.** In Q4 the side ahead with the ball wins there and then when two things
+  hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
+  has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
+
+### In the calibrator (`--candidate v21`, `v21_stream.py`)
+
+v2.1 prices as v21-report does, and the calibrator pairs it with prod as it pairs any version. From
+kick-off the sim plays the match's gamers and teams, each side's offense nudged `--v21-nudge-share`
+(0.75) of the way from the sim's own means to the prior's expected points. The prior is a v13/v14
+build made with `--history`, given as `--v21-prior-model`; the default is `./v14_model`. Every
+PLAY_OVER the sim can start from is priced from there with the same nudge: a snap, or the kick-off
+after a conversion or a field goal.
+
+A touchdown's PLAY_OVER, with its conversion still to come, has no book, so prod's quotes in that
+window go unpaired. Only the PLAY_OVERs prod's quotes read are simulated, at `--v21-paths` (1000)
+games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`).
+
+    python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
+        --v21-model v21_t10 --v21-prior-model v14_model
+
+### Coverage (`v21-coverage`)
+
+```powershell
+python -m eAMFModel v21-coverage --model v21_dec --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_coverage
+```
+
+For every real state in the window, how much real data the sim's draws there stand on. It covers
+the time draw at the state and the distance draw at the state with the time its real play took.
+For each draw it gives the fallback level reached, the real snaps in that group and, in full
+mode, whether the gamer's and team's own draws had enough alike. It does the same for every real
+4th down, early kick and conversion and its cell. Each draw is one of:
+- **full:** the whole key;
+- **situation:** the lead and the time of the game kept, but coarser;
+- **no lead:** the time of the game kept, not the lead;
+- **bare:** neither.
+
+`coverage.txt` sums them by the part of the game and the lead, and by the snaps left and the lead,
+with the median group size. It also lists the thinnest situations (by half, lead, down and snaps
+left), where the most states' distance draws lose the lead or the time of the game, for the end of
+a half and the rest of the game apart. `coverage_states.csv` and `coverage_decisions.csv` have one
+row per real state and decision, to look any situation up.
+
+### Down by down, by the time left (`v21-audit`)
+
+```powershell
+python -m eAMFModel v21-audit --model v21_dec --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_audit
+```
+
+The audit sets the sim against the window's real games, down by down. The parts of the game are
+Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares three ways:
+- **Game flow.** The sim's own games from kick-off (`--paths` per receiving side, each match with
+  its gamers and teams) against the real games. For each down and part of the game: snaps a game,
+  the share ending in a first down or touchdown, turnovers, yards and clock used. Where the sim
+  reaches a down more often than the real games, the drives part company there, compounding
+  included.
+- **One snap.** The next snap alone, drawn `--state-paths` times from every real state before a snap,
+  against what really came of it. This shows the draws with the game flow taken out. For each down,
+  by part of the game and by distance, it gives the share of each outcome: turnover, loss, no gain,
+  short of the line, first down, touchdown. It also gives the yards, the clock, and the 4th-down and
+  early-kick choices from the same states. A further table splits each down by the snaps left in
+  the half, as the draws read them, and another splits Q4's last 2:00 by the lead. That one shows
+  the real states the game's own end covers on their own row, since the sim ends the game there
+  with no snap. The 4th-down and early-kick choices in Q4's last 2:00 are split by what a field
+  goal does for the side with the ball, and conversions in Q4's last 3:00 by the lead after the
+  six (−1: a kick ties, two wins), the sim's own games against the real ones. Each choice also
+  shows the league's share in the sim's own cells, before the gamers' leans and the rules: where
+  the sim parts from the real choice, that says whether the cells or the leans move it. Q4's last
+  2:00 is split by the time each play took, too, and the sim's distance draws by where they came
+  from (the league's, a team's own, a gamer's own). Conversions before Q4's last 3:00 are split
+  the same way, by the part of the game (8 behind after the six: 14 behind, the first of two
+  touchdowns back), with the real two-point tries made by part against the sim's. 2nd–4th
+  downs are split by the time each play took, by the distance (1, 2–3, 4+ to go) and in the halves'
+  last 2:00: the share of the snaps in each bucket and the share that moved the chains, real and
+  sim, and the sim's own rates on the real snaps' times. Where that last is near the real, the
+  time draw is what's off; near the sim's, the draw given the time. And from every real Q4 state,
+  1–3 behind or level, it gives how often the sim's drive ran out of clock and where it was: in
+  field-goal range (a kick of 52 yards or less) or not, with 0:05 or less at its last snap's start
+  or more, and with a timeout left. From every real state in Q2's last 2:00 it plays the sim to the
+  half's end (`simulate(..., until_half=True)`): each side's points still to come in the half and
+  how the drive with the ball ended, by the lead and the time left, against the real half (the
+  score at the second half's first row, a kick at the buzzer the feed missed included).
+- **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
+  each side's points still to come in regulation, and, from level, how often the side with the
+  ball won, went to overtime or lost. It also gives how the drive with the ball ended: a
+  touchdown, a field goal made or missed, a punt, a turnover, on downs, or the clock running
+  out. Real states of one game share its result, so the real figures move in steps of whole
+  games.
+
+It opens with the largest gaps: the cells where the sim parts most from the real figure, measured in
+standard errors of the real one. It ends with overtime: how often a game goes there, from kick-off
+and from every real Q4 state, by the lead of the side with the ball and the time left, against
+whether the real game did.
+
+### Where options never happen (`v21-sweep`)
+
+```powershell
+python -m eAMFModel v21-sweep --out eAMFCalibrator/out_v21_sweep
+```
+
+The sweep goes through every real decision in the export, by default all of it (`--since` and
+`--until` narrow it). For each decision and each option, a tree splits the decisions on their full
+state:
+- the period and the seconds left in the half;
+- the deciding side's exact lead;
+- yards to the goal and yards to go;
+- the down;
+- both sides' timeouts left;
+- the play before.
+
+It splits so as to separate where the option was taken from where it wasn't. A tree searches many
+splits and reports the cleanest, so pure chance can look like "never" (0 of 74 happens 10% of the
+time for something taken 3% of the time). So the search is honest:
+- The matches are split at random in two, and a tree grows on each half.
+- On its half, a situation needs 20 or more real decisions with the option taken by 1% of them or
+  fewer, and by a tenth or less of its overall rate, every part of the situation alike.
+- It is kept only where the other half bears it out: as rare there, and so few that chance at the
+  option's overall rate would give that with p ≤ 0.005.
+- Both halves together need 30 or more decisions (`--min-region`).
+
+On pure-noise data this finds no situations, and it finds a planted late-game never-situation
+(Q4, the last 0:45, 4+ behind, in range) most of the time. A small one inside lots of noise can
+still be missed.
+
+For example: "Q4, 0:41 or less left in the half, behind by 4 or more, 8-35 yards from the goal:
+233 real, never".
+
+Where a few real sides took the option anyway, it lists who: the match, the gamer, the quarter,
+the clock and the lead, so each can be judged as a real choice or a mistake. It also checks the
+game's own end: what came after every real state it covers. There are five outcomes:
+- no more snaps;
+- only the same side's kneel-like losses;
+- other snaps;
+- the other side got the ball;
+- points scored.
+
+These are split by whether the two-minute warning was still to come.
+
+It writes `v21_sweep.txt` and `v21_sweep.csv`. `v21-build` learns the same situations from its own
+matches. For early kicks it learns them only from the half's last minute, where its sim decides.
+
+```powershell
+python -m eAMFModel v21-build --until 2026-10-01 --out v21_full --mode full
+python -m eAMFModel v21-build --until 2026-10-01 --out v21_adj --mode adjusted
+python -m eAMFModel v21-report --model v21_full --prior-model v14_model --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_v21_full
+```
+
+The build reads the calibrator's snapshots, history and timeouts from `eAMFCalibrator/out` by
+default and writes `v21model.pkl`. The report reads the expected points from a v13/v14 build's
+pre-match model: its own means by default, or those it prices with under `--inputs priced`. Its
+sections:
+
+- **Kick-off.** Each side's expected points against the sim's mean (both sides receiving,
+  `--paths` games each) and the real points:
+  - overall, with how many of the sim's points a point more expected brings;
+  - by band of the side's expected points and of the expected margin;
+  - by gamer and by team, for points for and against;
+  - graded against the prior's own score model: moneyline log loss and Brier, margin and total RPS,
+    and the paired log-loss difference.
+- **Each step.** From every `--every`-th real state (`--state-paths` games each), each side's points
+  still to come:
+  - the input's, which is its expected points times the league's share of a game's points still to
+    come at that clock;
+  - the sim's;
+  - the real ones.
+
+  These are shown by part of the game, for the favourite and the underdog, and by the side's lead at
+  the time.
+- **The draws.** The kick-off games against the real games of the window:
+  - events per game and points by quarter;
+  - the time draw, as time buckets after each kind of play;
+  - the distance draw, as snap classes within each time bucket.
+- **The decisions.** Each decision's choices, real against the sim, per game and by slice of the
+  state. For example, 4th downs are sliced by how far out and how far to go, and early kicks by the
+  time left. For the gamers with enough real decisions, it shows each one's real and simulated share
+  of the option that shows their lean (going for it, touchbacks, kicking early, going for two,
+  calling timeouts), and how well the two correlate.
+
+`--out` also writes `v21_matches.csv` (a row per match) and `v21_states.csv` (a row per real state).
+
+## Which prior on a few matches (`v14-variants`, `v14-priors`)
+
+`v14-variants v14_model` makes three copies of a v14 build that share its tables, grid, profiles and
+ratings and differ only in the prior they price with:
+- `v14_model_raw`: the same daily glmer fits without the prior shrink;
+- `v14_model_layered`: the same fits and shrink, with the post-game form layer on top;
+- `v14_model_nb2`: NB2, fitted at the build's cut-off, refitted every day after it and shrunk by its
+  own `fit_shrink` (the glmer shrink's centre), as the glmer prior is.
+
+The build itself is the shrunk glmer. Each copy then runs in the calibrator as its own candidate, so
+the same bets are re-priced by every prior; `bets --only-matches` keeps it to a chosen list.
+`v14-priors` lays the list out match by match: prod's closing pre-match prices (and the expected
+margin and total they imply, off a normal with the fitted sds), each prior's expected points as
+priced and bare (before the shrink and layers), v14's kick-off simulation off them (expected points,
+P home win, and its prices at prod's spread and total lines), the result, and with the calibrator's
+bets_sim.csv what each kept of the match's bets. A summary grades the list on the moneyline (Brier),
+the margin and the total, and adds up what each kept.
+
+```powershell
+python -m eAMFModel v14-variants v14_model
+python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --candidate v14,v14-raw=v14_model_raw,v14-layered=v14_model_layered,v14-nb2=v14_model_nb2 --v14-model v14_model --out eAMFCalibrator/out_worst15
+python -m eAMFModel v14-priors --matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --bets eAMFCalibrator/out_worst15/bets_sim.csv --out eAMFCalibrator/out_worst15
+```
+
+## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13 and v14)
 
 For every settled match in a window, priced as of its kick-off, this grades three prices of it on the
 real results:
@@ -1867,9 +2575,11 @@ real results:
   as `glmer/predict.R` prices the moneyline. A prior with no sigmas, NB2, gets plain Poisson.
 - **glmer + layers**: the same score model off the means the build prices with, after the prior
   shrink and any follow or form layer. Against raw it shows what those do.
-- **v13 sim**: v13's kick-off price off those means, with each side's profile and big-play rates.
-  That is what the stream quotes before the first play. Against the column before, it shows what
-  the simulation alone gains or loses.
+- **v13 sim** (or **v14 sim**, for a v14 build): the build's kick-off price off those means, with each
+  side's profile and big-play rates. That is what the stream quotes before the first play. Against
+  the column before, it shows what the simulation alone gains or loses. v14 holds the prior's total
+  (within `HOLD_TOL`) but lets each side's rates move the margin, so its expected margin differs from
+  the prior's by design; this grades whether that move helps.
 
 Each is graded on the moneyline (log loss, Brier, a decile calibration table, pushes left out) and on
 the margin and the total. For those it reports the bias and RMSE of the expected value, the ranked
@@ -1881,7 +2591,64 @@ python -m eAMFModel prior-vs-sim --model v13_glmer_1001 --history eAMFCalibrator
 ```
 
 `--paths` sets the simulated games per kick-off (default 4000), and `--workers` the processes. `--out`
-also writes a per-match CSV.
+also writes a per-match CSV. Under the table, the moneyline log loss differences are given match by
+match with their paired standard error. A difference inside about two of them is within the noise of
+the window.
+
+## A side's strength, snap by snap (`strength-check`, v14)
+
+A side's strength (theta) reaches its snaps two ways in `sim14.simulate`:
+- **The tilt**, exp(tilt x theta). It leans every draw toward the better end of its bin: fewer
+  turnovers and losses, and longer gains, all at once.
+- **The boom**, exp(boom x theta). It multiplies the bin's 40+ yard plays and moves the same share
+  onto its failed plays (turnovers, losses and the rest short of the line), out of the plays
+  between. A side's own big-play rate works the same way.
+
+A build from before the strength refit plays `TILT_SCALE` 0.5 and `BOOM` 3. One with it plays its
+own (`Tables.tilt_scale`, `Tables.boom`; see "The strength refit").
+
+Nothing else reads the strength. The play calling, the clock, 4th-down choices, kicking and red-zone
+holds are the same for a strong side as for a weak one; they differ only by the states the plays
+lead to. The prior grid finds the strengths that give each side its expected points. Each simulated
+game also draws the day's strengths around them (`sim14.strength_draw`): one swing both sides share,
+and each player's own form.
+
+`strength-check` measures all of this on a build, in three parts:
+- **A. From kick-off.**
+  - One side's expected points are stepped from 10 to 25, with the other side at 16, league
+    profiles and no draw.
+  - It shows the side's points, snaps a game and how its snaps split: turnover, loss, no gain, short
+    of the line, a first down under 20 yards, 20-39 yards, 40+.
+  - Each step is run as built and with each of the tilt, the boom and the conversion alone (the
+    other two off), at the same strengths. So it shows which kinds of play each part of the strength
+    moves, and how many of the points each carries.
+- **B. Every side, real against the sim.** The window's settled matches are priced as the stream
+  prices their kick-off: the held strengths, the players' profiles and the day's draw. Every side's
+  points and snap split are set against its real ones. They're grouped by the side's expected points
+  and by its expected margin, with the sim less real on each class.
+  - If strong sides really get their points with fewer failed plays while the sim gets them from big
+    plays, it shows here.
+  - The margin grouping shows how favourites and outsiders differ.
+- **C. The day's draw against fixed strengths.**
+  - The same matches are priced again with the draw off. The hold is run without the draw too, so
+    the prior's total is still met.
+  - It compares, for both: the mean total and margin against the prior's, the margin and total
+    spread (against the real results' RMS about the prior), the moneyline log loss and Brier, and
+    the margin and total RPS and coverage, all on the results.
+  - It ends with the log loss difference and its paired standard error.
+
+```powershell
+python -m eAMFModel strength-check --model v14_model --since 2026-10-01 --until 2026-10-12 --out eAMFCalibrator/out_strength
+```
+
+- `--no-matches` runs part A alone, in a few minutes.
+- `--paths` sets the games per kick-off for B and C (default 2000); every match is priced twice, each
+  with its own hold.
+- `--out` also writes a per-side CSV with each side's prior, real and simulated points, strengths
+  and snap counts.
+- Sim snaps are the real plays the draws landed on, with the gain cut at the goal line. The
+  touchdown run-on and backed-up rules that can change a play afterwards are not applied, so the
+  shares are what each side draws. Kneels and overtime are left out of both.
 
 ## Refitting the prior every day (`prior-daily`, v10–v13)
 
@@ -2261,17 +3028,31 @@ version that drops one fails the tests before it reaches the page.
 
 ## Run it
 
+Three steps: refresh the data, build, report. v14's build is the optimum build with nothing to set:
+every input from the refresh, glmer as the pre-match model (`glmer/fit.R`'s defaults), and that model
+refitted for every day from the build's cut-off to the history's last day, each on every result
+settled before its day began (the cut-off day's fit is the build's own).
+
 ```bash
-# once: the snapshots, the match history and every timeout (eAMFCalibrator), then a build
-python -m eAMFCalibrator scouting --since 2026-08-24 --until 2026-09-23
-python -m eAMFCalibrator history --until 2026-09-23
-python -m eAMFCalibrator timeouts --since 2026-08-24 --until 2026-09-23
-python -m eAMFModel v10-build eAMFCalibrator/out/scouting_playover.csv --half all --until 2026-09-23 \
-    --out v10_model --history eAMFCalibrator/out/match_history.csv \
-    --handles eAMFCalibrator/out/match_history.csv --timeouts eAMFCalibrator/out/timeouts.csv
+# 1. the data every build and report reads: snapshots and timeouts from 24 Aug, every settled match
+python -m eAMFCalibrator refresh --until 2026-10-12
 
-# the calibration report with versions standing in for the candidate
-python -m eAMFCalibrator report --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
+# 2. the build on everything before the cut-off (about 100 minutes, then the daily fits)
+python -m eAMFModel v14-build --until 2026-10-01
 
-python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v10
+# 3. the report against prod over the days after the cut-off, with the bets and the margin uplift
+python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v14 \
+    --bets --margin-chart FD_109_BALANCED.csv
+```
+
+- **Live:** build without `--until`, then each day `eAMFCalibrator refresh` and `eAMFModel
+  v14-daily` (fits the days since the last one and keeps the build attached).
+- `v14-build --no-daily` prices from the build's single fit; `--prior nb2` builds on NB2 instead.
+- `v14-build --sim-workers 12` runs the build's simulations on 12 processes (default 4): the same
+  model, sooner.
+- v8-v13 keep their own commands and defaults (`--prior nb2`, `--half train`; `prior-daily` to
+  attach daily fits).
+
+```bash
+python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v14
 ```

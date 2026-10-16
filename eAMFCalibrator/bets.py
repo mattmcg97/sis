@@ -617,6 +617,10 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     if prematch_only:
         bets = [b for b in bets if not b.in_play]
     gamer_info = None
+    if config.ONLY_MATCHES:
+        want = set(config.ONLY_MATCHES)
+        bets = [b for b in bets if b.match_code in want]
+        print(f"  only the {len(want):,} matches asked for: {len({b.match_code for b in bets}):,} of them have bets")
     if config.GAMERS:
         bets, gamer_info = for_gamers(cur, bets, config.GAMERS)
         print(f"  {', '.join(g.upper() for g in config.GAMERS)}: {len(gamer_info):,} matches in the window")
@@ -712,7 +716,14 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     book_lines = book_comparison.text(books)
     print("\n".join(book_lines))
     write_text(os.path.join(out_dir, "bets_book_comparison.txt"), book_lines)
-    uplift = margin_uplift.run(out_dir, uplift, chart_path=config.UPLIFT_CHART, factor=config.UPLIFT_FACTOR)
+    try:
+        uplift = margin_uplift.run(out_dir, uplift, chart_path=config.UPLIFT_CHART, factor=config.UPLIFT_FACTOR,
+                                   names=margin_uplift.names_of(history))
+    except Exception:                           # the uplift is an extra: the rest of the run still reports
+        import traceback
+        print("\n  margin uplift failed, the report goes on without it:")
+        traceback.print_exc()
+        uplift = None
     if summary is not None:
         summary.update(results=results, lags=lags, bets=len(bets), matches=len(matches),
                        book_comparison=books, uplift=uplift)

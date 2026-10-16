@@ -25,7 +25,11 @@ by play, off PLAY_OVER snapshots on the real game clock.
   form-trace             one gamer's matches as the pre-match model priced them and as the
                          post-game form layer moves them
   trader                 a local page to click through a game and see a version's prices
-  prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's
+  v14-variants DIR       copies of a v14 build pricing off other priors: without the shrink,
+                         with the form layer, NB2 (refitted daily) -- each a calibrator candidate
+  v14-priors             chosen matches as prod and each v14 variant price them: prior and
+                         kick-off expected points, prices at prod's lines, what the bets kept
+  prior-vs-sim           a window's matches as the pre-match prior prices them and as v13's or v14's
                          kick-off does off it, both graded on the results (calibration)
   kickoff-dist           a v12 kick-off simulated at given expected points: its final totals
                          against the real ones
@@ -36,6 +40,7 @@ The calibrator runs a version as a stream in its own right:
 """
 
 import argparse
+import json
 import os
 
 from . import grading, playover, players
@@ -75,6 +80,8 @@ def cmd_sim_build(args):
     name = args.version
     model = _sim_module(name)
     import datetime as dt
+    if name in OPTIMUM:
+        _optimum_inputs(args)            # before the timeouts are read: it finds timeouts.csv
     data = playover.load(args.snapshots)
     if getattr(args, "timeouts", None):
         found = playover.annotate_timeouts(data, args.timeouts)
@@ -97,6 +104,8 @@ def cmd_sim_build(args):
                          "NB2 pre-match model, never from GAMEPLAI's prices")
     if getattr(args, "in_play", False):
         model.IN_PLAY_FIT = True
+    if getattr(args, "sim_workers", None):
+        model.BUILD_WORKERS = max(1, args.sim_workers)
     if getattr(args, "red_zone", None) == "off":
         model.sim.RED_ZONE_FIT = False
     elif getattr(args, "red_zone", None):
@@ -107,6 +116,76 @@ def cmd_sim_build(args):
     players_file = f"{name}players.json"
     print(f"  wrote {args.out}/{name}tables.npz, {args.out}/{name}grid.npz"
           f"{' and ' + players_file if os.path.exists(os.path.join(args.out, players_file)) else ''}")
+    if name in OPTIMUM and not args.no_daily:
+        if before is None:
+            from .remaining import day
+            before = dt.datetime.combine(max(day(c) for c in keep) + dt.timedelta(days=1), dt.time())
+        _daily(args.out, history, prior or "nb2", before.date(), workers=args.workers)
+
+
+# v14's build is the optimum build by default: every input from the calibrator's `refresh`
+# (eAMFCalibrator/out), every snapshot before --until, the glmer pre-match model (glmer/fit.R's
+# defaults) and that model refitted for every day from the build's cut-off to the history's last
+# day, each fit on every result settled before its day began -- as a nightly refit would live.
+OPTIMUM = ("v14",)
+DATA = {"snapshots": os.path.join("eAMFCalibrator", "out", "scouting_playover.csv"),
+        "history": os.path.join("eAMFCalibrator", "out", "match_history.csv"),
+        "timeouts": os.path.join("eAMFCalibrator", "out", "timeouts.csv")}
+
+
+def _optimum_inputs(args):
+    """The optimum build's inputs: the history (and its handles) and the timeouts from the
+    calibrator's out directory when not given."""
+    if not args.history and os.path.exists(DATA["history"]):
+        args.history = DATA["history"]
+    if not args.handles and args.history:
+        args.handles = args.history
+    if not getattr(args, "timeouts", None) and os.path.exists(DATA["timeouts"]):
+        args.timeouts = DATA["timeouts"]
+
+
+def _daily(model_dir, history, prior, since, until=None, workers=2):
+    """The build's pre-match model refitted for every day from `since` (the build's cut-off) to
+    `until` (default: the history's last match day), into model_dir/<prior>_daily, and the build
+    attached to it. The cut-off day's fit is the build's own, copied rather than refitted; days
+    already fitted are kept."""
+    import shutil
+    from . import nb2_prior, rolling_prior, v14
+    days = [s.date() for s in (nb2_prior._start(r) for r in history) if s is not None]
+    until = until or (max(days) if days else since)
+    if until < since:
+        print(f"  daily pre-match fits: none (the history ends {until}, before the cut-off {since})")
+        return None
+    out = os.path.join(model_dir, f"{prior}_daily")
+    own, first = os.path.join(model_dir, prior), os.path.join(out, since.isoformat())
+    if v14.PRIORS[prior].exists(own) and not os.path.exists(first) \
+            and v14.PRIORS[prior](own).meta["before"][:10] == since.isoformat():
+        os.makedirs(out, exist_ok=True)
+        shutil.copytree(own, first)
+    print(f"  daily pre-match fits: {prior} for every day from {since} to {until}")
+    rolling = rolling_prior.fit(history, prior, out, since, until, workers=workers)
+    rolling_prior.attach(model_dir, out)
+    print(f"  {rolling.describe()}; {model_dir} prices each match from its own day's fit")
+    return rolling
+
+
+def cmd_daily(args):
+    """The optimum build's daily pre-match fits brought up to the refreshed history's last day."""
+    import datetime as dt
+    from . import nb2_prior
+    name = args.version
+    with open(os.path.join(args.model, f"{name}prior.json"), encoding="utf-8") as fh:
+        meta = json.load(fh)
+    prior = meta.get("prior", "nb2")
+    model = _sim_module(name)
+    own = os.path.join(args.model, prior)
+    if not model.PRIORS[prior].exists(own):
+        raise SystemExit(f"{args.model}: no {prior} fit of its own to start the days from")
+    since = dt.datetime.fromisoformat(model.PRIORS[prior](own).meta["before"][:19]).date()
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    _daily(args.model, history, prior, since, until, workers=args.workers)
+    return 0
 
 
 def cmd_sim(args):
@@ -193,7 +272,7 @@ def cmd_prior_vs_sim(args):
     history = nb2_prior.load_history(args.history)
     results = prior_check.run(args.model, history, since, until, n_paths=args.paths,
                               workers=args.workers or max(1, (os.cpu_count() or 2) - 1), seed=args.seed)
-    lines = prior_check.report(results, since, until)
+    lines = prior_check.report(results, since, until, prior_check.version_of(args.model))
     print("\n".join(lines))
     if args.out:
         os.makedirs(args.out, exist_ok=True)
@@ -202,6 +281,222 @@ def cmd_prior_vs_sim(args):
         prior_check.write_csv(os.path.join(args.out, "prior_vs_sim.csv"), results)
         print(f"\n  -> {args.out}/prior_vs_sim.txt and prior_vs_sim.csv")
     return 0
+
+
+def cmd_strength_check(args):
+    import datetime as dt
+    from . import strength_check as sc
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print("  A: the sweep from kick-off", flush=True)
+    rows = sc.sweep(args.model, n_paths=args.sweep_paths, workers=workers)
+    results = []
+    if not args.no_matches:
+        history = sc.history_rows(args.history or DATA["history"])
+        codes = sc.window_codes(history, since, until)
+        print(f"  B and C: reading the snapshots of {len(codes):,} matches", flush=True)
+        snaps = sc.load_snapshots(args.snapshots or DATA["snapshots"], codes)
+        print("  B and C: pricing the window's matches, with the day's draw and with fixed strengths", flush=True)
+        results = sc.run(args.model, history, snaps, since, until, n_paths=args.paths, workers=workers)
+    lines = sc.report(rows, results, since, until)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "strength_check.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        if results:
+            sc.write_csv(os.path.join(args.out, "strength_check.csv"), results)
+        print(f"\n  -> {args.out}/strength_check.txt" + (" and strength_check.csv" if results else ""))
+    return 0
+
+
+def cmd_v21_build(args):
+    import datetime as dt
+    import time
+    from . import nb2_prior, v21
+    from .remaining import day
+    t0 = time.time()
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts and not args.no_timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts})")
+    if args.until:
+        cut = dt.date.fromisoformat(args.until)
+        data = {c: rows for c, rows in data.items() if day(c) < cut}
+        print(f"  building on {len(data):,} matches before {cut}")
+    history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
+    model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
+                      gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split,
+                      key=args.key, blend=args.blend, field=args.field, decision_blend=args.decision_blend,
+                      clock=args.clock, tilt_prior=args.tilt_prior)
+    os.makedirs(args.out, exist_ok=True)
+    model.save(os.path.join(args.out, v21.MODEL_FILE))
+    print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_sweep(args):
+    import datetime as dt
+    from . import nb2_prior, v21_rules
+    from .remaining import day
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts})")
+    else:
+        print("  no timeouts file: the timeouts' rules can't be swept, and the others don't see them")
+    if args.since:
+        data = {c: rows for c, rows in data.items() if day(c) >= dt.date.fromisoformat(args.since)}
+    if args.until:
+        data = {c: rows for c, rows in data.items() if day(c) < dt.date.fromisoformat(args.until)}
+    history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
+    print(f"  sweeping {len(data):,} matches", flush=True)
+    found, auto, counts = v21_rules.sweep(data, history, min_region=args.min_region, rare=args.rare)
+    lines = v21_rules.report(found, auto, counts, args.min_region, args.rare)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_sweep.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_rules.write_csv(os.path.join(args.out, "v21_sweep.csv"), found)
+        print(f"\n  -> {args.out}/v21_sweep.txt and v21_sweep.csv")
+    return 0
+
+
+def cmd_v21_audit(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_audit
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  auditing {len(snaps):,} matches ({workers} processes)", flush=True)
+    out = v21_audit.run(args.model, snaps, history, n_paths=args.paths, state_paths=args.state_paths,
+                        every=args.every, workers=workers, since=since, until=until)
+    lines = v21_audit.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_audit.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        print(f"\n  -> {args.out}/v21_audit.txt")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_coverage(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_coverage
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    out = v21_coverage.run(args.model, snaps, history)
+    lines = v21_coverage.write(out, args.out) if args.out else v21_coverage.report(out)
+    print("\n".join(lines))
+    if args.out:
+        print(f"\n  -> {args.out}/coverage.txt, coverage_states.csv, coverage_decisions.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_report(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_report
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    rows = [r for r in history if r["MATCH_CODE"] in snaps]
+    print(f"  the inputs: {args.prior_model}'s pre-match expected points ({args.inputs})", flush=True)
+    means, books = v21_report.prior_inputs(args.prior_model, rows, history, which=args.inputs)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
+          f" ({workers} processes)", flush=True)
+    out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
+                         state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books,
+                         nudge=args.nudge, nudge_share=args.nudge_share)
+    lines = v21_report.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_report.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_report.write_csv(os.path.join(args.out, "v21_matches.csv"), out)
+        v21_report.write_states_csv(os.path.join(args.out, "v21_states.csv"), out)
+        print(f"\n  -> {args.out}/v21_report.txt, v21_matches.csv and v21_states.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v14_variants(args):
+    import datetime as dt
+    from . import nb2_prior, prior_variants
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    made = prior_variants.make(args.model, history, variants=[v.strip() for v in args.variants.split(",") if v.strip()],
+                               workers=args.workers, until=until, daily=None if args.no_daily else _daily)
+    for name, d in made.items():
+        print(f"  {name}: {d}")
+    tags = ",".join(f"v14-{name}={d}" for name, d in made.items())
+    print(f"\n  as calibrator candidates: --candidate v14,{tags} --v14-model {args.model}")
+    return 0
+
+
+def cmd_v14_priors(args):
+    import os
+    from . import nb2_prior, prior_variants
+    history = nb2_prior.load_history(args.history or DATA["history"])
+    codes = _match_list(args.matches)
+    models = {}
+    for item in args.models.split(","):
+        label, eq, directory = item.strip().partition("=")
+        models[label] = directory if eq else label
+    results = prior_variants.compare(models, history, codes, snapshots=args.snapshots or DATA["snapshots"],
+                                     bets_csv=args.bets, n_paths=args.paths, seed=args.seed)
+    lines = prior_variants.report(results, list(models))
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v14_priors.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        prior_variants.write_csv(os.path.join(args.out, "v14_priors.csv"), results, list(models))
+        print(f"\n  -> {args.out}/v14_priors.txt and v14_priors.csv")
+    return 0
+
+
+def _match_list(value):
+    """Match codes from a file (one a line, the first word; # starts a comment) or a comma-separated
+    list."""
+    if os.path.exists(value):
+        with open(value, encoding="utf-8") as fh:
+            return [w[0] for w in (line.split("#", 1)[0].split() for line in fh) if w]
+    return [c.strip() for c in value.split(",") if c.strip()]
 
 
 def cmd_prior_daily(args):
@@ -320,7 +615,8 @@ def _layer_options(p, what):
                                                              f"his day is going (default: never), {what}")
 
 
-def main(argv=None):
+def build_parser():
+    """The command line's parser."""
     parser = argparse.ArgumentParser(prog="eAMFModel", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -350,8 +646,13 @@ def main(argv=None):
                        ("v14", "v14: v13 played closer to the real game -- strength as boom or bust, the clock "
                                "as played -- built in one joint fit (see README)")):
         p = sub.add_parser(f"{name}-build", help=what)
-        p.add_argument("snapshots", help="scouting_playover.csv")
-        p.add_argument("--half", choices=["train", "test", "all"], default="train")
+        if name in OPTIMUM:
+            p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                           help=f"scouting_playover.csv (default {DATA['snapshots']})")
+        else:
+            p.add_argument("snapshots", help="scouting_playover.csv")
+        p.add_argument("--half", choices=["train", "test", "all"],
+                       default="all" if name in OPTIMUM else "train")
         p.add_argument("--out", default=f"{name}_model")
         p.add_argument("--handles", help="CSV of MATCH_CODE, PLAYER_1_HANDLE, PLAYER_2_HANDLE "
                                          "(default: the export's own handle columns)")
@@ -368,9 +669,19 @@ def main(argv=None):
                             "(see README: off by default, it has not held up out of sample)")
         p.add_argument("--timeouts", help="the calibrator's timeouts.csv (`python -m eAMFCalibrator "
                                           "timeouts`): every real timeout, to fit when sides call them")
-        p.add_argument("--prior", choices=["nb2", "glmer"], default="nb2",
-                       help="the pre-match model --history fits: nb2 (nb2/, the default) or "
-                            "glmer (glmer/ in R, needs R and lme4; see glmer/README.md)")
+        p.add_argument("--prior", choices=["nb2", "glmer"], default="glmer" if name in OPTIMUM else "nb2",
+                       help="the pre-match model --history fits: nb2 (nb2/) or glmer (glmer/ in R, "
+                            "needs R and lme4; see glmer/README.md); default "
+                            + ("glmer" if name in OPTIMUM else "nb2"))
+        if name in OPTIMUM:
+            p.add_argument("--no-daily", action="store_true",
+                           help="price from the build's single pre-match fit, without the daily refits "
+                                "from the cut-off to the history's last day (see v14-daily)")
+            p.add_argument("--workers", type=int, default=2,
+                           help="daily pre-match fits run side by side (default 2)")
+            p.add_argument("--sim-workers", type=int,
+                           help="processes for the build's long simulations (default 4); the results"
+                                " are the same for any number, only the time changes")
         p.add_argument("--red-zone", choices=["hold", "tilt", "off"],
                        help="how drives finish inside the 30 by quarter and lead: hold (the "
                             "default), tilt, or off (see README)")
@@ -414,6 +725,14 @@ def main(argv=None):
                         "(0, safety, 3, 6, 7, 8), instead of the rest of the game")
     p.set_defaults(func=cmd_remaining)
 
+    p = sub.add_parser("v14-daily", help="bring a v14 build's daily pre-match fits up to the refreshed "
+                                         "history's last day (run after eAMFCalibrator refresh)")
+    p.add_argument("--model", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--history", help=f"the match history (default {DATA['history']})")
+    p.add_argument("--until", help="last day to fit (default: the history's last match day)")
+    p.add_argument("--workers", type=int, default=2, help="fits run side by side (default 2)")
+    p.set_defaults(func=cmd_daily, version="v14")
+
     p = sub.add_parser("prior-daily", help="refit the pre-match model every day of a window, as it "
                                            "would be live, and point builds at it (rolling_prior.py)")
     p.add_argument("--history", help="eAMFCalibrator history's CSV (every match's players and finals)")
@@ -431,8 +750,8 @@ def main(argv=None):
     p.set_defaults(func=cmd_prior_daily)
 
     p = sub.add_parser("prior-vs-sim", help="calibration: a window's matches priced by the pre-match prior "
-                                            "itself and by v13's kick-off off it, graded on the results")
-    p.add_argument("--model", required=True, help="a v13 build (its prior: glmer or NB2, daily if attached)")
+                                            "itself and by the build's (v13 or v14) kick-off off it, graded on the results")
+    p.add_argument("--model", required=True, help="a v13 or v14 build (its prior: glmer or NB2, daily if attached)")
     p.add_argument("--history", required=True, help="the match history CSV (eAMFCalibrator history)")
     p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
     p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
@@ -441,6 +760,163 @@ def main(argv=None):
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", help="also write prior_vs_sim.txt and a per-match prior_vs_sim.csv here")
     p.set_defaults(func=cmd_prior_vs_sim)
+
+    p = sub.add_parser("v14-variants", help="copies of a v14 build pricing off other priors (no shrink, the "
+                                            "form layer, NB2 refitted daily), for the calibrator side by side")
+    p.add_argument("model", nargs="?", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--variants", default="raw,layered,nb2", help="which: raw, layered, nb2 (default all)")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--until", help="NB2's daily fits up to this day (default: the history's last)")
+    p.add_argument("--no-daily", action="store_true", help="NB2 from its single fit at the cut-off")
+    p.add_argument("--workers", type=int, default=2, help="NB2's daily fits run side by side (default 2)")
+    p.set_defaults(func=cmd_v14_variants)
+
+    p = sub.add_parser("v14-priors", help="chosen matches as prod and each v14 variant price them before "
+                                          "kick-off, and what each kept of their bets")
+    p.add_argument("--matches", required=True, help="a file of match codes (one a line) or codes, comma-separated")
+    p.add_argument("--models", default="v14=v14_model,v14-raw=v14_model_raw,v14-layered=v14_model_layered,"
+                                       "v14-nb2=v14_model_nb2",
+                   help="label=build pairs, comma-separated; the labels the calibrator's candidates had")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", help=f"the snapshot export, for prod's prices (default {DATA['snapshots']})")
+    p.add_argument("--bets", help="the calibrator's bets_sim.csv with every model a candidate: each one's kept")
+    p.add_argument("--paths", type=int, default=4000, help="simulated games per kick-off (default 4000)")
+    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--out", help="also write v14_priors.txt and v14_priors.csv here")
+    p.set_defaults(func=cmd_v14_priors)
+
+    p = sub.add_parser("strength-check", help="a v14 build's strengths snap by snap: which kinds of play "
+                                              "they move, the sim's snaps against the real ones, and the day's "
+                                              "strength draw against fixed strengths, graded on the results")
+    p.add_argument("--model", default="v14_model", help="the v14 build (default v14_model)")
+    p.add_argument("--history", help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=2000, help="simulated games per kick-off (default 2000)")
+    p.add_argument("--sweep-paths", type=int, default=4000, help="games per step of the sweep (default 4000)")
+    p.add_argument("--no-matches", action="store_true", help="the sweep only (part A)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write strength_check.txt and a per-side strength_check.csv here")
+    p.set_defaults(func=cmd_strength_check)
+
+    p = sub.add_parser("v21-build", help="v2.1: a snap sim drawing each snap's time, then its distance given "
+                                         "the time, from real snaps alone (no strength; see v21.py)")
+    p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                   help=f"scouting_playover.csv (default {DATA['snapshots']})")
+    p.add_argument("--until", help="build on the matches before this date (YYYY-MM-DD)")
+    p.add_argument("--out", default="v21_model", help="the build directory (default v21_model)")
+    p.add_argument("--mode", choices=["full", "adjusted", "tilt"], default="full",
+                   help="full: the gamers' and teams' own real snaps as draws; adjusted: the league's draws "
+                        "leaned by a fitted tilt for each; tilt: the league's draws reweighted by exp(theta . "
+                        "phi) on yards, touchdowns, turnovers and seconds, theta per gamer and team, offense and "
+                        "defense, fitted by maximum likelihood (default full)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers and "
+                                                               f"teams (default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--no-timeouts", action="store_true", help="build without the timeouts")
+    p.add_argument("--min-records", type=int, default=40, help="real snaps a draw's group needs (default 40)")
+    p.add_argument("--no-refine", action="store_true",
+                   help="keep the real games' snaps left in the half (no simulated pass)")
+    p.add_argument("--key", choices=["full", "lean"], default="full",
+                   help="the league's draws' key: full -- the play before in six classes, the part of the game, the "
+                        "snaps played so far; lean -- the clock running or stopped (or the play's time), the period, "
+                        "the lead, down, distance, field and snaps left only (default full)")
+    p.add_argument("--blend", type=float, default=0.0,
+                   help="blend the league's draws' levels: a cell of n real snaps is drawn from n / (n + BLEND) of "
+                        "the time, else its parent's (cells of 5+ kept); 0 (default): the first level with "
+                        "--min-records")
+    p.add_argument("--field", type=float, default=0.0,
+                   help="field windows: the distance draw takes its real snap from near the state's own field, "
+                        "within FIELD x the yards to go (2 yards at least; the 20 nearest where fewer), so a gain "
+                        "made at midfield is not played out at the 12; 0 (default): anywhere in its group "
+                        "(try 0.2)")
+    p.add_argument("--clock", type=float, default=0.0,
+                   help="clock windows: in a half's last 2:00 the time draw takes its real snap from those with as "
+                        "long left in the half, within CLOCK x the seconds left (2 at least; the 20 nearest where "
+                        "fewer); 0 (default): anywhere in its group (try 0.2)")
+    p.add_argument("--tilt-prior", type=float, default=200.0,
+                   help="--mode tilt: each tilt shrunk toward none as if it had this many league-average snaps "
+                        "(default 200)")
+    p.add_argument("--decision-blend", type=float, default=0.0,
+                   help="blend the decisions' cells: a cell of n real decisions weighs n / (n + K) of its state's "
+                        "shares, the rest its parents' (cells of 5+ kept); 0 (default): the first level with 25")
+    p.add_argument("--split", choices=["snaps", "time"], default="snaps",
+                   help="the draws' part of the game: snaps -- the half and the two-minute warning, the snaps "
+                        "left in the half the rest; time -- the seven parts of the game (default snaps)")
+    p.add_argument("--no-gamer-decisions", action="store_true",
+                   help="every gamer decides (4th downs, early kicks, kick-offs, conversions, timeouts) as the "
+                        "league does in the same state: no gamer's own lean")
+    p.add_argument("--no-rules", action="store_true",
+                   help="without the rules learned off the real decisions (options never or all but never taken "
+                        "in a situation, see v21-sweep): the real shares alone")
+    p.set_defaults(func=cmd_v21_build)
+
+    p = sub.add_parser("v21-sweep", help="every real decision in the export swept for the situations where an "
+                                         "option never happens, or all but never (and who did it anyway)")
+    p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                   help=f"scouting_playover.csv (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers "
+                                                               f"(default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: every match)")
+    p.add_argument("--until", help="matches before this day only, YYYY-MM-DD")
+    p.add_argument("--min-region", type=int, default=30, help="real decisions a situation needs (default 30)")
+    p.add_argument("--rare", type=float, default=0.01,
+                   help="the most an option may be taken in a situation to count as all but never (default 0.01)")
+    p.add_argument("--out", help="also write v21_sweep.txt and v21_sweep.csv here")
+    p.set_defaults(func=cmd_v21_sweep)
+
+    p = sub.add_parser("v21-audit", help="v2.1 down by down and by the time left against the real games: its own "
+                                         "games from kick-off, and the next snap from every real state")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=500, help="kick-off games per receiving side (default 500)")
+    p.add_argument("--state-paths", type=int, default=50, help="next snaps drawn from each real state (default 50)")
+    p.add_argument("--every", type=int, default=1, help="every Nth real state (default 1: all)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_audit.txt here")
+    p.set_defaults(func=cmd_v21_audit)
+
+    p = sub.add_parser("v21-coverage", help="v2.1's coverage: for every real state, the fallback level each draw "
+                                            "reaches and the real snaps behind it; the thinnest situations")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--out", help="write coverage.txt and the per-state CSVs here")
+    p.set_defaults(func=cmd_v21_coverage)
+
+    p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
+                                          "every step of the real games, and its draws against the real snaps")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--prior-model", default="v14_model",
+                   help="a v13/v14 build whose pre-match model gives the expected points (default v14_model)")
+    p.add_argument("--inputs", choices=["raw", "priced"], default="raw",
+                   help="raw: the pre-match model's own expected points; priced: with the build's layers")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=1000, help="kick-off games per receiving side (default 1000)")
+    p.add_argument("--state-paths", type=int, default=200, help="games from each real state (default 200; 0: none)")
+    p.add_argument("--nudge", action="store_true",
+                   help="a tilt build: each side's offense nudged along the strength direction until the sim's "
+                        "kick-off mean meets its expected points (the switch for pricing), the same nudge in its states")
+    p.add_argument("--nudge-share", type=float, default=1.0,
+                   help="with --nudge: go this share of the way from the sim's own kick-off means to the inputs "
+                        "(default 1: all of it)")
+    p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
+    p.set_defaults(func=cmd_v21_report)
 
     p = sub.add_parser("kickoff-dist", help="a v12 kick-off simulated at given expected points: its "
                                             "final totals against the real ones over a window")
@@ -488,7 +964,11 @@ def main(argv=None):
     p.add_argument("--no-browser", action="store_true", help="do not open the page")
     p.set_defaults(func=cmd_trader)
 
-    args = parser.parse_args(argv)
+    return parser
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
     args.func(args)
 
 

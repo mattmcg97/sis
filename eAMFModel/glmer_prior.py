@@ -78,7 +78,17 @@ def _settled(rows):
             and r.get("PLAYER_2_FINAL_SCORE") not in ("", None)]
 
 
-def _live_history(model_dir, work, settled):
+KEEP_FILES = False      # keep each prediction's input and output files (a test reads what R was handed)
+
+
+def _call_tag():
+    """A name no other prediction running at the same time has: two processes or threads predicting
+    off the same fit (a report and a test side by side) once wrote over each other's files, and one
+    read the other's -- an empty schedule, or another schedule's predictions."""
+    return f"{os.getpid()}_{threading.get_ident()}_{os.urandom(4).hex()}"
+
+
+def _live_history(model_dir, work, settled, tag=""):
     """The model's own history with `settled` (matches settled when pricing) added, as a CSV for
     predict.R; the model's own file when there are none."""
     own = os.path.join(model_dir, HISTORY)
@@ -88,7 +98,7 @@ def _live_history(model_dir, work, settled):
         rows = {r["MATCH_CODE"]: r for r in csv.DictReader(fh)}
     for r in settled:
         rows[r["MATCH_CODE"]] = r
-    path = os.path.join(work, "history_live.csv")
+    path = os.path.join(work, f"history_live_{tag}.csv" if tag else "history_live.csv")
     nb2_prior._write(path, list(rows.values()), nb2_prior.HISTORY_FIELDS)
     return path
 
@@ -103,8 +113,9 @@ def predict(model_dir, schedule, results=None):
     model_dir = os.path.abspath(model_dir)
     work = os.path.join(model_dir, "predict")
     os.makedirs(work, exist_ok=True)
-    sched = os.path.join(work, "schedule.csv")
-    out = os.path.join(work, "predictions.csv")
+    tag = _call_tag()
+    sched = os.path.join(work, f"schedule_{tag}.csv")
+    out = os.path.join(work, f"predictions_{tag}.csv")
     settled = _settled(results)
     finals = {r["MATCH_CODE"]: r for r in settled}
     # predict.R takes a schedule row over the history's for the same match, so a scheduled match
@@ -113,19 +124,24 @@ def predict(model_dir, schedule, results=None):
                      PLAYER_2_FINAL_SCORE=finals[r["MATCH_CODE"]]["PLAYER_2_FINAL_SCORE"])
                 if r["MATCH_CODE"] in finals and not _settled([r]) else r for r in schedule]
     nb2_prior._write(sched, schedule, nb2_prior.HISTORY_FIELDS)
-    history = _live_history(model_dir, work, settled)
-    t0 = time.time()
-    _run(PREDICT_SCRIPT, [f"--model={os.path.join(model_dir, MODEL)}", f"--schedule={sched}",
-                          f"--history={history}", "--n-sims=0", f"--out={out}"])
-    with _PREDICTS_LOCK:
-        PREDICTS["calls"] += 1
-        PREDICTS["seconds"] += time.time() - t0
-    got = {}
-    with open(out, newline="", encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            if r.get("Prediction_Status") == "OK":
-                got[r["MATCH_CODE"]] = (float(r["Pred_P1_Points"]), float(r["Pred_P2_Points"]))
-    return got
+    history = _live_history(model_dir, work, settled, tag)
+    try:
+        t0 = time.time()
+        _run(PREDICT_SCRIPT, [f"--model={os.path.join(model_dir, MODEL)}", f"--schedule={sched}",
+                              f"--history={history}", "--n-sims=0", f"--out={out}"])
+        with _PREDICTS_LOCK:
+            PREDICTS["calls"] += 1
+            PREDICTS["seconds"] += time.time() - t0
+        got = {}
+        with open(out, newline="", encoding="utf-8") as fh:
+            for r in csv.DictReader(fh):
+                if r.get("Prediction_Status") == "OK":
+                    got[r["MATCH_CODE"]] = (float(r["Pred_P1_Points"]), float(r["Pred_P2_Points"]))
+        return got
+    finally:
+        for path in () if KEEP_FILES else (sched, out, history if history != os.path.join(model_dir, HISTORY) else None):
+            if path and os.path.exists(path):
+                os.remove(path)
 
 
 # Features a schedule fixes in advance but read off the clock (rest, the session, the hour): a match
