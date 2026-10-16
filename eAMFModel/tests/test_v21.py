@@ -729,6 +729,17 @@ class TestSimulate(unittest.TestCase):
         v21.simulate(m, s, 20, stats=st, max_steps=1)
         self.assertEqual(st.get("late_timeouts", 0), 0)
 
+    def test_a_first_half_start_can_play_to_the_half_alone(self):
+        m = built()
+        s = _state(m, period=2, clock=30.0, team=0, y=50)
+        st = {}
+        h, a = v21.simulate(m, s, 50, stats=st, until_half=True)
+        self.assertEqual(st["unfinished"], 0)
+        self.assertTrue((st["drive_end"] >= 0).all())                    # the start's drive ended by the half
+        st2 = {}
+        v21.simulate(m, s, 50, stats=st2)
+        self.assertGreaterEqual(st2["snaps"], st["snaps"])                # the whole game plays on past it
+
     def test_overtime_ends_when_the_second_side_goes_ahead(self):
         m = built()
         _fixed_time(m, 7.0)
@@ -745,6 +756,7 @@ class TestSimulate(unittest.TestCase):
         np.testing.assert_array_equal(h, 21)                               # 6 and the kick
         np.testing.assert_array_equal(a, 22)                               # 6 and the forced two
         self.assertEqual(st["unfinished"], 0)
+        np.testing.assert_array_equal(st["q_points"][:, 4], 15)            # decided mid-period: still counted
 
 
 def _r(msg, period, clock, kind, off, down=1, dist=10, y=25, a=0, b=0, messages=""):
@@ -1141,6 +1153,11 @@ class TestAudit(unittest.TestCase):
                      "two-point tries made"):
             self.assertIn(part, lines)
         self.assertEqual(step["clock_out"].shape, (2, 4, len(A.CLOCK_OUTS) + 1))
+        # Q2's last 2:00 to the half's end: one real drive end per state, the sim's shares sum to one each
+        self.assertGreater(real["n2"].sum(), 0)
+        np.testing.assert_allclose(real["drives2"].sum(), real["n2"].sum())
+        np.testing.assert_allclose(step["drives2"].sum(), real["n2"].sum(), rtol=1e-6)
+        self.assertIn("Q2 STATES, the half's last 2:00", lines)
         self.assertTrue((step["clock_out"][..., :4].sum(-1) <= step["clock_out"][..., 5] + 1e-9).all())
 
 

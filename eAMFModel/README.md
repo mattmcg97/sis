@@ -2423,7 +2423,10 @@ Q1, Q3, overtime, and Q2 and Q4 each cut at 2:00, 1:00 and 0:30. It compares thr
   time draw is what's off; near the sim's, the draw given the time. And from every real Q4 state,
   1–3 behind or level, it gives how often the sim's drive ran out of clock and where it was: in
   field-goal range (a kick of 52 yards or less) or not, with 0:05 or less at its last snap's start
-  or more, and with a timeout left.
+  or more, and with a timeout left. From every real state in Q2's last 2:00 it plays the sim to the
+  half's end (`simulate(..., until_half=True)`): each side's points still to come in the half and
+  how the drive with the ball ended, by the lead and the time left, against the real half (the
+  score at the second half's first row, a kick at the buzzer the feed missed included).
 - **Q4 states.** From every real Q4 state to the end of the game: how often it went to overtime,
   each side's points still to come in regulation, and, from level, how often the side with the
   ball won, went to overtime or lost. It also gives how the drive with the ball ended: a

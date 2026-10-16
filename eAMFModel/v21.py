@@ -2657,9 +2657,10 @@ SNAP_LOG = ("path", "period", "clock", "prev", "seconds", "drawn", "kind", "gain
             "lead", "conv", "rem", "to_own", "to_opp", "src", "tb")     # src: the distance draw's (0 league, 1 team, 2 gamer)
 
 
-def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
+def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, until_half=False):
     """Play every start n_paths times to the end: (home, away) final scores shaped (starts, paths).
-    `stats` (a dict) gathers the census: every snap (SNAP_LOG), counts and points by quarter."""
+    `stats` (a dict) gathers the census: every snap (SNAP_LOG), counts and points by quarter.
+    until_half: a start in the first half plays to the half's end (the scores then)."""
     rng = np.random.default_rng(seed)
     S = len(start["period"])
     P = S * n_paths
@@ -3141,6 +3142,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         clock[c] = QUARTER
         prev[c] = FRESH
         h = ix[p == 2]
+        if until_half:                        # the half's end is the end
+            phase[h] = DONE
+            h = h[:0]
         period[h] = 3
         clock[h] = QUARTER
         tos[h] = TIMEOUTS
@@ -3235,6 +3239,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS):
         st["regulation"] = reg_score.copy()
         st["drive_end"] = drive_end.copy()
         st["drive_last"] = drive_last.copy()
+        # a game decided in overtime (or ended) mid-period: the period's points never reached end_period
+        q_points[np.arange(P), np.clip(period, 1, 5) - 1] += (score - q_score).sum(1)
         st["q_points"] = q_points
         st["unfinished"] = st.get("unfinished", 0) + int((phase != DONE).sum())
     return score[:, 0].reshape(S, n_paths), score[:, 1].reshape(S, n_paths)

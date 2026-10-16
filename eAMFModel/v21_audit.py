@@ -81,7 +81,9 @@ def tables():
                 two_part=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1, 2)),
                 two_part_base=np.zeros((len(CONV_PARTS), 2 * v21.CONV_MARGIN + 1)),
                 two_good=np.zeros((len(GOOD_PARTS), 2)), two_sim=np.zeros(4),
-                clock_out=np.zeros((2, 4, len(CLOCK_OUTS) + 1)))
+                clock_out=np.zeros((2, 4, len(CLOCK_OUTS) + 1)),
+                drives2=np.zeros((len(DRIVE_LEADS), 4, len(v21.DRIVE_ENDS))),
+                pts2_ball=np.zeros((7, 4)), pts2_other=np.zeros((7, 4)), n2=np.zeros((7, 4)))
 
 
 OT_LEADS = v21.MARGIN_NAMES
@@ -227,6 +229,21 @@ def _side_lead(s):
     return side, pts, pts[side] - pts[1 - side]
 
 
+def _half_score(rows):
+    """The real (home, away) score at the half: the first second-half row's (a kick at the buzzer the
+    feed missed is in it), else the first half's last."""
+    h = a = 0
+    for r in rows:
+        p = v21.s14._i(r.get("period"))
+        if p is None:
+            continue
+        if p >= 3:
+            return v21.s14._i(r.get("score_p1")) or 0, v21.s14._i(r.get("score_p2")) or 0
+        h = max(h, v21.s14._i(r.get("score_p1")) or 0)
+        a = max(a, v21.s14._i(r.get("score_p2")) or 0)
+    return h, a
+
+
 def _regulation(rows, final=None):
     """The real (home, away) score when regulation ended: the final (home's, away's) where the game did
     not go to overtime and the history has it, else the rows' (the scores only rise)."""
@@ -357,6 +374,30 @@ def _worker(job):
                 np.add.at(step["early"], (first, k), 1.0 / state_paths)
                 np.add.at(step["early_q4"], (lq[on], k[on]), 1.0 / state_paths)
                 np.add.at(step["early_q4_base"], lq[on], base[on] / state_paths)
+        # Q2's last 2:00: from every real state to the half's end, against the real half
+        q2 = [(j, s) for j, (i, s) in enumerate(starts) if int(s["period"][0]) == 2
+              and float(s["clock"][0]) <= v21.LATE and int(s["phase"][0]) == v21.SNAP]
+        if q2:
+            st = {}
+            v21.simulate(model, v21.concat_starts([s for _, s in q2]), state_paths, seed=seed + 3, stats=st,
+                         until_half=True)
+            half_sim = st["final"].reshape(len(q2), state_paths, 2)
+            ends = st["drive_end"].reshape(len(q2), state_paths)
+            half_real = _half_score(rows)
+            for k, (j, s) in enumerate(q2):
+                side, pts, lead = _side_lead(s)
+                c = float(s["clock"][0])
+                cs = 1 if c > 60 else 2 if c > 30 else 3
+                lb = int(v21.margin_b(lead))
+                real["drives2"][lb, cs, real_drive_end(rows, starts[j][0], final)] += 1
+                e = ends[k][ends[k] >= 0]
+                if len(e):
+                    step["drives2"][lb, cs] += np.bincount(e, minlength=len(v21.DRIVE_ENDS)) / len(e)
+                real["n2"][lb, cs] += 1
+                real["pts2_ball"][lb, cs] += half_real[side] - pts[side]
+                real["pts2_other"][lb, cs] += half_real[1 - side] - pts[1 - side]
+                step["pts2_ball"][lb, cs] += (half_sim[k, :, side] - pts[side]).mean()
+                step["pts2_other"][lb, cs] += (half_sim[k, :, 1 - side] - pts[1 - side]).mean()
         # overtime: from every real Q4 state to the end, against whether the real game went to overtime
         q4 = [(j, s) for j, (i, s) in enumerate(starts) if int(s["period"][0]) == 4]
         if q4:
@@ -560,6 +601,34 @@ def two_lines(real, flow):
     return lines
 
 
+def q2_lines(real, step):
+    lines = ["", "  Q2 STATES, the half's last 2:00: each side's points still to come in the half, by the lead of the"
+                 " side with the ball and the time left (real / sim; the side with the ball, then the other)",
+             f"  {'':16s}" + "".join(f"{OT_CLOCK[cs]:>26s}" for cs in (1, 2, 3))]
+    for lb, name in enumerate(OT_LEADS):
+        n = real["n2"][lb]
+        if not n[1:].sum():
+            continue
+        cells = []
+        for cs in (1, 2, 3):
+            if n[cs]:
+                cells.append(f"{real['pts2_ball'][lb, cs] / n[cs]:.2f}/{step['pts2_ball'][lb, cs] / n[cs]:.2f}"
+                             f" {real['pts2_other'][lb, cs] / n[cs]:.2f}/{step['pts2_other'][lb, cs] / n[cs]:.2f}")
+            else:
+                cells.append("-")
+        lines.append(f"  {name:16s}" + "".join(f"{c:>26s}" for c in cells))
+    lines += ["", "  Q2 STATES, the half's last 2:00: how the drive with the ball ended (real / sim, % of the states)",
+              f"  {'':28s}{'n real':>7s}" + "".join(f"{e:>14s}" for e in v21.DRIVE_ENDS)]
+    for lb, name in enumerate(DRIVE_LEADS):
+        for cs in (1, 2, 3):
+            r, m = real["drives2"][lb, cs], step["drives2"][lb, cs]
+            if r.sum() < 20:
+                continue
+            lines.append(f"  {name + ', ' + OT_CLOCK[cs]:28s}{int(r.sum()):>7d}" + "".join(
+                f"{_pair(_pct(r[e], r.sum()), _pct(m[e], m.sum())):>14s}" for e in range(len(v21.DRIVE_ENDS))))
+    return lines
+
+
 def clock_out_lines(step):
     lines = ["", "  Q4 STATES: the sim's drives that ran out of clock, 1-3 behind or level (% of the states), and where"
                  " they were (% of those clock-outs): in field-goal range or not (a kick of 52 yards or less), with"
@@ -757,6 +826,7 @@ def report(out):
     lines += q4_lines(out["real"], out["step"])
     lines += drive_lines(out["real"], out["step"])
     lines += clock_out_lines(out["step"])
+    lines += q2_lines(out["real"], out["step"])
     lines += ["", "  (snaps: a punt or a field goal is not one, a 4th down that went for it is; yards: the gain of the"
                   " snaps that kept the ball, cut at the goal line; seconds: PLAY_OVER to PLAY_OVER)"]
     return lines
