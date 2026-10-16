@@ -720,6 +720,14 @@ class TestSimulate(unittest.TestCase):
         st = {}
         v21.simulate(m, s, 20, stats=st, max_steps=1)
         self.assertEqual(st.get("late_timeouts", 0), 0)
+        s["home"], s["y"] = np.array([7]), np.array([30])                    # level at its own 30: calls it too
+        st = {}
+        v21.simulate(m, s, 20, stats=st, max_steps=1)
+        self.assertGreater(st.get("late_timeouts", 0), 0)
+        s["period"], s["clock"] = np.array([2]), np.array([20.0])           # but not at Q2's end out of range
+        st = {}
+        v21.simulate(m, s, 20, stats=st, max_steps=1)
+        self.assertEqual(st.get("late_timeouts", 0), 0)
 
     def test_overtime_ends_when_the_second_side_goes_ahead(self):
         m = built()
