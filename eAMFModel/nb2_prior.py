@@ -20,6 +20,10 @@ RATINGS = {"leaderboard": "NB2_player_leaderboardsept_team_joint.csv",
 HISTORY_FIELDS = ["MATCH_CODE", "SPORT_CODE", "STREAM_NUMBER", "SCHEDULED_START_TIME_UTC",
                   "PLAYER_1_HANDLE", "PLAYER_1_TEAM", "PLAYER_2_HANDLE", "PLAYER_2_TEAM",
                   "PLAYER_1_FINAL_SCORE", "PLAYER_2_FINAL_SCORE"]
+# what a fitted day keeps of its training rows (the backtest suite's audit reads their kick-offs)
+SLIM_FIELDS = ["MATCH_CODE", "SCHEDULED_START_TIME_UTC"]
+# NB2_schedule_predict.py's market tables, never read here: dropped after each prediction (megabytes a day)
+UNREAD_OUTPUTS = ("NB2_joint_spread_markets.csv", "NB2_joint_total_markets.csv")
 SCALE_DAYS = 7
 SCALE_PRIOR = 200
 N_SIMS = 20000
@@ -82,6 +86,7 @@ def fit(history, out_dir, before=None, half_life=None):
     _write(os.path.join(out_dir, "history.csv"), rows, HISTORY_FIELDS)
     _run(FIT_SCRIPT, ["--input", "history.csv"]
          + ([] if half_life is None else ["--half-life-days", f"{float(half_life):g}"]), out_dir)
+    _write(os.path.join(out_dir, "history.csv"), rows, SLIM_FIELDS)        # fitted: its kick-offs are enough
     return len(rows)
 
 
@@ -117,6 +122,11 @@ def _predict_in(work, ratings_dir, schedule, n_sims, full=False):
         for r in csv.DictReader(fh):
             if r.get("Prediction_Status") == "OK":
                 out[r["Match Id"]] = dict(r) if full else (float(r["Pred_P1_Points"]), float(r["Pred_P2_Points"]))
+    for name in UNREAD_OUTPUTS:
+        try:
+            os.remove(os.path.join(work, name))
+        except OSError:
+            pass
     return out
 
 
