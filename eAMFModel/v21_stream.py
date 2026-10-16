@@ -31,6 +31,9 @@ DEFAULT_PRIOR_DIR = "v14_model"
 DEFAULT_PATHS = 1000          # games a snapshot (the kick-off: each side receiving, so twice that)
 NUDGE_SHARE = 0.75            # how far toward the prior's expected points (v21-report's --nudge-share)
 PREMATCH = True
+# Every match's sim is seeded by the match (_seed): its quotes are the same whichever matches it is
+# priced with, so the calibrator prices several of its chunks in one pool (snowflake_io._sim_quotes).
+MATCH_SEEDED = True
 
 
 def _model_file(model_dir=None):
@@ -230,27 +233,51 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows):
     return [books[m] for m in keys], windows
 
 
+def _price(model, item, n_paths, lines, prematch_only, share):
+    """One match's quote rows by line mode: the kick-off (and the pre-match quotes published before
+    results the prior's form follows came in), then the PLAY_OVERs prod's quotes read."""
+    code, snaps, prod_rows, first_play, pair, teams, target, known = item
+    modes = (lines,) if isinstance(lines, str) else tuple(lines)
+    kick, alpha = _kickoff(model, pair, teams, target, n_paths, code, share)
+    kickoff = kick if PREMATCH else None
+    if kickoff is not None and known:
+        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share)[0] for m in sorted(set(known.values()))}
+        at = {publish: kicks[m] for publish, m in known.items()}
+        kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
+    if side_known(snaps) and not prematch_only:
+        books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows)
+    else:
+        books, windows = [], {}
+    return {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
+
+
 def _worker(job):
-    """Price a list of matches: the kick-off (and the pre-match quotes published before results the
-    prior's form follows came in), then the PLAY_OVERs prod's quotes read."""
+    """Price a list of matches, one after another (_price)."""
     items, model_file, n_paths, lines, prematch_only, share = job
     model = v21.Model.load(model_file)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
-    for code, snaps, prod_rows, first_play, pair, teams, target, known in items:
-        kick, alpha = _kickoff(model, pair, teams, target, n_paths, code, share)
-        kickoff = kick if PREMATCH else None
-        if kickoff is not None and known:
-            kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share)[0] for m in sorted(set(known.values()))}
-            at = {publish: kicks[m] for publish, m in known.items()}
-            kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
-        if side_known(snaps) and not prematch_only:
-            books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows)
-        else:
-            books, windows = [], {}
+    for item in items:
+        got = _price(model, item, n_paths, lines, prematch_only, share)
         for mode in modes:
-            out[mode].extend(quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff))
+            out[mode].extend(got[mode])
     return out
+
+
+_LOADED = {}            # a pool worker's model, read once for every match it is handed (_load)
+
+
+def _load(model_file):
+    _LOADED.clear()
+    _LOADED[model_file] = v21.Model.load(model_file)
+
+
+def _one(job):
+    """A pool worker: one match, off the model it loaded."""
+    item, model_file, n_paths, lines, prematch_only, share = job
+    if model_file not in _LOADED:
+        _load(model_file)
+    return _price(_LOADED[model_file], item, n_paths, lines, prematch_only, share)
 
 
 LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, simulate (and workers)
@@ -258,11 +285,13 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
-                       prior_dir=None, nudge_share=None, handles=None):
+                       prior_dir=None, nudge_share=None, handles=None, batches=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
-    0: the sim's own means, no prior needed)."""
+    0: the sim's own means, no prior needed); `batches`: the calibrator's chunks priced here together,
+    each match's earlier pre-match states read off its own chunk's ends of play, as a call for that
+    chunk alone reads them."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     pre = prematch_model(prior_tables)
@@ -291,7 +320,15 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         if PREMATCH and history is not None and getattr(pre, "FOLLOWS_RESULTS", False) \
                 and getattr(pre, "AS_OF", True):
             publish = {c: prematch_publish_times(prod_by[c], fp) for c, (_, fp) in matches.items()}
-            rows, code_at = known_states(rows, publish, history, match_ends(snapshots_by_match))
+            parts = [set(b) for b in batches] if batches else [set(snapshots_by_match)]
+            got_rows, code_at = [], {}
+            for part in parts:                           # each chunk's matches off its own ends of play
+                r_, c_ = known_states([r for r in rows if r["MATCH_CODE"] in part],
+                                      {c: p for c, p in publish.items() if c in part}, history,
+                                      match_ends({c: s for c, s in snapshots_by_match.items() if c in part}))
+                got_rows += r_
+                code_at.update(c_)
+            rows = got_rows
         means = base.means(rows, results=history)
         for (code, publish), at in code_at.items():
             if at != code and at in means:
@@ -308,13 +345,17 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     if not items:
         return [] if isinstance(lines, str) else {mode: [] for mode in modes}
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
-    jobs = [(items[i::workers], model_file, n_paths, lines, prematch_only, share) for i in range(workers)]
     t0 = time.time()
     if workers == 1:
-        results = [_worker(j) for j in jobs]
+        out = _worker((items, model_file, n_paths, lines, prematch_only, share))
     else:
-        with v14.pool_context().Pool(workers) as pool:
-            results = pool.map(_worker, jobs)
+        # a match at a time to whichever worker is free (a worker handed a fixed share kept the rest
+        # waiting on its longest matches), the rows put back in the order the shares gave them: each
+        # worker's every workers-th match, one after another
+        with v14.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
+            per = pool.map(_one, [(item, model_file, n_paths, lines, prematch_only, share) for item in items],
+                           chunksize=1)
+        order = [k for i in range(workers) for k in range(i, len(items), workers)]
+        out = {mode: [row for k in order for row in per[k][mode]] for mode in modes}
     LAST_TIMING.update(simulate=time.time() - t0, workers=workers)
-    out = {mode: [row for part in results for row in part[mode]] for mode in modes}
     return out[lines] if isinstance(lines, str) else out

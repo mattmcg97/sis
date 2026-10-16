@@ -2383,6 +2383,16 @@ games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`
     python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
         --v21-model v21_t10 --v21-prior-model v14_model
 
+Every match's sim is seeded by the match (`MATCH_SEEDED`), so its quotes are the same whichever
+matches it is priced with. Two things follow from that:
+- **Several chunks at once:** the calibrator prices `MODEL_CHUNK_SIZE` (300) matches of its 50-match
+  pairing chunks in one pool. Each chunk's quotes are kept for its turn, in the order its own call
+  would have given them. A pre-match quote's earlier states read its own chunk's ends of play, as
+  they did. The older versions (v8–v14) draw a worker's matches from one random stream, so they
+  still price a chunk at a time.
+- **One match at a time:** within a pool, a match goes to whichever worker is free; a fixed share of
+  matches per worker left the rest waiting on its longest ones.
+
 ### Timing (`v21-timing`)
 
 ```powershell

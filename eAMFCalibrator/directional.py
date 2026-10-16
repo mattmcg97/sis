@@ -631,6 +631,8 @@ def run(verbose=True, sink=None, prematch_sink=None):
                       f"{len(candidate_matches - prod_matches)} candidate-only)")
 
             chunk = config.MATCH_CHUNK_SIZE
+            # the chunks, named up front: a match-seeded model prices several at once (snowflake_io)
+            snowflake_io.plan_chunks([match_codes[s:s + chunk] for s in range(0, len(match_codes), chunk)])
             for start in range(0, len(match_codes), chunk):
                 batch = match_codes[start:start + chunk]
                 if verbose:

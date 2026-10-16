@@ -16,6 +16,7 @@ import os
 import pickle
 import sys
 import time
+from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "analysis"))
@@ -163,6 +164,7 @@ def fetch_all(cur, sql, params=None):
 def clear_fetch_cache():
     _FETCH_CACHE.clear()
     _MODEL_QUOTES.clear()
+    _PLAN.clear()
 
 
 def qualified(table):
@@ -715,6 +717,39 @@ def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=Non
 
 
 _MODEL_QUOTES = {}
+# A model seeded by match (its stream's MATCH_SEEDED: v21) prices several of the pairing's chunks in
+# one pool: MODEL_CHUNK_SIZE matches at once, where a chunk of 50 on 15 workers left them half idle.
+# The pairing names its chunks (plan_chunks); each chunk's quotes are filed under its own key, in the
+# order its own call would have made them, so the passes after read them as before.
+_PLAN = []
+
+
+def plan_chunks(batches):
+    """The pairing's chunks of matches, in order, for a match-seeded model to price several at once."""
+    _PLAN[:] = [tuple(b) for b in batches]
+
+
+def _chunk_group(match_codes, done):
+    """The chunks priced with this one: it and the planned chunks after it not yet priced (`done`),
+    MODEL_CHUNK_SIZE matches in all; the chunk alone where it is not in the plan."""
+    key = tuple(match_codes)
+    if key not in _PLAN:
+        return [key]
+    limit = getattr(config, "MODEL_CHUNK_SIZE", 0) or float("inf")
+    group, n = [], 0
+    for b in _PLAN[_PLAN.index(key):]:
+        if group and (n + len(b) > limit or done(b)):
+            break
+        group.append(b)
+        n += len(b)
+    return group
+
+
+def _as_chunk_called(rows_by_code, codes, workers):
+    """A chunk's quote rows in the order a call for it alone gives them: its matches dealt to the
+    workers in turn (the streams' items[i::workers]), each worker's matches one after another."""
+    w = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(codes)))
+    return [r for i in range(w) for c in codes[i::w] for r in rows_by_code.get(c, ())]
 
 
 def _sim_quotes(cur, match_codes, name, lines=None):
@@ -739,11 +774,15 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     opts = {arg: getattr(config, f"{key}_{attr}") for arg, attr in (("prior_dir", "PRIOR_MODEL_DIR"),
                                                                      ("nudge_share", "NUDGE_SHARE"))
             if getattr(config, f"{key}_{attr}", None) is not None}
-    cache_key = (name, tuple(match_codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
-                 prematch_only, tuple(sorted(opts.items())))
+    key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
+                            prematch_only, tuple(sorted(opts.items())))
+    cache_key = key_of(match_codes)
     caching = getattr(config, "FETCH_CACHE", False)
-    if caching and cache_key in _MODEL_QUOTES:
-        return list(_MODEL_QUOTES[cache_key][lines])
+    if cache_key in _MODEL_QUOTES:              # kept, or priced with an earlier chunk of its group
+        return list((_MODEL_QUOTES[cache_key] if caching else _MODEL_QUOTES.pop(cache_key))[lines])
+    seeded = getattr(stream, "MATCH_SEEDED", False)
+    group = _chunk_group(match_codes, lambda b: key_of(b) in _MODEL_QUOTES) if seeded else [tuple(match_codes)]
+    codes = [c for b in group for c in b]
     found = (stream.model_paths(model_dir, opts["prior_dir"]) if "prior_dir" in opts
              else stream.model_paths(model_dir))                 # fail early, with instructions
     tables = found[0]
@@ -753,7 +792,7 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if not nb2 and not hasattr(stream, "prematch_model"):
         print(f"  {name}: this model was built without --history, so its pre-match comes from"
               " prod's quotes; rebuild it with --history for our own (NB2)", flush=True)
-    snapshots, prod_all = _play_over_snapshots(cur, match_codes, with_handles=True)
+    snapshots, prod_all = _play_over_snapshots(cur, codes, with_handles=True)
     # players, teams and stream for the model's own pre-match model (NB2)
     match_info = fetch_match_info(cur, list(snapshots)) if nb2 else None
     # a pre-match model whose form follows the results (glmer) reads every match settled by the
@@ -765,15 +804,17 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
-          f"{len(snapshots):,} of {len(match_codes):,} matches; simulating "
-          f"{paths:,} games each{' at kick-off only' if prematch_only else ''}", flush=True)
+          f"{len(snapshots):,} of {len(codes):,} matches"
+          + (f" ({len(group)} chunks at once)" if len(group) > 1 else "")
+          + f"; simulating {paths:,} games each{' at kick-off only' if prematch_only else ''}", flush=True)
     from eAMFModel import glmer_prior
     r_before = dict(glmer_prior.PREDICTS)
     both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
                                      workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
-                                     history=history, prematch_only=prematch_only, **opts)
+                                     history=history, prematch_only=prematch_only, **opts,
+                                     **({"batches": [list(b) for b in group]} if seeded else {}))
     took = getattr(stream, "LAST_TIMING", {})
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
@@ -782,9 +823,24 @@ def _sim_quotes(cur, match_codes, name, lines=None):
               + _r_calls(r_before, glmer_prior.PREDICTS)
               + (f" (+{took['cuts']:,} earlier pre-match states)" if took.get("cuts") else "")
               + f", simulating {_mins(took['simulate'])} on {took['workers']} workers", flush=True)
-    if caching:
+    if not seeded:
+        if caching:
+            _MODEL_QUOTES[cache_key] = both
+        return list(both[lines])
+    if len(group) == 1:
         _MODEL_QUOTES[cache_key] = both
-    return list(both[lines])
+    else:                                       # each chunk's rows, as its own call orders them
+        by_code = {mode: defaultdict(list) for mode in both}
+        for mode, rows in both.items():
+            for r in rows:
+                by_code[mode][r[0]].append(r)
+        quoted = {r[0] for r in prod_all}
+        priced = [c for c, snaps in snapshots.items() if snaps and c in quoted]
+        for b in group:
+            mine = [c for c in priced if c in set(b)]
+            _MODEL_QUOTES[key_of(b)] = {mode: _as_chunk_called(by_code[mode], mine, config.MODEL_WORKERS)
+                                        for mode in both}
+    return list((_MODEL_QUOTES[cache_key] if caching else _MODEL_QUOTES.pop(cache_key))[lines])
 
 
 def _r_calls(before, after):
