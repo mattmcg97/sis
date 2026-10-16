@@ -97,12 +97,12 @@ def predict(ratings_dir, schedule, n_sims=N_SIMS, full=False):
     os.makedirs(base, exist_ok=True)
     work = tempfile.mkdtemp(prefix="call_", dir=base)
     try:
-        return _predict_in(work, ratings_dir, schedule, n_sims)
+        return _predict_in(work, ratings_dir, schedule, n_sims, full)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _predict_in(work, ratings_dir, schedule, n_sims):
+def _predict_in(work, ratings_dir, schedule, n_sims, full=False):
     rows = [{"Player 1 Name": r["PLAYER_1_HANDLE"], "Player 1 Team": r["PLAYER_1_TEAM"],
              "Player 2 Name": r["PLAYER_2_HANDLE"], "Player 2 Team": r["PLAYER_2_TEAM"],
              "Match Id": r["MATCH_CODE"], "Stream": r.get("STREAM_NUMBER", "")} for r in schedule]

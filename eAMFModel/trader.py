@@ -38,13 +38,14 @@ TOTAL_LADDER = 4
 INTERFACE = ("MARGIN_MAX", "PriorGrid", "Variant", "prior_theta", "price_states", "price_kickoff",
              "market_prob", "key_line", "even_line", "players_book", "prematch_model", "match_seed")
 STREAM_INTERFACE = ("model_paths", "sim")
+NOT_TRADED = {"v21"}             # the v2.1 snap sim: priced by v21_stream, with none of the trader's tables
 
 
 def versions():
-    """Every model version with a stream, oldest first: v8, v9, v10, ..."""
+    """Every model version with a stream the trader prices with, oldest first: v8, v9, v10, ..."""
     here = os.path.dirname(os.path.abspath(__file__))
     names = [f[:-len("_stream.py")] for f in os.listdir(here) if re.fullmatch(r"v\d+_stream\.py", f)]
-    return sorted(names, key=lambda n: int(n[1:]))
+    return sorted((n for n in names if n not in NOT_TRADED), key=lambda n: int(n[1:]))
 
 
 def load_version(version):
