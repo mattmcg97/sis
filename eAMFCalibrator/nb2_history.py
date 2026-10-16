@@ -77,11 +77,12 @@ def experience(history):
     return out
 
 
-def price_rows(fit_dir, rows, history, draws=DRAWS):
-    """[CSV row] for the rows (history rows) each priced by its own day's fit."""
+def price_rows(fit_dir, rows, history, draws=DRAWS, progress=None):
+    """[CSV row] for the rows (history rows) each priced by its own day's fit; `progress(done, total)`
+    after each day's fit has priced its matches."""
     from eAMFModel import rolling_prior
     prior = rolling_prior.Rolling(fit_dir)
-    points, own = pb.read_rolling(fit_dir, rows, history)
+    points, own = pb.read_rolling(fit_dir, rows, history, **({"progress": progress} if progress else {}))
     meets = day_meetings(history)
     seen = experience(history)
     out = []

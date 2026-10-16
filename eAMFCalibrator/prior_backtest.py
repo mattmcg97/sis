@@ -132,10 +132,10 @@ def read_arm(spec, rows, history):
     return points, own
 
 
-def read_rolling(directory, rows, history):
+def read_rolling(directory, rows, history, progress=None):
     """A rolling prior's expected points and its own score model, each match by its own day's fit:
     NB2's dispersions and shared fraction (its means times the fit's level scale), or glmer's noise
-    sds."""
+    sds. `progress(done, total)`: called after each NB2 day priced."""
     from eAMFModel import nb2_prior, rolling_prior
     prior = rolling_prior.Rolling(directory)
     # a match before the first fitted day would be priced by a fit that has seen its result
@@ -162,9 +162,11 @@ def read_rolling(directory, rows, history):
         start = _start(r.get("SCHEDULED_START_TIME_UTC"))
         by_fit[id(fit := prior.fit_for(start.date() if start else None))].append((fit, r))
     points, own = {}, {}
-    for group in by_fit.values():
+    for k, group in enumerate(by_fit.values(), 1):
         fit = group[0][0]
         got = nb2_prior.predict(fit.directory, [r for _, r in group], NB2_PREDICT_SIMS, full=True)
+        if progress is not None:
+            progress(k, len(by_fit))
         for code, row in got.items():
             mu1, mu2 = float(row["Pred_P1_Points"]) * fit.scale, float(row["Pred_P2_Points"]) * fit.scale
             a1, a2, sh = (_f(row.get(c)) for c in NB2_JOINT)
