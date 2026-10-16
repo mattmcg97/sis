@@ -2986,6 +2986,65 @@ already made, the run took 19 minutes:
 - layers 3 min;
 - variants 6 min.
 
+### A historic match replayed, v21 against prod: `replay-ui`
+
+```bash
+# matches off Snowflake (every answer cached), the expected points off the walkthrough's best variant
+python -m eAMFCalibrator replay-ui --v21-model v21_model \
+    --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv --history AMFELO_20261013.csv
+# no Snowflake: the matches off a `scouting` export
+python -m eAMFCalibrator replay-ui --v21-model v21_model --export eAMFCalibrator/out/scouting_playover.csv \
+    --history AMFELO_20261013.csv --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+Opens a local page (`http://127.0.0.1:8766/`) to step through a historic match a PLAY_OVER at a
+time. v2.1 prices each state, and prod's quote at that message sits beside it. It is the v21
+counterpart of eAMFModel's `trader` page, which sets up made-up states and doesn't load a v21
+build.
+
+**Picking a match:** choose a day and one of its matches (from `--history`, or Snowflake's history
+without it), or type a match code. With Snowflake, the match's PLAY_OVERs and prod's quotes are
+read as `scouting` reads them, and every answer is kept in `out/replay_cache`. A match read once
+costs nothing again. With `--export`, nothing touches Snowflake. A match with no play feed can't be
+loaded: it has no PLAY_OVERs to replay.
+
+**The page:**
+
+| part | what it shows |
+|---|---|
+| timeline | every PLAY_OVER: quarter, clock, score, the play, and prod's and v21's home win chance. Click one to jump to it |
+| scoreboard | the score, who has the ball, down, distance and field position |
+| controls | first / back / next / last, play at a chosen speed, "only states v21 prices", and "Price the whole match" |
+| prices | moneyline, spread and total, v21 and prod side by side with the difference. The spread and total are shown at prod's line and at v21's own key-number line, with v21's ladder around it. Marked suspended where prod wasn't live |
+| expected | v21's expected score, margin and total from here |
+| distributions | v21's final margin and total, with prod's line marked |
+| nudge | the expected points, the share, and what v21 makes of them (below) |
+| pre-match | prod's closing quote against v21's kick-off price |
+| chart | after "Price the whole match": the home win chance through the match, v21 against prod, with quarter lines. Hover for the numbers, click to jump |
+
+Keys: ← / → step, Home / End jump to the ends, space plays and pauses.
+
+**The nudge:** v21 starts from its own kick-off means (the gamers' and teams' effects in the
+build). The nudge moves each side's offense along the build's strength direction until the
+kick-off means sit `share` of the way from v21's own to the expected points (`v21.nudge_solve`, as
+the price stream does). The same nudge then applies to every later state.
+
+The expected points start as the prior's (`--v21-prior-model`: a walkthrough table or a v14 build),
+read with only the results before the match. They can be changed by hand:
+- "Apply" solves the nudge again and every price follows;
+- "Back to the prior" undoes the change;
+- the readout shows the target, v21's own means, the nudged means and the nudge itself.
+
+Share 0, or no expected points, prices with v21's own means. A nudge needs a tilt build
+(`v21-build --mode tilt`). With any other build, v21 prices off its own means and the page says so.
+
+**What v21 can't price:** a PLAY_OVER with a conversion still to come has no v21 state, as in the
+price stream. The page shows prod's quote there and says why v21 has none.
+
+**Speed:** a price is `--paths` games (default 1000, about half a second). The whole-match chart
+plays 400 games for each state in one run, a few seconds a match. Each state is played from a fixed
+seed, so the same state prices the same each time.
+
 ### The priors against each other, offline: `prior-offline`
 
 ```bash

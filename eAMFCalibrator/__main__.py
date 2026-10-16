@@ -220,6 +220,22 @@ def cmd_prior_backtest(args):
     return 0
 
 
+def cmd_replay_ui(args):
+    """The v21 replay page: a historic match a PLAY_OVER at a time, v21 against prod, the nudge by hand."""
+    from . import replay_ui
+    cur = None
+    if not args.export:
+        config.FETCH_DISK_CACHE = os.path.join(args.out or DEFAULT_OUT, "replay_cache")
+        cur = _LazyCursor()
+    replay = replay_ui.build(args.v21_model, args.prior_model, args.export, args.history, cur, args.paths, args.share)
+    try:
+        replay_ui.serve(replay, args.port, browser=not args.no_browser)
+    finally:
+        if cur is not None:
+            cur.close()
+    return 0
+
+
 def cmd_walkthrough(args):
     """The best pre-match variants priced for every match, walk-forward, one table each for the sims."""
     from . import walkthrough
@@ -1457,6 +1473,29 @@ def build_parser():
                            help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    ru_parser = sub.add_parser(
+        "replay-ui",
+        help="a local page to step through a historic match a PLAY_OVER at a time: v21 prices every state "
+             "beside prod's quote at that message, with the nudge (the expected points v21 is pulled toward) "
+             "set by hand")
+    ru_parser.add_argument("--v21-model", metavar="DIR", help="eAMFModel v21-build's output (default $EAMF_V21_MODEL, "
+                                                             "then ./v21_model)")
+    ru_parser.add_argument("--prior-model", "--v21-prior-model", dest="prior_model", metavar="DIR|CSV",
+                           help="the expected points' source: a v14 build or a walkthrough table "
+                                "(priors/avg.csv); default $EAMF_V21_PRIOR, then ./v14_model")
+    ru_parser.add_argument("--export", metavar="CSV",
+                           help="read the matches off a `scouting` export (out/scouting_playover.csv) instead of "
+                                "Snowflake")
+    ru_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv (or AMFELO file) for the day's matches, gamers and teams "
+                                "(default: Snowflake's history)")
+    ru_parser.add_argument("--paths", type=int, default=1000, help="games simulated a price (default 1000)")
+    ru_parser.add_argument("--share", type=float, default=0.75,
+                           help="how far the kick-off means move toward the expected points (default 0.75)")
+    ru_parser.add_argument("--port", type=int, default=8766, help="the local port (default 8766)")
+    ru_parser.add_argument("--no-browser", action="store_true", help="don't open the page")
+    ru_parser.add_argument("--out", help=f"where the query cache goes (default: {DEFAULT_OUT}/replay_cache)")
+
     wt_parser = sub.add_parser(
         "walkthrough",
         help="the best pre-match variants priced for every match of a span, walk-forward (NB2 and glmer refitted "
@@ -1693,6 +1732,8 @@ def main(argv=None):
         return cmd_prior_offline(args)
     if args.command == "walkthrough":
         return cmd_walkthrough(args)
+    if args.command == "replay-ui":
+        return cmd_replay_ui(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
