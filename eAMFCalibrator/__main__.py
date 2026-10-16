@@ -1642,7 +1642,19 @@ def build_parser():
     return parser
 
 
+def safe_console():
+    """Printed through a pipe on Windows (Tee-Object), the output is in the locale's code page
+    (cp1252), which has no Δ or ±: a character it can't take prints as ? rather than stopping the
+    report halfway."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    safe_console()
     args = build_parser().parse_args(argv)
     if args.command in ("scouting", "timeouts") and not (args.days or args.since):
         args.days = 30          # the scouting export defaults to the last month

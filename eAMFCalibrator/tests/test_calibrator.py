@@ -5937,3 +5937,24 @@ class TestRefresh(unittest.TestCase):
         self.assertEqual(timeouts.call_args[0][2], "x_out")
         self.assertEqual(history.call_args[0][1], "x_out")
         conn.close.assert_called_once()
+
+
+class TestSafeConsole(unittest.TestCase):
+    """A report piped on Windows (Tee-Object) prints in cp1252: a character it lacks prints as ?
+    rather than stopping the report (a report once stopped at its cross-section's DBRIER header)."""
+
+    def test_a_character_the_pipe_lacks_prints_as_a_question_mark(self):
+        import sys
+        from ..__main__ import safe_console
+        buf = io.BytesIO()
+        pipe = io.TextIOWrapper(buf, encoding="cp1252", errors="strict")
+        with mock.patch.object(sys, "stdout", pipe), mock.patch.object(sys, "stderr", pipe):
+            safe_console()
+            print("ΔBRIER ±")
+            pipe.flush()
+        self.assertEqual(buf.getvalue(), "?BRIER ±\n".encode("cp1252").replace(b"\n", os.linesep.encode()))
+
+    def test_the_report_s_own_headers_are_plain_ascii(self):
+        import inspect
+        from .. import report as rep
+        self.assertTrue(inspect.getsource(rep).isascii())
