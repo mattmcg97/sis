@@ -1259,6 +1259,25 @@ class TestStream(unittest.TestCase):
             vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=20, workers=1,
                                   match_info=self.info, nudge_share=0.75)
 
+    def test_the_prior_is_the_fit_under_the_build_s_layers(self):
+        from .. import prior_check, v21_stream as vs
+
+        class Fit:
+            FOLLOWS_RESULTS = False
+
+        class Layer:
+            FOLLOWS_RESULTS = True             # v14's follow layer over an NB2 fit
+
+            def __init__(self, pre):
+                self.pre = pre
+
+        build = type("Build", (), {"prematch_model": staticmethod(lambda _t: Layer(Layer(Fit())))})
+        with mock.patch.object(prior_check, "version_of", lambda _d: "v14"), \
+                mock.patch.object(prior_check, "_modules", lambda _v: (build, None)):
+            pre = vs.prematch_model(os.path.join("v14_model", "v14tables.npz"))
+        self.assertIsInstance(pre, Fit)        # the calibrator reads no history for it
+        self.assertIsNone(vs.prematch_model(None))
+
 
 class TestCoverage(unittest.TestCase):
 
