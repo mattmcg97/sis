@@ -289,6 +289,23 @@ then the two halves it is made of.
 | Same line | Δ is ΔBrier per match |
 | Different line | Δ is Δpoints per match |
 
+### Which prod row a pair reads: `pair-check`
+
+A pair reads prod's **first** live row on the first message after a
+PLAY_OVER; the betting simulation reads prod's **latest** row at the bet.
+Where prod publishes a quick price and corrects it on the same message,
+the pairing grades a candidate against the quick one. `pair-check` reads
+prod's moneyline alone (no simulation) and sets the first row against the
+last at every PLAY_OVER, graded on the result:
+
+```
+py -m eAMFCalibrator pair-check --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00"
+```
+
+Brier first − last above zero means the last row was the closer one. Set it
+beside a candidate's moneyline edge to see how much of that edge the
+pairing alone could account for (`out/pair_check.csv`, a row per quote).
+
 ### The report is a dashboard, not a write-up
 
 Headings, tables and numbers. No paragraph explains what a table is for,

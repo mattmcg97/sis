@@ -894,6 +894,18 @@ def cmd_cross(args):
     return 0
 
 
+def cmd_pair_check(args):
+    """Prod's first live row on each PLAY_OVER's message against its last (pair_check.py)."""
+    from . import pair_check
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            pair_check.run(cur, args.out or DEFAULT_OUT)
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_report(args):
     """One pairing pass per candidate, the console view of each, and one
     combined HTML file with every candidate beside prod.
@@ -1238,6 +1250,13 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("preflight", parents=[shared], help="check tables, clock column and window volume")
+
+    pc_parser = sub.add_parser(
+        "pair-check", parents=[shared],
+        help="prod's moneyline at each PLAY_OVER: its first live row on the message the report pairs "
+             "on against its last, graded on the result -- whether the report's pairing flatters a "
+             "candidate (-> out/pair_check.csv)")
+    pc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
     run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
@@ -1736,6 +1755,8 @@ def main(argv=None):
         return cmd_replay_ui(args)
     if args.command == "report":
         return cmd_report(args)
+    if args.command == "pair-check":
+        return cmd_pair_check(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":
