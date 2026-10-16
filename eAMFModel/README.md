@@ -3034,6 +3034,9 @@ This opens a local page (http://127.0.0.1:8765) for clicking through a game and 
 prices after every play. It needs only the v10 build; nothing else is installed. The pre-match
 model's expected points need pandas and scipy, like the build.
 
+For v2.1, and for a historic match against prod's quotes, use eAMFCalibrator's `replay-ui`
+(a match replayed a PLAY_OVER at a time, with the nudge set by hand).
+
 - **Match:** pick the two players, their teams and the stream. *Get expected points* asks the
   build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The
   points can be typed over before *Start match*, after which the pane shows the pre-match
