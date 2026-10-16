@@ -1279,6 +1279,86 @@ class TestStream(unittest.TestCase):
         self.assertIsNone(vs.prematch_model(None))
 
 
+def _with_timeouts(matches, directory):
+    """The matches with timeout calls placed (playover.annotate_timeouts), so the timeout decisions
+    have real ones: every third snap of Q2's and Q4's last 2:00, the sides in turn."""
+    from .. import playover
+    out = copy.deepcopy(matches)
+    path = os.path.join(directory, "timeouts.csv")
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.writer(fh)
+        w.writerow(["match_code", "message", "period", "caller", "prev_play"])
+        for code, rows in sorted(out.items()):
+            late = [r for r in rows if r["play_kind"] == "SCRIMMAGE" and r["period"] in ("2", "4")
+                    and float(r["clock_seconds"] or 0) <= 120]
+            for k, r in enumerate(late[::3][:4]):
+                w.writerow([code, r["message"], r["period"], ("TEAM_A", "TEAM_B")[k % 2], ""])
+    playover.annotate_timeouts(out, path)
+    return out
+
+
+class TestSpeedups(unittest.TestCase):
+    """The exact speedups (TILT_CACHE, DECISION_TABLE): the same draws bit for bit."""
+
+    def test_on_and_off_the_sim_gives_the_same_games(self):
+        with tempfile.TemporaryDirectory() as d:
+            matches = _with_timeouts(MATCHES, d)
+        hist = _history(matches)
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(matches, hist, mode="tilt", key="lean", blend=40.0, field=0.2, decision_blend=25.0,
+                          clock=0.2, min_records=20, verbose=False, refine=False)
+        self.assertGreater(m.choices["to_def"].n, 0)                     # the timeout decisions have data
+        code = sorted(matches)[0]
+        pair, teams = v21.match_people(code, matches[code], {r["MATCH_CODE"]: r for r in hist})
+        from .. import v21_stream as vs
+        starts = vs.state_starts(m, [vs._as_text(r) for r in matches[code]], pair, teams)
+        S = v21.concat_starts([s for _, s in starts])
+        S["nudge"] = np.tile([0.5, -0.3], (len(S["period"]), 1))
+
+        def runs():
+            (h, a), alpha = v21.nudge_solve(m, v21.kickoff_start(m, pair, teams), (24.0, 18.0), 60, seed=4, share=0.75)
+            return [h, a, alpha, *v21.simulate(m, S, 40, seed=5), *v21.simulate(m, dict(starts[0][1]), 80, seed=6)]
+
+        with mock.patch.multiple(v21, TILT_CACHE=False, DECISION_TABLE=False):
+            off = runs()
+        with mock.patch.object(v21, "TILT_CACHE_PATHS", 0):                # the tilt table in every run
+            on = runs()
+            again = runs()                                                 # off the tables kept
+        for x, y, z in zip(off, on, again):
+            self.assertTrue(np.array_equal(x, y) and np.array_equal(x, z))
+        self.assertTrue(m.dist.__dict__.get("_tiltz") and m.time.__dict__.get("_tiltz"))
+        for name in ("to_def", "to_off", "fourth", "kickoff", "two"):
+            T = m.choices[name].__dict__.get("_table")
+            self.assertTrue(T is not None and (~np.isnan(T[:, 0])).any(), name)
+        with tempfile.TemporaryDirectory() as d:                           # the tables stay out of the build
+            m.save(os.path.join(d, v21.MODEL_FILE))
+            back = v21.Model.load(os.path.join(d, v21.MODEL_FILE))
+        self.assertFalse(any(k.startswith("_tilt") for k in back.dist.__dict__))
+        self.assertFalse(any("_table" in ch.__dict__ for ch in back.choices.values()))
+
+
+class TestTiming(unittest.TestCase):
+
+    def test_a_sample_priced_as_the_stream_prices_it_timed_and_projected(self):
+        from .. import v21_timing as T
+        model = built()
+        codes = sorted(MATCHES)[:4]
+        with tempfile.TemporaryDirectory() as d:
+            model.save(os.path.join(d, v21.MODEL_FILE))
+            out = T.run(d, {c: MATCHES[c] for c in codes}, HISTORY, n_matches=2, n_paths=20, workers=3)
+        self.assertEqual(len(out["per"]), 2)
+        self.assertEqual(out["window"], 4)
+        for _, t in out["per"]:
+            self.assertGreater(t["states"], 0)
+            self.assertEqual(t["play_games"], 20 * t["states"])
+            self.assertEqual(t["kick_games"], 2 * 20)                # not a tilt build: one kick-off run
+            self.assertGreater(t["play_snaps"], 0)
+        text = "\n".join(T.report(out))
+        for part in ("a match on average", "on 3 workers", "one live price update", "simulate's parts",
+                     "the distance draw"):
+            self.assertIn(part, text)
+
+
 class TestCoverage(unittest.TestCase):
 
     def test_every_real_state_s_draws_and_the_thinnest_situations(self):

@@ -2383,6 +2383,45 @@ games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`
     python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
         --v21-model v21_t10 --v21-prior-model v14_model
 
+### Timing (`v21-timing`)
+
+```powershell
+python -m eAMFModel v21-timing --model v21_t10 --since 2026-10-01 --until 2026-10-14
+```
+
+How long the calibrator's v21 stream takes to price the window, measured off the local snapshot
+export with no Snowflake connection. It takes a seeded sample of `--matches` (6) matches and prices
+each as one worker does: the kick-off with its nudge solved (four runs of both sides receiving),
+then every in-play PLAY_OVER state at `--paths` (1000) games in one run. For each match it gives
+the seconds per part, the games and snaps simulated, and the microseconds per snap. It then
+projects the window's run over the workers. One live price update comes next: a single state
+simulated alone at points through the game, as a live pricer would run it with the model loaded
+and the nudge solved before kick-off. A profile of the first match's in-play run follows:
+simulate's parts and the functions it spends its own time in. The projection covers simulation
+only; reading Snowflake and the prior's predictions come on top.
+
+`--compare` also runs the first match with v2.1's two exact speedups off and on, in turn three
+times, keeping the best of each so other work on the machine weighs on both alike. It times
+the kick-off, the in-play run and a live update, and sets every output against the run with them
+off, bit for bit.
+
+### The exact speedups (`TILT_CACHE`, `DECISION_TABLE`)
+
+Two switches in `v21.py`, both on. Each gives the same draws, bit for bit, in less time; with
+either off, the sim runs the code it ran before.
+- **`TILT_CACHE`:** a run's tilts are one a side for a match. Each real record's theta . phi is
+  worked out once per run, with the same einsum the draws ran on their candidates
+  (`Bins.tilt_z`). The tilted draws then read their 16 candidates' values off that table instead of
+  working each out again. A run of fewer than `TILT_CACHE_PATHS` (5000) games, such as the
+  kick-off's nudge solve, works them out as before, unless an earlier run of the same tilts left
+  its table.
+- **`DECISION_TABLE`:** a decision's league shares in a cell of its features are drawn up level by
+  level the first time the cell comes up, and read off a table after (`Choice.base`). Most of
+  this saving is the defense's and the offense's timeout choices before every running-clock snap.
+  The rules' strike-outs and the gamers' leans still run on every decision's full state.
+
+Neither table is saved with the build.
+
 ### Coverage (`v21-coverage`)
 
 ```powershell
