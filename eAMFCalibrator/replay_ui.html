@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>v21 replay</title>
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --ink: #0b0b0b;
+  --ink-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --ring: rgba(11, 11, 11, 0.10);
+  --wash: rgba(11, 11, 11, 0.05);
+  --v21: #2a78d6;           /* categorical slot 1 */
+  --prod: #eb6834;          /* categorical slot 2 */
+  --up: #006300;
+  --down: #b42f2f;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --ink: #f0efec;
+    --ink-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --ring: rgba(255, 255, 255, 0.10);
+    --wash: rgba(255, 255, 255, 0.06);
+    --v21: #3987e5;
+    --prod: #d95926;
+    --up: #0ca30c;
+    --down: #e66767;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --ink: #f0efec;
+  --ink-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --ring: rgba(255, 255, 255, 0.10);
+  --wash: rgba(255, 255, 255, 0.06);
+  --v21: #3987e5;
+  --prod: #d95926;
+  --up: #0ca30c;
+  --down: #e66767;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--page); color: var(--ink);
+  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { padding: 12px 16px; border-bottom: 1px solid var(--ring); display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+header h1 { font-size: 16px; margin: 0; }
+header .meta { color: var(--ink-2); font-size: 12px; }
+.bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--ring); }
+.bar label { color: var(--ink-2); font-size: 12px; }
+input, select, button {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--ring); border-radius: 6px; padding: 5px 8px;
+}
+button { cursor: pointer; }
+button:hover { background: var(--wash); }
+button.primary { border-color: var(--v21); }
+button:disabled { opacity: 0.5; cursor: default; }
+select#match { min-width: 320px; max-width: 100%; }
+main { display: grid; grid-template-columns: 300px minmax(0, 1fr) 300px; gap: 12px; padding: 12px 16px; align-items: start; }
+@media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 12px; }
+.card h2 { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+.stack > * + * { margin-top: 12px; }
+#timeline { max-height: calc(100vh - 170px); overflow-y: auto; padding: 0; }
+#timeline .item {
+  display: grid; grid-template-columns: 70px 44px 1fr; gap: 4px 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--ring); cursor: pointer; font-size: 12px;
+}
+#timeline .item:hover { background: var(--wash); }
+#timeline .item.current { box-shadow: inset 3px 0 0 var(--v21); background: var(--wash); }
+#timeline .item.unpriced .sit { color: var(--muted); }
+#timeline .when { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+#timeline .score { font-variant-numeric: tabular-nums; font-weight: 600; }
+#timeline .probs { grid-column: 2 / 4; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.key { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.key.v21 { border-color: var(--v21); }
+.key.prod { border-color: var(--prod); }
+.scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.scoreboard .side { font-size: 13px; }
+.scoreboard .side.away { text-align: right; }
+.scoreboard .side .who { font-weight: 600; font-size: 15px; }
+.scoreboard .side .team { color: var(--ink-2); }
+.scoreboard .pts { font-size: 28px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
+.scoreboard .pts .sub { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); }
+.situation { margin-top: 8px; display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); font-size: 13px; }
+.situation b { color: var(--ink); font-weight: 600; }
+.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.status { color: var(--ink-2); font-size: 12px; }
+table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+th, td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--ring); }
+th { color: var(--ink-2); font-weight: 600; font-size: 12px; }
+th:first-child, td:first-child { text-align: left; }
+td.diff.pos { color: var(--up); }
+td.diff.neg { color: var(--down); }
+td .odds { color: var(--muted); font-size: 12px; margin-left: 4px; }
+.note { color: var(--ink-2); font-size: 12px; }
+.warn { color: var(--down); font-size: 12px; }
+.dists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 700px) { .dists { grid-template-columns: 1fr; } }
+svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
+.nudge-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
+.nudge-grid input[type="number"] { width: 90px; }
+.readout { display: grid; grid-template-columns: auto auto auto; gap: 2px 10px; font-variant-numeric: tabular-nums; font-size: 12px; margin-top: 8px; }
+.readout .h { color: var(--ink-2); }
+#chartWrap { position: relative; }
+#tip {
+  position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--ring);
+  border-radius: 6px; padding: 6px 8px; font-size: 12px; display: none; white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); z-index: 5;
+}
+#tip .v { font-weight: 600; color: var(--ink); }
+#tip .l { color: var(--ink-2); }
+.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
+.full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>v21 replay</h1>
+  <span class="meta" id="metaLine">loading…</span>
+</header>
+
+<div class="bar">
+  <label for="day">Day</label>
+  <input type="date" id="day">
+  <button id="loadDay">Matches</button>
+  <label for="match">Match</label>
+  <select id="match"><option value="">pick a day first</option></select>
+  <label for="code">or code</label>
+  <input id="code" placeholder="AF…" size="14">
+  <button id="loadMatch" class="primary">Load</button>
+  <label for="paths">Games a price</label>
+  <input type="number" id="paths" min="200" max="20000" step="200" style="width: 90px">
+  <span class="status" id="status"></span>
+</div>
+
+<main>
+  <section class="card" id="timelineCard" aria-label="PLAY_OVER messages">
+    <h2>PLAY_OVER messages</h2>
+    <div id="timeline" role="listbox" tabindex="0"><div class="note" style="padding:10px">Load a match.</div></div>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <div class="scoreboard">
+        <div class="side home"><div class="who" id="homeWho">Home</div><div class="team" id="homeTeam"></div></div>
+        <div class="pts"><span id="score">–</span><span class="sub" id="clock"></span></div>
+        <div class="side away"><div class="who" id="awayWho">Away</div><div class="team" id="awayTeam"></div></div>
+      </div>
+      <div class="situation" id="situation"></div>
+    </div>
+
+    <div class="card">
+      <div class="controls">
+        <button id="first" title="Kick-off (Home)">⏮</button>
+        <button id="prev" title="Previous (←)">◀</button>
+        <button id="next" title="Next (→)">▶</button>
+        <button id="last" title="Last (End)">⏭</button>
+        <button id="play" title="Play / pause (space)">Play</button>
+        <select id="speed" aria-label="Speed">
+          <option value="400">fast</option>
+          <option value="1200" selected>normal</option>
+          <option value="3000">slow</option>
+        </select>
+        <label class="note"><input type="checkbox" id="pricedOnly" checked> only states v21 prices</label>
+        <button id="priceAll">Price the whole match</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Prices at this message</h2>
+      <div id="priceNote" class="note"></div>
+      <table aria-label="v21 against prod">
+        <thead><tr><th>Market</th><th>Line</th><th><span class="key v21"></span>v21</th><th><span class="key prod"></span>prod</th><th>v21 − prod</th></tr></thead>
+        <tbody id="markets"></tbody>
+      </table>
+      <div class="note" id="expected" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>v21's final margin and total</h2>
+      <div class="legend"><span><span class="key v21"></span>v21's chance of each final</span><span><span class="key prod"></span>prod's line</span></div>
+      <div class="dists">
+        <div><div class="note">Final margin (home less away)</div><svg id="marginDist" width="100%" height="140"></svg></div>
+        <div><div class="note">Final total</div><svg id="totalDist" width="100%" height="140"></svg></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="stack">
+    <div class="card">
+      <h2>Nudge</h2>
+      <div class="note" id="priorLine"></div>
+      <div class="nudge-grid" style="margin-top:8px">
+        <label for="meanHome" id="meanHomeLabel">Home pts</label><input type="number" step="0.1" id="meanHome">
+        <label for="meanAway" id="meanAwayLabel">Away pts</label><input type="number" step="0.1" id="meanAway">
+        <label for="share">Share</label><div><input type="range" id="share" min="0" max="1" step="0.05"> <span id="shareText"></span></div>
+      </div>
+      <div class="controls" style="margin-top:8px">
+        <button id="applyNudge" class="primary">Apply</button>
+        <button id="resetNudge">Back to the prior</button>
+      </div>
+      <div class="readout" id="nudgeReadout"></div>
+      <div class="note" id="nudgeNote" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <h2>Pre-match</h2>
+      <table><thead><tr><th>Market</th><th>Line</th><th>v21 KO</th><th>prod</th></tr></thead><tbody id="prematch"></tbody></table>
+      <div class="note" style="margin-top:6px">prod: its last quote before the first play; v21: the kick-off, nudged.</div>
+    </div>
+  </section>
+
+  <section class="card full">
+    <h2>Home win chance through the match</h2>
+    <div class="legend"><span><span class="key v21"></span>v21</span><span><span class="key prod"></span>prod</span><span id="chartNote"></span></div>
+    <div id="chartWrap"><svg id="chart" width="100%" height="240"></svg><div id="tip" role="status"></div></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const S = {
+  meta: null, match: null, steps: [], pos: 0, prices: new Map(), chartV21: new Map(),
+  means: null, share: 0.75, paths: 1000, playing: null, busy: false, nudgeKey: "",
+};
+
+async function api(path, body) {
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST",
+    headers: { "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function setStatus(t) { $("status").textContent = t || ""; }
+function pct(p) { return p == null ? "–" : (100 * p).toFixed(1) + "%"; }
+function fair(p) { return p == null || p <= 0 ? "" : (1 / p).toFixed(2); }
+function el(tag, attrs, text) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  if (text != null) e.textContent = text;
+  return e;
+}
+function svgEl(tag, attrs) {
+  const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
+  return e;
+}
+function ordinal(n) { return ({ 1: "1st", 2: "2nd", 3: "3rd" })[n] || (n + "th"); }
+function spot(y) { return y == null ? "" : y < 50 ? "own " + y : y === 50 ? "50" : "opp " + (100 - y); }
+function sideName(side) { if (!S.match) return side; return side === "home" ? S.match.home : side === "away" ? S.match.away : ""; }
+function situation(t) {
+  if (!t.offense || !t.down) return "";
+  const togo = t.field != null && t.distance != null && t.field + t.distance >= 100 ? "goal" : t.distance;
+  return `${sideName(t.offense)} ${ordinal(t.down)} & ${togo} at ${spot(t.field)}`;
+}
+function gameSeconds(t) {
+  if (!t || !t.period) return 0;
+  const [m, s] = (t.clock || "4:00").split(":").map(Number);
+  return (t.period - 1) * 240 + (240 - (m * 60 + s));
+}
+
+// ---------------------------------------------------------------- meta and the match list
+
+async function init() {
+  const m = await api("/api/meta");
+  S.meta = m; S.paths = m.paths; S.share = m.share;
+  $("metaLine").textContent = `model ${m.model} (${m.mode || "?"}) · prior ${m.prior || "none"} · ${m.source}`;
+  $("paths").value = m.paths;
+  $("share").value = m.share; $("shareText").textContent = Math.round(100 * m.share) + "%";
+  if (m.last_day) $("day").value = m.last_day;
+  if (!m.nudge) $("nudgeNote").textContent = "This build has no strength direction (not a tilt build): v21 prices off its own means.";
+  if (m.last_day) loadDay();
+}
+
+async function loadDay() {
+  const day = $("day").value;
+  if (!day) return;
+  setStatus("reading the day's matches…");
+  try {
+    const { matches } = await api("/api/matches", { day });
+    const sel = $("match");
+    sel.textContent = "";
+    if (!matches.length) sel.append(el("option", { value: "" }, "no matches that day"));
+    for (const x of matches) {
+      const fin = x.final && x.final[0] != null ? `  ${x.final[0]}–${x.final[1]}` : "";
+      sel.append(el("option", { value: x.code }, `${x.start}  ${x.home} (${x.home_team}) v ${x.away} (${x.away_team})${fin}  · ${x.code}`));
+    }
+    setStatus(`${matches.length} matches`);
+  } catch (e) { setStatus(e.message); }
+}
+
+async function loadMatch() {
+  const code = $("code").value.trim() || $("match").value;
+  if (!code) return;
+  stopPlay();
+  setStatus(`loading ${code} (the first time from Snowflake, then from the cache)…`);
+  try {
+    const m = await api("/api/load", { code });
+    S.match = m; S.prices.clear(); S.chartV21.clear();
+    S.steps = [{ kick: true, message: null }].concat(m.timeline);
+    S.means = m.prior ? m.prior.slice() : null;
+    $("homeWho").textContent = m.home; $("homeTeam").textContent = m.home_team;
+    $("awayWho").textContent = m.away; $("awayTeam").textContent = m.away_team;
+    $("meanHomeLabel").textContent = `${m.home} pts`; $("meanAwayLabel").textContent = `${m.away} pts`;
+    $("priorLine").textContent = m.prior ? `The prior: ${m.home} ${m.prior[0]}, ${m.away} ${m.prior[1]}.` : (m.prior_note || "");
+    $("meanHome").value = S.means ? S.means[0] : ""; $("meanAway").value = S.means ? S.means[1] : "";
+    renderTimeline();
+    setStatus(`${m.code}: ${m.timeline.length} PLAY_OVERs, ${m.n_priced} v21 can price · final ${m.final[0]}–${m.final[1]}`);
+    await go(0);
+    renderPrematch();
+  } catch (e) { setStatus(e.message); }
+}
+
+// ---------------------------------------------------------------- the timeline
+
+function renderTimeline() {
+  const box = $("timeline");
+  box.textContent = "";
+  S.steps.forEach((t, i) => {
+    const it = el("div", { class: "item" + (t.kick || t.priced ? "" : " unpriced"), "data-i": i, role: "option" });
+    if (t.kick) {
+      it.append(el("span", { class: "when" }, "Kick-off"), el("span", { class: "score" }, "0–0"),
+                el("span", { class: "sit" }, "pre-match"));
+    } else {
+      it.append(el("span", { class: "when" }, `Q${t.period} ${t.clock}`), el("span", { class: "score" }, `${t.home}–${t.away}`),
+                el("span", { class: "sit" }, (t.play ? t.play.toLowerCase() + " · " : "") + (situation(t) || "")));
+    }
+    const probs = el("span", { class: "probs" });
+    it.append(probs);
+    it.addEventListener("click", () => { stopPlay(); go(i); });
+    box.append(it);
+  });
+  refreshTimelineProbs();
+}
+
+function prodHome(i) {
+  const t = S.steps[i];
+  if (!t) return null;
+  const q = t.kick ? (S.match.prematch || {})["50"] : (t.prod || {})["50"];
+  return q ? q.p : null;
+}
+function v21Home(i) {
+  const t = S.steps[i];
+  const key = t.kick ? "kick" : t.message;
+  const pr = S.prices.get(priceKey(key));
+  if (pr && pr.priced) return pr.moneyline.home;
+  return S.chartV21.has(key) ? S.chartV21.get(key) : null;
+}
+function refreshTimelineProbs() {
+  const items = $("timeline").querySelectorAll(".item");
+  items.forEach((it, i) => {
+    const pr = prodHome(i), v = v21Home(i);
+    const probs = it.querySelector(".probs");
+    probs.textContent = "";
+    if (pr != null) { probs.append(el("span", { class: "key prod" })); probs.append(document.createTextNode(`prod ${pct(pr)}  `)); }
+    if (v != null) { probs.append(el("span", { class: "key v21" })); probs.append(document.createTextNode(`v21 ${pct(v)}`)); }
+  });
+}
+function markCurrent() {
+  const items = $("timeline").querySelectorAll(".item");
+  items.forEach((it, i) => it.classList.toggle("current", i === S.pos));
+  const cur = items[S.pos];
+  if (cur) cur.scrollIntoView({ block: "nearest" });
+}
+
+// ---------------------------------------------------------------- stepping and pricing
+
+function nudgeBody() {
+  return { means: S.means, share: S.share, paths: S.paths };
+}
+function priceKey(key) { return `${key}|${S.nudgeKey}`; }
+function currentNudgeKey() { return JSON.stringify([S.means, S.share, S.paths]); }
+
+async function go(i) {
+  if (!S.match) return;
+  S.pos = Math.max(0, Math.min(S.steps.length - 1, i));
+  markCurrent();
+  renderBoard();
+  const t = S.steps[S.pos];
+  const key = t.kick ? "kick" : t.message;
+  S.nudgeKey = currentNudgeKey();
+  let pr = S.prices.get(priceKey(key));
+  if (!pr) {
+    if (!t.kick && !t.priced) {
+      pr = { priced: false, prod: t.prod, why: "v21 has no state here (a conversion still to come, or no snap to start from)" };
+    } else {
+      setStatus("pricing…");
+      S.busy = true;
+      try {
+        pr = await api("/api/price", Object.assign({ code: S.match.code, message: t.kick ? null : t.message }, nudgeBody()));
+        S.prices.set(priceKey(key), pr);
+        setStatus("");
+      } catch (e) { setStatus(e.message); S.busy = false; return; }
+      S.busy = false;
+    }
+  }
+  renderPrice(pr, t);
+  if (pr.nudge) renderNudge(pr.nudge);
+  if (t.kick) renderPrematch(pr);
+  refreshTimelineProbs();
+  drawChart();
+}
+
+function renderBoard() {
+  const t = S.steps[S.pos];
+  if (t.kick) {
+    $("score").textContent = "0–0"; $("clock").textContent = "Kick-off";
+    $("situation").textContent = "Pre-match: v21's kick-off price, against prod's last quote before the first play.";
+    return;
+  }
+  $("score").textContent = `${t.home}–${t.away}`;
+  $("clock").textContent = `Q${t.period > 4 ? "OT" + (t.period - 4) : t.period} ${t.clock}`;
+  const sit = $("situation");
+  sit.textContent = "";
+  const add = (label, value) => { const s = el("span"); s.append(document.createTextNode(label + " ")); s.append(el("b", {}, value)); sit.append(s); };
+  if (t.play) add("Play over:", t.play.toLowerCase());
+  const s = situation(t);
+  if (s) add("Next:", s);
+  if (t.messages) add("Feed:", t.messages);
+  if (t.bet_state) add("Bets:", t.bet_state.toLowerCase());
+  add("Message", String(t.message));
+}
+
+function row(tbody, name, line, v, p, note) {
+  const tr = el("tr");
+  tr.append(el("td", {}, name), el("td", {}, line == null ? "" : String(line)));
+  const tdv = el("td"); tdv.textContent = pct(v); if (v != null) tdv.append(el("span", { class: "odds" }, fair(v)));
+  const tdp = el("td"); tdp.textContent = pct(p); if (p != null) tdp.append(el("span", { class: "odds" }, fair(p) + (note || "")));
+  const d = v != null && p != null ? 100 * (v - p) : null;
+  const tdd = el("td", { class: "diff" + (d == null ? "" : d > 0.05 ? " pos" : d < -0.05 ? " neg" : "") },
+                 d == null ? "" : (d > 0 ? "+" : "") + d.toFixed(1) + " pts");
+  tr.append(tdv, tdp, tdd);
+  tbody.append(tr);
+}
+
+function renderPrice(pr, t) {
+  const tb = $("markets");
+  tb.textContent = "";
+  const prod = pr.prod || {};
+  const live = (q) => q && q.live === false ? " (suspended)" : "";
+  if (!pr.priced) {
+    $("priceNote").textContent = pr.why || "";
+    $("expected").textContent = "";
+    if (prod["50"]) row(tb, `${S.match.home} win`, null, null, prod["50"].p, live(prod["50"]));
+    if (prod["52"]) row(tb, `${S.match.home} spread`, prod["52"].line, null, prod["52"].p, live(prod["52"]));
+    if (prod["54"]) row(tb, "Total over", prod["54"].line, null, prod["54"].p, live(prod["54"]));
+    drawDist($("marginDist"), null); drawDist($("totalDist"), null);
+    return;
+  }
+  $("priceNote").textContent = Object.keys(prod).length ? "" : "prod had no quote at this message";
+  const at = pr.at_prod || {};
+  row(tb, `${S.match.home} win`, null, pr.moneyline.home, prod["50"] ? prod["50"].p : null, live(prod["50"]));
+  row(tb, `${S.match.away} win`, null, pr.moneyline.away, prod["50"] ? 1 - prod["50"].p : null, live(prod["50"]));
+  if (prod["52"] && prod["52"].line != null) row(tb, `${S.match.home} spread (prod's line)`, prod["52"].line, at["52"], prod["52"].p, live(prod["52"]));
+  row(tb, `${S.match.home} spread (v21's line)`, pr.spread.line, pr.spread.home, null);
+  if (prod["54"] && prod["54"].line != null) row(tb, "Total over (prod's line)", prod["54"].line, at["54"], prod["54"].p, live(prod["54"]));
+  row(tb, "Total over (v21's line)", pr.total.line, pr.total.over, null);
+  const e = pr.expected;
+  $("expected").textContent = `v21 expects ${S.match.home} ${e.home}, ${S.match.away} ${e.away}: margin ${e.margin > 0 ? "+" : ""}${e.margin}, total ${e.total} · ${pr.paths} games`;
+  drawDist($("marginDist"), pr.margin_dist, prod["52"] ? prod["52"].line : null);
+  drawDist($("totalDist"), pr.total_dist, prod["54"] ? prod["54"].line : null);
+}
+
+function renderPrematch(pr) {
+  const tb = $("prematch");
+  tb.textContent = "";
+  if (!S.match) return;
+  const pm = S.match.prematch || {};
+  const kick = pr || S.prices.get(priceKey("kick"));
+  const at = (kick && kick.at_prod) || {};
+  const add = (name, line, v, p) => {
+    const tr = el("tr");
+    tr.append(el("td", {}, name), el("td", {}, line == null ? "" : String(line)), el("td", {}, pct(v)), el("td", {}, pct(p)));
+    tb.append(tr);
+  };
+  add(`${S.match.home} win`, null, kick && kick.priced ? kick.moneyline.home : null, pm["50"] ? pm["50"].p : null);
+  if (pm["52"]) add(`${S.match.home} spread`, pm["52"].line, at["52"], pm["52"].p);
+  if (pm["54"]) add("Total over", pm["54"].line, at["54"], pm["54"].p);
+}
+
+function renderNudge(n) {
+  const r = $("nudgeReadout");
+  r.textContent = "";
+  const head = ["", S.match.home, S.match.away];
+  head.forEach((h) => r.append(el("span", { class: "h" }, h)));
+  const line = (label, xs) => { r.append(el("span", { class: "h" }, label)); xs.forEach((x) => r.append(el("span", {}, x == null ? "–" : String(x)))); };
+  line("target", n.target || [null, null]);
+  line("v21's own", n.own);
+  line("nudged", n.nudged);
+  if (n.alpha) line("nudge", n.alpha);
+  if (!n.available) $("nudgeNote").textContent = "This build has no strength direction (not a tilt build): v21 prices off its own means.";
+  else if (!n.target) $("nudgeNote").textContent = "No expected points: v21 prices off its own means. Enter them and Apply.";
+  else $("nudgeNote").textContent = `Kick-off means pulled ${Math.round(100 * n.share)}% of the way from v21's own to the target; the same nudge on every later state.`;
+}
+
+// ---------------------------------------------------------------- the distributions
+
+function drawDist(svg, dist, line) {
+  svg.textContent = "";
+  if (!dist) return;
+  const W = svg.clientWidth || 360, H = 140, pad = { l: 4, r: 4, t: 6, b: 18 };
+  const n = dist.p.length, max = Math.max(...dist.p, 1e-9);
+  const step = (W - pad.l - pad.r) / n, bw = Math.max(1, step - 2);
+  const y = (p) => pad.t + (H - pad.t - pad.b) * (1 - p / max);
+  svg.append(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: H - pad.b, y2: H - pad.b, stroke: "var(--axis)" }));
+  dist.p.forEach((p, k) => {
+    const x = pad.l + k * step + (step - bw) / 2, top = y(p);
+    const h = Math.max(0, H - pad.b - top);
+    const r = svgEl("rect", { x, y: top, width: bw, height: h, rx: Math.min(2, bw / 2), fill: "var(--v21)" });
+    const title = svgEl("title"); title.textContent = `${dist.start + k}: ${pct(p)}`;
+    r.append(title);
+    svg.append(r);
+  });
+  const tickEvery = n > 60 ? 10 : 5;
+  for (let k = 0; k < n; k++) {
+    const v = dist.start + k;
+    if (v % tickEvery) continue;
+    const t = svgEl("text", { x: pad.l + k * step + step / 2, y: H - 4, "text-anchor": "middle" });
+    t.textContent = String(v);
+    svg.append(t);
+  }
+  if (line != null) {
+    const x = pad.l + (line - dist.start + 0.5) * step;
+    if (x > pad.l && x < W - pad.r) {
+      svg.append(svgEl("line", { x1: x, x2: x, y1: pad.t, y2: H - pad.b, stroke: "var(--prod)", "stroke-width": 2 }));
+      const t = svgEl("text", { x: x + 3, y: pad.t + 9 }); t.textContent = `prod ${line}`; svg.append(t);
+    }
+  }
+}
+
+// ---------------------------------------------------------------- the chart
+
+function chartData() {
+  const pts = S.steps.map((t, i) => ({ i, x: t.kick ? 0 : gameSeconds(t), prod: prodHome(i), v21: v21Home(i) }));
+  return pts;
+}
+function drawChart() {
+  const svg = $("chart");
+  svg.textContent = "";
+  if (!S.match) return;
+  const W = svg.clientWidth || 900, H = 240, pad = { l: 40, r: 70, t: 10, b: 24 };
+  const pts = chartData();
+  const maxX = Math.max(960, ...pts.map((p) => p.x));
+  const X = (x) => pad.l + (W - pad.l - pad.r) * x / maxX;
+  const Y = (p) => pad.t + (H - pad.t - pad.b) * (1 - p);
+  for (const g of [0, 0.25, 0.5, 0.75, 1]) {
+    svg.append(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: Y(g), y2: Y(g), stroke: g === 0.5 ? "var(--axis)" : "var(--grid)" }));
+    const t = svgEl("text", { x: pad.l - 6, y: Y(g) + 4, "text-anchor": "end" }); t.textContent = Math.round(100 * g) + "%"; svg.append(t);
+  }
+  for (let q = 1; q * 240 <= maxX; q++) {
+    svg.append(svgEl("line", { x1: X(q * 240), x2: X(q * 240), y1: pad.t, y2: H - pad.b, stroke: "var(--grid)" }));
+  }
+  for (let q = 0; q * 240 < maxX; q++) {
+    const t = svgEl("text", { x: X(q * 240 + 120), y: H - 6, "text-anchor": "middle" }); t.textContent = q < 4 ? `Q${q + 1}` : `OT${q - 3}`; svg.append(t);
+  }
+  const path = (key, color) => {
+    const ok = pts.filter((p) => p[key] != null);
+    if (!ok.length) return null;
+    const d = ok.map((p, k) => `${k ? "L" : "M"}${X(p.x).toFixed(1)},${Y(p[key]).toFixed(1)}`).join("");
+    svg.append(svgEl("path", { d, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round" }));
+    return ok[ok.length - 1];
+  };
+  const endProd = path("prod", "var(--prod)");
+  const endV21 = path("v21", "var(--v21)");
+  const labels = [];
+  if (endProd) labels.push({ y: Y(endProd.prod), text: "prod" });
+  if (endV21) labels.push({ y: Y(endV21.v21), text: "v21" });
+  if (labels.length === 2 && Math.abs(labels[0].y - labels[1].y) < 12) labels[1].y = labels[0].y + (labels[1].y >= labels[0].y ? 12 : -12);
+  labels.forEach((l) => { const t = svgEl("text", { x: W - pad.r + 6, y: l.y + 4 }); t.textContent = l.text; svg.append(t); });
+  const cur = pts[S.pos];
+  if (cur) svg.append(svgEl("line", { x1: X(cur.x), x2: X(cur.x), y1: pad.t, y2: H - pad.b, stroke: "var(--ink-2)", "stroke-dasharray": "3 3" }));
+  const hair = svgEl("line", { x1: 0, x2: 0, y1: pad.t, y2: H - pad.b, stroke: "var(--muted)", visibility: "hidden" });
+  svg.append(hair);
+  const hit = svgEl("rect", { x: pad.l, y: pad.t, width: W - pad.l - pad.r, height: H - pad.t - pad.b, fill: "transparent" });
+  svg.append(hit);
+  const tip = $("tip");
+  const nearest = (evt) => {
+    const box = svg.getBoundingClientRect();
+    const mx = (evt.clientX - box.left) * ((svg.clientWidth || W) / box.width);
+    const x = (mx - pad.l) / (W - pad.l - pad.r) * maxX;
+    let best = 0, bd = Infinity;
+    pts.forEach((p, k) => { const dd = Math.abs(p.x - x); if (dd < bd) { bd = dd; best = k; } });
+    return best;
+  };
+  hit.addEventListener("pointermove", (evt) => {
+    const k = nearest(evt), p = pts[k], t = S.steps[k];
+    hair.setAttribute("x1", X(p.x)); hair.setAttribute("x2", X(p.x)); hair.setAttribute("visibility", "visible");
+    tip.textContent = "";
+    const head = el("div", { class: "l" }, t.kick ? "Kick-off" : `Q${t.period} ${t.clock} · ${t.home}–${t.away}`);
+    tip.append(head);
+    const lineRow = (cls, label, v) => { const d = el("div"); d.append(el("span", { class: "key " + cls })); d.append(el("span", { class: "v" }, pct(v))); d.append(el("span", { class: "l" }, " " + label)); tip.append(d); };
+    lineRow("v21", "v21", p.v21);
+    lineRow("prod", "prod", p.prod);
+    tip.style.display = "block";
+    const wrap = $("chartWrap").getBoundingClientRect();
+    const left = Math.min(evt.clientX - wrap.left + 12, wrap.width - tip.offsetWidth - 4);
+    tip.style.left = left + "px"; tip.style.top = "8px";
+  });
+  hit.addEventListener("pointerleave", () => { tip.style.display = "none"; hair.setAttribute("visibility", "hidden"); });
+  hit.addEventListener("click", (evt) => { stopPlay(); go(nearest(evt)); });
+}
+
+// ---------------------------------------------------------------- whole match, nudge, play
+
+async function priceAll() {
+  if (!S.match) return;
+  setStatus(`pricing every state (${S.meta.chart_paths} games each)…`);
+  $("priceAll").disabled = true;
+  try {
+    const r = await api("/api/price_all", Object.assign({ code: S.match.code, chart_paths: S.meta.chart_paths }, nudgeBody()));
+    S.chartV21.clear();
+    for (const p of r.points) S.chartV21.set(p.message == null ? "kick" : p.message, p.home);
+    $("chartNote").textContent = `v21 at every state: ${r.paths} games each (${r.seconds}s)`;
+    setStatus("");
+    refreshTimelineProbs();
+    drawChart();
+  } catch (e) { setStatus(e.message); }
+  $("priceAll").disabled = false;
+}
+
+function applyNudge() {
+  const h = parseFloat($("meanHome").value), a = parseFloat($("meanAway").value);
+  S.means = isFinite(h) && isFinite(a) ? [h, a] : null;
+  S.share = parseFloat($("share").value);
+  S.paths = parseInt($("paths").value, 10) || S.meta.paths;
+  S.prices.clear(); S.chartV21.clear();
+  $("chartNote").textContent = "";
+  go(S.pos);
+}
+function resetNudge() {
+  if (!S.match) return;
+  const p = S.match.prior;
+  $("meanHome").value = p ? p[0] : ""; $("meanAway").value = p ? p[1] : "";
+  $("share").value = S.meta.share; $("shareText").textContent = Math.round(100 * S.meta.share) + "%";
+  applyNudge();
+}
+
+function nextIndex(i, dir) {
+  const only = $("pricedOnly").checked;
+  let k = i + dir;
+  while (only && k > 0 && k < S.steps.length && !S.steps[k].priced) k += dir;
+  return Math.max(0, Math.min(S.steps.length - 1, k));
+}
+function stopPlay() { if (S.playing) { clearTimeout(S.playing); S.playing = null; $("play").textContent = "Play"; } }
+async function tickPlay() {
+  if (!S.playing) return;
+  if (S.pos >= S.steps.length - 1) { stopPlay(); return; }
+  await go(nextIndex(S.pos, 1));
+  if (S.playing) S.playing = setTimeout(tickPlay, parseInt($("speed").value, 10));
+}
+function togglePlay() {
+  if (S.playing) { stopPlay(); return; }
+  $("play").textContent = "Pause";
+  S.playing = setTimeout(tickPlay, 10);
+}
+
+$("loadDay").addEventListener("click", loadDay);
+$("day").addEventListener("change", loadDay);
+$("loadMatch").addEventListener("click", loadMatch);
+$("match").addEventListener("change", () => { $("code").value = ""; loadMatch(); });
+$("first").addEventListener("click", () => { stopPlay(); go(0); });
+$("prev").addEventListener("click", () => { stopPlay(); go(nextIndex(S.pos, -1)); });
+$("next").addEventListener("click", () => { stopPlay(); go(nextIndex(S.pos, 1)); });
+$("last").addEventListener("click", () => { stopPlay(); go(S.steps.length - 1); });
+$("play").addEventListener("click", togglePlay);
+$("priceAll").addEventListener("click", priceAll);
+$("applyNudge").addEventListener("click", applyNudge);
+$("resetNudge").addEventListener("click", resetNudge);
+$("share").addEventListener("input", () => { $("shareText").textContent = Math.round(100 * parseFloat($("share").value)) + "%"; });
+document.addEventListener("keydown", (e) => {
+  if (!S.match || ["INPUT", "SELECT"].includes(document.activeElement.tagName)) return;
+  if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); go(nextIndex(S.pos, 1)); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); go(nextIndex(S.pos, -1)); }
+  else if (e.key === "Home") { e.preventDefault(); stopPlay(); go(0); }
+  else if (e.key === "End") { e.preventDefault(); stopPlay(); go(S.steps.length - 1); }
+  else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+});
+window.addEventListener("resize", () => { drawChart(); const t = S.steps[S.pos]; if (t) { const pr = S.prices.get(priceKey(t.kick ? "kick" : t.message)); if (pr && pr.priced) { drawDist($("marginDist"), pr.margin_dist, (pr.prod["52"] || {}).line); drawDist($("totalDist"), pr.total_dist, (pr.prod["54"] || {}).line); } } });
+init().catch((e) => setStatus(e.message));
+</script>
+</body>
+</html>
