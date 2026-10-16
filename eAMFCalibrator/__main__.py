@@ -1126,8 +1126,8 @@ def common_options():
                         help="eAMFModel v21-build's output, for --candidate v21 "
                              "(default $EAMF_V21_MODEL, then ./v21_model)")
     tuning.add_argument("--v21-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v21 "
-                             f"(default {config.V21_PATHS}; the kick-off twice that)")
+                        help=f"games simulated per snapshot for --candidate v21, the kick-off and "
+                             f"its nudge too (default {config.V21_PATHS})")
     tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v21: as --v10-lines "
                              f"(default {config.V21_LINES})")
