@@ -2822,6 +2822,34 @@ interval (resampling matches) and the weeks it came out ahead. The cuts are:
 Writes `out/prior_replay.txt` and `out/prior_replay.csv` (a row per bet with
 each variant's probability, odds and revenue).
 
+### NB2 refitted daily over the year, every match priced: `nb2-history`
+
+```bash
+python -m eAMFCalibrator nb2-history --since 2026-01-01 --history eAMFCalibrator/out/match_history.csv
+```
+
+NB2 is refitted every day from `--since`, each fit on every result settled before that day began,
+as it would run live, with no layers. Every match is priced by its own day's fit. It needs no
+Snowflake given `--history`. The fits are kept in `out/nb2_history/` (`nb2_history_hl<D>/` with
+`--half-life`), so a rerun fits only the days it lacks. Only the days the history covers are fitted.
+About 20 s a fit, two a day (the day's and its level scale's): `--workers 4` (the default) does the
+year in under an hour.
+
+`out/nb2_history.csv` has a row per match:
+- **The match:** code, kick-off, stream, gamers, teams, the pair's meeting number that day, each
+  gamer's settled matches before the day, the score.
+- **NB2's price:** expected points (`Pred_P1_Points`, `Pred_P2_Points`), margin and total, and the
+  moneyline from NB2's own joint score model (`p_home` splits a tie half and half; the home win,
+  draw and away win are given apart). NB2 gives ties 3–4%; the games have almost none (6 in 24,000:
+  overtime settles them).
+- **The fit:** its day, the matches it was fitted on, its level scale, and the gamers' dispersions
+  and shared fraction. These let `prior-backtest` read the CSV as an arm with NB2's own score model.
+
+Every price was made before its match's day, so a model fitted on the CSV's earlier rows and
+priced on a later day's sees nothing it couldn't have live. `glmer/cadence.R --nb2` fits glmer on it
+(glmer/README.md). `out/nb2_history.txt` grades NB2 month by month (the moneyline's log loss and
+Brier, the margin's and total's RMSE and bias) with the moneyline's calibration.
+
 ### Every prior variant, audited, graded and replayed: `backtest-suite`
 
 ```bash
