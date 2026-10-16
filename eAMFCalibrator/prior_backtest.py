@@ -463,22 +463,35 @@ def prepare(cur, since, until=None, features=None):
           "by their first play's message, the rest by the scheduled kick-off; against the price these tools "
           f"read before, the moneyline moved {100 * sum(moved) / len(moved) if moved else 0:.1f} points on average, "
           f"over 5 points in {sum(1 for x in moved if x > 0.05):,} matches", flush=True)
-    rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
-    first = min((m["start"] for m in window.values()), default=start)
-    feats, stat_rows = None, None
+    return context(history, window, codes, prod, features, start, tl=tl, early=early, first_plays=first_plays)
+
+
+def load_features(features, codes, first):
+    """(each match's gamer stats as of its day, the stats' rows) off player-stats' CSV; (None, None)
+    without one."""
     if features and os.path.exists(features):
         with open(features, newline="", encoding="utf-8") as fh:
             stat_rows = list(csv.DictReader(fh))
         feats = gamer_features.daily(stat_rows, since=first.date())
         print(f"  the gamers' stats: {sum(1 for c in codes if gamer_features.margin_x(feats.get(c))):,} of "
               f"{len(codes):,} matches with every stat ({features}, as of each match's day)", flush=True)
-    elif features:
+        return feats, stat_rows
+    if features:
         print(f"  no {features}: run player-stats first for the feature layer", flush=True)
-    return dict(history=history, window=window, codes=codes, tl=tl, prod=prod, early=early, first_plays=first_plays,
+    return None, None
+
+
+def context(history, window, codes, prod, features, start, **extra):
+    """What every arm is read against (prepare's, or prior_offline's without prod): the history, the
+    window's matches, prod's prices, the gamers' stats, the layers' burn-in."""
+    rows_by_code = {r["MATCH_CODE"]: r for r in history if r["MATCH_CODE"] in window}
+    first = min((m["start"] for m in window.values()), default=start)
+    feats, stat_rows = load_features(features, codes, first)
+    return dict(history=history, window=window, codes=codes, prod=prod,
                 features=feats, stat_rows=stat_rows, features_since=first.date(), read={}, fitted={},
                 sched=[rows_by_code[c] for c in codes if c in rows_by_code],
                 burn_from=first.replace(hour=0, minute=0, second=0, microsecond=0)
-                + dt.timedelta(days=BURN_IN_DAYS))
+                + dt.timedelta(days=BURN_IN_DAYS), **extra)
 
 
 def fit_arm(name, spec, ctx):

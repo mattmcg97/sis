@@ -2903,6 +2903,33 @@ priced on a later day's sees nothing it couldn't have live. `glmer/cadence.R --n
 (glmer/README.md). `out/nb2_history.txt` grades NB2 month by month (the moneyline's log loss and
 Brier, the margin's and total's RMSE and bias) with the moneyline's calibration.
 
+### The priors against each other, offline: `prior-offline`
+
+```bash
+python -m eAMFCalibrator prior-offline --history eAMFCalibrator/out/match_history.csv \
+    --since "2026-05-01 00:00:00" --until "2026-09-10 00:00:00" \
+    --arm "nb2=eAMFCalibrator/out/nb2_history.csv" \
+    --arm "glmer=glmer/out/cadence/cadence_matches.csv@trim:hl60_x0.5:daily" \
+    --blend "avg=nb2+infer,glmer+both"
+```
+
+`prior-backtest` without prod, the bets or Snowflake: the same arms (`NAME=SOURCE[#MODE]`), read,
+layered and scored the same way, graded against each other on the results alone. The match
+history comes from a CSV (`--history`). Each arm runs as it is and with each layer (`+layer`,
+`+infer`, `+both`, and `+feat`, `+both+feat` with the gamers' stats, `--features`, by default
+player-stats' `out/player_match_stats.csv`). A blend (`--blend NAME=VARIANT,VARIANT`) averages its
+variants' moneylines and expected totals.
+
+Every variant is graded against the first arm as it is, match by match, on the matches every
+variant priced after the layers' 7-day burn-in:
+- **moneyline:** log loss and Brier (draws out), and the fortnights it beat the baseline;
+- **total:** the expected total's RMSE and bias.
+
+These are given for every match, the rematches, the first meetings, the first meetings after
+either gamer had played someone else, each period (either side of the play-detail gap) and each
+month. With no prod there's no over at a line and no bets: `prior-backtest` and `prior-replay` are
+the tests against prod. Writes `out/prior_offline.txt` and `out/prior_offline.csv`.
+
 ### Every prior variant, audited, graded and replayed: `backtest-suite`
 
 ```bash

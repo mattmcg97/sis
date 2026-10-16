@@ -220,6 +220,15 @@ def cmd_prior_backtest(args):
     return 0
 
 
+def cmd_prior_offline(args):
+    """The priors and their layers graded against each other on the results: no prod, no Snowflake."""
+    from . import prior_offline
+    path = prior_offline.run(args.out or DEFAULT_OUT, _arms(args), args.history, args.since, args.until,
+                             _features(args), args.blend or (), args.draws)
+    print(f"\n  -> {path} and prior_offline.csv")
+    return 0
+
+
 def cmd_nb2_history(args):
     """NB2 refitted daily over a span, every match priced by its own day's fit, into one CSV."""
     from . import nb2_history
@@ -1437,6 +1446,28 @@ def build_parser():
                            help="as prior-backtest's --features")
     pr_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
 
+    po_parser = sub.add_parser(
+        "prior-offline",
+        help="the pre-match priors graded against each other on the results alone, no prod and no Snowflake: "
+             "prior-backtest's arms off a match history CSV, each as it is and with each layer (+feat and "
+             "+both+feat with the gamers' stats), and blends, against the first arm (-> prior_offline.txt/csv)")
+    po_parser.add_argument("--history", required=True, metavar="CSV",
+                           help="a match_history.csv (eAMFCalibrator history's, or nb2/AMFELO.csv)")
+    po_parser.add_argument("--since", required=True, metavar="TS", help="the window's start, 'YYYY-MM-DD HH:MM:SS'")
+    po_parser.add_argument("--until", metavar="TS", help="the window's end (default: the history's)")
+    po_parser.add_argument("--arm", action="append", metavar="NAME=SOURCE[#MODE]",
+                           help="a prior (repeatable), as prior-backtest's; the first is the baseline. "
+                                "nb2-history's nb2_history.csv is one")
+    po_parser.add_argument("--blend", action="append", metavar="NAME=VARIANT,VARIANT",
+                           help="a blend of variants (repeatable): their moneylines and totals averaged, "
+                                "e.g. avg=nb2+infer,glmer+both")
+    po_parser.add_argument("--features", metavar="CSV",
+                           help="the gamers' per-match stats for the feature layer (default: player-stats' "
+                                "player_match_stats.csv in --out; 'none' for none)")
+    po_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match (default 40000)")
+    po_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
     nh_parser = sub.add_parser(
         "nb2-history",
         help="NB2's historical pass: refitted every day from --since (default 2026-01-01) as live, no layers; "
@@ -1618,6 +1649,8 @@ def main(argv=None):
         return cmd_backtest_suite(args)
     if args.command == "nb2-history":
         return cmd_nb2_history(args)
+    if args.command == "prior-offline":
+        return cmd_prior_offline(args)
     if args.command == "report":
         return cmd_report(args)
     if args.command == "indrive":
