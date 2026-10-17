@@ -943,6 +943,13 @@ def cmd_prior_bets(args):
     return 0
 
 
+def cmd_ml_states(args):
+    """The moneyline by game situation, prod against a candidate (ml_states.py)."""
+    from . import ml_states
+    ml_states.run(args.out or os.path.join(DEFAULT_OUT, "ml_states"), args.pairs, args.bets, label=args.label)
+    return 0
+
+
 def cmd_report(args):
     """One pairing pass per candidate, the console view of each, and one
     combined HTML file with every candidate beside prod.
@@ -1338,6 +1345,18 @@ def build_parser():
     pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
                            help="simulated scorelines per match for a table's score model (default 40000)")
     pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/prior_bets)")
+
+    ms_parser = sub.add_parser(
+        "ml-states",
+        help="the moneyline by game situation off the report's pairs, no Snowflake: what prod and the candidate price "
+             "the pre-match favourite at after the first score (who, TD or FG, the opening drive or later) and at each "
+             "quarter's start by its lead, against how often it won; with --bets, what the bets struck there did "
+             "(-> out/ml_states/)")
+    ms_parser.add_argument("--pairs", nargs="+", required=True, metavar="CSV",
+                           help="the report's directional_pairs.csv (prod's and the candidate's prices at every snapshot)")
+    ms_parser.add_argument("--bets", nargs="+", metavar="CSV", help="betting-sim bets_sim.csv files on the same matches")
+    ms_parser.add_argument("--label", default="candidate", help="what to call the candidate (default candidate)")
+    ms_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/ml_states)")
 
     run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
@@ -1842,6 +1861,8 @@ def main(argv=None):
         return cmd_money_layer(args)
     if args.command == "prior-bets":
         return cmd_prior_bets(args)
+    if args.command == "ml-states":
+        return cmd_ml_states(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":

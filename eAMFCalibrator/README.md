@@ -3511,3 +3511,38 @@ price, the operator's margin kept), on the same bets and in two books, with
 
 Writes `prior_bets.txt` and `prior_bets.csv` (a row per match: the result, the
 moneyline stake and every price) to `--out` (default `out/prior_bets/`).
+
+### The moneyline by game situation: `ml-states`
+
+```bash
+python -m eAMFCalibrator ml-states --pairs eAMFCalibrator/out_cal_v21_glmer/directional_pairs.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --label v21
+```
+
+This asks what prod and a candidate price the pre-match favourite at in a
+given situation, against how often the favourite goes on to win. It reads
+the report's pairs: prod's and the candidate's moneyline at each snapshot,
+with the score, the quarter and who has the ball. It needs no Snowflake.
+
+**The favourite** is the side prod's price is on at the opening kick-off,
+with prices within 1 point of 50% left out.
+
+**The situations:**
+- **the first score of the game:** who scored (favourite or underdog), a
+  touchdown or a field goal, and when: on the opening drive (before the ball
+  first changed hands), later in the first quarter, or after. Each is read
+  at the first snapshot with the other side on the ball, so the try and the
+  kick-off are in.
+- **each later quarter's start,** by the favourite's lead.
+
+Each match counts once per situation, with 95% intervals over matches. The
+opening-drive touchdowns are also split by how strong a favourite.
+
+**With `--bets`:** every settled in-play moneyline bet placed in the
+situation (from its snapshot to the next score). For each it gives the
+margin and what prod's price says it should be, the backed side's result
+less prod's price and less the candidate's, and the candidate's re-priced
+margin against prod's. Then every bet by the quarter, the favourite's lead
+and the side backed.
+
+Writes `ml_states.txt` and `ml_states.csv` to `--out` (default
+`out/ml_states/`).
