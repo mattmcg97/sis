@@ -1409,6 +1409,31 @@ class TestReact(unittest.TestCase):
         finally:
             os.remove(path)
 
+    def test_gamer_by_gamer(self):
+        from .. import v21_react as vr, v21_stream as vs
+        self.assertEqual(vr.variant_of("v21-gsnap2"), ("gsnap", 2.0))
+        self.assertEqual(vr.variant_of("v21-gwpa1"), ("gwpa", 1.0))
+        table = {"snap": {"setting": 4.0, "k": 0.5, "gamers": {"G1": 2.0, "G2": 0.0}}}
+        self.assertEqual(list(vr.gamer_scale(table, "snap", ("G1", "nobody"))), [2.0, 0.5])
+        rows = [vs._as_text(r) for r in self.rows]
+        starts = vs.state_starts(self.model, rows)
+        base = vr.updates(self.model, rows, starts, None, ("snap", 4.0), ("G1", "G2"))
+        own = vr.updates(self.model, rows, starts, None, ("gsnap", 4.0), ("G1", "G2"), gamers=table)
+        self.assertTrue(np.allclose(own[:, 0], np.clip(2.0 * base[:, 0], -v21.NUDGE_MAX, v21.NUDGE_MAX)))
+        self.assertTrue(np.allclose(own[:, 1], 0.0))
+        with self.assertRaises(ValueError):
+            vr.updates(self.model, rows, starts, None, ("gsnap", 4.0), ("G1", "G2"))
+        with self.assertRaises(SystemExit):                        # priced without the gamers' table
+            self._quotes(("gsnap", 4.0))
+        path = os.path.join(self.tmp.name, vr.GAMERS_FILE)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(table, fh)
+        try:
+            self.assertEqual(vr.load_gamers(self.tmp.name), table)
+            self.assertTrue(self._quotes(("gsnap", 4.0)))
+        finally:
+            os.remove(path)
+
     def test_the_fit_writes_the_table_and_scores_the_updates(self):
         import datetime as dt
         import random
@@ -1427,11 +1452,24 @@ class TestReact(unittest.TestCase):
                              test_share=0.4, n_paths=20, workers=1)
         self.assertEqual(len(got["coef"]), len(vr.WP_FEATURES))
         self.assertGreater(got["coef"][1], 0)                          # ahead, likelier to win
-        for v in ("snap4", "pts4", "wpa10"):
+        for v in ("snap4", "pts4", "wpa10", "csnap4", "cpts4", "cwpa10"):
             self.assertIn(v, got["scores"])
+            self.assertIn("open", got["scores"][v])
             self.assertTrue(any(line.lstrip().startswith(v + " ") for line in lines), v)
         out = fit.write(os.path.join(self.tmp.name, "fit", vr.WP_FILE), got)
         self.assertEqual(vr.load_wp(os.path.dirname(out)), tuple(got["coef"]))
+        self.assertTrue(any("gamer by gamer" in line for line in lines))
+
+    def test_the_sessions_and_the_carry(self):
+        from .. import v21_react_fit as fit
+        hist = [dict(MATCH_CODE=f"M{i}", PLAYER_1_HANDLE="A", PLAYER_2_HANDLE=f"B{i}",
+                     SCHEDULED_START_TIME_UTC=t) for i, t in enumerate(
+                         ("2026-09-01 10:00:00", "2026-09-01 11:00:00", "2026-09-01 12:00:00", "2026-09-01 20:00:00"))]
+        sess = fit.sessions(hist)
+        self.assertEqual(sess[("M2", "A")], ["M1", "M0"])               # latest first
+        self.assertEqual(sess[("M3", "A")], [])                          # eight hours on: a new session
+        c = fit.carried([[1.0, 2.0, 3.0, 0.1], [1.0, 2.0, 3.0, 0.1]])
+        self.assertTrue(np.allclose(c, np.array([1, 2, 3, 1, 0.1]) * (1 + fit.CARRY_DECAY)))
 
 
 def _with_timeouts(matches, directory):

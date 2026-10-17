@@ -2406,6 +2406,11 @@ The calibrator names a variant as a candidate, priced off the same `--v21-model`
 | `v21-ptsT` | points so far against the kick-off mean × the share of a game's points that has come (`points_share`); the kick-off's simulated spread of points is the noise | T: the prior sd, points a game |
 | `v21-wpaC` | every snap looked up in a win-probability table: the side's chance after it less before it. The nudge is C × the chance its snaps added. A snap counts for how far it moved the match, not how far it was from its situation's usual | C: points a game for a whole win chance |
 
+**Gamer by gamer** (`v21-gsnapT`, `v21-gptsT`, `v21-gwpaC`): the approach's nudge × the gamer's own
+scale. That scale is the slope of the gamer's rest-of-game points beyond the sim's, against what the
+approach said, shrunk toward the pooled slope by an average gamer's evidence. `v21-react-fit` writes
+it to `react_gamers.json` beside the table. A gamer it has none for takes the pooled slope.
+
 The snap update moves most early: a snap's score is divided by the information so far plus 1/T², so
 one 20-yard gain on the first snap moves a side further than the same gain an hour in. `wpaC` reads
 its table from `react_wp.json` beside the build, written by `v21-react-fit`; without it the run stops
@@ -2429,7 +2434,13 @@ Each candidate is a pricing of its own, so each one adds a full v2.1 run's time.
     matches.
   - **Slope:** of what came on what the update said. 1 means right, under 1 means it moves too far.
 
-It also prints the sim's own game script by the lead: the slope of points still to come beyond the
+It scores three more things on the same matches:
+- **Earlier matches (`c-`):** each update with the gamer's earlier matches of the session carried in.
+  Each one back is worth ×0.7, and it is scored from the opening kick-off. This is fit-only for now:
+  it gets priced if it scores.
+- **Gamer by gamer:** each approach's gamer scales fitted on the first 60% of the scored matches,
+  then set against the pooled slope on the last 40%.
+- **The sim's own game script by the lead:** the slope of points still to come beyond the
 sim's on the side's lead × the share left. Below zero, the sim gives the side ahead too much of the
 rest of the game. That is a sim fix of its own, and any update that follows the lead (`pts`, `wpa`)
 looks the worse for it.
@@ -2441,6 +2452,36 @@ what it adds to that.
     python -m eAMFModel v21-react-fit --model v21_t10 --until 2026-10-01
 
 It reads the export alone (no Snowflake), at `--paths` (500) games a kick-off.
+
+### How far the draws set each gamer apart (`v21-gamers`)
+
+Every gamer in the build plays an average opponent from kick-off, home and away, with no nudge. It
+prints the sim's points for and against, the margin and the win chance. Beside them are the gamer's
+real points a match and the gamer's offense and defense tilts read along the strength direction.
+The summary gives the spread of the sim's margins across gamers, and how much of a point of real
+scoring the sim follows. Pre-match the kick-off nudge then moves each side most of the way to the
+prior's expected points, so the rest of a gamer's pre-match strength is the prior's.
+
+    python -m eAMFModel v21-gamers --model v21_t10 --gamers KILLJOY,MERLIN,HERMES --out v21_gamers.csv
+
+### What the money backing a gamer sees (`gamer-dig`)
+
+Off the export, the history and a betting simulation's `bets_sim.csv`, each side of every match gets
+a play profile: yards a snap, explosive gains (15+), stuffed snaps, first downs, 3rd downs made,
+turnovers, touchdowns and seconds a snap. Each gamer has a baseline over the 30 days before the window.
+- **Targeted gamers:** the gamers the money wins on (their backers' edge over prod's price), or those
+  `--gamers` names. It gives their record against prod's pre-match price, their baseline against the
+  league's, and their play in the window against their own baseline.
+- **Earlier matches:** whether the gamer's play in the last three matches of the session, against
+  their baseline, tells their result beyond prod's pre-match price (every match the export prices).
+- **This match:** whether the backed gamer's or the opponent's play so far tells the bet's result
+  beyond prod's price at the bet, with match-clustered intervals.
+- **The snap before:** the snap each bet followed (touchdown, turnover, explosive, first down,
+  stuffed), how often, and the edge after it.
+
+Each section is repeated for bets backing a gamer on 3+ wins this session.
+
+    python -m eAMFModel gamer-dig --bets eAMFCalibrator/out_bets_react/bets_sim.csv --out gamer_dig
 
 ### Timing (`v21-timing`)
 

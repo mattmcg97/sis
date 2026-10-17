@@ -25,6 +25,11 @@ by then. Three ways of reading the game:
 (T for snap and pts: the prior's sd in points a game, how far the side's strength today may be from
 the kick-off's.)
 
+Gamer by gamer (gsnapT, gptsT, gwpaC): the approach's nudge x the gamer's own scale, the slope of what
+the gamer's rest of the game did against what the approach said on real games, shrunk toward the
+pooled slope (react_gamers.json beside the model, written by v21-react-fit; a gamer it has none for
+takes the pooled).
+
 The calibrator names them as candidates: --candidate v21,v21-snap4,v21-pts6 prices the same build
 three ways. No update (v21 itself) leaves the nudge as it was, so its prices are unchanged."""
 
@@ -34,9 +39,10 @@ import numpy as np
 
 from . import v21
 
-_NAME = re.compile(r"^(snap|pts|wpa)(\d+(?:\.\d+)?)$")
+_NAME = re.compile(r"^(g?(?:snap|pts|wpa))(\d+(?:\.\d+)?)$")
 VARIANTS = ("snap2", "snap4", "snap8", "pts4", "pts8", "wpa10", "wpa20")    # a spread to set against each other
 WP_FILE = "react_wp.json"
+GAMERS_FILE = "react_gamers.json"          # each gamer's own scale on each approach (v21-react-fit)
 
 
 def spec_of(tag):
@@ -276,6 +282,26 @@ def wpa_sums(rows, messages, coef, pair=("", ""), teams=("", "")):
     return _sums_by(messages, known.astype(np.int64), side.astype(np.int64), add)[0]
 
 
+def load_gamers(model_dir):
+    """{approach: {"setting", "k" (the pooled scale), "gamers": {handle: scale}}} beside a build
+    (GAMERS_FILE), or None."""
+    import json
+    import os
+    path = os.path.join(model_dir if os.path.isdir(model_dir) else os.path.dirname(model_dir), GAMERS_FILE)
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def gamer_scale(table, approach, pair):
+    """(2,) each side's own scale on an approach (the pooled where the gamer has none)."""
+    t = (table or {}).get(approach) or {}
+    k = float(t.get("k", 1.0))
+    own = t.get("gamers") or {}
+    return np.array([float(own.get((g or "").strip().upper(), k)) for g in pair])
+
+
 def load_wp(model_dir):
     """The win-probability table's coefficients beside a build (WP_FILE), or None."""
     import json
@@ -313,14 +339,21 @@ def points_updates(model, starts, alpha, tau, kick):
     return _clip(a0, out)
 
 
-def updates(model, rows, sel, alpha, spec, pair=("", ""), teams=("", ""), kick=None, wp=None):
+def updates(model, rows, sel, alpha, spec, pair=("", ""), teams=("", ""), kick=None, wp=None, gamers=None):
     """(states, 2) each side's nudge change at each selected state ([(PLAY_OVER message, start)]) under
     a variant (spec_of); zeros without one, or where the build has no strength direction. wp: the
-    win-probability table's coefficients (load_wp), for wpa."""
+    win-probability table's coefficients (load_wp), for wpa; gamers: each gamer's own scale (load_gamers),
+    for the g- variants."""
     out = np.zeros((len(sel), 2))
     if not spec or not sel or getattr(model, "nudge_dir", None) is None:
         return out
     kind, x = spec[0], spec[1]
+    if kind.startswith("g"):
+        if gamers is None or kind[1:] not in gamers:
+            raise ValueError(f"the {kind} update needs each gamer's own scale (v21-react-fit's {GAMERS_FILE})")
+        a0 = np.zeros(2) if alpha is None else np.asarray(alpha, float)
+        base = updates(model, rows, sel, alpha, (kind[1:], x), pair, teams, kick, wp)
+        return _clip(a0, base * gamer_scale(gamers, kind[1:], pair)[None, :])
     if kind == "snap":
         return snap_updates(model, rows, [m for m, _ in sel], alpha, x, pair, teams)
     if kind == "pts":
