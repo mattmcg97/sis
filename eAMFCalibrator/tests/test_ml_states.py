@@ -82,6 +82,37 @@ class TestMlStates(unittest.TestCase):
         line = next(l for l in text.splitlines() if l.strip().startswith("the underdog TD, opening drive") and "%" not in l)
         self.assertIn("0.400", line)                                 # prod's price on the favourite after it
 
+    def test_by_gamer(self):
+        with tempfile.TemporaryDirectory() as d:
+            pairs, bets = self._write(d)
+            hist = os.path.join(d, "history.csv")
+            with open(hist, "w", newline="", encoding="utf-8") as fh:
+                w = csv.writer(fh)
+                w.writerow(["MATCH_CODE", "SCHEDULED_START_TIME_UTC", "PLAYER_1_HANDLE", "PLAYER_2_HANDLE",
+                            "PLAYER_1_FINAL_SCORE", "PLAYER_2_FINAL_SCORE"])
+                for i in range(40):
+                    home_won = (i % 5 != 0) == (i % 2 == 0)
+                    w.writerow([f"AF{i:03d}011026", f"{T0:%Y-%m-%d %H:%M:%S}", "ACE" if i % 2 == 0 else "BOB",
+                                "BOB" if i % 2 == 0 else "ACE", 21 if home_won else 20, 20 if home_won else 21])
+            by, won = ms.read_pairs([pairs])
+            states = {c: s for c, rows in by.items() if (s := ms.match_states(rows, won.get(c)))}
+            placed = ms.place_bets(ms.read_bets([bets]), states)
+            numbers = ms.gamer_numbers(states, ms.read_history(hist), placed)
+            path = ms.run(os.path.join(d, "out"), [pairs], [bets], label="v21", history=hist)
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            self.assertTrue(os.path.isfile(os.path.join(d, "out", "ml_states_gamers.csv")))
+        ace = numbers["ACE"]                                          # always the favourite, wins four in five
+        self.assertEqual(ace["matches"], 40)
+        self.assertAlmostEqual(ace["as_fav"], 1.0)
+        self.assertAlmostEqual(ace["won"], 0.8)
+        self.assertAlmostEqual(ace["kick_prod"], 0.56)
+        self.assertEqual(ace["conceded_first"] + ace["scored_first"], 40)
+        self.assertAlmostEqual(ace["close_won"], 0.8)                 # every game decided by one point
+        self.assertEqual(ace["bets"]["bets"], 40)
+        self.assertIsNone(numbers["BOB"]["bets"])
+        self.assertIn("by gamer (2 with 12+ matches", text)
+
     def test_lead_bands(self):
         self.assertEqual(ms.lead_band(-10), "2+ scores behind")
         self.assertEqual(ms.lead_band(0), "level (within 2)")
