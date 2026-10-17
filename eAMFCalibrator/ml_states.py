@@ -117,7 +117,8 @@ def match_states(rows, home_won):
             pts = abs(at["p1"] - at["p2"])
             kind = "TD" if pts >= 6 else "FG" if pts == 3 else None
             opening = rows[0]["offense"]
-            opened = all(x["offense"] == opening for x in rows[:first + 1]) and opening.lower().startswith(side)
+            # the ball never changed hands before the score (at drive starts the score shows on the next drive's)
+            opened = first >= 1 and all(x["offense"] == opening for x in rows[:first]) and opening.lower().startswith(side)
             when = WHEN[0] if opened else WHEN[1] if r["period"] == 1 else WHEN[2]
             nxt = next((j for j in range(back + 1, len(rows)) if rows[j]["p1"] + rows[j]["p2"] > at["p1"] + at["p2"]), len(rows))
             if kind:

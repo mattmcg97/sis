@@ -113,6 +113,21 @@ class TestMlStates(unittest.TestCase):
         self.assertIsNone(numbers["BOB"]["bets"])
         self.assertIn("by gamer (2 with 12+ matches", text)
 
+    def test_drive_starts(self):
+        """Pairs at drive starts: the opening drive's touchdown first shows on the next drive's start, the other
+        side on the ball."""
+        rows = []
+        for k, (sec, p1, p2, off, p) in enumerate(((0, 0, 0, "Home Team", 0.45), (60, 0, 7, "Home Team", 0.30),
+                                                    (120, 0, 7, "Away Team", 0.32), (300, 7, 7, "Away Team", 0.50))):
+            rows.append(dict(t=T0 + dt.timedelta(seconds=sec), drive=k + 1, period=1, p1=p1, p2=p2, offense=off,
+                             prod=p, cand=p))
+        rows[0]["offense"] = "Away Team"                              # the away side receives and scores
+        s = ms.match_states(rows, 0.0)
+        self.assertEqual(s["fav"], 2)
+        self.assertEqual(s["first"]["situation"], "the favourite TD, opening drive")
+        self.assertEqual(s["first"]["row"], 1)
+        self.assertAlmostEqual(s["first"]["prod"], 0.70)
+
     def test_lead_bands(self):
         self.assertEqual(ms.lead_band(-10), "2+ scores behind")
         self.assertEqual(ms.lead_band(0), "level (within 2)")
