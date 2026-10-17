@@ -3515,7 +3515,7 @@ moneyline stake and every price) to `--out` (default `out/prior_bets/`).
 ### The moneyline by game situation: `ml-states`
 
 ```bash
-python -m eAMFCalibrator ml-states --pairs eAMFCalibrator/out_cal_v21_glmer/directional_pairs.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --label v21
+python -m eAMFCalibrator ml-states --pairs eAMFCalibrator/out_cal_v21_glmer/directional_pairs.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --label v21 --history eAMFCalibrator/out/match_history.csv
 ```
 
 This asks what prod and a candidate price the pre-match favourite at in a
@@ -3544,5 +3544,18 @@ less prod's price and less the candidate's, and the candidate's re-priced
 margin against prod's. Then every bet by the quarter, the favourite's lead
 and the side backed.
 
-Writes `ml_states.txt` and `ml_states.csv` to `--out` (default
-`out/ml_states/`).
+**With `--history`** (a match_history.csv, for the handles): every gamer with
+12 or more matches gets their own lines:
+- their results against each book's price on them at kick-off;
+- their result less each book's price at every snapshot (a match's mean);
+- having conceded the first score, and having scored it, their win rate and
+  the prices on them then;
+- their share of the games decided by 3 or fewer;
+- the bets backing them.
+
+On 24 Aug – 22 Sep (prod), none of these carried over from one half of the
+window to the other: comeback −0.05, close games 0.00, front-running +0.26
+(p 0.09). Read them as a gamer's record, not as a trait.
+
+Writes `ml_states.txt`, `ml_states.csv` and (with `--history`)
+`ml_states_gamers.csv` to `--out` (default `out/ml_states/`).

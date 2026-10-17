@@ -22,8 +22,13 @@ situation, against how often the favourite goes on to win -- and what the bets s
                the candidate re-priced (the betting sim's own re-price, on the bets it re-priced); then
                every in-play moneyline bet by the quarter, the favourite's lead and the side backed
 
-Writes (to --out): ml_states.txt and ml_states.csv (a row a match: the favourite, the kick-off prices,
-the first score, the prices after it, the result).
+  by gamer     (--history, a match_history.csv for the handles) every gamer with GAMER_MIN matches: his
+               results against the prices on him at kick-off and at every snapshot, having conceded the first
+               score and having scored it, his share of the games decided by 3 or fewer, and the bets backing
+               him
+
+Writes (to --out): ml_states.txt, ml_states.csv (a row a match: the favourite, the kick-off prices, the
+first score, the prices after it, the result) and, with --history, ml_states_gamers.csv.
 """
 
 import csv
@@ -33,7 +38,7 @@ from bisect import bisect_right
 from collections import defaultdict
 
 from . import markets
-from .money_layer import SIDE, _num, _time, read_sim_bets, sim_columns
+from .money_layer import SIDE, _num, _time, read_history, read_sim_bets, sim_columns
 
 EVENS = 0.01               # a kick-off price this near 50% has no favourite
 MIN_MATCHES = 15
@@ -99,7 +104,7 @@ def match_states(rows, home_won):
     def lead(r):
         return (r["p1"] - r["p2"]) * (1 if fav == 1 else -1)
     out = dict(fav=fav, rows=rows, prod_kickoff=on_fav(kick["prod"]), cand_kickoff=on_fav(kick["cand"]),
-               fav_won=home_won if fav == 1 else 1 - home_won, first=None, quarters=[])
+               fav_won=home_won if fav == 1 else 1 - home_won, home_won=home_won, first=None, quarters=[])
     first = next((i for i, r in enumerate(rows) if r["p1"] + r["p2"] > 0), None)
     if first is not None:
         r = rows[first]
@@ -118,7 +123,8 @@ def match_states(rows, home_won):
             if kind:
                 who = "the favourite" if scorer == fav else "the underdog"
                 out["first"] = dict(situation=f"{who} {kind}, {when}", who=who, kind=kind, when=when, row=back,
-                                    next=nxt, prod=on_fav(at["prod"]), cand=on_fav(at["cand"]))
+                                    next=nxt, prod=on_fav(at["prod"]), cand=on_fav(at["cand"]), scorer=scorer,
+                                    prod_home=at["prod"], cand_home=at["cand"])
     seen = set()
     for r in rows:
         if r["period"] in (2, 3, 4) and r["period"] not in seen:
@@ -291,10 +297,122 @@ def bet_lines(placed, label):
     return L
 
 
+# --------------------------------------------------------------------------------------------- by gamer
+
+def _mean(xs):
+    xs = [x for x in xs if x is not None]
+    return sum(xs) / len(xs) if xs else None
+
+
+def gamer_numbers(states, hist, placed=()):
+    """gamer -> dict of his numbers over the matches he played (states with his handle in the history): the
+    prices on him at kick-off and his results, every snapshot's result less the price on him (a match's mean),
+    the first score conceded and scored (the prices on him after it, his results), the games decided by 3 or
+    fewer, and the bets backing him."""
+    acc = defaultdict(lambda: defaultdict(list))
+    for code, s in states.items():
+        h = hist.get(code)
+        if not h:
+            continue
+        for side, g in ((1, h[1]), (2, h[2])):
+            if not g:
+                continue
+
+            def on(p, side=side):
+                return None if p is None else p if side == 1 else 1 - p
+            a = acc[g]
+            won = s["home_won"] if side == 1 else 1 - s["home_won"]
+            a["won"].append(won)
+            a["fav"].append(1.0 if s["fav"] == side else 0.0)
+            a["kick_prod"].append(on(s["rows"][0]["prod"]))
+            a["kick_cand"].append(on(s["rows"][0]["cand"]))
+            ps = [won - on(r["prod"]) for r in s["rows"]]
+            cs = [won - on(r["cand"]) for r in s["rows"] if r["cand"] is not None]
+            a["ip_prod"].append(sum(ps) / len(ps))
+            if cs:
+                a["ip_cand"].append(sum(cs) / len(cs))
+            f = s["first"]
+            if f:
+                key = "scored" if f["scorer"] == side else "conceded"
+                a[key].append((won, on(f["prod_home"]), on(f["cand_home"])))
+            final = h[3]
+            if final and final[0] != final[1] and abs(final[0] - final[1]) <= 3:
+                m = (final[0] - final[1]) * (1 if side == 1 else -1)
+                a["close"].append(1.0 if m > 0 else 0.0)
+    for b, s, _ in placed:
+        h = hist.get(b["match"])
+        g = h and (h[1] if b["side"] == 1 else h[2])
+        if g:
+            acc[g]["bets"].append((b, s, _))
+    out = {}
+    for g, a in acc.items():
+        conc, scor = a["conceded"], a["scored"]
+        out[g] = dict(gamer=g, matches=len(a["won"]), as_fav=_mean(a["fav"]), won=_mean(a["won"]),
+                      kick_prod=_mean(a["kick_prod"]), kick_cand=_mean(a["kick_cand"]),
+                      in_play_prod=_mean(a["ip_prod"]), in_play_cand=_mean(a["ip_cand"]),
+                      conceded_first=len(conc), conceded_won=_mean([w for w, _, _ in conc]),
+                      conceded_prod=_mean([p for _, p, _ in conc]), conceded_cand=_mean([c for _, _, c in conc]),
+                      scored_first=len(scor), scored_won=_mean([w for w, _, _ in scor]),
+                      scored_prod=_mean([p for _, p, _ in scor]), scored_cand=_mean([c for _, _, c in scor]),
+                      close=len(a["close"]), close_won=_mean(a["close"]), bets=bet_stats(a["bets"]))
+    return out
+
+
+GAMER_MIN = 12               # matches a gamer needs for his line
+GAMER_FIELDS = ("gamer", "matches", "as_fav", "won", "kick_prod", "kick_cand", "in_play_prod", "in_play_cand",
+                "conceded_first", "conceded_won", "conceded_prod", "conceded_cand", "scored_first", "scored_won",
+                "scored_prod", "scored_cand", "close", "close_won", "bet_stake", "bet_margin", "bet_expected",
+                "bet_won_prod", "bet_won_cand", "bet_cand_change")
+
+
+def _f(x, fmt):
+    return "  -  " if x is None else format(x, fmt)
+
+
+def gamer_lines(numbers, label, minimum=GAMER_MIN):
+    """Lines: every gamer with `minimum` matches or more, the books' prices on him against his results."""
+    rows = sorted((n for n in numbers.values() if n["matches"] >= minimum), key=lambda n: -(n["in_play_prod"] or 0))
+    if not rows:
+        return []
+    c = label[:5]
+    L = [f"\n  by gamer ({len(rows)} with {minimum}+ matches, most underpriced by prod in play first): won and each"
+         f" book's price on him at kick-off; in play, his result less each book's price at every snapshot (a match's"
+         f" mean); having conceded the first score, and having scored it, his win rate and the prices on him then;"
+         f" the games decided by 3 or fewer and his share of them",
+         f"  {'gamer':14s} {'mtchs':>5s} {'fav':>4s} {'won':>5s} {'prod':>5s} {c:>5s}   {'in-play less':>13s}"
+         f"    {'conceded first':>26s}    {'scored first':>21s}    {'close':>9s}",
+         f"  {'':14s} {'':>5s} {'':>4s} {'':>5s} {'kick':>5s} {'kick':>5s}   {'prod':>6s} {c:>6s}"
+         f"    {'n':>3s} {'won':>5s} {'prod':>5s} {c:>5s}       {'n':>3s} {'won':>5s} {'prod':>5s}    {'n':>3s} {'won':>5s}"]
+    for n in rows:
+        L.append(f"  {n['gamer'][:14]:14s} {n['matches']:>5,} {_f(n['as_fav'] and 100 * n['as_fav'], '>3.0f')}% {_f(n['won'], '.3f')}"
+                 f" {_f(n['kick_prod'], '.3f')} {_f(n['kick_cand'], '.3f')}   {_f(n['in_play_prod'], '+.3f')} {_f(n['in_play_cand'], '+.3f')}"
+                 f"    {n['conceded_first']:>3} {_f(n['conceded_won'], '.3f')} {_f(n['conceded_prod'], '.3f')} {_f(n['conceded_cand'], '.3f')}"
+                 f"       {n['scored_first']:>3} {_f(n['scored_won'], '.3f')} {_f(n['scored_prod'], '.3f')}"
+                 f"    {n['close']:>3} {_f(n['close_won'], '.3f')}")
+    with_bets = [n for n in rows if n["bets"]]
+    if with_bets:
+        L += [f"\n  the in-play moneyline bets backing each gamer (most stake first): margin and prod's expected, the backed"
+              f" side's result less prod's price and less {label}'s, {label}'s re-priced margin less prod's", BET_HEAD]
+        for n in sorted(with_bets, key=lambda n: -n["bets"]["stake"]):
+            L.append(_bet_line(n["gamer"][:44], n["bets"]))
+    return L
+
+
+def gamer_csv(path, numbers):
+    with open(path, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, GAMER_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        for n in sorted(numbers.values(), key=lambda n: -n["matches"]):
+            b = n["bets"] or {}
+            w.writerow(dict({k: (round(v, 4) if isinstance(v, float) else v) for k, v in n.items() if k != "bets"},
+                            bet_stake=b.get("stake"), bet_margin=b.get("margin"), bet_expected=b.get("expected"),
+                            bet_won_prod=b.get("wp"), bet_won_cand=b.get("wc"), bet_cand_change=b.get("change")))
+
+
 # --------------------------------------------------------------------------------------------- the run
 
-def run(out_dir, pairs_paths, bets_paths=None, label="candidate"):
-    """The whole report. Returns ml_states.txt's path."""
+def run(out_dir, pairs_paths, bets_paths=None, label="candidate", history=None):
+    """The whole report; `history` (a match_history.csv) adds every gamer's numbers. Returns ml_states.txt's path."""
     by, won = read_pairs(pairs_paths)
     states = {}
     for code, rows in by.items():
@@ -308,11 +426,16 @@ def run(out_dir, pairs_paths, bets_paths=None, label="candidate"):
          f"  {len(states):,} matches from 0-0 with a pre-match favourite (prod's kick-off price beyond"
          f" {100 * (0.5 + EVENS):.0f}%) and a result; {firsts:,} with a first score read; the candidate: {label}"]
     L += situation_lines(list(states.values()), label)
+    placed = []
     if bets_paths:
         placed = place_bets(read_bets(bets_paths), states)
         L.append(f"\n  {len(placed):,} settled in-play moneyline bets on these matches")
         L += bet_lines(placed, label)
     os.makedirs(out_dir, exist_ok=True)
+    if history:
+        numbers = gamer_numbers(states, read_history(history), placed)
+        L += gamer_lines(numbers, label)
+        gamer_csv(os.path.join(out_dir, "ml_states_gamers.csv"), numbers)
     with open(os.path.join(out_dir, "ml_states.csv"), "w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, FIELDS)
         w.writeheader()
