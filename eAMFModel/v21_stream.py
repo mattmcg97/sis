@@ -239,8 +239,9 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
             base = np.zeros(2) if alpha is None else np.asarray(alpha, float)
             S["nudge"] = np.tile(base, (len(S["period"]), 1))
             if react:
+                extra = react[2] if len(react) > 2 else {}
                 S["nudge"] = S["nudge"] + v21_react.updates(model, rows, sel, base, react[:2], pair, teams, kick,
-                                                            wp=react[2] if len(react) > 2 else None)
+                                                            wp=extra.get("wp"), gamers=extra.get("gamers"))
         sh, sa = v21.simulate(model, S, n_paths, seed=_seed(code) + 1)
         for k, (m, _) in enumerate(sel):
             mp_, tp = v14._distributions(sh[k], sa[k])
@@ -309,15 +310,22 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none)."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
-    if react and react[0] == "wpa":                  # the win-probability table, read once with the build
-        wp = v21_react.load_wp(model_file)
-        if wp is None:
-            raise SystemExit(
-                f"the wpa update reads its win-probability table, {v21_react.WP_FILE}, beside the build"
-                f" ({os.path.dirname(model_file)}): fit it once on real games before the window --\n"
-                "  python -m eAMFModel v21-react-fit --model <the build> --snapshots <scouting_playover.csv>"
-                " --history <match_history.csv> --until <the window's start>")
-        react = (react[0], react[1], wp)
+    if react:                                        # the tables a variant reads, once with the build
+        fit_it = ("fit them once on real games before the window --\n  python -m eAMFModel v21-react-fit --model"
+                  " <the build> --snapshots <scouting_playover.csv> --history <match_history.csv> --until"
+                  " <the window's start>")
+        extra = {}
+        if react[0].endswith("wpa"):
+            extra["wp"] = v21_react.load_wp(model_file)
+            if extra["wp"] is None:
+                raise SystemExit(f"the {react[0]} update reads its win-probability table, {v21_react.WP_FILE}, beside"
+                                 f" the build ({os.path.dirname(model_file)}): {fit_it}")
+        if react[0].startswith("g"):
+            extra["gamers"] = v21_react.load_gamers(model_file)
+            if not extra["gamers"] or react[0][1:] not in extra["gamers"]:
+                raise SystemExit(f"the {react[0]} update reads each gamer's own scale, {v21_react.GAMERS_FILE}, beside"
+                                 f" the build ({os.path.dirname(model_file)}): {fit_it}")
+        react = (react[0], react[1], extra)
     pre = prematch_model(prior_tables)
     if share and pre is None:
         raise SystemExit(
