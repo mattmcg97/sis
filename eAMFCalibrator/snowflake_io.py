@@ -774,6 +774,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     opts = {arg: getattr(config, f"{key}_{attr}") for arg, attr in (("prior_dir", "PRIOR_MODEL_DIR"),
                                                                      ("nudge_share", "NUDGE_SHARE"))
             if getattr(config, f"{key}_{attr}", None) is not None}
+    react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
+    if react:
+        opts["react"] = react
     key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
                             prematch_only, tuple(sorted(opts.items())))
     cache_key = key_of(match_codes)
@@ -803,6 +806,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         history = fetch_history(cur, until=config.CUTOFF_END)
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
+    if react:
+        print(f"  {name}: in-play strength update {react[0]}, a prior sd of {react[1]:g} points a game",
+              flush=True)
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(codes):,} matches"
           + (f" ({len(group)} chunks at once)" if len(group) > 1 else "")

@@ -5960,6 +5960,39 @@ class TestSafeConsole(unittest.TestCase):
         self.assertTrue(inspect.getsource(rep).isascii())
 
 
+class TestV21React(unittest.TestCase):
+    """A candidate named v21-snap4 (v21-ptsT, v21-wpaC) prices v21's build with its in-play strength
+    update: the variant handed to the stream, its quotes kept apart from v21's own."""
+
+    def test_the_name_picks_the_update(self):
+        import importlib
+        from .. import snowflake_io as sio
+        self.assertEqual(sio.stream_name("v21-snap4"), "MODEL:v21-snap4")
+        self.assertEqual(sio.build_dir("v21-snap4"), config.V21_MODEL_DIR)
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("react"))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()):
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-snap4", "v21-wpa10", "v21-snap4"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            keys = list(sio._MODEL_QUOTES)
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, ("snap", 4.0), ("wpa", 10.0)])     # the second v21-snap4 read the first's
+        self.assertEqual(len(keys), 3)
+
+
 class TestV21Grouped(unittest.TestCase):
     """A match-seeded model (v21) prices several of the pairing's chunks in one pool: every chunk's
     quotes the same, row for row and in the same order, as when each chunk was priced on its own --

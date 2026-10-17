@@ -5,6 +5,7 @@ import contextlib
 import copy
 import csv
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -1277,6 +1278,160 @@ class TestStream(unittest.TestCase):
             pre = vs.prematch_model(os.path.join("v14_model", "v14tables.npz"))
         self.assertIsInstance(pre, Fit)        # the calibrator reads no history for it
         self.assertIsNone(vs.prematch_model(None))
+
+
+class TestReact(unittest.TestCase):
+    """v2.1's in-play strength update (v21_react): the variants by name, each side's nudge moved the way
+    its play says, the stream's prices untouched without one, and v21-react-fit's table."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt",
+                          key="lean", blend=40.0, field=0.2, decision_blend=25.0, clock=0.2)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.model = m
+        cls.code = sorted(MATCHES)[0]
+        cls.rows = sorted(MATCHES[cls.code], key=lambda r: int(r["message"]))
+        cls.info = [h for h in HISTORY if h["MATCH_CODE"] == cls.code]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    COEF = (0.5, 0.3, 1.0, 1.5, -0.1, -0.3, -0.6, 0.0)          # a win-probability table of the right shape
+
+    def _prod(self):
+        c = self.code
+        out = [(c, k, "2026-10-01 00:00:00", 50.0, 2.0, line, None, "OPEN", "true")
+               for k, line in ((50, ""), (52, "PLAYER 1 to score over 3.5 points more than PLAYER 2"),
+                               (54, "Total points over 40.5"))]
+        for r in self.rows:
+            for k in (50, 51):
+                out.append((c, k, None, 50.0, 2.0, "", int(r["message"]), "OPEN", "true"))
+        return out
+
+    def _quotes(self, react):
+        from .. import v21_stream as vs
+        return vs.quotes_for_matches({self.code: self.rows}, self._prod(), self.tmp.name, n_paths=40, workers=1,
+                                     match_info=self.info, lines=vs.PROD_LINES, nudge_share=0.0, react=react)
+
+    def test_the_variants_by_name(self):
+        from .. import v21_react as vr, v21_stream as vs
+        self.assertEqual(vr.variant_of("v21-snap4"), ("snap", 4.0))
+        self.assertEqual(vr.variant_of("v21-pts2.5"), ("pts", 2.5))
+        self.assertEqual(vr.variant_of("v21-wpa10"), ("wpa", 10.0))
+        for name in ("v21", "v21-glmer", "v21-snap0", "v21-snap", "v21-snapx"):
+            self.assertIsNone(vr.variant_of(name), name)
+        self.assertEqual(vs.react_of("v21-snap8"), ("snap", 8.0))
+        self.assertTrue(all(vr.spec_of(v) for v in vr.VARIANTS))
+
+    def test_no_update_prices_as_before(self):
+        from .. import v21_react as vr
+        before = self._quotes(None)
+        with mock.patch.object(vr, "updates", side_effect=AssertionError("no update without a variant")):
+            again = self._quotes(None)
+        self.assertEqual(before, again)
+
+    def test_an_update_moves_the_in_play_prices_not_the_pre_match(self):
+        base, moved = self._quotes(None), self._quotes(("snap", 8.0))
+        pre = lambda q: sorted(x for x in q if x[6] is None)
+        live = lambda q: {(x[1], x[6]): x[3] for x in q if x[6] is not None}
+        self.assertEqual(pre(base), pre(moved))
+        a, b = live(base), live(moved)
+        self.assertEqual(set(a), set(b))
+        self.assertTrue(any(abs(a[k] - b[k]) > 1e-9 for k in a))
+
+    def test_the_stronger_side_is_pushed_up(self):
+        import random
+        from .. import v21_react as vr, v21_stream as vs
+        from .fakes import _fake_match
+        rng = random.Random(11)
+        got = {}
+        for strength in ((0.6, 0.0), (0.0, 0.6)):
+            ends = []
+            for k in range(10):
+                rows = [vs._as_text(r) for r in _fake_match(f"AFX{k}", rng, strength=strength)]
+                starts = vs.state_starts(self.model, rows)
+                ends.append(vr.updates(self.model, rows, starts, None, ("snap", 4.0))[-1])
+            got[strength] = np.mean(ends, axis=0)
+        self.assertGreater(got[(0.6, 0.0)][0], got[(0.6, 0.0)][1] + 1.0)
+        self.assertGreater(got[(0.0, 0.6)][1], got[(0.0, 0.6)][0] + 1.0)
+
+    def test_a_tighter_prior_moves_it_less(self):
+        from .. import v21_react as vr, v21_stream as vs
+        rows = [vs._as_text(r) for r in self.rows]
+        starts = vs.state_starts(self.model, rows)
+        tight, loose = (np.abs(vr.updates(self.model, rows, starts, None, ("snap", t))).sum() for t in (1.0, 8.0))
+        self.assertLess(tight, loose)
+        self.assertTrue(np.all(np.abs(vr.updates(self.model, rows, starts, np.full(2, 9.5), ("snap", 50.0))
+                                      + 9.5) <= v21.NUDGE_MAX + 1e-9))
+
+    def test_the_points_update(self):
+        from .. import v21_react as vr
+        st = dict(period=np.array([3]), clock=np.array([240.0]), home=np.array([20]), away=np.array([7]))
+        kick = dict(mean=(14.0, 14.0), var=(50.0, 50.0))
+        f = vr.elapsed_share(self.model, 3, 240.0)
+        self.assertTrue(0.3 < f < 0.8)
+        d = vr.points_updates(self.model, [st], None, 4.0, kick)[0]
+        self.assertAlmostEqual(d[0], 16 * (20 - 14 * f) / (50 + 16 * f))
+        self.assertAlmostEqual(d[1], 16 * (7 - 14 * f) / (50 + 16 * f))
+        self.assertGreater(d[0], 0)
+        self.assertLess(d[1], 0)
+
+    def test_the_win_chance_a_snap_added(self):
+        from .. import v21_react as vr, v21_stream as vs
+        rows = [vs._as_text(r) for r in self.rows]
+        s = vr.wp_state(rows[5], 0.0)
+        self.assertAlmostEqual(vr.wp_of(self.COEF, s, 0) + vr.wp_of(self.COEF, s, 1), 1.0)
+        got = vr.snap_wpa(rows, self.COEF)
+        self.assertTrue(got)
+        recs = {r["message"]: r for r in vr._snaps(rows, ("", ""), ("", ""))}
+        tds = [(side, add) for side, msg, add in got
+               if recs[msg]["kind"] == v21.GAIN and recs[msg]["gain"] >= 100 - recs[msg]["field"]]
+        self.assertTrue(tds)
+        self.assertTrue(all(add > 0 for _, add in tds))              # a touchdown adds to its side's chance
+        W = vr.wpa_sums(rows, [int(rows[-1]["message"])], self.COEF)
+        self.assertEqual(W.shape, (1, 2))
+
+    def test_wpa_needs_its_table(self):
+        from .. import v21_react as vr
+        with self.assertRaises(SystemExit):
+            self._quotes(("wpa", 10.0))
+        path = os.path.join(self.tmp.name, vr.WP_FILE)
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump({"coef": list(self.COEF)}, fh)
+        try:
+            self.assertEqual(vr.load_wp(self.tmp.name), self.COEF)
+            q = self._quotes(("wpa", 10.0))
+            self.assertTrue(q)
+        finally:
+            os.remove(path)
+
+    def test_the_fit_writes_the_table_and_scores_the_updates(self):
+        import datetime as dt
+        import random
+        from .. import v21_react as vr, v21_react_fit as fit
+        from .fakes import _fake_match
+        rng = random.Random(4)
+        data, hist = {}, []
+        for i in range(30):
+            code = f"AF{i:03d}{(dt.date(2026, 9, 1) + dt.timedelta(days=i // 3)):%d%m%y}"
+            rows = _fake_match(code, rng, strength=(0.3 * (i % 3 - 1), 0.0))
+            data[code] = rows
+            hist.append(dict(MATCH_CODE=code, PLAYER_1_HANDLE="", PLAYER_2_HANDLE="", PLAYER_1_TEAM="",
+                             PLAYER_2_TEAM="", PLAYER_1_FINAL_SCORE=rows[-1]["final_p1"],
+                             PLAYER_2_FINAL_SCORE=rows[-1]["final_p2"]))
+        lines, got = fit.run(data, hist, os.path.join(self.tmp.name, v21.MODEL_FILE), None, dt.date(2026, 10, 1),
+                             test_share=0.4, n_paths=20, workers=1)
+        self.assertEqual(len(got["coef"]), len(vr.WP_FEATURES))
+        self.assertGreater(got["coef"][1], 0)                          # ahead, likelier to win
+        for v in ("snap4", "pts4", "wpa10"):
+            self.assertIn(v, got["scores"])
+            self.assertTrue(any(line.lstrip().startswith(v + " ") for line in lines), v)
+        out = fit.write(os.path.join(self.tmp.name, "fit", vr.WP_FILE), got)
+        self.assertEqual(vr.load_wp(os.path.dirname(out)), tuple(got["coef"]))
 
 
 def _with_timeouts(matches, directory):

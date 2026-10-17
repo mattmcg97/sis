@@ -2393,6 +2393,55 @@ matches it is priced with. Two things follow from that:
 - **One match at a time:** within a pool, a match goes to whichever worker is free; a fixed share of
   matches per worker left the rest waiting on its longest ones.
 
+### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
+
+Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:
+the kick-off's, moved by what the match has shown of each side by then. The nudge is in points a
+game for the side's offense, so a side outplaying its price is priced up for the rest of the game.
+The calibrator names a variant as a candidate, priced off the same `--v21-model` build:
+
+| Name | What moves the nudge | Its setting |
+|---|---|---|
+| `v21-snapT` | every real snap scored against the draw the sim makes in its place (the league's snaps for the situation, its blended levels and field window, tilted by the side's strength): the snap's features less the draw's mean along the strength direction, over the draw's variance. One Newton step from the kick-off, shrunk by a prior of 1/T² (v14's react, in v2.1's terms) | T: the prior sd, points a game |
+| `v21-ptsT` | points so far against the kick-off mean × the share of a game's points that has come (`points_share`); the kick-off's simulated spread of points is the noise | T: the prior sd, points a game |
+| `v21-wpaC` | every snap looked up in a win-probability table: the side's chance after it less before it. The nudge is C × the chance its snaps added. A snap counts for how far it moved the match, not how far it was from its situation's usual | C: points a game for a whole win chance |
+
+The snap update moves most early: a snap's score is divided by the information so far plus 1/T², so
+one 20-yard gain on the first snap moves a side further than the same gain an hour in. `wpaC` reads
+its table from `react_wp.json` beside the build, written by `v21-react-fit`; without it the run stops
+before pricing. No variant (`v21` itself) leaves every row as it was: the stream's quotes match the
+previous code row for row.
+
+    python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" \
+        --candidate v21,v21-snap2,v21-snap4,v21-pts4,v21-wpa10 --v21-model v21_t10 --v21-prior-model v14_model
+
+Each candidate is a pricing of its own, so each one adds a full v2.1 run's time.
+
+**Choosing the settings (`v21-react-fit`).** On the matches before the window, by day:
+- The first 60% fit the win-probability table `wpaC` reads. It's a logistic fit of who won on each
+  PLAY_OVER's state: the margin, the field and the down over the root of the time left, and prod's
+  pre-match price times that root.
+- The last 40% score every update at a spread of settings, through the build:
+  - **Baseline:** at each kick-off after a score, the sim plays the rest of the game with the kick-off
+    nudge (toward prod's pre-match spread and total, at the stream's share).
+  - **Score:** each side's points still to come beyond the sim's expectation, against the update's
+    nudge × the share of the game left. This is the squared-error change, with a 95% interval over
+    matches.
+  - **Slope:** of what came on what the update said. 1 means right, under 1 means it moves too far.
+
+It also prints the sim's own game script by the lead: the slope of points still to come beyond the
+sim's on the side's lead × the share left. Below zero, the sim gives the side ahead too much of the
+rest of the game. That is a sim fix of its own, and any update that follows the lead (`pts`, `wpa`)
+looks the worse for it.
+
+A table fitted on real games has already learned that the side ahead is likelier the better one, so
+it isn't the test: v2.1's sim prices a state off the prior's strength alone, and an update is worth
+what it adds to that.
+
+    python -m eAMFModel v21-react-fit --model v21_t10 --until 2026-10-01
+
+It reads the export alone (no Snowflake), at `--paths` (500) games a kick-off.
+
 ### Timing (`v21-timing`)
 
 ```powershell

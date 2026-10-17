@@ -455,6 +455,23 @@ def cmd_v21_report(args):
     return 0
 
 
+def cmd_v21_react_fit(args):
+    import datetime as dt
+    from . import nb2_prior, v21_react, v21_react_fit, v21_stream
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    model_file = v21_stream._model_file(args.model) if args.model else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    lines, got = v21_react_fit.run(data, history, model_file, since, until, args.test_share, args.matches,
+                                   args.paths, workers)
+    print("\n".join(lines))
+    out = args.out or (os.path.join(args.model, v21_react.WP_FILE) if args.model else v21_react.WP_FILE)
+    print(f"\n  -> {v21_react_fit.write(out, got)}")
+    return 0
+
+
 def cmd_v21_timing(args):
     import datetime as dt
     from . import strength_check as sc, v21_timing
@@ -938,6 +955,26 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
     p.set_defaults(func=cmd_v21_report)
+
+    p = sub.add_parser("v21-react-fit",
+                       help="v2.1's in-play strength updates on real games: the win-probability table the wpa update "
+                            "reads (react_wp.json beside the build), and every update (snapT, ptsT, wpaC) scored on "
+                            "who won, before any is priced")
+    p.add_argument("--model", help="a v21-build directory: the table goes beside it, and the snap update is scored "
+                                   "(it reads the build's draws)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", required=True, help="the day the priced window starts, YYYY-MM-DD: only matches before it")
+    p.add_argument("--test-share", type=float, default=0.4,
+                   help="the later share of the matches the updates are scored on, the rest fitting the table "
+                        "(default 0.4)")
+    p.add_argument("--matches", type=int, help="the last N matches before --until only (default: all)")
+    p.add_argument("--paths", type=int, default=500,
+                   help="games the sim plays from each kick-off the updates are scored at (default 500)")
+    p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
+    p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
+    p.set_defaults(func=cmd_v21_react_fit)
 
     p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
                                           "matches timed part by part, the sim profiled, the window's run projected")

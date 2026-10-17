@@ -1053,7 +1053,9 @@ def common_options():
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
-                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917 "
+                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917; v21 with an in-play "
+                             "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
+                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react) "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
@@ -1126,8 +1128,8 @@ def common_options():
                         help="eAMFModel v21-build's output, for --candidate v21 "
                              "(default $EAMF_V21_MODEL, then ./v21_model)")
     tuning.add_argument("--v21-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v21, the kick-off and "
-                             f"its nudge too (default {config.V21_PATHS})")
+                        help=f"games simulated per snapshot for --candidate v21 "
+                             f"(default {config.V21_PATHS}; the kick-off twice that, each side receiving)")
     tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v21: as --v10-lines "
                              f"(default {config.V21_LINES})")
