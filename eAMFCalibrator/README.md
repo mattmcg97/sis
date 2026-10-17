@@ -3421,3 +3421,55 @@ Restricted and VIP, each place gets:
 
 A place where the stake share runs above its share of gamer-matches is where
 the money is lumped. Writes `out/bets_sessions.txt`.
+
+### What the money already bet says: `money-layer`
+
+```bash
+python -m eAMFCalibrator money-layer --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" --base prod --history eAMFCalibrator/out/match_history.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv
+python -m eAMFCalibrator money-layer --since "2026-09-01 00:00:00" --until "2026-10-13 00:00:00" --base eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+On the moneyline the bettors beat prod by about 9.5 points of the operator's
+margin. All of the gap is informed money:
+- bets under 10 lose at the margin prod's prices say they should (10.4% in
+  play against 10.5%);
+- bets of 200 and up carry nearly two-thirds of the shortfall;
+- most of it is on a handful of gamers whose level jumped beyond chance from
+  September to October, with the money on them from their first days.
+
+This tests two ways of using that money.
+
+**The days before.** Each gamer's pre-match price is moved by their backers'
+edge on the gamer's matches settled before this one, walk-forward:
+- **the edge:** each bet's result less the price it was laid at, which is
+  prod's probability at the bet with `--bets`, or else the operator's odds with
+  its margin taken out (the bet table alone; the two agree to three places);
+- **the signal:** stake-weighted, over the stake plus `--shrink` (default
+  50,000), settled by the match's kick-off (`--cut daily`: by the start of its
+  day);
+- **the slope:** fitted on the days before;
+- **the price move:** goes into a copy of the base table as `p_home` and the
+  points (over the nudge share, so v21's kick-off lands on the whole move).
+  `money.csv` reads like any other table with `--v21-prior-model`.
+
+The test grades base and money on the results: Brier and log loss with 95%
+intervals over days, the slope on the test days, fifths of the signal, each
+week, and the settings side by side. On Oct 1–12 the Brier moved by −0.0003
+[−0.0035, +0.0023]; even the best slope picked in hindsight only reached
+−0.0018. That is no material gain.
+
+**The match so far** (with `--bets`). Each moneyline price is moved in logit
+by beta × the money already on its side of the match:
+- **the money:** (this side − the other) / (both + 500);
+- **beta:** fitted on the bets of the days before;
+- **the outputs:** the same bets re-priced as the betting sim does, and two
+  books, with 95% intervals over matches, for prod and each candidate in the
+  file.
+
+On Oct 1–12 this re-priced prod's bets by +2.3 points [+1.5, +3.2] and v21's
+by +1.7 [+1.1, +2.4]. That is the only first-pass gain with an interval clear
+of zero, and it comes from following the money, not from the model: about a
+quarter of the gap. Pricing that way live needs the bets as they are placed.
+
+Writes `money_layer.txt`, `money_gamers.csv` and (for a table base)
+`money.csv` to `--out` (default `out/money/`).

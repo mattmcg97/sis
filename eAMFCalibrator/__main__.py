@@ -906,6 +906,27 @@ def cmd_pair_check(args):
     return 0
 
 
+def cmd_money_layer(args):
+    """What the money already bet says about who wins (money_layer.py): the days before, as a prior table,
+    and the match so far."""
+    from . import money_layer
+
+    def go(cur):
+        return money_layer.run(args.out or os.path.join(DEFAULT_OUT, "money"), args.base, history=args.history,
+                               bets=args.bets, cur=cur, shrink=args.shrink, half_life=args.half_life, cut=args.cut,
+                               slope=args.slope, share=args.share, test_since=args.test_since, grid=not args.no_grid)
+    if args.bets:
+        go(None)
+        return 0
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            go(cur)
+    finally:
+        conn.close()
+    return 0
+
+
 def cmd_report(args):
     """One pairing pass per candidate, the console view of each, and one
     combined HTML file with every candidate beside prod.
@@ -1259,6 +1280,33 @@ def build_parser():
              "on against its last, graded on the result -- whether the report's pairing flatters a "
              "candidate (-> out/pair_check.csv)")
     pc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    mo_parser = sub.add_parser(
+        "money-layer", parents=[shared],
+        help="what the money already bet says about who wins: each gamer's pre-match price moved by their backers' "
+             "edge on the matches before (walk-forward, a prior table for --v21-prior-model, tested on the results), "
+             "and with --bets each moneyline price moved toward the stake already on its side of the match "
+             "(re-priced bets and two books) (-> out/money/)")
+    mo_parser.add_argument("--base", required=True, metavar="CSV|prod",
+                           help="the prior table it moves (a walkthrough's priors/VARIANT.csv), or prod: prod's "
+                                "pre-match price off --bets, tested only")
+    mo_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv: the kick-offs, gamers and results a table lacks (--base prod needs it)")
+    mo_parser.add_argument("--bets", nargs="+", metavar="CSV",
+                           help="betting-sim bets_sim.csv files: each bet at prod's price, and the match-so-far test "
+                                "(default: config.BET_TABLE over the window, at the operator's odds less its margin)")
+    mo_parser.add_argument("--shrink", type=float, metavar="STAKE",
+                           help="the stake a gamer's backers' edge is shrunk by (default 50,000)")
+    mo_parser.add_argument("--half-life", type=float, metavar="DAYS", help="older bets count for less (default: none)")
+    mo_parser.add_argument("--cut", choices=["kickoff", "daily"], default="kickoff",
+                           help="the bets a match is priced off: settled by its kick-off, or by the start of its day "
+                                "(default kickoff)")
+    mo_parser.add_argument("--slope", type=float, help="a fixed slope (default: fitted day by day on the days before)")
+    mo_parser.add_argument("--share", type=float,
+                           help="the share of the way a sim goes to the table's points (default v21's nudge share, 0.75)")
+    mo_parser.add_argument("--test-since", metavar="DATE", help="the test's first day (default: a week into the window)")
+    mo_parser.add_argument("--no-grid", action="store_true", help="skip the settings side by side")
+    mo_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/money)")
 
     run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
@@ -1759,6 +1807,8 @@ def main(argv=None):
         return cmd_report(args)
     if args.command == "pair-check":
         return cmd_pair_check(args)
+    if args.command == "money-layer":
+        return cmd_money_layer(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":
