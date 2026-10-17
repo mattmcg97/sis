@@ -807,8 +807,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
     if react:
-        print(f"  {name}: in-play strength update {react[0]}, a prior sd of {react[1]:g} points a game",
-              flush=True)
+        print(f"  {name}: in-play strength update {react[0]}, "
+              + (f"{react[1]:g} points a game for a whole win chance added" if react[0] == "wpa"
+                 else f"a prior sd of {react[1]:g} points a game"), flush=True)
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(codes):,} matches"
           + (f" ({len(group)} chunks at once)" if len(group) > 1 else "")
