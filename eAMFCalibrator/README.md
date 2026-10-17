@@ -3473,3 +3473,41 @@ quarter of the gap. Pricing that way live needs the bets as they are placed.
 
 Writes `money_layer.txt`, `money_gamers.csv` and (for a table base)
 `money.csv` to `--out` (default `out/money/`).
+
+### The pre-match report, no simulation: `prior-bets`
+
+```bash
+python -m eAMFCalibrator prior-bets --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --sim-name glmer-sim --table nb2=eAMFCalibrator/out/walkthrough/priors/nb2.csv --table glmer=eAMFCalibrator/out/walkthrough/priors/glmer.csv --table avg=eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+This sets prod against each walkthrough table's own price and against a
+sim's pre-match price, all on the same bets, with no simulation run here.
+- **A table's price:** each row's score model rebuilt about its `home_pts` /
+  `away_pts`, read at the bet's line as `prior-replay` reads an arm. That is
+  NB2's shared-gamma joint model for `nb2` and the averages, and NB2's
+  construction fitted to glmer's errors for `glmer`.
+- **The sim's price:** the bets file's candidate, at its kick-off price
+  pre-match. Its bets are re-priced as the betting sim made them. Point
+  `--bets` at a run of v21 on a glmer build for the glmer-driven sim.
+
+**The grades.** These are for the moneyline, on every match with a result:
+- Brier and log loss, each less prod's, with 95% intervals over days;
+- the same by how heavily the match was bet (quarters of its moneyline
+  stake), and weighted by stake;
+- each price's disagreement with prod as a second term on the result (1:
+  take its whole view, 0: none of it).
+
+The spread and the total are graded at prod's pre-match line, using each
+match's last pre-match bet in the market.
+
+**The bets.** Each bet is re-priced as the betting sim does (odds × prod /
+price, the operator's margin kept), on the same bets and in two books, with
+95% intervals over matches. The groups are:
+- **every pre-match bet, by market:** the clean ones first, placed once both
+  gamers' previous results were in;
+- **the kick-off money:** in-play moneyline bets struck while prod's price was
+  still within 2 points of its pre-match one, the game's first 15 seconds
+  apart. Here a table's price is moved by prod's small move since kick-off.
+
+Writes `prior_bets.txt` and `prior_bets.csv` (a row per match: the result, the
+moneyline stake and every price) to `--out` (default `out/prior_bets/`).

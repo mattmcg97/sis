@@ -927,6 +927,22 @@ def cmd_money_layer(args):
     return 0
 
 
+def cmd_prior_bets(args):
+    """The pre-match report: prod against the priors' own prices and a sim's (prior_bets.py)."""
+    from . import prior_bets
+    tables = []
+    for spec in args.table or []:
+        name, eq, path = spec.partition("=")
+        if not eq or not name.strip() or not path.strip():
+            raise SystemExit(f"--table {spec!r}: give it as NAME=CSV, e.g. nb2=eAMFCalibrator/out/walkthrough/priors/nb2.csv")
+        if not os.path.isfile(path.strip()):
+            raise SystemExit(f"--table {spec!r}: no such file")
+        tables.append((name.strip(), path.strip()))
+    prior_bets.run(args.out or os.path.join(DEFAULT_OUT, "prior_bets"), args.bets, tables, sim_name=args.sim_name,
+                   draws=args.draws)
+    return 0
+
+
 def cmd_report(args):
     """One pairing pass per candidate, the console view of each, and one
     combined HTML file with every candidate beside prod.
@@ -1307,6 +1323,21 @@ def build_parser():
     mo_parser.add_argument("--test-since", metavar="DATE", help="the test's first day (default: a week into the window)")
     mo_parser.add_argument("--no-grid", action="store_true", help="skip the settings side by side")
     mo_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/money)")
+
+    pb_parser = sub.add_parser(
+        "prior-bets",
+        help="the pre-match report, no simulation: prod against each walkthrough table's own price (its score "
+             "distribution) and a sim's pre-match price from a betting-sim run -- the moneyline graded on the "
+             "results by how heavily each match was bet, and every pre-match bet (and the kick-off moneyline money) "
+             "re-priced, same bets and two books (-> out/prior_bets/)")
+    pb_parser.add_argument("--bets", nargs="+", required=True, metavar="CSV",
+                           help="betting-sim bets_sim.csv files: prod's price at each bet, and the sim's (its candidate)")
+    pb_parser.add_argument("--table", action="append", metavar="NAME=CSV",
+                           help="a walkthrough table (priors/VARIANT.csv) to price with, as NAME=CSV; repeat it")
+    pb_parser.add_argument("--sim-name", default="sim", help="what to call the bets' candidate (default sim)")
+    pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match for a table's score model (default 40000)")
+    pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/prior_bets)")
 
     run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
@@ -1809,6 +1840,8 @@ def main(argv=None):
         return cmd_pair_check(args)
     if args.command == "money-layer":
         return cmd_money_layer(args)
+    if args.command == "prior-bets":
+        return cmd_prior_bets(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":
