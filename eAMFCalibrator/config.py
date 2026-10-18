@@ -124,6 +124,9 @@ V21_PATHS = 1000
 V21_LINES = "own"
 V21_PRIOR_MODEL_DIR = None
 V21_NUDGE_SHARE = 0.75
+# A candidate's own prior, by its name (--prior-for v21-avgf2=<table or build>), so several v21
+# candidates nudged toward different priors are priced in one run on the same bets.
+MODEL_PRIORS = {}
 
 # The betting simulation (`python -m eAMFCalibrator bets`): every in-play
 # single bet on an AF moneyline, handicap or total in the window, bet by bet,

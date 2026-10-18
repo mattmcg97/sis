@@ -774,6 +774,10 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     opts = {arg: getattr(config, f"{key}_{attr}") for arg, attr in (("prior_dir", "PRIOR_MODEL_DIR"),
                                                                      ("nudge_share", "NUDGE_SHARE"))
             if getattr(config, f"{key}_{attr}", None) is not None}
+    own_prior = getattr(config, "MODEL_PRIORS", {}).get(name)    # --prior-for v21-avgf2=<table>
+    if own_prior:
+        opts["prior_dir"] = own_prior
+        print(f"  {name}: its own prior, {own_prior}", flush=True)
     react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
     if react:
         opts["react"] = react
