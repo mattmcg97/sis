@@ -1,686 +1,686 @@
 match_code,fav,prod_kickoff,cand_kickoff,first_score,prod_after,cand_after,fav_won
-AF001021026,home,0.5416,0.442,"the favourite TD, later in Q1",0.6093999999999999,0.53,0
-AF001041026,home,0.6032,0.546,"the favourite TD, later in Q1",0.6939,0.654,1
-AF001061026,away,0.5626,0.502,"the underdog TD, Q2 or later",0.4534,0.44799999999999995,0
-AF001091026,home,0.6118,0.598,"the underdog TD, Q2 or later",0.45799999999999996,0.46799999999999997,1
+AF001021026,home,0.5416,0.442,"the favourite TD, opening drive",0.6093999999999999,0.53,0
+AF001041026,home,0.6032,0.546,"the favourite TD, opening drive",0.6939,0.654,1
+AF001061026,away,0.5626,0.502,"the underdog TD, opening drive",0.4534,0.44799999999999995,0
+AF001091026,home,0.6118,0.598,"the underdog TD, opening drive",0.45799999999999996,0.46799999999999997,1
 AF001101026,away,0.5708,0.551,"the favourite TD, later in Q1",0.7924,0.804,0
-AF001111026,away,0.5186,0.506,"the underdog FG, later in Q1",0.5453,0.5389999999999999,1
-AF001121026,home,0.6184,0.575,"the underdog TD, later in Q1",0.4877,0.455,1
-AF002011026,away,0.5317,0.509,"the underdog FG, later in Q1",0.5659000000000001,0.537,0
+AF001111026,away,0.5186,0.506,"the underdog FG, opening drive",0.5453,0.5389999999999999,1
+AF001121026,home,0.6184,0.575,"the underdog TD, opening drive",0.4877,0.455,1
+AF002011026,away,0.5317,0.509,"the underdog FG, opening drive",0.5659000000000001,0.537,0
 AF002021026,away,0.5218,0.521,"the favourite TD, later in Q1",0.6947,0.6679999999999999,0
 AF002031026,home,0.594,0.605,"the underdog TD, opening drive",0.2433,0.28300000000000003,0
 AF002041026,home,0.5402,0.443,"the favourite FG, Q2 or later",0.6409999999999999,0.574,0
-AF002051026,home,0.5604,0.444,"the favourite TD, later in Q1",0.6718999999999999,0.5706,1
+AF002051026,home,0.5604,0.444,"the favourite TD, opening drive",0.6718999999999999,0.5706,1
 AF002091026,away,0.6255,0.569,"the favourite TD, Q2 or later",0.8404,0.823,1
-AF002101026,home,0.5705,0.587,"the underdog FG, later in Q1",0.6234000000000001,0.612,1
+AF002101026,home,0.5705,0.587,"the underdog FG, opening drive",0.6234000000000001,0.612,1
 AF002111026,home,0.5657,0.553,"the favourite TD, Q2 or later",0.7962,0.792,1
-AF002121026,away,0.5595,0.513,"the underdog TD, Q2 or later",0.4192,0.392,0
-AF003031026,away,0.5368,0.484,"the favourite TD, later in Q1",0.6268,0.597,0
-AF003041026,home,0.6012,0.5545,"the underdog TD, later in Q1",0.47200000000000003,0.47700000000000004,0
-AF003051026,home,0.6067,0.522,"the favourite TD, Q2 or later",0.6896,0.635,1
+AF002121026,away,0.5595,0.513,"the underdog TD, opening drive",0.4192,0.392,0
+AF003031026,away,0.5368,0.484,"the favourite TD, opening drive",0.6268,0.597,0
+AF003041026,home,0.6012,0.5545,"the underdog TD, opening drive",0.47200000000000003,0.47700000000000004,0
+AF003051026,home,0.6067,0.522,"the favourite TD, opening drive",0.6896,0.635,1
 AF003071026,away,0.5948,0.548,,,,1
-AF003081026,away,0.6194,0.452,"the underdog TD, later in Q1",0.49229999999999996,0.395,0
+AF003081026,away,0.6194,0.452,"the underdog TD, opening drive",0.49229999999999996,0.395,0
 AF003091026,away,0.5107,0.561,"the favourite TD, later in Q1",0.7592,0.814,1
-AF003101026,away,0.527,0.434,"the favourite TD, later in Q1",0.6187,0.558,0
+AF003101026,away,0.527,0.434,"the favourite TD, opening drive",0.6187,0.558,0
 AF004011026,home,0.6454,0.635,,,,1
 AF004021026,away,0.5122,0.467,"the favourite TD, later in Q1",0.7623,0.775,0
-AF004041026,away,0.5639,0.606,"the underdog FG, later in Q1",0.6217,0.663,1
-AF004071026,home,0.5719,0.522,"the underdog TD, later in Q1",0.4291,0.419,1
-AF004091026,home,0.5318,0.422,"the favourite TD, Q2 or later",0.6537000000000001,0.581,0
-AF004101026,home,0.6427,0.666,"the favourite TD, later in Q1",0.7373000000000001,0.775,1
-AF004111026,away,0.5906,0.557,"the favourite TD, later in Q1",0.7203999999999999,0.719,1
+AF004041026,away,0.5639,0.606,"the underdog FG, opening drive",0.6217,0.663,1
+AF004071026,home,0.5719,0.522,"the underdog TD, opening drive",0.4291,0.419,1
+AF004091026,home,0.5318,0.422,"the favourite TD, opening drive",0.6537000000000001,0.581,0
+AF004101026,home,0.6427,0.666,"the favourite TD, opening drive",0.7373000000000001,0.775,1
+AF004111026,away,0.5906,0.557,"the favourite TD, opening drive",0.7203999999999999,0.719,1
 AF004121026,away,0.5331,0.521,"the favourite TD, later in Q1",0.7867,0.806,1
 AF005011026,away,0.5385,0.4955,"the favourite TD, later in Q1",0.7755,0.758,1
-AF005051026,home,0.5519,0.391,"the underdog TD, later in Q1",0.4354,0.327,0
-AF005061026,away,0.5562,0.508,"the underdog FG, later in Q1",0.5938000000000001,0.5900000000000001,1
+AF005051026,home,0.5519,0.391,"the underdog TD, opening drive",0.4354,0.327,0
+AF005061026,away,0.5562,0.508,"the underdog FG, opening drive",0.5938000000000001,0.5900000000000001,1
 AF005071026,away,0.526,0.454,"the underdog TD, Q2 or later",0.4140999999999999,0.35,1
-AF005081026,away,0.5331,0.429,"the underdog TD, later in Q1",0.39469999999999994,0.29500000000000004,0
-AF005091026,home,0.5211,0.42,"the underdog TD, later in Q1",0.4083,0.322,0
-AF005101026,home,0.5114,0.502,"the favourite TD, Q2 or later",0.612,0.628,0
-AF005111026,home,0.5932,0.521,"the underdog TD, Q2 or later",0.46140000000000003,0.42200000000000004,1
-AF005121026,away,0.5483,0.571,"the underdog TD, later in Q1",0.42789999999999995,0.47750000000000004,0
-AF006021026,away,0.5211,0.4965,"the underdog TD, Q2 or later",0.38950000000000007,0.364,1
-AF006041026,home,0.5456,0.473,"the underdog TD, later in Q1",0.4119,0.384,1
-AF006071026,home,0.6025,0.594,"the underdog TD, later in Q1",0.4817,0.48,1
+AF005081026,away,0.5331,0.429,"the underdog TD, opening drive",0.39469999999999994,0.29500000000000004,0
+AF005091026,home,0.5211,0.42,"the underdog TD, opening drive",0.4083,0.322,0
+AF005101026,home,0.5114,0.502,"the favourite TD, opening drive",0.612,0.628,0
+AF005111026,home,0.5932,0.521,"the underdog TD, opening drive",0.46140000000000003,0.42200000000000004,1
+AF005121026,away,0.5483,0.571,"the underdog TD, opening drive",0.42789999999999995,0.47750000000000004,0
+AF006021026,away,0.5211,0.4965,"the underdog TD, opening drive",0.38950000000000007,0.364,1
+AF006041026,home,0.5456,0.473,"the underdog TD, opening drive",0.4119,0.384,1
+AF006071026,home,0.6025,0.594,"the underdog TD, opening drive",0.4817,0.48,1
 AF006101026,home,0.5369,0.512,"the favourite TD, later in Q1",0.8109000000000001,0.7659999999999999,0
 AF006111026,away,0.5736,0.508,"the favourite TD, later in Q1",0.815,0.793,1
 AF006121026,away,0.6167,0.571,"the favourite FG, Q2 or later",0.6442,0.598,0
-AF007011026,home,0.5235,0.549,"the favourite TD, later in Q1",0.6516,0.627,0
-AF007021026,away,0.5434,0.59,"the underdog TD, later in Q1",0.41359999999999997,0.44999999999999996,0
+AF007011026,home,0.5235,0.549,"the favourite TD, opening drive",0.6516,0.627,0
+AF007021026,away,0.5434,0.59,"the underdog TD, opening drive",0.41359999999999997,0.44999999999999996,0
 AF007041026,away,0.5808,0.541,"the underdog TD, later in Q1",0.2942,0.2709999999999999,0
-AF007051026,away,0.5918,0.5115,"the favourite TD, later in Q1",0.6901999999999999,0.636,1
+AF007051026,away,0.5918,0.5115,"the favourite TD, opening drive",0.6901999999999999,0.636,1
 AF007061026,away,0.5458,0.549,"the underdog TD, later in Q1",0.2845,0.274,0
-AF007071026,home,0.5878,0.6066,"the favourite TD, later in Q1",0.7105,0.6829999999999999,0
+AF007071026,home,0.5878,0.6066,"the favourite TD, opening drive",0.7105,0.6829999999999999,0
 AF007081026,home,0.636,0.4665,"the favourite TD, later in Q1",0.8513,0.7070000000000001,1
 AF008011026,away,0.6412,0.597,"the favourite FG, Q2 or later",0.7256,0.739,1
-AF008041026,home,0.5829,0.638,"the underdog TD, later in Q1",0.45840000000000003,0.47700000000000004,0
+AF008041026,home,0.5829,0.638,"the underdog TD, opening drive",0.45840000000000003,0.47700000000000004,0
 AF008071026,away,0.5702,0.497,"the favourite TD, Q2 or later",0.8097,0.783,0
 AF008081026,away,0.5149,0.484,"the underdog TD, Q2 or later",0.23019999999999996,0.20599999999999996,0
 AF008101026,away,0.655,0.656,"the underdog TD, later in Q1",0.397,0.4,0
 AF008111026,home,0.6212,0.65,"the underdog TD, later in Q1",0.3368,0.402,0
-AF008121026,away,0.5722,0.495,"the favourite TD, later in Q1",0.6688000000000001,0.619,0
+AF008121026,away,0.5722,0.495,"the favourite TD, opening drive",0.6688000000000001,0.619,0
 AF009011026,away,0.5653,0.442,"the underdog TD, Q2 or later",0.28579999999999994,0.20599999999999996,0
-AF009021026,away,0.5363,0.413,"the favourite TD, later in Q1",0.6522,0.504,0
+AF009021026,away,0.5363,0.413,"the favourite TD, opening drive",0.6522,0.504,0
 AF009061026,away,0.5341,0.531,"the favourite TD, later in Q1",0.7741,0.802,1
 AF009101026,home,0.5767,0.562,"the underdog TD, later in Q1",0.2975,0.235,1
-AF009111026,home,0.5346,0.537,"the favourite FG, Q2 or later",0.4739,0.466,0
+AF009111026,home,0.5346,0.537,"the favourite FG, opening drive",0.4739,0.466,0
 AF009121026,away,0.6718,0.632,"the favourite TD, Q2 or later",0.8653,0.879,1
 AF010011026,home,0.5217,0.551,"the favourite TD, Q2 or later",0.8162,0.8109999999999999,1
-AF010021026,away,0.5195,0.484,"the favourite TD, Q2 or later",0.6553,0.5960000000000001,1
-AF010081026,home,0.5219,0.5155,"the favourite TD, later in Q1",0.5982,0.626,1
-AF010091026,home,0.5131,0.46,"the underdog FG, later in Q1",0.5668,0.54,1
-AF010101026,away,0.5533,0.5405,"the underdog FG, later in Q1",0.5938000000000001,0.591,1
+AF010021026,away,0.5195,0.484,"the favourite TD, opening drive",0.6553,0.5960000000000001,1
+AF010081026,home,0.5219,0.5155,"the favourite TD, opening drive",0.5982,0.626,1
+AF010091026,home,0.5131,0.46,"the underdog FG, opening drive",0.5668,0.54,1
+AF010101026,away,0.5533,0.5405,"the underdog FG, opening drive",0.5938000000000001,0.591,1
 AF010111026,away,0.6575,0.561,"the favourite TD, later in Q1",0.8418,0.813,1
-AF010121026,away,0.5901,0.56,"the underdog TD, later in Q1",0.4575,0.484,0
-AF011031026,home,0.5277,0.548,"the underdog FG, Q2 or later",0.5938,0.569,0
-AF011041026,away,0.5103,0.508,"the underdog TD, later in Q1",0.3811,0.4079999999999999,1
+AF010121026,away,0.5901,0.56,"the underdog TD, opening drive",0.4575,0.484,0
+AF011031026,home,0.5277,0.548,"the underdog FG, opening drive",0.5938,0.569,0
+AF011041026,away,0.5103,0.508,"the underdog TD, opening drive",0.3811,0.4079999999999999,1
 AF011051026,away,0.5401,0.436,"the favourite TD, later in Q1",0.7827,0.729,1
-AF011061026,home,0.5631,0.485,"the underdog TD, later in Q1",0.4389,0.385,1
-AF011071026,home,0.6038,0.548,"the favourite TD, later in Q1",0.7186,0.655,0
+AF011061026,home,0.5631,0.485,"the underdog TD, opening drive",0.4389,0.385,1
+AF011071026,home,0.6038,0.548,"the favourite TD, opening drive",0.7186,0.655,0
 AF011081026,home,0.5868,0.526,"the underdog FG, later in Q1",0.45799999999999996,0.377,1
-AF011101026,home,0.5123,0.499,"the favourite TD, later in Q1",0.63,0.638,1
+AF011101026,home,0.5123,0.499,"the favourite TD, opening drive",0.63,0.638,1
 AF012011026,away,0.6014,0.599,"the favourite TD, Q2 or later",0.6771,0.679,1
-AF012031026,away,0.5501,0.4605,"the favourite TD, Q2 or later",0.6942999999999999,0.619,0
-AF012051026,away,0.5538,0.424,"the underdog TD, later in Q1",0.43509999999999993,0.348,0
-AF012071026,away,0.5297,0.655,"the favourite TD, later in Q1",0.6073,0.741,0
-AF012101026,away,0.7411,0.707,"the underdog FG, Q2 or later",0.7671,0.71,1
-AF012111026,home,0.5135,0.513,"the favourite TD, Q2 or later",0.6583,0.628,0
+AF012031026,away,0.5501,0.4605,"the favourite TD, opening drive",0.6942999999999999,0.619,0
+AF012051026,away,0.5538,0.424,"the underdog TD, opening drive",0.43509999999999993,0.348,0
+AF012071026,away,0.5297,0.655,"the favourite TD, opening drive",0.6073,0.741,0
+AF012101026,away,0.7411,0.707,"the underdog FG, opening drive",0.7671,0.71,1
+AF012111026,home,0.5135,0.513,"the favourite TD, opening drive",0.6583,0.628,0
 AF012121026,home,0.5233,0.541,"the favourite FG, Q2 or later",0.5783,0.616,1
-AF013011026,away,0.5483,0.481,"the favourite TD, later in Q1",0.6621,0.62,1
+AF013011026,away,0.5483,0.481,"the favourite TD, opening drive",0.6621,0.62,1
 AF013021026,away,0.5229,0.523,"the favourite FG, Q2 or later",0.6157,0.661,1
-AF013031026,away,0.5252,0.464,"the favourite FG, Q2 or later",0.4665,0.41900000000000004,0
+AF013031026,away,0.5252,0.464,"the favourite FG, opening drive",0.4665,0.41900000000000004,0
 AF013051026,away,0.6058,0.584,"the favourite TD, later in Q1",0.8207,0.8260000000000001,1
-AF013061026,away,0.5427,0.545,"the underdog TD, later in Q1",0.43189999999999995,0.42000000000000004,1
+AF013061026,away,0.5427,0.545,"the underdog TD, opening drive",0.43189999999999995,0.42000000000000004,1
 AF013071026,home,0.5838,0.501,"the favourite TD, later in Q1",0.833,0.833,1
-AF013101026,home,0.5336,0.466,"the underdog TD, later in Q1",0.41950000000000004,0.382,1
-AF013111026,home,0.5803,0.54,"the favourite TD, Q2 or later",0.6762999999999999,0.614,1
-AF014021026,away,0.521,0.524,"the underdog TD, later in Q1",0.39049999999999996,0.36240000000000006,0
-AF014061026,away,0.5455,0.555,"the underdog TD, later in Q1",0.40549999999999997,0.40700000000000003,0
-AF014091026,home,0.5194,0.488,"the underdog TD, later in Q1",0.3786,0.36200000000000004,0
-AF014101026,away,0.7044,0.679,"the underdog TD, later in Q1",0.5382,0.53,1
+AF013101026,home,0.5336,0.466,"the underdog TD, opening drive",0.41950000000000004,0.382,1
+AF013111026,home,0.5803,0.54,"the favourite TD, opening drive",0.6762999999999999,0.614,1
+AF014021026,away,0.521,0.524,"the underdog TD, opening drive",0.39049999999999996,0.36240000000000006,0
+AF014061026,away,0.5455,0.555,"the underdog TD, opening drive",0.40549999999999997,0.40700000000000003,0
+AF014091026,home,0.5194,0.488,"the underdog TD, opening drive",0.3786,0.36200000000000004,0
+AF014101026,away,0.7044,0.679,"the underdog TD, opening drive",0.5382,0.53,1
 AF014111026,away,0.5751,0.482,"the favourite TD, later in Q1",0.7948,0.782,0
 AF015021026,away,0.5141,0.425,"the underdog TD, later in Q1",0.26180000000000003,0.18200000000000005,0
 AF015051026,home,0.518,0.585,"the underdog TD, Q2 or later",0.2796,0.303,0
 AF015071026,home,0.5317,0.458,"the underdog TD, Q2 or later",0.313,0.242,0
 AF015081026,away,0.5251,0.463,"the underdog TD, later in Q1",0.28370000000000006,0.20999999999999996,1
-AF015091026,away,0.5998,0.58,"the underdog TD, later in Q1",0.4656,0.44999999999999996,1
+AF015091026,away,0.5998,0.58,"the underdog TD, opening drive",0.4656,0.44999999999999996,1
 AF015101026,home,0.5505,0.596,"the underdog TD, later in Q1",0.2766,0.318,0
 AF015121026,away,0.6303,0.561,"the favourite TD, later in Q1",0.8361,0.8038,1
-AF016011026,home,0.5119,0.495,"the underdog TD, later in Q1",0.3766,0.37,0
+AF016011026,home,0.5119,0.495,"the underdog TD, opening drive",0.3766,0.37,0
 AF016021026,away,0.5114,0.533,"the favourite TD, Q2 or later",0.632,0.632,1
-AF016041026,away,0.5266,0.431,"the favourite TD, later in Q1",0.6516,0.5700000000000001,1
-AF016051026,away,0.5595,0.4845,"the underdog TD, later in Q1",0.4323,0.3590000000000001,1
+AF016041026,away,0.5266,0.431,"the favourite TD, opening drive",0.6516,0.5700000000000001,1
+AF016051026,away,0.5595,0.4845,"the underdog TD, opening drive",0.4323,0.3590000000000001,1
 AF016071026,away,0.5148,0.626,"the favourite TD, later in Q1",0.6113,0.683,1
 AF016101026,away,0.5816,0.55,,,,1
 AF016111026,away,0.573,0.573,"the favourite TD, later in Q1",0.8143,0.844,0
-AF016121026,home,0.5553,0.551,"the favourite TD, later in Q1",0.6716,0.6920000000000001,0
-AF017011026,home,0.5438,0.493,"the favourite TD, later in Q1",0.6339,0.605,1
-AF017031026,home,0.5263,0.429,"the underdog FG, later in Q1",0.5658,0.445,0
-AF017051026,away,0.5338,0.381,"the underdog TD, later in Q1",0.42189999999999994,0.32400000000000007,1
+AF016121026,home,0.5553,0.551,"the favourite TD, opening drive",0.6716,0.6920000000000001,0
+AF017011026,home,0.5438,0.493,"the favourite TD, opening drive",0.6339,0.605,1
+AF017031026,home,0.5263,0.429,"the underdog FG, opening drive",0.5658,0.445,0
+AF017051026,away,0.5338,0.381,"the underdog TD, opening drive",0.42189999999999994,0.32400000000000007,1
 AF017071026,home,0.5263,0.442,"the underdog TD, later in Q1",0.2615,0.19699999999999998,0
-AF017101026,away,0.5351,0.476,"the underdog TD, later in Q1",0.4062,0.348,1
-AF017111026,away,0.5728,0.519,"the favourite TD, later in Q1",0.6773,0.62,0
+AF017101026,away,0.5351,0.476,"the underdog TD, opening drive",0.4062,0.348,1
+AF017111026,away,0.5728,0.519,"the favourite TD, opening drive",0.6773,0.62,0
 AF017121026,away,0.6834,0.649,"the underdog TD, Q2 or later",0.381,0.29799999999999993,1
-AF018011026,away,0.5599,0.555,"the favourite TD, later in Q1",0.6909000000000001,0.665,0
+AF018011026,away,0.5599,0.555,"the favourite TD, opening drive",0.6909000000000001,0.665,0
 AF018021026,home,0.5191,0.529,"the underdog TD, Q2 or later",0.2227,0.213,0
 AF018101026,away,0.5359,0.495,"the underdog TD, Q2 or later",0.42289999999999994,0.386,1
-AF018111026,home,0.5581,0.528,"the favourite TD, later in Q1",0.6919,0.6729999999999999,1
-AF018121026,home,0.629,0.6176,"the underdog TD, later in Q1",0.4778,0.46549999999999997,0
-AF019061026,home,0.5465,0.557,"the favourite TD, later in Q1",0.6581999999999999,0.691,0
-AF019071026,home,0.5976,0.555,"the favourite TD, later in Q1",0.7212999999999999,0.6940000000000001,1
+AF018111026,home,0.5581,0.528,"the favourite TD, opening drive",0.6919,0.6729999999999999,1
+AF018121026,home,0.629,0.6176,"the underdog TD, opening drive",0.4778,0.46549999999999997,0
+AF019061026,home,0.5465,0.557,"the favourite TD, opening drive",0.6581999999999999,0.691,0
+AF019071026,home,0.5976,0.555,"the favourite TD, opening drive",0.7212999999999999,0.6940000000000001,1
 AF019081026,home,0.6204,0.503,"the favourite FG, opening drive",0.5679,0.40299999999999997,0
-AF020021026,home,0.5248,0.568,"the underdog FG, Q2 or later",0.5827,0.602,1
+AF020021026,home,0.5248,0.568,"the underdog FG, opening drive",0.5827,0.602,1
 AF020031026,home,0.5196,0.576,"the underdog TD, Q2 or later",0.3791,0.44799999999999995,1
-AF020041026,home,0.5687,0.605,"the favourite TD, Q2 or later",0.6583,0.7240000000000001,1
-AF020051026,home,0.5253,0.53,"the underdog TD, Q2 or later",0.377,0.424,0
-AF020071026,away,0.5448,0.492,"the favourite TD, later in Q1",0.6573,0.581,0
-AF020081026,away,0.5239,0.514,"the underdog FG, Q2 or later",0.5964,0.538,1
+AF020041026,home,0.5687,0.605,"the favourite TD, opening drive",0.6583,0.7240000000000001,1
+AF020051026,home,0.5253,0.53,"the underdog TD, opening drive",0.377,0.424,0
+AF020071026,away,0.5448,0.492,"the favourite TD, opening drive",0.6573,0.581,0
+AF020081026,away,0.5239,0.514,"the underdog FG, opening drive",0.5964,0.538,1
 AF020091026,away,0.5195,0.473,"the underdog TD, Q2 or later",0.3779,0.28900000000000003,0
 AF020101026,away,0.6646,0.673,"the underdog TD, Q2 or later",0.3933,0.363,0
-AF020111026,home,0.6036,0.624,"the favourite TD, Q2 or later",0.7528,0.7798,0
-AF020121026,away,0.676,0.635,"the favourite TD, Q2 or later",0.7393000000000001,0.6990000000000001,1
+AF020111026,home,0.6036,0.624,"the favourite TD, opening drive",0.7528,0.7798,0
+AF020121026,away,0.676,0.635,"the favourite TD, opening drive",0.7393000000000001,0.6990000000000001,1
 AF021031026,home,0.5654,0.383,"the favourite FG, later in Q1",0.6674,0.509,0
-AF021041026,away,0.5167,0.433,"the favourite FG, later in Q1",0.4554,0.43799999999999994,1
+AF021041026,away,0.5167,0.433,"the favourite FG, opening drive",0.4554,0.43799999999999994,1
 AF021051026,home,0.5316,0.463,"the underdog TD, later in Q1",0.26,0.19399999999999998,0
 AF021081026,away,0.5733,0.589,"the favourite TD, later in Q1",0.8045,0.8360000000000001,1
-AF021091026,away,0.5507,0.56,"the underdog TD, later in Q1",0.39680000000000004,0.41100000000000003,1
-AF021101026,away,0.5191,0.517,"the underdog TD, later in Q1",0.38439999999999996,0.39,0
-AF022011026,away,0.5613,0.4735,"the favourite TD, later in Q1",0.6875,0.652,0
+AF021091026,away,0.5507,0.56,"the underdog TD, opening drive",0.39680000000000004,0.41100000000000003,1
+AF021101026,away,0.5191,0.517,"the underdog TD, opening drive",0.38439999999999996,0.39,0
+AF022011026,away,0.5613,0.4735,"the favourite TD, opening drive",0.6875,0.652,0
 AF022031026,home,0.5207,0.56,"the underdog TD, Q2 or later",0.3506,0.445,0
-AF022041026,away,0.513,0.604,"the favourite FG, Q2 or later",0.4637,0.587,1
+AF022041026,away,0.513,0.604,"the favourite FG, opening drive",0.4637,0.587,1
 AF022051026,away,0.5316,0.55,"the underdog TD, Q2 or later",0.25450000000000006,0.245,0
-AF022071026,home,0.5152,0.418,"the underdog TD, later in Q1",0.38420000000000004,0.266,1
-AF022081026,away,0.5795,0.496,"the favourite TD, later in Q1",0.6966,0.653,1
+AF022071026,home,0.5152,0.418,"the underdog TD, opening drive",0.38420000000000004,0.266,1
+AF022081026,away,0.5795,0.496,"the favourite TD, opening drive",0.6966,0.653,1
 AF022091026,home,0.5674,0.543,"the favourite TD, later in Q1",0.7945,0.8009999999999999,1
-AF023011026,home,0.5689,0.613,"the underdog TD, later in Q1",0.4315,0.494,0
-AF023021026,home,0.5432,0.463,"the underdog TD, later in Q1",0.4191,0.326,0
-AF023031026,home,0.5374,0.584,"the underdog TD, later in Q1",0.4203,0.41600000000000004,0
+AF023011026,home,0.5689,0.613,"the underdog TD, opening drive",0.4315,0.494,0
+AF023021026,home,0.5432,0.463,"the underdog TD, opening drive",0.4191,0.326,0
+AF023031026,home,0.5374,0.584,"the underdog TD, opening drive",0.4203,0.41600000000000004,0
 AF023041026,away,0.5305,0.418,"the underdog TD, Q2 or later",0.27260000000000006,0.17400000000000004,0
-AF023051026,away,0.5299,0.569,"the favourite TD, later in Q1",0.6372,0.665,0
-AF023061026,away,0.527,0.573,"the favourite TD, later in Q1",0.6496,0.7,0
-AF023091026,home,0.5781,0.4975,"the underdog FG, Q2 or later",0.6462,0.508,1
+AF023051026,away,0.5299,0.569,"the favourite TD, opening drive",0.6372,0.665,0
+AF023061026,away,0.527,0.573,"the favourite TD, opening drive",0.6496,0.7,0
+AF023091026,home,0.5781,0.4975,"the underdog FG, opening drive",0.6462,0.508,1
 AF023101026,away,0.5285,0.528,"the favourite TD, Q2 or later",0.7778,0.773,0
 AF023121026,home,0.5137,0.5,"the favourite TD, later in Q1",0.7709,0.777,0
-AF024011026,away,0.5339,0.42,"the underdog TD, Q2 or later",0.3792,0.29200000000000004,1
-AF024021026,away,0.6235,0.523,"the favourite TD, later in Q1",0.7242,0.6547000000000001,1
-AF024041026,away,0.6044,0.689,"the underdog TD, later in Q1",0.48560000000000003,0.537,1
+AF024011026,away,0.5339,0.42,"the underdog TD, opening drive",0.3792,0.29200000000000004,1
+AF024021026,away,0.6235,0.523,"the favourite TD, opening drive",0.7242,0.6547000000000001,1
+AF024041026,away,0.6044,0.689,"the underdog TD, opening drive",0.48560000000000003,0.537,1
 AF024061026,away,0.5204,0.511,,,,1
 AF024071026,home,0.5458,0.492,"the favourite FG, Q2 or later",0.6339,0.581,0
 AF024111026,home,0.6134,0.5375,"the underdog FG, Q2 or later",0.47130000000000005,0.377,0
-AF024121026,home,0.5354,0.568,"the favourite TD, Q2 or later",0.6631999999999999,0.649,1
-AF025011026,away,0.514,0.448,"the favourite TD, later in Q1",0.6364000000000001,0.5429999999999999,1
-AF025021026,home,0.5491,0.623,"the underdog TD, Q2 or later",0.40740000000000004,0.39,1
+AF024121026,home,0.5354,0.568,"the favourite TD, opening drive",0.6631999999999999,0.649,1
+AF025011026,away,0.514,0.448,"the favourite TD, opening drive",0.6364000000000001,0.5429999999999999,1
+AF025021026,home,0.5491,0.623,"the underdog TD, opening drive",0.40740000000000004,0.39,1
 AF025031026,home,0.5215,0.489,"the underdog TD, later in Q1",0.2605,0.233,1
-AF025051026,away,0.529,0.458,"the favourite TD, later in Q1",0.6363000000000001,0.552,1
+AF025051026,away,0.529,0.458,"the favourite TD, opening drive",0.6363000000000001,0.552,1
 AF025081026,home,0.5247,0.465,"the favourite TD, Q2 or later",0.797,0.746,1
 AF025091026,home,0.5455,0.5335,"the underdog TD, Q2 or later",0.3494,0.332,1
 AF025101026,home,0.5176,0.56,"the underdog TD, later in Q1",0.41090000000000004,0.38299999999999995,1
-AF025121026,home,0.5793,0.604,"the underdog FG, later in Q1",0.5918,0.631,0
+AF025121026,home,0.5793,0.604,"the underdog FG, opening drive",0.5918,0.631,0
 AF026011026,home,0.5178,0.528,"the underdog TD, Q2 or later",0.2619,0.183,0
-AF026021026,home,0.6642,0.524,"the favourite TD, later in Q1",0.7712,0.6703,1
-AF026041026,home,0.5376,0.553,"the underdog TD, later in Q1",0.4153,0.447,1
-AF026051026,away,0.533,0.532,"the underdog TD, Q2 or later",0.39479999999999993,0.369,0
-AF026061026,home,0.5289,0.527,"the underdog TD, later in Q1",0.3978,0.46399999999999997,1
-AF026071026,home,0.5238,0.481,"the underdog TD, Q2 or later",0.41700000000000004,0.335,1
-AF026081026,away,0.522,0.498,"the underdog TD, Q2 or later",0.3863,0.358,1
-AF026091026,home,0.5755,0.641,"the favourite TD, later in Q1",0.6884999999999999,0.732,0
-AF027011026,home,0.5446,0.56,"the favourite FG, Q2 or later",0.48210000000000003,0.522,1
+AF026021026,home,0.6642,0.524,"the favourite TD, opening drive",0.7712,0.6703,1
+AF026041026,home,0.5376,0.553,"the underdog TD, opening drive",0.4153,0.447,1
+AF026051026,away,0.533,0.532,"the underdog TD, opening drive",0.39479999999999993,0.369,0
+AF026061026,home,0.5289,0.527,"the underdog TD, opening drive",0.3978,0.46399999999999997,1
+AF026071026,home,0.5238,0.481,"the underdog TD, opening drive",0.41700000000000004,0.335,1
+AF026081026,away,0.522,0.498,"the underdog TD, opening drive",0.3863,0.358,1
+AF026091026,home,0.5755,0.641,"the favourite TD, opening drive",0.6884999999999999,0.732,0
+AF027011026,home,0.5446,0.56,"the favourite FG, opening drive",0.48210000000000003,0.522,1
 AF027021026,home,0.5365,0.499,"the underdog TD, opening drive",0.1726,0.133,0
 AF027031026,home,0.5301,0.65,"the favourite TD, later in Q1",0.7731999999999999,0.831,1
-AF027041026,home,0.5381,0.636,"the favourite TD, later in Q1",0.6416,0.736,1
+AF027041026,home,0.5381,0.636,"the favourite TD, opening drive",0.6416,0.736,1
 AF027051026,away,0.5419,0.654,"the favourite TD, later in Q1",0.7925,0.869,1
-AF027061026,away,0.5157,0.529,"the underdog TD, later in Q1",0.41469999999999996,0.396,0
+AF027061026,away,0.5157,0.529,"the underdog TD, opening drive",0.41469999999999996,0.396,0
 AF027071026,home,0.5394,0.576,"the favourite TD, Q2 or later",0.7981999999999999,0.8109999999999999,1
-AF027081026,home,0.5919,0.63,"the favourite TD, later in Q1",0.6818000000000001,0.7040000000000001,1
-AF027091026,home,0.6085,0.6185,"the favourite TD, later in Q1",0.728,0.711,1
+AF027081026,home,0.5919,0.63,"the favourite TD, opening drive",0.6818000000000001,0.7040000000000001,1
+AF027091026,home,0.6085,0.6185,"the favourite TD, opening drive",0.728,0.711,1
 AF027101026,away,0.519,0.453,"the underdog TD, Q2 or later",0.2298,0.19499999999999995,0
 AF027111026,home,0.5932,0.668,"the underdog TD, later in Q1",0.3367,0.373,0
-AF027121026,away,0.5251,0.537,"the favourite TD, later in Q1",0.6491,0.624,1
-AF028011026,home,0.5122,0.5315,"the underdog TD, later in Q1",0.4092,0.38,1
+AF027121026,away,0.5251,0.537,"the favourite TD, opening drive",0.6491,0.624,1
+AF028011026,home,0.5122,0.5315,"the underdog TD, opening drive",0.4092,0.38,1
 AF028031026,home,0.5183,0.561,"the underdog TD, Q2 or later",0.23809999999999998,0.278,0
-AF028061026,home,0.5545,0.495,"the underdog TD, Q2 or later",0.4202,0.402,1
+AF028061026,home,0.5545,0.495,"the underdog TD, opening drive",0.4202,0.402,1
 AF028081026,home,0.5181,0.515,"the favourite TD, later in Q1",0.7901,0.797,1
-AF028101026,home,0.511,0.544,"the underdog TD, Q2 or later",0.37829999999999997,0.39399999999999996,1
-AF028121026,home,0.6411,0.629,"the underdog TD, later in Q1",0.5127,0.5579999999999999,0
-AF029011026,home,0.5441,0.611,"the favourite FG, later in Q1",0.5114,0.546,1
+AF028101026,home,0.511,0.544,"the underdog TD, opening drive",0.37829999999999997,0.39399999999999996,1
+AF028121026,home,0.6411,0.629,"the underdog TD, opening drive",0.5127,0.5579999999999999,0
+AF029011026,home,0.5441,0.611,"the favourite FG, opening drive",0.5114,0.546,1
 AF029021026,home,0.5646,0.563,"the underdog TD, Q2 or later",0.18539999999999998,0.155,1
-AF029031026,home,0.5639,0.497,"the favourite TD, later in Q1",0.6695,0.612,1
-AF029051026,home,0.5318,0.514,"the underdog TD, Q2 or later",0.4086,0.402,1
-AF029081026,away,0.5131,0.478,"the underdog TD, later in Q1",0.3982,0.366,0
-AF029091026,home,0.5985,0.583,"the underdog TD, later in Q1",0.461,0.44299999999999995,0
+AF029031026,home,0.5639,0.497,"the favourite TD, opening drive",0.6695,0.612,1
+AF029051026,home,0.5318,0.514,"the underdog TD, opening drive",0.4086,0.402,1
+AF029081026,away,0.5131,0.478,"the underdog TD, opening drive",0.3982,0.366,0
+AF029091026,home,0.5985,0.583,"the underdog TD, opening drive",0.461,0.44299999999999995,0
 AF029111026,home,0.6078,0.627,"the favourite TD, later in Q1",0.8262999999999999,0.8759999999999999,1
 AF029121026,away,0.6158,0.654,"the favourite TD, Q2 or later",0.7274,0.753,1
-AF030011026,away,0.525,0.458,"the underdog TD, later in Q1",0.4134,0.3490000000000001,0
-AF030021026,away,0.5159,0.505,"the favourite TD, later in Q1",0.6409,0.6747,0
+AF030011026,away,0.525,0.458,"the underdog TD, opening drive",0.4134,0.3490000000000001,0
+AF030021026,away,0.5159,0.505,"the favourite TD, opening drive",0.6409,0.6747,0
 AF030031026,home,0.5321,0.602,"the favourite TD, Q2 or later",0.8665,0.8959999999999999,1
 AF030041026,away,0.6056,0.589,,,,1
-AF030051026,away,0.544,0.449,"the underdog TD, later in Q1",0.4304,0.31900000000000006,1
+AF030051026,away,0.544,0.449,"the underdog TD, opening drive",0.4304,0.31900000000000006,1
 AF030071026,home,0.5308,0.523,"the favourite TD, later in Q1",0.782,0.7709999999999999,1
-AF030081026,home,0.5259,0.564,"the favourite TD, Q2 or later",0.6615000000000001,0.6657,1
+AF030081026,home,0.5259,0.564,"the favourite TD, opening drive",0.6615000000000001,0.6657,1
 AF031041026,home,0.5137,0.55,"the underdog FG, later in Q1",0.40020000000000006,0.45299999999999996,1
-AF031051026,away,0.5775,0.652,"the underdog TD, later in Q1",0.44200000000000006,0.5029999999999999,1
+AF031051026,away,0.5775,0.652,"the underdog TD, opening drive",0.44200000000000006,0.5029999999999999,1
 AF031061026,away,0.5783,0.6135,"the underdog TD, Q2 or later",0.2811,0.31700000000000006,0
-AF031071026,home,0.6032,0.656,"the underdog TD, later in Q1",0.4815,0.521,0
+AF031071026,home,0.6032,0.656,"the underdog TD, opening drive",0.4815,0.521,0
 AF031081026,home,0.5465,0.616,"the favourite TD, Q2 or later",0.6994,0.741,1
-AF031091026,home,0.5987,0.57,"the underdog TD, later in Q1",0.44920000000000004,0.4254,0
-AF031101026,home,0.5179,0.57,"the underdog TD, later in Q1",0.4164,0.415,0
-AF031111026,home,0.5125,0.552,"the favourite TD, Q2 or later",0.6129,0.627,0
-AF031121026,away,0.5687,0.58,"the favourite TD, later in Q1",0.6793,0.687,1
-AF032011026,home,0.5398,0.516,"the underdog TD, Q2 or later",0.3711,0.301,0
+AF031091026,home,0.5987,0.57,"the underdog TD, opening drive",0.44920000000000004,0.4254,0
+AF031101026,home,0.5179,0.57,"the underdog TD, opening drive",0.4164,0.415,0
+AF031111026,home,0.5125,0.552,"the favourite TD, opening drive",0.6129,0.627,0
+AF031121026,away,0.5687,0.58,"the favourite TD, opening drive",0.6793,0.687,1
+AF032011026,home,0.5398,0.516,"the underdog TD, opening drive",0.3711,0.301,0
 AF032021026,home,0.6056,0.5175,"the favourite FG, Q2 or later",0.7156,0.648,1
-AF032041026,home,0.5618,0.746,"the underdog TD, Q2 or later",0.4362,0.564,1
-AF032061026,home,0.6049,0.563,"the underdog TD, later in Q1",0.46340000000000003,0.4,0
+AF032041026,home,0.5618,0.746,"the underdog TD, opening drive",0.4362,0.564,1
+AF032061026,home,0.6049,0.563,"the underdog TD, opening drive",0.46340000000000003,0.4,0
 AF032071026,home,0.5268,0.558,"the favourite FG, Q2 or later",0.6705,0.722,1
-AF032081026,home,0.5721,0.5015,"the favourite TD, later in Q1",0.691,0.608,1
-AF032091026,away,0.5138,0.393,"the underdog TD, later in Q1",0.3841,0.2929999999999999,1
-AF032111026,away,0.6166,0.5626,"the underdog TD, later in Q1",0.46939999999999993,0.404,1
+AF032081026,home,0.5721,0.5015,"the favourite TD, opening drive",0.691,0.608,1
+AF032091026,away,0.5138,0.393,"the underdog TD, opening drive",0.3841,0.2929999999999999,1
+AF032111026,away,0.6166,0.5626,"the underdog TD, opening drive",0.46939999999999993,0.404,1
 AF032121026,away,0.5978,0.511,"the underdog TD, Q2 or later",0.3378,0.268,0
-AF033041026,home,0.5223,0.493,"the underdog TD, later in Q1",0.4003,0.36200000000000004,0
-AF033051026,away,0.5908,0.618,"the underdog TD, later in Q1",0.47450000000000003,0.495,1
-AF033061026,home,0.5127,0.501,"the underdog FG, later in Q1",0.5433,0.573,0
-AF033081026,home,0.5993,0.598,"the favourite TD, Q2 or later",0.6968000000000001,0.6990000000000001,1
-AF033091026,home,0.5605,0.54,"the underdog TD, later in Q1",0.4202,0.40399999999999997,1
-AF033101026,away,0.5242,0.521,"the underdog FG, later in Q1",0.5692,0.54,1
-AF033111026,away,0.5334,0.422,"the underdog TD, later in Q1",0.4073,0.35,0
+AF033041026,home,0.5223,0.493,"the underdog TD, opening drive",0.4003,0.36200000000000004,0
+AF033051026,away,0.5908,0.618,"the underdog TD, opening drive",0.47450000000000003,0.495,1
+AF033061026,home,0.5127,0.501,"the underdog FG, opening drive",0.5433,0.573,0
+AF033081026,home,0.5993,0.598,"the favourite TD, opening drive",0.6968000000000001,0.6990000000000001,1
+AF033091026,home,0.5605,0.54,"the underdog TD, opening drive",0.4202,0.40399999999999997,1
+AF033101026,away,0.5242,0.521,"the underdog FG, opening drive",0.5692,0.54,1
+AF033111026,away,0.5334,0.422,"the underdog TD, opening drive",0.4073,0.35,0
 AF033121026,away,0.5137,0.481,,,,1
-AF034011026,home,0.5685,0.53,"the underdog TD, later in Q1",0.4129,0.35600000000000004,0
+AF034011026,home,0.5685,0.53,"the underdog TD, opening drive",0.4129,0.35600000000000004,0
 AF034021026,home,0.5148,0.5025,"the favourite TD, Q2 or later",0.7585999999999999,0.79,1
 AF034041026,home,0.5574,0.614,"the underdog FG, Q2 or later",0.5915,0.636,1
 AF034051026,away,0.5171,0.536,"the underdog TD, Q2 or later",0.238,0.2390000000000001,0
-AF034061026,home,0.5256,0.569,"the underdog TD, later in Q1",0.40159999999999996,0.452,0
-AF034071026,away,0.512,0.455,"the favourite TD, later in Q1",0.6589,0.621,1
-AF034081026,home,0.5682,0.494,"the underdog TD, Q2 or later",0.4425,0.326,1
+AF034061026,home,0.5256,0.569,"the underdog TD, opening drive",0.40159999999999996,0.452,0
+AF034071026,away,0.512,0.455,"the favourite TD, opening drive",0.6589,0.621,1
+AF034081026,home,0.5682,0.494,"the underdog TD, opening drive",0.4425,0.326,1
 AF034091026,away,0.6272,0.549,"the underdog TD, Q2 or later",0.29700000000000004,0.263,0
 AF034101026,away,0.5274,0.4937,"the favourite TD, later in Q1",0.6764,0.6479999999999999,1
 AF034121026,away,0.5307,0.519,"the underdog TD, Q2 or later",0.35030000000000006,0.3490000000000001,0
-AF035021026,away,0.5706,0.625,"the underdog FG, later in Q1",0.5672999999999999,0.6220000000000001,0
+AF035021026,away,0.5706,0.625,"the underdog FG, opening drive",0.5672999999999999,0.6220000000000001,0
 AF035031026,away,0.5249,0.465,"the underdog TD, opening drive",0.2865000000000001,0.19999999999999996,0
-AF035051026,home,0.5374,0.455,"the favourite TD, later in Q1",0.6587999999999999,0.622,1
-AF035061026,away,0.5278,0.528,"the underdog TD, later in Q1",0.4517,0.45599999999999996,0
-AF035081026,home,0.5543,0.544,"the favourite FG, later in Q1",0.5115,0.514,1
+AF035051026,home,0.5374,0.455,"the favourite TD, opening drive",0.6587999999999999,0.622,1
+AF035061026,away,0.5278,0.528,"the underdog TD, opening drive",0.4517,0.45599999999999996,0
+AF035081026,home,0.5543,0.544,"the favourite FG, opening drive",0.5115,0.514,1
 AF035091026,away,0.5507,0.528,"the underdog TD, later in Q1",0.25670000000000004,0.2659999999999999,1
 AF035111026,away,0.55,0.458,"the underdog TD, Q2 or later",0.4242,0.33799999999999997,0
 AF035121026,away,0.6037,0.608,"the underdog TD, later in Q1",0.3395999999999999,0.347,0
 AF036011026,home,0.5102,0.445,"the underdog FG, Q2 or later",0.3832,0.3357,1
 AF036021026,away,0.6766,0.495,"the favourite TD, later in Q1",0.8602,0.764,1
-AF036051026,away,0.517,0.444,"the underdog TD, Q2 or later",0.3771,0.31200000000000006,1
+AF036051026,away,0.517,0.444,"the underdog TD, opening drive",0.3771,0.31200000000000006,1
 AF036061026,home,0.585,0.525,,,,1
-AF036071026,away,0.5662,0.509,"the favourite TD, Q2 or later",0.6933,0.6819999999999999,0
+AF036071026,away,0.5662,0.509,"the favourite TD, opening drive",0.6933,0.6819999999999999,0
 AF036081026,away,0.5362,0.476,"the favourite TD, later in Q1",0.7745,0.75,1
-AF036091026,away,0.5918,0.634,"the underdog FG, Q2 or later",0.6093999999999999,0.6890000000000001,1
-AF036121026,home,0.5553,0.553,"the underdog TD, later in Q1",0.4224,0.418,0
-AF037011026,away,0.5647,0.571,"the underdog TD, later in Q1",0.4385,0.43899999999999995,0
+AF036091026,away,0.5918,0.634,"the underdog FG, opening drive",0.6093999999999999,0.6890000000000001,1
+AF036121026,home,0.5553,0.553,"the underdog TD, opening drive",0.4224,0.418,0
+AF037011026,away,0.5647,0.571,"the underdog TD, opening drive",0.4385,0.43899999999999995,0
 AF037021026,away,0.5439,0.546,"the underdog TD, opening drive",0.16849999999999998,0.16299999999999992,1
 AF037031026,away,0.559,0.631,"the favourite TD, later in Q1",0.7908,0.825,1
-AF037041026,away,0.5216,0.652,"the underdog TD, Q2 or later",0.39460000000000006,0.477,0
+AF037041026,away,0.5216,0.652,"the underdog TD, opening drive",0.39460000000000006,0.477,0
 AF037051026,home,0.5354,0.496,"the favourite TD, Q2 or later",0.8129000000000001,0.797,1
 AF037061026,away,0.5529,0.608,,,,1
-AF037091026,away,0.6197,0.619,"the favourite TD, later in Q1",0.7339,0.7050000000000001,1
+AF037091026,away,0.6197,0.619,"the favourite TD, opening drive",0.7339,0.7050000000000001,1
 AF037101026,home,0.5434,0.525,"the favourite TD, later in Q1",0.7875,0.754,1
-AF037111026,away,0.5937,0.646,"the favourite TD, Q2 or later",0.6960999999999999,0.726,1
-AF037121026,home,0.5324,0.514,"the underdog TD, later in Q1",0.4054,0.409,0
-AF038011026,away,0.5184,0.5475,"the underdog FG, later in Q1",0.5875,0.609,1
-AF038021026,away,0.5105,0.522,"the underdog TD, later in Q1",0.37729999999999997,0.3590000000000001,0
-AF038031026,away,0.5148,0.5295,"the underdog TD, later in Q1",0.372,0.385,1
-AF038051026,home,0.5144,0.489,"the underdog TD, later in Q1",0.3757,0.34600000000000003,0
-AF038071026,away,0.5184,0.5435,"the favourite TD, Q2 or later",0.6205,0.6930000000000001,1
-AF038091026,away,0.5302,0.592,"the favourite TD, later in Q1",0.6317999999999999,0.687,0
-AF038121026,away,0.6264,0.5985,"the favourite TD, later in Q1",0.7249,0.709,0
+AF037111026,away,0.5937,0.646,"the favourite TD, opening drive",0.6960999999999999,0.726,1
+AF037121026,home,0.5324,0.514,"the underdog TD, opening drive",0.4054,0.409,0
+AF038011026,away,0.5184,0.5475,"the underdog FG, opening drive",0.5875,0.609,1
+AF038021026,away,0.5105,0.522,"the underdog TD, opening drive",0.37729999999999997,0.3590000000000001,0
+AF038031026,away,0.5148,0.5295,"the underdog TD, opening drive",0.372,0.385,1
+AF038051026,home,0.5144,0.489,"the underdog TD, opening drive",0.3757,0.34600000000000003,0
+AF038071026,away,0.5184,0.5435,"the favourite TD, opening drive",0.6205,0.6930000000000001,1
+AF038091026,away,0.5302,0.592,"the favourite TD, opening drive",0.6317999999999999,0.687,0
+AF038121026,away,0.6264,0.5985,"the favourite TD, opening drive",0.7249,0.709,0
 AF039011026,away,0.5408,0.593,"the underdog TD, later in Q1",0.2556999999999999,0.30400000000000005,1
 AF039021026,away,0.5599,0.5506,"the underdog TD, Q2 or later",0.18489999999999995,0.16000000000000003,0
 AF039031026,away,0.5774,0.501,"the underdog TD, later in Q1",0.3166,0.237,0
 AF039051026,home,0.5104,0.528,"the underdog TD, later in Q1",0.4144,0.415,0
-AF039091026,away,0.599,0.522,"the favourite TD, later in Q1",0.7015,0.659,0
+AF039091026,away,0.599,0.522,"the favourite TD, opening drive",0.7015,0.659,0
 AF039111026,away,0.6097,0.604,"the favourite TD, later in Q1",0.8207,0.84,1
 AF039121026,away,0.5221,0.543,"the favourite FG, Q2 or later",0.5872999999999999,0.609,1
 AF040011026,home,0.5254,0.48,"the underdog TD, Q2 or later",0.3178,0.2462,0
 AF040041026,home,0.5945,0.552,"the favourite TD, Q2 or later",0.9763,0.968,1
 AF040051026,home,0.5287,0.417,"the favourite FG, later in Q1",0.6476999999999999,0.539,1
-AF040081026,away,0.5257,0.534,"the favourite TD, later in Q1",0.6506000000000001,0.667,1
-AF040091026,away,0.6001,0.605,"the underdog TD, later in Q1",0.4607,0.495,1
+AF040081026,away,0.5257,0.534,"the favourite TD, opening drive",0.6506000000000001,0.667,1
+AF040091026,away,0.6001,0.605,"the underdog TD, opening drive",0.4607,0.495,1
 AF040101026,away,0.5283,0.527,"the underdog TD, Q2 or later",0.26049999999999995,0.25029999999999997,0
-AF040121026,home,0.5644,0.505,"the favourite TD, later in Q1",0.6897,0.62,0
+AF040121026,home,0.5644,0.505,"the favourite TD, opening drive",0.6897,0.62,0
 AF041021026,away,0.5479,0.578,"the favourite TD, later in Q1",0.7944,0.821,1
 AF041031026,home,0.5153,0.442,"the underdog TD, later in Q1",0.3985,0.375,1
-AF041051026,home,0.5259,0.5933,"the favourite TD, later in Q1",0.6581,0.74,1
+AF041051026,home,0.5259,0.5933,"the favourite TD, opening drive",0.6581,0.74,1
 AF041061026,home,0.5962,0.628,,,,1
 AF041071026,away,0.5923,0.6,,,,0
 AF041091026,away,0.5674,0.575,"the underdog TD, Q2 or later",0.26739999999999997,0.28400000000000003,1
-AF041101026,home,0.5268,0.545,"the underdog TD, later in Q1",0.3994,0.46399999999999997,1
+AF041101026,home,0.5268,0.545,"the underdog TD, opening drive",0.3994,0.46399999999999997,1
 AF041111026,away,0.5592,0.492,"the favourite FG, Q2 or later",0.5397000000000001,0.492,1
-AF041121026,home,0.605,0.582,"the underdog TD, later in Q1",0.4855,0.522,1
-AF042011026,home,0.5336,0.4875,"the favourite TD, Q2 or later",0.6602,0.6659999999999999,1
-AF042021026,away,0.6252,0.491,"the underdog TD, later in Q1",0.4841,0.34299999999999997,1
-AF042051026,away,0.5196,0.471,"the favourite TD, later in Q1",0.6304000000000001,0.5866,1
+AF041121026,home,0.605,0.582,"the underdog TD, opening drive",0.4855,0.522,1
+AF042011026,home,0.5336,0.4875,"the favourite TD, opening drive",0.6602,0.6659999999999999,1
+AF042021026,away,0.6252,0.491,"the underdog TD, opening drive",0.4841,0.34299999999999997,1
+AF042051026,away,0.5196,0.471,"the favourite TD, opening drive",0.6304000000000001,0.5866,1
 AF042061026,away,0.5772,0.559,"the underdog FG, Q2 or later",0.4377,0.388,0
 AF042071026,away,0.5487,0.53,"the underdog TD, later in Q1",0.26480000000000004,0.23299999999999998,0
 AF042091026,away,0.5222,0.525,"the underdog TD, later in Q1",0.2519,0.264,0
-AF042111026,home,0.5777,0.5936,"the underdog TD, later in Q1",0.4407,0.435,0
-AF042121026,away,0.5326,0.515,"the underdog TD, later in Q1",0.4111,0.394,0
+AF042111026,home,0.5777,0.5936,"the underdog TD, opening drive",0.4407,0.435,0
+AF042121026,away,0.5326,0.515,"the underdog TD, opening drive",0.4111,0.394,0
 AF043011026,away,0.5625,0.508,"the favourite TD, Q2 or later",0.8028,0.801,0
-AF043031026,away,0.5389,0.526,"the underdog TD, later in Q1",0.41390000000000005,0.4,1
-AF043041026,away,0.5163,0.588,"the favourite TD, later in Q1",0.6318999999999999,0.722,1
+AF043031026,away,0.5389,0.526,"the underdog TD, opening drive",0.41390000000000005,0.4,1
+AF043041026,away,0.5163,0.588,"the favourite TD, opening drive",0.6318999999999999,0.722,1
 AF043071026,home,0.5194,0.571,"the favourite TD, later in Q1",0.7845,0.8290000000000001,1
 AF043081026,away,0.5757,0.5685,"the favourite TD, later in Q1",0.8054,0.808,1
-AF043091026,away,0.5573,0.512,"the favourite TD, later in Q1",0.6602,0.6539999999999999,0
+AF043091026,away,0.5573,0.512,"the favourite TD, opening drive",0.6602,0.6539999999999999,0
 AF043111026,away,0.5336,0.707,"the favourite TD, later in Q1",0.6364000000000001,0.769,1
-AF043121026,home,0.5344,0.508,"the underdog TD, Q2 or later",0.4115,0.384,0
+AF043121026,home,0.5344,0.508,"the underdog TD, opening drive",0.4115,0.384,0
 AF044021026,home,0.616,0.506,"the favourite TD, Q2 or later",0.6938,0.633,1
 AF044041026,home,0.5828,0.623,"the favourite TD, later in Q1",0.7967,0.8440000000000001,1
-AF044051026,away,0.5126,0.467,"the favourite TD, later in Q1",0.6074999999999999,0.5740000000000001,1
-AF044071026,away,0.5267,0.494,"the favourite TD, Q2 or later",0.6401,0.6439999999999999,1
+AF044051026,away,0.5126,0.467,"the favourite TD, opening drive",0.6074999999999999,0.5740000000000001,1
+AF044071026,away,0.5267,0.494,"the favourite TD, opening drive",0.6401,0.6439999999999999,1
 AF044111026,away,0.6397,0.558,"the favourite TD, later in Q1",0.8597,0.8200000000000001,1
 AF045011026,away,0.523,0.364,"the favourite TD, later in Q1",0.7592,0.643,1
-AF045021026,away,0.5242,0.5295,"the underdog FG, later in Q1",0.5427,0.5489999999999999,0
+AF045021026,away,0.5242,0.5295,"the underdog FG, opening drive",0.5427,0.5489999999999999,0
 AF045031026,home,0.5514,0.438,"the favourite TD, Q2 or later",0.7957,0.718,1
 AF045051026,away,0.5402,0.556,"the favourite TD, opening drive",0.8717,0.873,1
-AF045061026,home,0.5153,0.498,"the favourite TD, later in Q1",0.6145,0.655,0
-AF045081026,away,0.6572,0.546,"the favourite TD, later in Q1",0.7533,0.692,0
-AF045091026,away,0.5702,0.588,"the underdog TD, later in Q1",0.41380000000000006,0.41100000000000003,0
+AF045061026,home,0.5153,0.498,"the favourite TD, opening drive",0.6145,0.655,0
+AF045081026,away,0.6572,0.546,"the favourite TD, opening drive",0.7533,0.692,0
+AF045091026,away,0.5702,0.588,"the underdog TD, opening drive",0.41380000000000006,0.41100000000000003,0
 AF045111026,away,0.5124,0.58,"the favourite TD, Q2 or later",0.6649,0.752,0
-AF045121026,home,0.5546,0.542,"the underdog TD, later in Q1",0.42,0.47600000000000003,0
-AF046011026,away,0.5521,0.512,"the underdog TD, later in Q1",0.4061,0.348,0
-AF046041026,away,0.5197,0.557,"the underdog TD, later in Q1",0.379,0.402,0
+AF045121026,home,0.5546,0.542,"the underdog TD, opening drive",0.42,0.47600000000000003,0
+AF046011026,away,0.5521,0.512,"the underdog TD, opening drive",0.4061,0.348,0
+AF046041026,away,0.5197,0.557,"the underdog TD, opening drive",0.379,0.402,0
 AF046051026,home,0.5607,0.5381,,,,0
-AF046061026,away,0.5594,0.551,"the favourite TD, Q2 or later",0.6824,0.629,1
-AF046071026,home,0.5116,0.507,"the underdog TD, later in Q1",0.36920000000000003,0.311,0
+AF046061026,away,0.5594,0.551,"the favourite TD, opening drive",0.6824,0.629,1
+AF046071026,home,0.5116,0.507,"the underdog TD, opening drive",0.36920000000000003,0.311,0
 AF046081026,away,0.5851,0.484,"the underdog TD, later in Q1",0.31779999999999997,0.2509999999999999,0
-AF046091026,home,0.5956,0.634,"the favourite TD, Q2 or later",0.6914,0.687,0
+AF046091026,home,0.5956,0.634,"the favourite TD, opening drive",0.6914,0.687,0
 AF046101026,home,0.5597,0.573,"the favourite TD, Q2 or later",0.8007,0.802,1
-AF047011026,home,0.5329,0.529,"the favourite TD, later in Q1",0.6557999999999999,0.626,1
-AF047021026,away,0.5148,0.564,"the underdog TD, Q2 or later",0.4487,0.5,1
-AF047041026,home,0.5288,0.667,"the favourite TD, later in Q1",0.6396999999999999,0.7290000000000001,1
+AF047011026,home,0.5329,0.529,"the favourite TD, opening drive",0.6557999999999999,0.626,1
+AF047021026,away,0.5148,0.564,"the underdog TD, opening drive",0.4487,0.5,1
+AF047041026,home,0.5288,0.667,"the favourite TD, opening drive",0.6396999999999999,0.7290000000000001,1
 AF047061026,home,0.5696,0.609,"the underdog FG, Q2 or later",0.49060000000000004,0.491,1
 AF047081026,home,0.5745,0.6,"the favourite TD, later in Q1",0.6849,0.703,1
-AF047091026,home,0.5392,0.494,"the underdog TD, later in Q1",0.44420000000000004,0.408,1
+AF047091026,home,0.5392,0.494,"the underdog TD, opening drive",0.44420000000000004,0.408,1
 AF047101026,home,0.5231,0.527,"the underdog TD, later in Q1",0.39990000000000003,0.38,1
-AF047111026,home,0.5324,0.664,"the underdog FG, Q2 or later",0.61,0.7190000000000001,1
+AF047111026,home,0.5324,0.664,"the underdog FG, opening drive",0.61,0.7190000000000001,1
 AF047121026,home,0.5148,0.473,"the underdog FG, Q2 or later",0.3996,0.33799999999999997,0
 AF048021026,away,0.6156,0.46,"the underdog TD, Q2 or later",0.48419999999999996,0.33099999999999996,0
-AF048041026,away,0.5523,0.6056,"the favourite TD, later in Q1",0.6702,0.7130000000000001,1
+AF048041026,away,0.5523,0.6056,"the favourite TD, opening drive",0.6702,0.7130000000000001,1
 AF048051026,away,0.5737,0.514,"the favourite TD, opening drive",0.8384,0.875,1
 AF048071026,home,0.5337,0.561,"the favourite TD, Q2 or later",0.7737999999999999,0.7759999999999999,1
-AF048081026,away,0.5104,0.446,"the favourite TD, later in Q1",0.6312,0.619,1
-AF048091026,away,0.5318,0.4605,"the underdog TD, later in Q1",0.42569999999999997,0.3540000000000001,0
-AF048111026,home,0.6575,0.65,"the favourite TD, later in Q1",0.7513,0.7306999999999999,1
-AF048121026,home,0.5168,0.525,"the underdog TD, later in Q1",0.38549999999999995,0.408,0
-AF049011026,away,0.5159,0.423,"the favourite TD, later in Q1",0.6242000000000001,0.534,1
+AF048081026,away,0.5104,0.446,"the favourite TD, opening drive",0.6312,0.619,1
+AF048091026,away,0.5318,0.4605,"the underdog TD, opening drive",0.42569999999999997,0.3540000000000001,0
+AF048111026,home,0.6575,0.65,"the favourite TD, opening drive",0.7513,0.7306999999999999,1
+AF048121026,home,0.5168,0.525,"the underdog TD, opening drive",0.38549999999999995,0.408,0
+AF049011026,away,0.5159,0.423,"the favourite TD, opening drive",0.6242000000000001,0.534,1
 AF049031026,home,0.5211,0.502,"the favourite TD, Q2 or later",0.6672,0.609,0
 AF049041026,away,0.5149,0.4905,"the underdog TD, later in Q1",0.26670000000000005,0.22799999999999998,1
-AF049051026,away,0.5331,0.488,"the favourite TD, later in Q1",0.6378999999999999,0.617,0
-AF049061026,away,0.5584,0.576,"the favourite TD, later in Q1",0.6679999999999999,0.651,1
-AF049081026,away,0.5446,0.511,"the underdog FG, later in Q1",0.607,0.5660000000000001,1
+AF049051026,away,0.5331,0.488,"the favourite TD, opening drive",0.6378999999999999,0.617,0
+AF049061026,away,0.5584,0.576,"the favourite TD, opening drive",0.6679999999999999,0.651,1
+AF049081026,away,0.5446,0.511,"the underdog FG, opening drive",0.607,0.5660000000000001,1
 AF049091026,home,0.558,0.532,,,,1
-AF049111026,home,0.5623,0.396,"the underdog TD, later in Q1",0.4257,0.312,0
+AF049111026,home,0.5623,0.396,"the underdog TD, opening drive",0.4257,0.312,0
 AF049121026,home,0.5849,0.616,"the favourite TD, later in Q1",0.8016,0.823,1
-AF050011026,away,0.5837,0.536,"the underdog TD, later in Q1",0.4065,0.352,1
+AF050011026,away,0.5837,0.536,"the underdog TD, opening drive",0.4065,0.352,1
 AF050021026,home,0.6617,0.498,"the underdog TD, Q2 or later",0.4772,0.2883,0
 AF050041026,home,0.5269,0.534,,,,0
 AF050061026,away,0.5302,0.514,,,,1
-AF050081026,home,0.5492,0.585,"the underdog TD, Q2 or later",0.3814,0.39799999999999996,1
-AF050091026,home,0.5804,0.586,"the favourite TD, Q2 or later",0.7084,0.705,0
-AF050121026,away,0.5114,0.524,"the favourite FG, later in Q1",0.48340000000000005,0.489,0
+AF050081026,home,0.5492,0.585,"the underdog TD, opening drive",0.3814,0.39799999999999996,1
+AF050091026,home,0.5804,0.586,"the favourite TD, opening drive",0.7084,0.705,0
+AF050121026,away,0.5114,0.524,"the favourite FG, opening drive",0.48340000000000005,0.489,0
 AF051011026,home,0.5548,0.526,"the underdog TD, opening drive",0.1744,0.14800000000000002,1
-AF051021026,home,0.5338,0.564,"the underdog TD, later in Q1",0.4071,0.387,1
-AF051031026,home,0.5252,0.61,"the favourite TD, later in Q1",0.6268,0.6629999999999999,0
+AF051021026,home,0.5338,0.564,"the underdog TD, opening drive",0.4071,0.387,1
+AF051031026,home,0.5252,0.61,"the favourite TD, opening drive",0.6268,0.6629999999999999,0
 AF051041026,home,0.5606,0.668,"the underdog TD, later in Q1",0.26739999999999997,0.377,1
-AF051061026,away,0.5409,0.447,"the underdog TD, Q2 or later",0.4152,0.32200000000000006,0
+AF051061026,away,0.5409,0.447,"the underdog TD, opening drive",0.4152,0.32200000000000006,0
 AF051071026,home,0.5802,0.5485,"the underdog TD, later in Q1",0.3039,0.285,1
 AF051091026,home,0.6192,0.616,"the underdog TD, Q2 or later",0.2648,0.26899999999999996,1
 AF051111026,home,0.6001,0.734,"the favourite TD, later in Q1",0.8047,0.903,1
 AF051121026,away,0.5213,0.48,"the favourite TD, Q2 or later",0.6795,0.69,1
-AF052011026,home,0.5399,0.491,"the underdog FG, Q2 or later",0.5549000000000001,0.52,0
+AF052011026,home,0.5399,0.491,"the underdog FG, opening drive",0.5549000000000001,0.52,0
 AF052031026,home,0.54,0.603,"the favourite TD, later in Q1",0.7884,0.8170000000000001,1
-AF052051026,home,0.591,0.6146,"the underdog FG, Q2 or later",0.6113000000000001,0.5379999999999999,1
-AF052071026,home,0.5285,0.591,"the underdog TD, later in Q1",0.405,0.47200000000000003,0
+AF052051026,home,0.591,0.6146,"the underdog FG, opening drive",0.6113000000000001,0.5379999999999999,1
+AF052071026,home,0.5285,0.591,"the underdog TD, opening drive",0.405,0.47200000000000003,0
 AF052081026,home,0.5328,0.624,"the underdog FG, later in Q1",0.4025,0.493,0
-AF052101026,away,0.527,0.458,"the underdog FG, Q2 or later",0.5557000000000001,0.552,0
-AF052111026,home,0.5422,0.481,"the underdog TD, later in Q1",0.4181,0.368,0
-AF052121026,home,0.5796,0.55,"the underdog TD, later in Q1",0.43170000000000003,0.47,1
-AF053011026,home,0.5317,0.579,"the favourite TD, Q2 or later",0.65,0.6937000000000001,1
-AF053021026,home,0.5312,0.559,"the underdog TD, later in Q1",0.40549999999999997,0.46,0
+AF052101026,away,0.527,0.458,"the underdog FG, opening drive",0.5557000000000001,0.552,0
+AF052111026,home,0.5422,0.481,"the underdog TD, opening drive",0.4181,0.368,0
+AF052121026,home,0.5796,0.55,"the underdog TD, opening drive",0.43170000000000003,0.47,1
+AF053011026,home,0.5317,0.579,"the favourite TD, opening drive",0.65,0.6937000000000001,1
+AF053021026,home,0.5312,0.559,"the underdog TD, opening drive",0.40549999999999997,0.46,0
 AF053031026,home,0.581,0.53,"the favourite TD, Q2 or later",0.8253,0.818,1
 AF053041026,home,0.5364,0.656,"the underdog FG, Q2 or later",0.4214,0.531,1
-AF053081026,away,0.5157,0.411,"the underdog TD, later in Q1",0.3944,0.29700000000000004,0
+AF053081026,away,0.5157,0.411,"the underdog TD, opening drive",0.3944,0.29700000000000004,0
 AF053091026,home,0.5601,0.558,"the underdog TD, Q2 or later",0.45880000000000004,0.436,1
 AF053101026,home,0.5109,0.488,,,,1
-AF053111026,home,0.593,0.614,"the favourite TD, later in Q1",0.6838,0.708,1
-AF053121026,away,0.6106,0.633,"the favourite TD, Q2 or later",0.7103999999999999,0.716,1
+AF053111026,home,0.593,0.614,"the favourite TD, opening drive",0.6838,0.708,1
+AF053121026,away,0.6106,0.633,"the favourite TD, opening drive",0.7103999999999999,0.716,1
 AF054011026,away,0.5234,0.47,"the underdog TD, Q2 or later",0.1169,0.10099999999999998,0
 AF054031026,home,0.5149,0.6235,"the favourite TD, Q2 or later",0.7767000000000001,0.8368000000000001,0
-AF054051026,away,0.5522,0.457,"the favourite TD, Q2 or later",0.6672,0.646,0
-AF054061026,home,0.5335,0.514,"the underdog TD, later in Q1",0.4202,0.342,0
+AF054051026,away,0.5522,0.457,"the favourite TD, opening drive",0.6672,0.646,0
+AF054061026,home,0.5335,0.514,"the underdog TD, opening drive",0.4202,0.342,0
 AF054071026,home,0.5642,0.575,"the favourite TD, later in Q1",0.8173999999999999,0.835,1
-AF054091026,home,0.582,0.676,"the favourite TD, later in Q1",0.7192000000000001,0.772,0
+AF054091026,home,0.582,0.676,"the favourite TD, opening drive",0.7192000000000001,0.772,0
 AF054101026,home,0.5506,0.557,"the favourite FG, Q2 or later",0.69,0.715,1
 AF054121026,home,0.5131,0.548,"the underdog FG, Q2 or later",0.37560000000000004,0.41700000000000004,1
 AF055011026,home,0.5185,0.486,"the underdog TD, Q2 or later",0.4047,0.34299999999999997,0
-AF055021026,home,0.5497,0.565,"the underdog TD, later in Q1",0.4349,0.446,0
+AF055021026,home,0.5497,0.565,"the underdog TD, opening drive",0.4349,0.446,0
 AF055041026,away,0.5156,0.506,"the favourite FG, Q2 or later",0.6356999999999999,0.632,0
 AF055051026,away,0.5445,0.61,"the underdog FG, later in Q1",0.42469999999999997,0.509,1
-AF055061026,away,0.602,0.578,"the favourite TD, later in Q1",0.7221,0.669,1
-AF055071026,home,0.5806,0.621,"the favourite TD, later in Q1",0.6431999999999999,0.6579999999999999,0
-AF055091026,home,0.5735,0.584,"the favourite TD, later in Q1",0.7081000000000001,0.722,0
+AF055061026,away,0.602,0.578,"the favourite TD, opening drive",0.7221,0.669,1
+AF055071026,home,0.5806,0.621,"the favourite TD, opening drive",0.6431999999999999,0.6579999999999999,0
+AF055091026,home,0.5735,0.584,"the favourite TD, opening drive",0.7081000000000001,0.722,0
 AF055111026,home,0.5502,0.515,"the underdog FG, later in Q1",0.4439,0.38,0
-AF055121026,home,0.5268,0.487,"the favourite TD, Q2 or later",0.6670999999999999,0.6579999999999999,0
+AF055121026,home,0.5268,0.487,"the favourite TD, opening drive",0.6670999999999999,0.6579999999999999,0
 AF056021026,home,0.6057,0.508,"the underdog TD, Q2 or later",0.2584,0.2002,0
 AF056041026,home,0.5499,0.637,"the underdog TD, later in Q1",0.3072,0.31,0
-AF056051026,home,0.5355,0.5,"the favourite TD, Q2 or later",0.6507,0.642,0
-AF056061026,home,0.576,0.5375,"the underdog TD, later in Q1",0.4514,0.375,0
-AF056081026,home,0.5965,0.483,"the underdog TD, later in Q1",0.4604,0.32130000000000003,0
+AF056051026,home,0.5355,0.5,"the favourite TD, opening drive",0.6507,0.642,0
+AF056061026,home,0.576,0.5375,"the underdog TD, opening drive",0.4514,0.375,0
+AF056081026,home,0.5965,0.483,"the underdog TD, opening drive",0.4604,0.32130000000000003,0
 AF056111026,away,0.5976,0.558,"the favourite TD, Q2 or later",0.8331,0.84,0
-AF056121026,away,0.55,0.505,"the underdog TD, later in Q1",0.42469999999999997,0.405,0
-AF057011026,home,0.536,0.379,"the underdog TD, later in Q1",0.4067,0.313,0
+AF056121026,away,0.55,0.505,"the underdog TD, opening drive",0.42469999999999997,0.405,0
+AF057011026,home,0.536,0.379,"the underdog TD, opening drive",0.4067,0.313,0
 AF057021026,home,0.5327,0.581,"the favourite TD, later in Q1",0.7579,0.8079999999999999,1
 AF057031026,away,0.5483,0.453,"the underdog TD, Q2 or later",0.27890000000000004,0.18900000000000006,0
 AF057061026,home,0.5295,0.547,"the favourite TD, later in Q1",0.7896,0.82,1
 AF057081026,home,0.6507,0.585,"the favourite TD, later in Q1",0.8487,0.8270000000000001,1
-AF057091026,home,0.558,0.554,"the favourite TD, later in Q1",0.6688,0.685,1
+AF057091026,home,0.558,0.554,"the favourite TD, opening drive",0.6688,0.685,1
 AF057101026,home,0.5172,0.506,"the favourite TD, later in Q1",0.7567,0.765,1
 AF057111026,away,0.5113,0.372,"the underdog TD, Q2 or later",0.3668,0.263,0
 AF057121026,home,0.5896,0.572,"the favourite TD, Q2 or later",0.8408,0.8690000000000001,1
-AF058011026,home,0.5402,0.492,"the underdog FG, Q2 or later",0.5695,0.542,0
+AF058011026,home,0.5402,0.492,"the underdog FG, opening drive",0.5695,0.542,0
 AF058021026,away,0.5488,0.468,"the favourite TD, later in Q1",0.7726,0.725,1
 AF058071026,away,0.517,0.511,"the underdog TD, Q2 or later",0.2329000000000001,0.20700000000000007,0
-AF058091026,away,0.5977,0.57,"the favourite TD, later in Q1",0.7042999999999999,0.6910000000000001,1
-AF058121026,away,0.566,0.51,"the underdog TD, later in Q1",0.4365,0.3490000000000001,0
+AF058091026,away,0.5977,0.57,"the favourite TD, opening drive",0.7042999999999999,0.6910000000000001,1
+AF058121026,away,0.566,0.51,"the underdog TD, opening drive",0.4365,0.3490000000000001,0
 AF059011026,home,0.5667,0.598,"the favourite TD, later in Q1",0.8029999999999999,0.82,1
-AF059021026,away,0.5195,0.563,"the favourite TD, later in Q1",0.6313,0.6699999999999999,1
+AF059021026,away,0.5195,0.563,"the favourite TD, opening drive",0.6313,0.6699999999999999,1
 AF059091026,home,0.5523,0.51,,,,1
-AF059101026,home,0.5202,0.471,"the favourite TD, Q2 or later",0.6252,0.618,1
+AF059101026,home,0.5202,0.471,"the favourite TD, opening drive",0.6252,0.618,1
 AF059121026,away,0.5152,0.586,"the favourite TD, opening drive",0.7713,0.808,1
-AF060021026,away,0.6129,0.456,"the underdog TD, later in Q1",0.48150000000000004,0.32799999999999996,0
+AF060021026,away,0.6129,0.456,"the underdog TD, opening drive",0.48150000000000004,0.32799999999999996,0
 AF060041026,away,0.5947,0.605,"the favourite TD, Q2 or later",0.8904,0.905,1
-AF060051026,away,0.5787,0.508,"the underdog TD, later in Q1",0.4276,0.36,1
-AF060061026,home,0.5986,0.587,"the underdog TD, later in Q1",0.46590000000000004,0.461,1
+AF060051026,away,0.5787,0.508,"the underdog TD, opening drive",0.4276,0.36,1
+AF060061026,home,0.5986,0.587,"the underdog TD, opening drive",0.46590000000000004,0.461,1
 AF060071026,home,0.5212,0.535,"the favourite TD, later in Q1",0.7322,0.769,0
-AF060091026,home,0.5211,0.543,"the favourite TD, Q2 or later",0.6506000000000001,0.6679999999999999,1
-AF060111026,home,0.6588,0.593,"the underdog TD, later in Q1",0.5173,0.47100000000000003,0
-AF060121026,away,0.5228,0.4935,"the underdog TD, later in Q1",0.42469999999999997,0.368,1
-AF061011026,home,0.5222,0.485,"the underdog TD, later in Q1",0.39130000000000004,0.342,1
+AF060091026,home,0.5211,0.543,"the favourite TD, opening drive",0.6506000000000001,0.6679999999999999,1
+AF060111026,home,0.6588,0.593,"the underdog TD, opening drive",0.5173,0.47100000000000003,0
+AF060121026,away,0.5228,0.4935,"the underdog TD, opening drive",0.42469999999999997,0.368,1
+AF061011026,home,0.5222,0.485,"the underdog TD, opening drive",0.39130000000000004,0.342,1
 AF061021026,away,0.5266,0.541,"the favourite TD, later in Q1",0.7887,0.7969999999999999,1
-AF061031026,home,0.5485,0.508,"the underdog TD, Q2 or later",0.402,0.377,0
-AF061041026,home,0.5102,0.46,"the underdog TD, later in Q1",0.4021,0.396,0
-AF061051026,home,0.5145,0.497,"the underdog TD, later in Q1",0.40090000000000003,0.405,0
+AF061031026,home,0.5485,0.508,"the underdog TD, opening drive",0.402,0.377,0
+AF061041026,home,0.5102,0.46,"the underdog TD, opening drive",0.4021,0.396,0
+AF061051026,home,0.5145,0.497,"the underdog TD, opening drive",0.40090000000000003,0.405,0
 AF061071026,away,0.5447,0.445,"the underdog TD, later in Q1",0.4171,0.29799999999999993,0
-AF061081026,away,0.5741,0.513,"the favourite TD, later in Q1",0.6799999999999999,0.614,1
+AF061081026,away,0.5741,0.513,"the favourite TD, opening drive",0.6799999999999999,0.614,1
 AF061091026,home,0.6061,0.657,"the favourite TD, Q2 or later",0.8339,0.855,1
-AF061121026,home,0.5488,0.572,"the favourite TD, later in Q1",0.6542,0.706,1
+AF061121026,home,0.5488,0.572,"the favourite TD, opening drive",0.6542,0.706,1
 AF062051026,away,0.5294,0.596,"the favourite TD, later in Q1",0.784,0.844,1
-AF062081026,away,0.5334,0.523,"the underdog FG, later in Q1",0.5687,0.55,1
+AF062081026,away,0.5334,0.523,"the underdog FG, opening drive",0.5687,0.55,1
 AF062091026,away,0.5122,0.452,,,,0
-AF062101026,away,0.5278,0.576,"the favourite TD, later in Q1",0.6627000000000001,0.685,1
-AF062111026,away,0.6325,0.573,"the underdog TD, Q2 or later",0.5214000000000001,0.41200000000000003,0
-AF062121026,away,0.6157,0.63,"the underdog TD, later in Q1",0.4828,0.486,0
+AF062101026,away,0.5278,0.576,"the favourite TD, opening drive",0.6627000000000001,0.685,1
+AF062111026,away,0.6325,0.573,"the underdog TD, opening drive",0.5214000000000001,0.41200000000000003,0
+AF062121026,away,0.6157,0.63,"the underdog TD, opening drive",0.4828,0.486,0
 AF063021026,home,0.5143,0.49,"the underdog TD, Q2 or later",0.2253,0.201,1
-AF063041026,away,0.5609,0.51,"the favourite TD, Q2 or later",0.6627000000000001,0.636,0
-AF063061026,home,0.515,0.501,"the underdog TD, later in Q1",0.431,0.387,0
-AF063071026,home,0.5973,0.522,"the underdog TD, later in Q1",0.474,0.449,0
+AF063041026,away,0.5609,0.51,"the favourite TD, opening drive",0.6627000000000001,0.636,0
+AF063061026,home,0.515,0.501,"the underdog TD, opening drive",0.431,0.387,0
+AF063071026,home,0.5973,0.522,"the underdog TD, opening drive",0.474,0.449,0
 AF063081026,home,0.5731,0.534,"the underdog FG, later in Q1",0.4011,0.35,1
-AF063101026,home,0.5546,0.52,"the underdog TD, Q2 or later",0.4155,0.40399999999999997,0
+AF063101026,home,0.5546,0.52,"the underdog TD, opening drive",0.4155,0.40399999999999997,0
 AF063121026,away,0.5649,0.536,"the underdog TD, later in Q1",0.2834,0.258,1
-AF064021026,home,0.5718,0.488,"the underdog TD, Q2 or later",0.4337,0.358,0
+AF064021026,home,0.5718,0.488,"the underdog TD, opening drive",0.4337,0.358,0
 AF064041026,home,0.5125,0.513,"the favourite FG, Q2 or later",0.4757,0.49700000000000005,0
-AF064071026,away,0.5283,0.505,"the favourite TD, later in Q1",0.6447,0.635,1
-AF064081026,home,0.5761,0.5515,"the favourite TD, later in Q1",0.6923999999999999,0.6920000000000001,1
+AF064071026,away,0.5283,0.505,"the favourite TD, opening drive",0.6447,0.635,1
+AF064081026,home,0.5761,0.5515,"the favourite TD, opening drive",0.6923999999999999,0.6920000000000001,1
 AF064091026,away,0.52,0.508,"the favourite TD, Q2 or later",0.841,0.849,0
-AF064101026,home,0.6184,0.596,"the favourite TD, Q2 or later",0.7216,0.7120000000000001,0
-AF064121026,away,0.6019,0.62,"the favourite TD, later in Q1",0.7426,0.724,1
+AF064101026,home,0.6184,0.596,"the favourite TD, opening drive",0.7216,0.7120000000000001,0
+AF064121026,away,0.6019,0.62,"the favourite TD, opening drive",0.7426,0.724,1
 AF065011026,away,0.5227,0.488,"the underdog TD, later in Q1",0.24269999999999992,0.241,0
-AF065021026,away,0.5407,0.471,"the underdog TD, later in Q1",0.42069999999999996,0.383,0
+AF065021026,away,0.5407,0.471,"the underdog TD, opening drive",0.42069999999999996,0.383,0
 AF065031026,home,0.5325,0.508,"the underdog TD, opening drive",0.1689,0.16399999999999998,0
 AF065041026,home,0.5302,0.467,"the underdog FG, Q2 or later",0.426,0.38799999999999996,0
-AF065051026,away,0.5273,0.513,"the favourite TD, Q2 or later",0.6061,0.615,0
-AF065071026,away,0.5617,0.376,"the underdog TD, later in Q1",0.4043,0.2829999999999999,0
+AF065051026,away,0.5273,0.513,"the favourite TD, opening drive",0.6061,0.615,0
+AF065071026,away,0.5617,0.376,"the underdog TD, opening drive",0.4043,0.2829999999999999,0
 AF065111026,away,0.6401,0.617,"the favourite TD, Q2 or later",0.7194,0.702,1
-AF065121026,home,0.5464,0.533,"the underdog TD, later in Q1",0.40979999999999994,0.37799999999999995,0
+AF065121026,home,0.5464,0.533,"the underdog TD, opening drive",0.40979999999999994,0.37799999999999995,0
 AF066031026,home,0.5224,0.498,"the favourite TD, later in Q1",0.652,0.613,1
-AF066061026,home,0.5519,0.505,"the underdog FG, later in Q1",0.5820000000000001,0.501,1
-AF066081026,home,0.515,0.4495,"the favourite TD, later in Q1",0.6174000000000001,0.562,1
-AF066101026,away,0.6172,0.574,"the favourite TD, later in Q1",0.7346999999999999,0.737,1
+AF066061026,home,0.5519,0.505,"the underdog FG, opening drive",0.5820000000000001,0.501,1
+AF066081026,home,0.515,0.4495,"the favourite TD, opening drive",0.6174000000000001,0.562,1
+AF066101026,away,0.6172,0.574,"the favourite TD, opening drive",0.7346999999999999,0.737,1
 AF066111026,away,0.5968,0.526,"the underdog TD, Q2 or later",0.482,0.388,1
-AF066121026,away,0.6317,0.6193,"the underdog FG, Q2 or later",0.6476,0.599,0
-AF067011026,away,0.5235,0.513,"the favourite TD, later in Q1",0.651,0.617,1
-AF067031026,away,0.5978,0.628,"the underdog TD, later in Q1",0.5,0.515,0
+AF066121026,away,0.6317,0.6193,"the underdog FG, opening drive",0.6476,0.599,0
+AF067011026,away,0.5235,0.513,"the favourite TD, opening drive",0.651,0.617,1
+AF067031026,away,0.5978,0.628,"the underdog TD, opening drive",0.5,0.515,0
 AF067041026,away,0.5334,0.48,,,,1
-AF067051026,away,0.5378,0.507,"the underdog FG, later in Q1",0.5802,0.558,1
-AF067061026,away,0.5562,0.466,"the underdog TD, later in Q1",0.4363,0.32700000000000007,0
-AF067071026,home,0.607,0.486,"the favourite TD, Q2 or later",0.6986,0.617,1
+AF067051026,away,0.5378,0.507,"the underdog FG, opening drive",0.5802,0.558,1
+AF067061026,away,0.5562,0.466,"the underdog TD, opening drive",0.4363,0.32700000000000007,0
+AF067071026,home,0.607,0.486,"the favourite TD, opening drive",0.6986,0.617,1
 AF067081026,away,0.6351,0.52,"the favourite FG, Q2 or later",0.6921999999999999,0.6120000000000001,1
 AF067091026,away,0.51,0.527,"the underdog TD, later in Q1",0.2592,0.254,0
-AF067101026,away,0.5166,0.471,"the underdog TD, later in Q1",0.3913,0.393,1
+AF067101026,away,0.5166,0.471,"the underdog TD, opening drive",0.3913,0.393,1
 AF067121026,away,0.5261,0.516,"the favourite TD, later in Q1",0.7558,0.7889999999999999,0
-AF068011026,home,0.5357,0.539,"the favourite TD, later in Q1",0.6392,0.652,1
+AF068011026,home,0.5357,0.539,"the favourite TD, opening drive",0.6392,0.652,1
 AF068021026,away,0.5655,0.499,"the underdog TD, later in Q1",0.28870000000000007,0.26,0
-AF068031026,home,0.5776,0.617,"the underdog TD, Q2 or later",0.4314,0.44,0
+AF068031026,home,0.5776,0.617,"the underdog TD, opening drive",0.4314,0.44,0
 AF068041026,away,0.5735,0.466,"the favourite TD, later in Q1",0.6923999999999999,0.6020000000000001,1
-AF068061026,home,0.6383,0.623,"the underdog TD, later in Q1",0.5171,0.516,1
+AF068061026,home,0.6383,0.623,"the underdog TD, opening drive",0.5171,0.516,1
 AF068081026,home,0.5124,0.48,"the favourite FG, Q2 or later",0.6061,0.612,1
-AF068091026,home,0.6007,0.65,"the underdog TD, Q2 or later",0.4914,0.4805,0
-AF068101026,home,0.5302,0.512,"the underdog TD, Q2 or later",0.41100000000000003,0.4,1
+AF068091026,home,0.6007,0.65,"the underdog TD, opening drive",0.4914,0.4805,0
+AF068101026,home,0.5302,0.512,"the underdog TD, opening drive",0.41100000000000003,0.4,1
 AF068111026,home,0.5328,0.502,"the favourite TD, Q2 or later",0.8067,0.7909999999999999,1
-AF068121026,away,0.6048,0.614,"the favourite FG, later in Q1",0.5637,0.5760000000000001,1
-AF069011026,away,0.5398,0.519,"the favourite TD, later in Q1",0.6572,0.6819999999999999,1
-AF069021026,away,0.5266,0.5315,"the underdog TD, later in Q1",0.3897999999999999,0.32599999999999996,0
-AF069031026,home,0.5801,0.696,"the underdog TD, Q2 or later",0.47340000000000004,0.555,0
-AF069041026,away,0.5206,0.5595,"the favourite TD, later in Q1",0.6359,0.665,0
-AF069051026,away,0.5194,0.5135,"the underdog FG, later in Q1",0.6049,0.532,1
+AF068121026,away,0.6048,0.614,"the favourite FG, opening drive",0.5637,0.5760000000000001,1
+AF069011026,away,0.5398,0.519,"the favourite TD, opening drive",0.6572,0.6819999999999999,1
+AF069021026,away,0.5266,0.5315,"the underdog TD, opening drive",0.3897999999999999,0.32599999999999996,0
+AF069031026,home,0.5801,0.696,"the underdog TD, opening drive",0.47340000000000004,0.555,0
+AF069041026,away,0.5206,0.5595,"the favourite TD, opening drive",0.6359,0.665,0
+AF069051026,away,0.5194,0.5135,"the underdog FG, opening drive",0.6049,0.532,1
 AF069061026,home,0.553,0.554,"the favourite TD, Q2 or later",0.6485,0.7190000000000001,1
-AF069071026,home,0.5835,0.608,"the favourite TD, later in Q1",0.7075,0.6920000000000001,1
-AF069081026,away,0.6322,0.546,"the underdog TD, Q2 or later",0.4731000000000001,0.378,1
-AF069101026,home,0.5599,0.562,"the favourite TD, later in Q1",0.6673,0.6679999999999999,1
-AF069121026,away,0.6189,0.587,"the favourite FG, later in Q1",0.5574,0.525,1
+AF069071026,home,0.5835,0.608,"the favourite TD, opening drive",0.7075,0.6920000000000001,1
+AF069081026,away,0.6322,0.546,"the underdog TD, opening drive",0.4731000000000001,0.378,1
+AF069101026,home,0.5599,0.562,"the favourite TD, opening drive",0.6673,0.6679999999999999,1
+AF069121026,away,0.6189,0.587,"the favourite FG, opening drive",0.5574,0.525,1
 AF070011026,home,0.5142,0.5135,"the favourite TD, Q2 or later",0.6315999999999999,0.652,1
 AF070031026,away,0.5444,0.5335,"the favourite TD, Q2 or later",0.7813,0.79,0
-AF070061026,away,0.5612,0.464,"the favourite TD, later in Q1",0.6642,0.589,1
-AF070071026,home,0.5317,0.551,"the underdog TD, later in Q1",0.3942,0.49,1
-AF070081026,away,0.564,0.593,"the underdog FG, Q2 or later",0.5981000000000001,0.643,1
+AF070061026,away,0.5612,0.464,"the favourite TD, opening drive",0.6642,0.589,1
+AF070071026,home,0.5317,0.551,"the underdog TD, opening drive",0.3942,0.49,1
+AF070081026,away,0.564,0.593,"the underdog FG, opening drive",0.5981000000000001,0.643,1
 AF070091026,home,0.5559,0.503,"the favourite TD, Q2 or later",0.6456000000000001,0.615,0
 AF070101026,away,0.533,0.529,"the favourite TD, Q2 or later",0.7755,0.792,1
-AF070111026,away,0.5809,0.5025,"the favourite TD, Q2 or later",0.7093,0.704,0
-AF071011026,away,0.5511,0.469,"the favourite TD, later in Q1",0.6516,0.615,0
-AF071031026,away,0.593,0.652,"the favourite FG, Q2 or later",0.5065999999999999,0.532,0
-AF071051026,home,0.5138,0.57,"the underdog TD, Q2 or later",0.3975,0.433,0
+AF070111026,away,0.5809,0.5025,"the favourite TD, opening drive",0.7093,0.704,0
+AF071011026,away,0.5511,0.469,"the favourite TD, opening drive",0.6516,0.615,0
+AF071031026,away,0.593,0.652,"the favourite FG, opening drive",0.5065999999999999,0.532,0
+AF071051026,home,0.5138,0.57,"the underdog TD, opening drive",0.3975,0.433,0
 AF071061026,away,0.5187,0.52,"the favourite TD, later in Q1",0.7759,0.827,0
-AF071071026,home,0.5298,0.496,"the underdog TD, later in Q1",0.4014,0.366,1
-AF071091026,away,0.5322,0.527,"the favourite TD, later in Q1",0.5734,0.5129999999999999,0
-AF071101026,away,0.5208,0.465,"the underdog FG, Q2 or later",0.5646,0.542,1
-AF071111026,away,0.6351,0.607,"the underdog TD, Q2 or later",0.4768,0.45200000000000007,1
-AF071121026,away,0.5538,0.57,"the favourite FG, later in Q1",0.5255,0.53,1
-AF072011026,home,0.5181,0.62,"the underdog TD, later in Q1",0.39899999999999997,0.508,1
-AF072021026,away,0.6084,0.517,"the favourite TD, later in Q1",0.7082999999999999,0.655,1
+AF071071026,home,0.5298,0.496,"the underdog TD, opening drive",0.4014,0.366,1
+AF071091026,away,0.5322,0.527,"the favourite TD, opening drive",0.5734,0.5129999999999999,0
+AF071101026,away,0.5208,0.465,"the underdog FG, opening drive",0.5646,0.542,1
+AF071111026,away,0.6351,0.607,"the underdog TD, opening drive",0.4768,0.45200000000000007,1
+AF071121026,away,0.5538,0.57,"the favourite FG, opening drive",0.5255,0.53,1
+AF072011026,home,0.5181,0.62,"the underdog TD, opening drive",0.39899999999999997,0.508,1
+AF072021026,away,0.6084,0.517,"the favourite TD, opening drive",0.7082999999999999,0.655,1
 AF072041026,away,0.6037,0.493,"the favourite TD, later in Q1",0.8238,0.757,1
 AF072061026,home,0.5668,0.512,"the favourite TD, later in Q1",0.8026000000000001,0.8059999999999999,1
-AF072081026,away,0.5576,0.52,"the underdog TD, later in Q1",0.41469999999999996,0.40700000000000003,0
+AF072081026,away,0.5576,0.52,"the underdog TD, opening drive",0.41469999999999996,0.40700000000000003,0
 AF072091026,away,0.6762,0.589,"the underdog TD, Q2 or later",0.2825,0.22299999999999998,0
-AF072101026,away,0.565,0.5365,"the favourite TD, later in Q1",0.7041999999999999,0.671,1
+AF072101026,away,0.565,0.5365,"the favourite TD, opening drive",0.7041999999999999,0.671,1
 AF072111026,home,0.553,0.532,,,,1
-AF073041026,away,0.5504,0.399,"the underdog TD, later in Q1",0.43490000000000006,0.32099999999999995,0
-AF073051026,away,0.5487,0.502,"the underdog TD, later in Q1",0.4344,0.41500000000000004,1
+AF073041026,away,0.5504,0.399,"the underdog TD, opening drive",0.43490000000000006,0.32099999999999995,0
+AF073051026,away,0.5487,0.502,"the underdog TD, opening drive",0.4344,0.41500000000000004,1
 AF073061026,home,0.571,0.514,"the favourite FG, Q2 or later",0.5941,0.573,0
 AF073071026,home,0.527,0.403,"the underdog FG, Q2 or later",0.3116,0.25129999999999997,0
-AF073081026,home,0.6494,0.558,"the underdog FG, Q2 or later",0.6720999999999999,0.568,1
-AF073091026,home,0.6132,0.628,"the favourite TD, later in Q1",0.708,0.6990000000000001,1
-AF073101026,away,0.6084,0.5065,"the underdog TD, later in Q1",0.4739,0.43500000000000005,1
+AF073081026,home,0.6494,0.558,"the underdog FG, opening drive",0.6720999999999999,0.568,1
+AF073091026,home,0.6132,0.628,"the favourite TD, opening drive",0.708,0.6990000000000001,1
+AF073101026,away,0.6084,0.5065,"the underdog TD, opening drive",0.4739,0.43500000000000005,1
 AF073111026,home,0.5142,0.559,,,,1
-AF073121026,home,0.5623,0.67,"the underdog TD, later in Q1",0.4669,0.5,1
+AF073121026,home,0.5623,0.67,"the underdog TD, opening drive",0.4669,0.5,1
 AF074031026,home,0.5662,0.629,"the favourite TD, Q2 or later",0.792,0.816,1
-AF074051026,away,0.55,0.527,"the favourite TD, later in Q1",0.6474,0.611,1
-AF074061026,away,0.5889,0.568,"the favourite TD, later in Q1",0.6937,0.649,0
+AF074051026,away,0.55,0.527,"the favourite TD, opening drive",0.6474,0.611,1
+AF074061026,away,0.5889,0.568,"the favourite TD, opening drive",0.6937,0.649,0
 AF074081026,away,0.5428,0.582,"the favourite TD, Q2 or later",0.8168,0.854,1
 AF074091026,away,0.5235,0.5355,"the underdog TD, Q2 or later",0.39479999999999993,0.4224,1
-AF074101026,home,0.5424,0.565,"the favourite TD, Q2 or later",0.6831999999999999,0.718,0
-AF074111026,home,0.6104,0.569,"the underdog TD, Q2 or later",0.474,0.405,0
-AF074121026,home,0.6089,0.61,"the favourite TD, Q2 or later",0.7514,0.743,1
-AF075011026,home,0.5171,0.549,"the favourite TD, later in Q1",0.6325,0.674,1
-AF075021026,home,0.5222,0.472,"the underdog TD, later in Q1",0.3791,0.327,0
+AF074101026,home,0.5424,0.565,"the favourite TD, opening drive",0.6831999999999999,0.718,0
+AF074111026,home,0.6104,0.569,"the underdog TD, opening drive",0.474,0.405,0
+AF074121026,home,0.6089,0.61,"the favourite TD, opening drive",0.7514,0.743,1
+AF075011026,home,0.5171,0.549,"the favourite TD, opening drive",0.6325,0.674,1
+AF075021026,home,0.5222,0.472,"the underdog TD, opening drive",0.3791,0.327,0
 AF075061026,home,0.5739,0.5435,"the favourite FG, later in Q1",0.6799,0.654,1
-AF075091026,home,0.531,0.552,"the favourite FG, later in Q1",0.4865,0.515,0
-AF075101026,away,0.5424,0.511,"the underdog TD, later in Q1",0.43679999999999997,0.43500000000000005,0
-AF076031026,away,0.5575,0.51,"the favourite TD, Q2 or later",0.5939,0.567,0
+AF075091026,home,0.531,0.552,"the favourite FG, opening drive",0.4865,0.515,0
+AF075101026,away,0.5424,0.511,"the underdog TD, opening drive",0.43679999999999997,0.43500000000000005,0
+AF076031026,away,0.5575,0.51,"the favourite TD, opening drive",0.5939,0.567,0
 AF076061026,home,0.5475,0.541,"the underdog TD, Q2 or later",0.4305,0.428,1
-AF076071026,away,0.5469,0.531,"the favourite TD, later in Q1",0.6439,0.635,0
+AF076071026,away,0.5469,0.531,"the favourite TD, opening drive",0.6439,0.635,0
 AF076081026,away,0.5673,0.562,"the favourite FG, later in Q1",0.6860999999999999,0.698,1
-AF076091026,away,0.7074,0.663,"the underdog TD, later in Q1",0.5668,0.512,1
-AF076101026,home,0.6478,0.575,"the underdog TD, later in Q1",0.4763,0.396,0
-AF076111026,home,0.5284,0.48,"the underdog TD, later in Q1",0.3992,0.28800000000000003,1
+AF076091026,away,0.7074,0.663,"the underdog TD, opening drive",0.5668,0.512,1
+AF076101026,home,0.6478,0.575,"the underdog TD, opening drive",0.4763,0.396,0
+AF076111026,home,0.5284,0.48,"the underdog TD, opening drive",0.3992,0.28800000000000003,1
 AF077011026,home,0.5611,0.551,"the favourite FG, Q2 or later",0.5096,0.519,1
-AF077021026,away,0.5247,0.506,"the favourite FG, Q2 or later",0.4406,0.45799999999999996,1
+AF077021026,away,0.5247,0.506,"the favourite FG, opening drive",0.4406,0.45799999999999996,1
 AF077031026,home,0.5625,0.638,"the favourite TD, Q2 or later",0.8105,0.8390000000000001,1
-AF077041026,home,0.5463,0.477,"the favourite TD, later in Q1",0.6393,0.589,1
-AF077061026,home,0.5154,0.418,"the favourite TD, later in Q1",0.649,0.603,0
-AF077071026,away,0.5937,0.478,"the favourite TD, later in Q1",0.7058,0.645,0
-AF077081026,home,0.672,0.545,"the favourite TD, later in Q1",0.7689,0.691,1
+AF077041026,home,0.5463,0.477,"the favourite TD, opening drive",0.6393,0.589,1
+AF077061026,home,0.5154,0.418,"the favourite TD, opening drive",0.649,0.603,0
+AF077071026,away,0.5937,0.478,"the favourite TD, opening drive",0.7058,0.645,0
+AF077081026,home,0.672,0.545,"the favourite TD, opening drive",0.7689,0.691,1
 AF077091026,home,0.5851,0.582,"the underdog TD, Q2 or later",0.3397,0.317,1
-AF078011026,away,0.5101,0.524,"the favourite FG, Q2 or later",0.4522999999999999,0.494,1
-AF078031026,away,0.5537,0.4525,"the favourite TD, later in Q1",0.6798,0.5660000000000001,1
-AF078041026,home,0.5573,0.487,"the underdog TD, later in Q1",0.47340000000000004,0.42700000000000005,0
-AF078051026,home,0.5125,0.562,"the favourite TD, later in Q1",0.6284000000000001,0.629,0
+AF078011026,away,0.5101,0.524,"the favourite FG, opening drive",0.4522999999999999,0.494,1
+AF078031026,away,0.5537,0.4525,"the favourite TD, opening drive",0.6798,0.5660000000000001,1
+AF078041026,home,0.5573,0.487,"the underdog TD, opening drive",0.47340000000000004,0.42700000000000005,0
+AF078051026,home,0.5125,0.562,"the favourite TD, opening drive",0.6284000000000001,0.629,0
 AF078061026,away,0.557,0.566,"the favourite TD, later in Q1",0.8006,0.8,1
-AF078091026,away,0.6775,0.588,"the underdog FG, Q2 or later",0.6905,0.615,1
-AF078111026,away,0.5776,0.558,"the underdog TD, later in Q1",0.43590000000000007,0.385,0
+AF078091026,away,0.6775,0.588,"the underdog FG, opening drive",0.6905,0.615,1
+AF078111026,away,0.5776,0.558,"the underdog TD, opening drive",0.43590000000000007,0.385,0
 AF079021026,home,0.5284,0.501,"the favourite TD, later in Q1",0.7997,0.78,1
-AF079031026,away,0.5525,0.597,"the favourite TD, later in Q1",0.6853,0.7150000000000001,1
-AF079041026,home,0.5578,0.561,"the favourite TD, later in Q1",0.6391,0.6970000000000001,0
-AF079061026,home,0.5325,0.457,"the favourite FG, Q2 or later",0.4987,0.41,0
+AF079031026,away,0.5525,0.597,"the favourite TD, opening drive",0.6853,0.7150000000000001,1
+AF079041026,home,0.5578,0.561,"the favourite TD, opening drive",0.6391,0.6970000000000001,0
+AF079061026,home,0.5325,0.457,"the favourite FG, opening drive",0.4987,0.41,0
 AF079091026,home,0.5738,0.565,"the favourite TD, Q2 or later",0.8029999999999999,0.8190000000000001,1
-AF079101026,away,0.5617,0.525,"the favourite TD, later in Q1",0.6668000000000001,0.6020000000000001,1
-AF080011026,away,0.5161,0.548,"the underdog TD, later in Q1",0.38670000000000004,0.391,0
-AF080061026,away,0.6253,0.647,"the favourite TD, later in Q1",0.7111000000000001,0.751,1
-AF080071026,away,0.5176,0.5265,"the favourite TD, Q2 or later",0.6136999999999999,0.627,1
+AF079101026,away,0.5617,0.525,"the favourite TD, opening drive",0.6668000000000001,0.6020000000000001,1
+AF080011026,away,0.5161,0.548,"the underdog TD, opening drive",0.38670000000000004,0.391,0
+AF080061026,away,0.6253,0.647,"the favourite TD, opening drive",0.7111000000000001,0.751,1
+AF080071026,away,0.5176,0.5265,"the favourite TD, opening drive",0.6136999999999999,0.627,1
 AF080081026,home,0.5654,0.62,"the underdog TD, Q2 or later",0.26940000000000003,0.322,0
-AF080091026,away,0.5383,0.534,"the underdog TD, Q2 or later",0.4240999999999999,0.42799999999999994,1
-AF080101026,home,0.5502,0.541,"the underdog TD, Q2 or later",0.4144,0.397,1
-AF080111026,home,0.5501,0.494,"the favourite TD, later in Q1",0.6753,0.6940000000000001,1
-AF081021026,away,0.6284,0.498,"the underdog TD, later in Q1",0.49539999999999995,0.37,0
-AF081031026,home,0.5106,0.505,"the underdog TD, later in Q1",0.3921,0.376,0
-AF081041026,home,0.5374,0.42,"the underdog TD, later in Q1",0.4113,0.318,1
-AF081071026,away,0.5455,0.58,"the favourite TD, later in Q1",0.6576,0.667,0
-AF081081026,away,0.5431,0.503,"the favourite TD, later in Q1",0.6677,0.657,1
-AF081091026,away,0.5363,0.472,"the underdog TD, later in Q1",0.40380000000000005,0.32900000000000007,1
+AF080091026,away,0.5383,0.534,"the underdog TD, opening drive",0.4240999999999999,0.42799999999999994,1
+AF080101026,home,0.5502,0.541,"the underdog TD, opening drive",0.4144,0.397,1
+AF080111026,home,0.5501,0.494,"the favourite TD, opening drive",0.6753,0.6940000000000001,1
+AF081021026,away,0.6284,0.498,"the underdog TD, opening drive",0.49539999999999995,0.37,0
+AF081031026,home,0.5106,0.505,"the underdog TD, opening drive",0.3921,0.376,0
+AF081041026,home,0.5374,0.42,"the underdog TD, opening drive",0.4113,0.318,1
+AF081071026,away,0.5455,0.58,"the favourite TD, opening drive",0.6576,0.667,0
+AF081081026,away,0.5431,0.503,"the favourite TD, opening drive",0.6677,0.657,1
+AF081091026,away,0.5363,0.472,"the underdog TD, opening drive",0.40380000000000005,0.32900000000000007,1
 AF081101026,home,0.5195,0.569,"the underdog TD, later in Q1",0.2816,0.27,0
-AF081111026,away,0.592,0.538,"the underdog FG, Q2 or later",0.631,0.5189999999999999,1
+AF081111026,away,0.592,0.538,"the underdog FG, opening drive",0.631,0.5189999999999999,1
 AF082021026,home,0.5202,0.558,"the favourite TD, Q2 or later",0.7974,0.815,1
 AF082031026,away,0.538,0.586,,,,0
-AF082041026,away,0.5642,0.542,"the favourite TD, later in Q1",0.6659,0.714,1
-AF082071026,home,0.5443,0.611,"the underdog TD, later in Q1",0.4637,0.574,1
+AF082041026,away,0.5642,0.542,"the favourite TD, opening drive",0.6659,0.714,1
+AF082071026,home,0.5443,0.611,"the underdog TD, opening drive",0.4637,0.574,1
 AF082081026,home,0.554,0.608,"the favourite TD, later in Q1",0.7874,0.85,1
-AF082091026,away,0.5303,0.531,"the underdog TD, later in Q1",0.40049999999999997,0.367,0
-AF082101026,away,0.534,0.509,"the favourite TD, Q2 or later",0.6516,0.685,0
+AF082091026,away,0.5303,0.531,"the underdog TD, opening drive",0.40049999999999997,0.367,0
+AF082101026,away,0.534,0.509,"the favourite TD, opening drive",0.6516,0.685,0
 AF082111026,home,0.6276,0.577,"the favourite TD, Q2 or later",0.85,0.805,1
 AF083031026,home,0.595,0.6375,,,,0
 AF083041026,away,0.5492,0.537,"the underdog TD, later in Q1",0.27769999999999995,0.28200000000000003,0
-AF083061026,away,0.571,0.496,"the favourite TD, later in Q1",0.6886,0.657,0
+AF083061026,away,0.571,0.496,"the favourite TD, opening drive",0.6886,0.657,0
 AF083071026,away,0.5597,0.546,"the favourite TD, later in Q1",0.8116,0.78,1
 AF083091026,away,0.6083,0.556,"the underdog TD, later in Q1",0.34840000000000004,0.30700000000000005,0
 AF083101026,home,0.5472,0.548,"the favourite FG, Q2 or later",0.6559999999999999,0.622,1
 AF083111026,home,0.5304,0.478,"the favourite TD, Q2 or later",0.8042,0.757,1
 AF084021026,home,0.6132,0.537,,,,0
-AF084041026,away,0.5407,0.448,"the underdog FG, later in Q1",0.6028,0.481,1
+AF084041026,away,0.5407,0.448,"the underdog FG, opening drive",0.6028,0.481,1
 AF084061026,home,0.5843,0.615,"the favourite TD, Q2 or later",0.8209000000000001,0.846,0
 AF084071026,home,0.5517,0.593,"the underdog TD, Q2 or later",0.1479,0.154,0
-AF084081026,home,0.5534,0.627,"the underdog TD, later in Q1",0.4153,0.5,1
-AF084091026,home,0.5691,0.616,"the favourite TD, later in Q1",0.6701999999999999,0.6887000000000001,0
-AF084111026,home,0.6,0.52,"the favourite FG, Q2 or later",0.546,0.527,0
-AF085021026,away,0.5522,0.538,"the favourite TD, Q2 or later",0.6515,0.6599999999999999,0
+AF084081026,home,0.5534,0.627,"the underdog TD, opening drive",0.4153,0.5,1
+AF084091026,home,0.5691,0.616,"the favourite TD, opening drive",0.6701999999999999,0.6887000000000001,0
+AF084111026,home,0.6,0.52,"the favourite FG, opening drive",0.546,0.527,0
+AF085021026,away,0.5522,0.538,"the favourite TD, opening drive",0.6515,0.6599999999999999,0
 AF085041026,home,0.5504,0.565,"the underdog TD, later in Q1",0.2752,0.265,1
-AF085051026,away,0.5414,0.5005,"the favourite TD, later in Q1",0.6664,0.589,1
-AF085071026,away,0.5675,0.654,"the favourite TD, later in Q1",0.6827,0.756,1
-AF085081026,home,0.637,0.551,"the favourite TD, later in Q1",0.7402,0.6759999999999999,1
-AF085091026,away,0.5622,0.534,"the underdog TD, later in Q1",0.43509999999999993,0.42299999999999993,0
-AF085111026,away,0.6453,0.536,"the underdog TD, later in Q1",0.5195000000000001,0.42899999999999994,0
+AF085051026,away,0.5414,0.5005,"the favourite TD, opening drive",0.6664,0.589,1
+AF085071026,away,0.5675,0.654,"the favourite TD, opening drive",0.6827,0.756,1
+AF085081026,home,0.637,0.551,"the favourite TD, opening drive",0.7402,0.6759999999999999,1
+AF085091026,away,0.5622,0.534,"the underdog TD, opening drive",0.43509999999999993,0.42299999999999993,0
+AF085111026,away,0.6453,0.536,"the underdog TD, opening drive",0.5195000000000001,0.42899999999999994,0
 AF086021026,home,0.5378,0.506,"the favourite TD, Q2 or later",0.7471,0.722,1
-AF086031026,away,0.5216,0.465,"the underdog TD, later in Q1",0.382,0.31599999999999995,1
+AF086031026,away,0.5216,0.465,"the underdog TD, opening drive",0.382,0.31599999999999995,1
 AF086051026,away,0.5615,0.51,"the underdog TD, Q2 or later",0.4393,0.43999999999999995,0
 AF086071026,home,0.5507,0.598,"the underdog TD, Q2 or later",0.2562,0.27,0
-AF086091026,home,0.7046,0.644,"the underdog FG, Q2 or later",0.7323000000000001,0.693,1
-AF086101026,home,0.5476,0.57,"the favourite FG, Q2 or later",0.503,0.5,1
+AF086091026,home,0.7046,0.644,"the underdog FG, opening drive",0.7323000000000001,0.693,1
+AF086101026,home,0.5476,0.57,"the favourite FG, opening drive",0.503,0.5,1
 AF086111026,away,0.5574,0.468,"the favourite TD, later in Q1",0.8148,0.768,1
-AF087031026,home,0.5389,0.545,"the underdog TD, later in Q1",0.39799999999999996,0.395,0
-AF087061026,home,0.5656,0.5835,"the underdog TD, later in Q1",0.42619999999999997,0.405,0
-AF087071026,away,0.5443,0.539,"the favourite TD, later in Q1",0.6582,0.629,1
+AF087031026,home,0.5389,0.545,"the underdog TD, opening drive",0.39799999999999996,0.395,0
+AF087061026,home,0.5656,0.5835,"the underdog TD, opening drive",0.42619999999999997,0.405,0
+AF087071026,away,0.5443,0.539,"the favourite TD, opening drive",0.6582,0.629,1
 AF087091026,away,0.5287,0.526,"the favourite FG, Q2 or later",0.49229999999999996,0.43700000000000006,0
 AF087101026,away,0.5255,0.521,"the underdog TD, later in Q1",0.2440000000000001,0.19099999999999995,0
-AF088061026,away,0.6219,0.647,"the favourite TD, Q2 or later",0.7183999999999999,0.745,1
+AF088061026,away,0.6219,0.647,"the favourite TD, opening drive",0.7183999999999999,0.745,1
 AF088071026,away,0.5837,0.496,"the underdog TD, Q2 or later",0.07739999999999991,0.04500000000000004,0
 AF088091026,home,0.6555,0.692,,,,0
 AF089031026,away,0.5214,0.487,"the favourite FG, Q2 or later",0.6538999999999999,0.618,1
 AF089061026,away,0.6236,0.625,"the underdog TD, later in Q1",0.33519999999999994,0.34099999999999997,1
-AF089071026,home,0.5722,0.604,"the favourite FG, later in Q1",0.5263,0.525,1
+AF089071026,home,0.5722,0.604,"the favourite FG, opening drive",0.5263,0.525,1
 AF089111026,home,0.6696,0.609,"the underdog TD, Q2 or later",0.12960000000000002,0.10300000000000001,0
-AF090031026,away,0.5359,0.534,"the favourite FG, later in Q1",0.48619999999999997,0.557,1
+AF090031026,away,0.5359,0.534,"the favourite FG, opening drive",0.48619999999999997,0.557,1
 AF090061026,away,0.5811,0.559,"the favourite TD, Q2 or later",0.6836,0.681,0
-AF090071026,away,0.5176,0.582,"the favourite TD, Q2 or later",0.6234,0.6679999999999999,0
-AF090111026,home,0.5412,0.471,"the favourite TD, Q2 or later",0.7186,0.6920000000000001,1
-AF091061026,home,0.641,0.607,"the underdog TD, later in Q1",0.5206000000000001,0.515,1
-AF091071026,home,0.5841,0.5155,"the favourite TD, later in Q1",0.6889,0.623,0
-AF091111026,home,0.6521,0.625,"the underdog TD, Q2 or later",0.48450000000000004,0.49,0
+AF090071026,away,0.5176,0.582,"the favourite TD, opening drive",0.6234,0.6679999999999999,0
+AF090111026,home,0.5412,0.471,"the favourite TD, opening drive",0.7186,0.6920000000000001,1
+AF091061026,home,0.641,0.607,"the underdog TD, opening drive",0.5206000000000001,0.515,1
+AF091071026,home,0.5841,0.5155,"the favourite TD, opening drive",0.6889,0.623,0
+AF091111026,home,0.6521,0.625,"the underdog TD, opening drive",0.48450000000000004,0.49,0
 AF092061026,home,0.5745,0.581,"the favourite TD, Q2 or later",0.8531,0.866,1
-AF092071026,home,0.5373,0.595,"the underdog TD, later in Q1",0.4058,0.452,1
-AF092111026,home,0.5209,0.544,"the underdog TD, later in Q1",0.40700000000000003,0.38799999999999996,1
-AF093061026,home,0.6049,0.561,"the underdog TD, later in Q1",0.4851,0.429,0
-AF093071026,home,0.5811,0.595,"the underdog TD, later in Q1",0.42810000000000004,0.46399999999999997,0
-AF093111026,away,0.6563,0.596,"the favourite TD, Q2 or later",0.7237,0.69,1
-AF094031026,away,0.5239,0.557,"the underdog TD, later in Q1",0.42069999999999996,0.395,0
-AF094111026,home,0.6312,0.659,"the favourite FG, Q2 or later",0.5411,0.5579999999999999,0
-AF095071026,away,0.5608,0.558,"the favourite FG, Q2 or later",0.5154,0.506,0
+AF092071026,home,0.5373,0.595,"the underdog TD, opening drive",0.4058,0.452,1
+AF092111026,home,0.5209,0.544,"the underdog TD, opening drive",0.40700000000000003,0.38799999999999996,1
+AF093061026,home,0.6049,0.561,"the underdog TD, opening drive",0.4851,0.429,0
+AF093071026,home,0.5811,0.595,"the underdog TD, opening drive",0.42810000000000004,0.46399999999999997,0
+AF093111026,away,0.6563,0.596,"the favourite TD, opening drive",0.7237,0.69,1
+AF094031026,away,0.5239,0.557,"the underdog TD, opening drive",0.42069999999999996,0.395,0
+AF094111026,home,0.6312,0.659,"the favourite FG, opening drive",0.5411,0.5579999999999999,0
+AF095071026,away,0.5608,0.558,"the favourite FG, opening drive",0.5154,0.506,0
