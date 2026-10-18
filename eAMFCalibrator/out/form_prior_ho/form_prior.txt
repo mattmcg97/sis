@@ -1,0 +1,9 @@
+
+Form priors: 26,584 matches in eAMFCalibrator/out/match_history.csv (2025-12-10 to 2026-10-17)
+  the rating: margin sd 12 a match, a new gamer 16 points^2, teams 0.002 of each miss
+  avg_form2_w05.csv                avg moved 0.5 of the way to the rating drifting 2/day: 3,398 of 3,398 matches, the margin moved 0.88 points on average
+  avg_form2_w10.csv                avg moved 1 of the way to the rating drifting 2/day: 3,398 of 3,398 matches, the margin moved 1.76 points on average
+  avg_form4_w05.csv                avg moved 0.5 of the way to the rating drifting 4/day: 3,398 of 3,398 matches, the margin moved 1.07 points on average
+  avg_form4_w10.csv                avg moved 1 of the way to the rating drifting 4/day: 3,398 of 3,398 matches, the margin moved 2.14 points on average
+  avg_form8_w05.csv                avg moved 0.5 of the way to the rating drifting 8/day: 3,398 of 3,398 matches, the margin moved 1.28 points on average
+  avg_form8_w10.csv                avg moved 1 of the way to the rating drifting 8/day: 3,398 of 3,398 matches, the margin moved 2.55 points on average
