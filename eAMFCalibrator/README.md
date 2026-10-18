@@ -3559,3 +3559,48 @@ window to the other: comeback −0.05, close games 0.00, front-running +0.26
 
 Writes `ml_states.txt`, `ml_states.csv` and (with `--history`)
 `ml_states_gamers.csv` to `--out` (default `out/ml_states/`).
+
+### Form priors for the betting sim: `form-prior` and `--prior-for`
+
+```bash
+python -m eAMFCalibrator form-prior --history eAMFCalibrator/out/match_history.csv --table avg=eAMFCalibrator/out/walkthrough_oct/priors/avg.csv --drift 1,2,4 --weight 0.5,1
+python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" --candidate v21,v21-avgf2 --prior-for v21-avgf2=eAMFCalibrator/out/form_prior/priors/avg_form2_w05.csv
+```
+
+`form-prior` moves each walkthrough table's expected margin toward a fast
+walk-forward rating. The rating is every gamer's strength as their latest
+results have it:
+- each gamer's strength (in points of margin) is a random walk that drifts
+  DRIFT points² a day;
+- each match's margin is a draw about the two strengths and the teams'
+  ratings, with an sd of 12 points;
+- the gamers are updated after every result, in kick-off order (a Kalman
+  filter), and the teams by 0.002 of each miss;
+- each match is priced only off the results before it.
+
+Each table row's margin moves WEIGHT of the way to the rating's. The total
+is kept (half the move goes to each side's points), and `p_home` is re-read
+off the row's own score model. A match the rating has no view of is left
+as it is.
+
+**Why:** on the Oct 1–12 bets, a rating drifting 1–4 points² a day
+re-priced prod's moneyline by +1.2 to +1.9 points on the same bets, in
+play as well as at kick-off. Its Brier score was no better than prod's.
+The slow ratings (NB2's and glmer's 60-day half-lives) gained nothing
+there. The money follows who is playing well now.
+
+With `--bets` (bets_sim.csv files) it first says how many of the bet
+matches, and how much of their stake, the history and each table have. On
+Oct 1–12 a history short of the finals left 180 of the 860 bet matches out.
+
+Writes `priors/<base>_form<drift>_w<weight>.csv` for every table, drift
+and weight (`w05` is 0.5, `w10` is 1), and `form_prior.txt`, to `--out`
+(default `out/form_prior/`).
+
+**`--prior-for NAME=PRIOR`** (repeat it) gives a v21 candidate its own
+prior: a table, or a build, as `--v21-prior-model` takes. Name the
+candidate `v21-<tag>` without a build directory, so it prices off
+`--v21-model`. Every v21 candidate is then priced in one run, on the same
+bets, prod quotes and lags, each nudged toward its own prior. One without
+a `--prior-for` reads `--v21-prior-model`. The name must be a
+`--candidate` of the run, and the prior must exist.
