@@ -292,6 +292,13 @@ DECISION_TABLE_MAX = 4_000_000                            # cells (the 4th down'
 NUDGE_ITERS = 3
 NUDGE_MAX = 10.0              # points a side
 NUDGE_PATHS = 3000
+# The second strength lever (the shape: a start's "shape" kappa and "edge", its expected home margin at
+# kick-off): the strength gap played by the score. The favourite behind by SHAPE_TRAIL or more plays the
+# gap kappa * |edge| / 2 nudge units a side wider (it raises its game), SHAPE_LEAD or more ahead that much
+# narrower (it eases off), the nudge itself still solved to the expected points: more comebacks, fewer
+# blowouts -- the favourite wins more often without winning by more, as the real games show.
+SHAPE_TRAIL = 1
+SHAPE_LEAD = 9
 YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
 SECOND_BIN_EDGES = np.arange(2, 61, 2)
 ADJUST_GRID = np.round(np.linspace(-1.5, 1.5, 31), 3)     # log tilts tried
@@ -2174,16 +2181,20 @@ def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
     return max(0.05, (got[1] - got[0]) / 2.0)
 
 
-def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0):
+def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0, shape=0.0):
     """((home, away) final scores, alpha): the sim from `start` with each side's offense nudged along
     the strength direction by alpha (2,) so its kick-off means meet `target` (home, away) -- or, share
     below 1, that share of the way there from the sim's own means: secant steps from the build's slope,
-    each on the same random numbers; the last run's scores (and its stats)."""
+    each on the same random numbers; the last run's scores (and its stats). shape (kappa): the second
+    lever on, its edge the target's margin (SHAPE_TRAIL)."""
     alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
     prev = None
     target = np.asarray(target, float)
+    n = len(start["period"])
     for it in range(iters + 1):
-        st = dict(start, nudge=np.tile(alpha, (len(start["period"]), 1)))
+        st = dict(start, nudge=np.tile(alpha, (n, 1)))
+        if shape:
+            st.update(edge=np.full(n, float(target[0] - target[1])), shape=np.full(n, float(shape)))
         last = it == iters
         h, a = simulate(model, st, n_paths, seed=seed, stats=stats if last else None)
         if last:
@@ -2741,6 +2752,21 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     # every real record's theta . phi for the run's tilts, once (TILT_CACHE; None: each draw works its own out)
     tz_time = model.time.tilt_z(th_time, P) if th_time is not None else None
     tz_dist = model.dist.tilt_z(th_dist, P) if th_dist is not None else None
+    # the second lever (SHAPE_TRAIL): each side's distance tilt three ways -- as it is, the favourite behind
+    # (the gap wider), the favourite well ahead (narrower) -- each snap drawn on its score's
+    shape_on = (th_dist is not None and getattr(model, "nudge_dir", None) is not None and "shape" in start
+                and "edge" in start and bool(np.any(np.asarray(start["shape"], float) != 0)))
+    fav = th_reg = tz_reg = None
+    if shape_on:
+        edge = rep(start["edge"], float)
+        fav = np.where(edge >= 0, 0, 1)
+        half = 0.5 * rep(start["shape"], float) * np.abs(edge)
+        home_up = np.where(fav == 0, half, -half)
+        push = np.stack([home_up, -home_up], axis=1)[:, :, None] * np.asarray(model.nudge_dir)[None, None, :]
+        th_reg = np.stack([th_dist, th_dist + push, th_dist - push])
+        tz_reg = model.dist.tilt_z(th_reg.reshape((3 * P,) + th_dist.shape[1:]), P)
+        if tz_reg is not None:
+            tz_reg = (tz_reg[0], tz_reg[1].reshape(3, P, 2))
     tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
@@ -3029,6 +3055,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             b = league_bins(model.dist, f)
         th = th_dist[ix, off] if th_dist is not None else None
         tz = tz_of(tz_dist, ix, off) if th is not None else None
+        if shape_on:                                  # the favourite's lead picks the tilt (SHAPE_TRAIL)
+            fl = score[ix, fav[ix]] - score[ix, 1 - fav[ix]]
+            reg = np.where(fl <= -SHAPE_TRAIL, 1, np.where(fl >= SHAPE_LEAD, 2, 0))
+            th = th_reg[reg, ix, off]
+            tz = None if tz_reg is None else (tz_reg[0], tz_reg[1][reg, ix, off])
         j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin, tz=tz) if field_share \
             else model.dist.draw_tilted(b, u, th, rng, tz=tz) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())

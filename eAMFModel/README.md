@@ -2396,6 +2396,39 @@ matches it is priced with. Two things follow from that:
 - **One match at a time:** within a pool, a match goes to whichever worker is free; a fixed share of
   matches per worker left the rest waiting on its longest ones.
 
+### The second strength lever (`--candidate v21-shape0.25`, `v21-report --shape`)
+
+A big gap between gamers makes the favourite win more often without winning by much more. Over Dec
+10 – Sep 10 the favourite by 250–300 Elo won 74.4% by 4.8 points on average. A model that prices the
+win off the margin, with the league's spread, gives 68.6% at that margin. The margin's spread narrows
+as the gap grows (9.85 at under 50 Elo, 9.46 at 250+), and close wins rise from 31% of games to about
+40%. Measured by the pre-match points expectancy instead of Elo, the favourite wins 0.3–2.1 points
+more often than its real margin implies (Feb–Oct, 22,370 matches). The nudge alone can't do this:
+v2.1 turns its margin into a win chance with a fixed spread (chance = Φ(margin / 9.87) on Oct 1–17).
+
+The lever plays the strength gap by the score. Each side's distance tilt is kept three ways: as it is,
+with the favourite behind by `SHAPE_TRAIL` (1) or more, and with it `SHAPE_LEAD` (9) or more ahead. A
+behind favourite plays the gap κ × |edge| / 2 nudge units a side wider (it raises its game); a
+favourite two scores up plays it that much narrower (it eases off). The edge is the kick-off's
+expected home margin, and the favourite is the side it favours. The nudge is still solved so the
+kick-off means meet the expected points. The result is more comebacks and fewer blowouts: the
+favourite wins more often, by the same mean margin.
+
+On the tests' build, a favourite at +5.8 points expected:
+
+| κ | mean margin | margin sd | wins | wins by 1–7 | by 8+ |
+|---|---|---|---|---|---|
+| 0 (off) | +5.84 | 8.74 | 76.3% | 37.6% | 38.7% |
+| 0.5 | +5.80 | 7.14 | 80.7% | 45.6% | 35.0% |
+| 1 | +6.04 | 5.88 | 86.0% | 52.0% | 34.0% |
+
+The real games show about +2 points of win chance with the spread barely moving, so κ is small,
+fitted on the real build: `v21-report --nudge --nudge-share 0.75 --shape K` (the final-margin
+section shows how the favourite wins, the sim's against the real), then the betting sim's
+`--candidate v21,v21-shape0.1,v21-shape0.25` on the same bets. Off (κ 0, any name without
+`-shapeK`), the draws are exactly as before. The three tilts a side share the sim's tilt cache (six a
+match, under `TILT_CACHE_MAX`), so the lever costs little time.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:

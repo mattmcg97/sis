@@ -1136,7 +1136,8 @@ def common_options():
                              "side by side in the report; a second build of a version is "
                              "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917; v21 with an in-play "
                              "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
-                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react) "
+                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react); with the second strength "
+                             "lever (the favourite's gap played by the score) v21-shapeK, e.g. v21-shape0.25 "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "

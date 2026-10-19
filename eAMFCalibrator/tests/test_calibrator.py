@@ -5992,6 +5992,33 @@ class TestV21React(unittest.TestCase):
         self.assertEqual(seen, [None, ("snap", 4.0), ("wpa", 10.0)])     # the second v21-snap4 read the first's
         self.assertEqual(len(keys), 3)
 
+    def test_the_name_picks_the_second_lever(self):
+        """v21-shape0.25: v21's build with the second strength lever at kappa 0.25, its quotes apart."""
+        import importlib
+        from .. import snowflake_io as sio
+        self.assertEqual(sio.stream_name("v21-shape0.25"), "MODEL:v21-shape0.25")
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append((kw.get("shape"), kw.get("react")))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-shape0.25", "v21-shape0.5"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [(None, None), (0.25, None), (0.5, None)])
+        self.assertIn("the second strength lever, kappa 0.25", out.getvalue())
+
 
 class TestV21Grouped(unittest.TestCase):
     """A match-seeded model (v21) prices several of the pairing's chunks in one pool: every chunk's

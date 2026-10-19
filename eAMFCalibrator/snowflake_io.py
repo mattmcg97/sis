@@ -752,6 +752,11 @@ def _as_chunk_called(rows_by_code, codes, workers):
     return [r for i in range(w) for c in codes[i::w] for r in rows_by_code.get(c, ())]
 
 
+def _lead_of(stream):
+    """The lead at which the second lever's favourite eases off (v21.SHAPE_LEAD)."""
+    return getattr(getattr(stream, "v21", None), "SHAPE_LEAD", 9)
+
+
 def _sim_quotes(cur, match_codes, name, lines=None):
     """An eAMFModel simulation version (v8 to v14, v21), GAMEPLAI-shaped: PLAY_OVER
     snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
@@ -781,6 +786,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
     if react:
         opts["react"] = react
+    shape = getattr(stream, "shape_of", lambda _n: None)(name)    # v21-shape0.25: the second strength lever
+    if shape:
+        opts["shape"] = shape
     key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
                             prematch_only, tuple(sorted(opts.items())))
     cache_key = key_of(match_codes)
@@ -810,6 +818,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         history = fetch_history(cur, until=config.CUTOFF_END)
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
+    if shape:
+        print(f"  {name}: the second strength lever, kappa {shape:g}: the favourite's strength gap played {shape:g} x"
+              f" half its expected margin wider a side when behind, narrower when {_lead_of(stream)}+ ahead", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")

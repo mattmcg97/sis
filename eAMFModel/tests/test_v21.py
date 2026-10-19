@@ -1329,6 +1329,94 @@ class TestStream(unittest.TestCase):
         self.assertIsNone(vs.prematch_model(None))
 
 
+class TestShape(unittest.TestCase):
+    """The second strength lever (v21.SHAPE_TRAIL): the favourite's strength gap played by the score, so it
+    wins more often without winning by more; off, the draws exactly as before."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt",
+                          key="lean", blend=40.0, field=0.2)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.model = m
+        cls.code = sorted(MATCHES)[0]
+        cls.rows = sorted(MATCHES[cls.code], key=lambda r: int(r["message"]))
+        cls.info = [h for h in HISTORY if h["MATCH_CODE"] == cls.code]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_the_name_picks_the_lever(self):
+        from .. import v21_react as vr, v21_stream as vs
+        self.assertEqual(vs.shape_of("v21-shape0.25"), 0.25)
+        self.assertEqual(vs.shape_of("V21-SHAPE1"), 1.0)
+        for name in ("v21", "v21-shape0", "v21-shape", "v21-shapex", "v21-snap4", "v21-avgf4"):
+            self.assertIsNone(vs.shape_of(name), name)
+        self.assertIsNone(vr.variant_of("v21-shape0.5"))              # no in-play update by that name
+
+    def test_off_the_draws_are_as_before(self):
+        start = v21.kickoff_start(self.model)
+        n = len(start["period"])
+        plain = v21.simulate(self.model, dict(start, nudge=np.full((n, 2), 0.5)), 200, seed=5)
+        off = v21.simulate(self.model, dict(start, nudge=np.full((n, 2), 0.5), edge=np.full(n, 6.0), shape=np.zeros(n)),
+                           200, seed=5)
+        self.assertTrue(np.array_equal(plain[0], off[0]) and np.array_equal(plain[1], off[1]))
+        a = v21.nudge_solve(self.model, start, (12.0, 9.0), 200, seed=5)
+        b = v21.nudge_solve(self.model, start, (12.0, 9.0), 200, seed=5, shape=0.0)
+        self.assertTrue(np.array_equal(a[0][0], b[0][0]) and np.array_equal(a[1], b[1]))
+
+    def test_the_favourite_wins_more_often_by_no_more(self):
+        start = v21.kickoff_start(self.model)
+        h0, a0 = v21.simulate(self.model, start, 2000, seed=3)
+        target = (h0.mean() + 3.0, a0.mean() - 3.0)
+        got = {}
+        for k in (0.0, 1.0):
+            (h, a), _ = v21.nudge_solve(self.model, start, target, 3000, seed=3, shape=k)
+            mg = (h - a).ravel()
+            got[k] = (mg.mean(), mg.std(), np.mean(mg > 0), np.mean((mg >= 1) & (mg <= 7)))
+        self.assertLess(abs(got[1.0][0] - got[0.0][0]), 1.0)           # the nudge still meets the expected points
+        self.assertGreater(got[1.0][2], got[0.0][2] + 0.04)            # the favourite wins more often
+        self.assertLess(got[1.0][1], got[0.0][1] - 1.0)                # by less: the margin tighter
+        self.assertGreater(got[1.0][3], got[0.0][3] + 0.05)            # more close wins
+
+    def test_the_stream_carries_it_in_play(self):
+        from .. import v21_stream as vs
+
+        class Prior:
+            league = (15.0, 15.0)
+
+            def means(self, rows, results=None):
+                return {r["MATCH_CODE"]: (16.0, 10.0) for r in rows}
+
+        prod = [(self.code, k, None, 50.0, 2.0, "", int(r["message"]), "OPEN", "true")
+                for r in self.rows for k in (50, 51)]
+        prod.append((self.code, 50, "2026-10-01 00:00:00", 50.0, 2.0, "", None, "OPEN", "true"))
+        seen, real = [], v21.simulate
+
+        def spy(model, start, n_paths, **kw):
+            seen.append((len(start["period"]), "shape" in start, float(np.max(start.get("shape", [0.0])))))
+            return real(model, start, n_paths, **kw)
+        got = {}
+        for shape in (None, 1.0):
+            seen.clear()
+            with mock.patch.object(vs, "prematch_model", lambda _t: Prior()), \
+                    mock.patch.object(vs, "_prior_tables", lambda _d=None: "prior"), \
+                    mock.patch.object(v21, "simulate", spy):
+                got[shape] = vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=60, workers=1,
+                                                   match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0, shape=shape)
+            calls = list(seen)
+            if shape:
+                self.assertTrue(all(on and k == 1.0 for _, on, k in calls))   # the kick-off solve and the states
+                self.assertTrue(any(n > 1 for n, _, _ in calls))
+            else:
+                self.assertFalse(any(on for _, on, _ in calls))
+        live = lambda q: {(x[1], x[6]): x[3] for x in q if x[6] is not None}
+        self.assertNotEqual(live(got[None]), live(got[1.0]))
+
+
 class TestReact(unittest.TestCase):
     """v2.1's in-play strength update (v21_react): the variants by name, each side's nudge moved the way
     its play says, the stream's prices untouched without one, and v21-react-fit's table."""

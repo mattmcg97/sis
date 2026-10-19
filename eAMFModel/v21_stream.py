@@ -14,9 +14,13 @@ PLAY_OVER before it while that state lasts (stream.confident_windows), and only 
 simulated.
 
 With an in-play strength update (v21_react: a candidate named v21-snapT or v21-ptsT), every in-play
-state gets its own nudge, the kick-off's moved by what the match has shown of each side by then."""
+state gets its own nudge, the kick-off's moved by what the match has shown of each side by then. With
+the second strength lever (a candidate named v21-shapeK, v21.SHAPE_TRAIL), the favourite's strength gap
+is played by the score at kick-off and in every state: wider when it is behind, narrower when it is two
+scores up."""
 
 import os
+import re
 import time
 import zlib
 from bisect import bisect_left, bisect_right
@@ -116,6 +120,16 @@ def prematch_model(prior_tables):
 def _base(pre):
     from . import prior_check
     return prior_check.base_prior(pre)
+
+
+_SHAPE = re.compile(r"^shape(\d+(?:\.\d+)?)$")
+
+
+def shape_of(name):
+    """The second strength lever a candidate's name asks for ('v21-shape0.25' -> 0.25, v21.SHAPE_TRAIL), or None."""
+    _, _, tag = str(name or "").partition("-")
+    m = _SHAPE.match(tag.strip().lower())
+    return float(m.group(1)) if m and float(m.group(1)) > 0 else None
 
 
 def react_of(name):
@@ -224,22 +238,23 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
     return out
 
 
-def _kickoff(model, pair, teams, target, n_paths, code, share):
+def _kickoff(model, pair, teams, target, n_paths, code, share, shape=0.0):
     """(kick-off margin and total distributions, the nudge alpha or None, each side's simulated mean
-    and variance of its points)."""
+    and variance of its points). shape: the second strength lever (v21.SHAPE_TRAIL), with the nudge."""
     start = v21.kickoff_start(model, pair, teams)
     if target is not None and share and getattr(model, "nudge_dir", None) is not None:
-        (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), share=share)
+        (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), share=share, shape=shape or 0.0)
     else:
         (h, a), alpha = v21.simulate(model, start, n_paths, seed=_seed(code)), None
     h, a = h.ravel(), a.ravel()
     return v14._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()))
 
 
-def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None):
+def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, shape=0.0):
     """(books, windows): v21's margin and total distributions at the PLAY_OVERs the match's prod
     quotes read, every other PLAY_OVER keyed with None. `react` (v21_react.spec_of): each state's
-    nudge moved by the match so far (kick: the kick-off's points, for the points update)."""
+    nudge moved by the match so far (kick: the kick-off's points, for the points update). shape: the
+    second strength lever, its edge the kick-off's margin."""
     rows = [_as_text(r) for r in sorted(snaps, key=lambda r: int(r["message"]))]
     starts = state_starts(model, rows, pair, teams)
     keys = [m for m, _ in starts]
@@ -256,6 +271,10 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
                 extra = react[2] if len(react) > 2 else {}
                 S["nudge"] = S["nudge"] + v21_react.updates(model, rows, sel, base, react[:2], pair, teams, kick,
                                                             wp=extra.get("wp"), gamers=extra.get("gamers"))
+        if shape and alpha is not None and kick is not None:
+            n = len(S["period"])
+            S["edge"] = np.full(n, float(kick["mean"][0] - kick["mean"][1]))
+            S["shape"] = np.full(n, float(shape))
         sh, sa = v21.simulate(model, S, n_paths, seed=_seed(code) + 1)
         for k, (m, _) in enumerate(sel):
             mp_, tp = v14._distributions(sh[k], sa[k])
@@ -263,19 +282,19 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
     return [books[m] for m in keys], windows
 
 
-def _price(model, item, n_paths, lines, prematch_only, share, react=None):
+def _price(model, item, n_paths, lines, prematch_only, share, react=None, shape=0.0):
     """One match's quote rows by line mode: the kick-off (and the pre-match quotes published before
     results the prior's form follows came in), then the PLAY_OVERs prod's quotes read."""
     code, snaps, prod_rows, first_play, pair, teams, target, known = item
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
-    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share)
+    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, shape)
     kickoff = kick if PREMATCH else None
     if kickoff is not None and known:
-        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share)[0] for m in sorted(set(known.values()))}
+        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, shape)[0] for m in sorted(set(known.values()))}
         at = {publish: kicks[m] for publish, m in known.items()}
         kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
     if side_known(snaps) and not prematch_only:
-        books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react, kstats)
+        books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react, kstats, shape)
     else:
         books, windows = [], {}
     return {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
@@ -283,12 +302,12 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None):
 
 def _worker(job):
     """Price a list of matches, one after another (_price)."""
-    items, model_file, n_paths, lines, prematch_only, share, react = job
+    items, model_file, n_paths, lines, prematch_only, share, react, shape = job
     model = v21.Model.load(model_file)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     out = {mode: [] for mode in modes}
     for item in items:
-        got = _price(model, item, n_paths, lines, prematch_only, share, react)
+        got = _price(model, item, n_paths, lines, prematch_only, share, react, shape)
         for mode in modes:
             out[mode].extend(got[mode])
     return out
@@ -304,10 +323,10 @@ def _load(model_file):
 
 def _one(job):
     """A pool worker: one match, off the model it loaded."""
-    item, model_file, n_paths, lines, prematch_only, share, react = job
+    item, model_file, n_paths, lines, prematch_only, share, react, shape = job
     if model_file not in _LOADED:
         _load(model_file)
-    return _price(_LOADED[model_file], item, n_paths, lines, prematch_only, share, react)
+    return _price(_LOADED[model_file], item, n_paths, lines, prematch_only, share, react, shape)
 
 
 LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, simulate (and workers)
@@ -315,13 +334,14 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
-                       prior_dir=None, nudge_share=None, handles=None, batches=None, react=None):
+                       prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, shape=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
     0: the sim's own means, no prior needed); `batches`: the calibrator's chunks priced here together,
     each match's earlier pre-match states read off its own chunk's ends of play, as a call for that
-    chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none)."""
+    chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none); `shape`:
+    the second strength lever's kappa (v21.SHAPE_TRAIL, shape_of; None: off)."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     if react:                                        # the tables a variant reads, once with the build
@@ -398,13 +418,13 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
     t0 = time.time()
     if workers == 1:
-        out = _worker((items, model_file, n_paths, lines, prematch_only, share, react))
+        out = _worker((items, model_file, n_paths, lines, prematch_only, share, react, shape or 0.0))
     else:
         # a match at a time to whichever worker is free (a worker handed a fixed share kept the rest
         # waiting on its longest matches), the rows put back in the order the shares gave them: each
         # worker's every workers-th match, one after another
         with v14.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
-            per = pool.map(_one, [(item, model_file, n_paths, lines, prematch_only, share, react) for item in items],
+            per = pool.map(_one, [(item, model_file, n_paths, lines, prematch_only, share, react, shape or 0.0) for item in items],
                            chunksize=1)
         order = [k for i in range(workers) for k in range(i, len(items), workers)]
         out = {mode: [row for k in order for row in per[k][mode]] for mode in modes}
