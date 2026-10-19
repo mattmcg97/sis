@@ -1315,8 +1315,8 @@ def apply_overrides(args):
 
 
 def uplift_options(parser):
-    """The margin uplift's options (margin_uplift.py: prod against each candidate, the partner's
-    dummy bets), for report --bets and bets."""
+    """The margin uplift's options (margin_uplift.py: prod against each candidate, every in-play
+    tick a dummy bet between the two books), for report --bets and bets."""
     group = parser.add_argument_group("margin uplift")
     group.add_argument("--margin-chart", metavar="CSV",
                        help="the margin chart the dummy bets are priced at (probability, numerator, "
@@ -1324,11 +1324,16 @@ def uplift_options(parser):
     group.add_argument("--uplift-factor", type=float, metavar="X",
                        help="minutes from the scheduled start x X = game minutes (default: fitted so "
                             "prod's matches end at 60)")
+    group.add_argument("--all-moments", action="store_true",
+                       help="price v21 at every moment prod's quotes read, not only the ones the bets read "
+                            "(the default, several times quicker): slower, and the margin uplift then bets "
+                            "every in-play tick rather than the bets' moments alone")
 
 
 def apply_uplift(args):
     config.UPLIFT_CHART = getattr(args, "margin_chart", None)
     config.UPLIFT_FACTOR = getattr(args, "uplift_factor", None)
+    config.ALL_MOMENTS = bool(getattr(args, "all_moments", False))
     if config.UPLIFT_CHART and not os.path.exists(config.UPLIFT_CHART):
         raise SystemExit(f"--margin-chart {config.UPLIFT_CHART}: no such file")
     if config.UPLIFT_CHART:                     # read it now: a bad chart stops the run before the long part

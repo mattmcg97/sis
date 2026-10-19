@@ -1,6 +1,7 @@
 """v2.1: the draws (backoff groups, tilts, the censored time), the real snaps' features, the build in
 both modes, the sim's bounds (quarter end, two-minute warning, end zones, overtime) and the report."""
 
+import bisect
 import contextlib
 import copy
 import csv
@@ -1256,6 +1257,45 @@ class TestStream(unittest.TestCase):
         self.assertTrue(both)
         for m in both:
             self.assertAlmostEqual(by[(50, m)] + by[(51, m)], 100.0, delta=0.5)
+
+    def test_the_books_the_bets_read(self):
+        """A bet reads the latest quote of its market at or before prod's message: the book of the latest
+        prod quote there that falls in a book's window, none before the first PLAY_OVER."""
+        from .. import v21_stream as vs
+        prod = [("M", k, None, 50.0, 2.0, "", m, "OPEN", "true") for k, ms in ((50, (5, 10, 12, 16, 20, 26, 31)),
+                                                                              (54, (31,))) for m in ms]
+        keys, windows = [10, 20, 30], {10: 15, 20: 25, 30: 99}
+        self.assertEqual(vs._read(keys, prod, windows, [(50, 12)]), {10})
+        self.assertEqual(vs._read(keys, prod, windows, [(50, 18)]), {10})      # 16 outside 10's window: 12's
+        self.assertEqual(vs._read(keys, prod, windows, [(50, 27)]), {20})
+        self.assertEqual(vs._read(keys, prod, windows, [(50, 7), (51, 20), (54, 29)]), set())   # kick-off, none
+        self.assertEqual(vs._read(keys, prod, windows, [(50, 12), (54, 40), (50, 31)]), {10, 30})
+
+    def test_only_the_moments_the_bets_read(self):
+        from .. import v21_stream as vs
+        prod = self._prod()
+        price = lambda moments=None: vs.quotes_for_matches(
+            {self.code: self.rows}, prod, self.tmp.name, n_paths=20, workers=1, match_info=self.info,
+            lines=vs.PROD_LINES, nudge_share=0.0, moments=moments)
+        full = price()
+        every = vs.LAST_TIMING["states"]
+        self.assertEqual(vs.LAST_TIMING["states_of"], every)
+        none = price({})
+        self.assertEqual(vs.LAST_TIMING["states"], 0)
+        self.assertEqual(vs.LAST_TIMING["states_of"], every)
+        kick = {(x[1], x[6]) for x in none}                                  # the kick-off's prices alone
+        played = sorted({x[6] for x in full if x[1] == 50 and (50, x[6]) not in kick})
+        read = played[len(played) // 2]
+        fast = price({self.code: [(50, read)]})
+        self.assertEqual((vs.LAST_TIMING["states"], vs.LAST_TIMING["states_of"]), (1, every))
+        self.assertGreater(every, 1)
+        live = {(x[1], x[6]) for x in fast} - kick
+        self.assertIn((50, read), live)
+        self.assertLess(live, {(x[1], x[6]) for x in full})                  # one book's quotes, of them all
+        keys = [m for m, _ in vs.state_starts(self.model, [vs._as_text(r) for r in self.rows])]
+        at = lambda m: bisect.bisect_right(keys, m)
+        self.assertEqual({at(m) for _, m in live}, {at(read)})
+        self.assertEqual(sorted(x for x in fast if (x[1], x[6]) in kick), sorted(none))   # the kick-off as before
 
     def test_the_nudge_moves_the_kick_off_toward_the_prior(self):
         from .. import v21_stream as vs

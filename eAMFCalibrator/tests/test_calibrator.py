@@ -6020,6 +6020,47 @@ class TestV21React(unittest.TestCase):
         self.assertIn("the second strength lever, kappa 0.25", out.getvalue())
 
 
+    def test_a_betting_simulation_prices_the_bets_moments_alone(self):
+        """config.BET_MOMENTS (bets.run's): v21 is handed the moments and caches them apart; --all-moments
+        clears them; a model that cannot (v14) and a table are priced as ever."""
+        import importlib
+        from .. import snowflake_io as sio, __main__ as cli
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("moments"))
+            stream.LAST_TIMING.update(moments=kw.get("moments") is not None, states=3, states_of=40)
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        reads = {"AF001": {(50, 12)}}
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            sio._sim_quotes(None, ["AF001"], "v21", "own")
+            self.assertFalse(sio.at_bet_moments("MODEL:v21"))
+            config.BET_MOMENTS = reads
+            sio._sim_quotes(None, ["AF001"], "v21", "own")                  # not the full run's cached quotes
+            sio._sim_quotes(None, ["AF001"], "v21", "prod")                 # the same moments: read back
+            self.assertTrue(sio.at_bet_moments("MODEL:v21"))
+            self.assertFalse(sio.at_bet_moments("MODEL:v14"))
+            self.assertFalse(sio.at_bet_moments("GAMEPLAI_STREAM_CANDIDATE"))
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, reads])
+        self.assertIn("v21: 3 of 40 in-play states simulated, the ones the bets read", out.getvalue())
+        with mock.patch.multiple(config, ALL_MOMENTS=False, UPLIFT_CHART=None, UPLIFT_FACTOR=None):
+            cli.apply_uplift(cli.build_parser().parse_args(["bets", "--all-moments"]))
+            self.assertTrue(config.ALL_MOMENTS)
+            cli.apply_uplift(cli.build_parser().parse_args(["report", "--bets"]))
+            self.assertFalse(config.ALL_MOMENTS)
+
+
 class TestV21Grouped(unittest.TestCase):
     """A match-seeded model (v21) prices several of the pairing's chunks in one pool: every chunk's
     quotes the same, row for row and in the same order, as when each chunk was priced on its own --

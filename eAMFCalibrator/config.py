@@ -28,12 +28,19 @@ PREMATCH_ONLY = False
 GAMERS = []
 # `bets --only-matches FILE`: only these matches' bets (a quick test on a chosen few).
 ONLY_MATCHES = []
-# The margin uplift every betting simulation runs (margin_uplift.py, the partner's dummy-bet
-# method): prod against each candidate over the window, priced off UPLIFT_CHART (a margin chart
-# CSV: probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
-# minutes from the scheduled start to the game clock (None: fitted on prod).
+# The margin uplift every betting simulation runs (margin_uplift.py: every in-play tick a dummy
+# bet, prod and each candidate as two books, every match counting the same) over the window,
+# priced off UPLIFT_CHART (a margin chart CSV: probability, numerator, denominator; None: a
+# proportional 109% book). UPLIFT_FACTOR scales minutes from the scheduled start to the game clock
+# (None: fitted on prod).
 UPLIFT_CHART = None
 UPLIFT_FACTOR = None
+# The betting simulation prices a model that can (v21) only at the moments its bets read: each bet's
+# market and the prod message it reads (BET_MOMENTS, {match: {(market, message)}}, set by bets.run
+# while the candidates are priced). ALL_MOMENTS (`--all-moments`): every moment prod's quotes read, as
+# a calibration run prices them -- slower, and the margin uplift then has every tick.
+ALL_MOMENTS = False
+BET_MOMENTS = None
 # Answer repeated identical queries from memory (set by a report that runs
 # more than one pairing pass over the same window).
 FETCH_CACHE = False
