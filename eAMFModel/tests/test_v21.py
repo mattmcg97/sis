@@ -1086,6 +1086,28 @@ class TestReport(unittest.TestCase):
     def test_steps(self):
         self.assertEqual(list(v21_report.step_of([1, 1, 2, 4, 5], [200, 100, 121, 120, 50])), [0, 1, 2, 7, 8])
 
+    def test_the_final_margin(self):
+        """A sim sure of a 3-point home win, a prior spread over 1-14: the bands, the key margins, the spread and
+        how the favourite wins, against finals of +3 and -10."""
+        from .. import v13
+        sure = v13._distributions(np.full(100, 24), np.full(100, 21))
+        wide = v13._distributions(np.repeat([21, 21, 30, 35], 25), np.repeat([20, 14, 20, 21], 25))
+        results = [dict(code=f"M{i}", finals=f, book=sure, prior_book=wide) for i, f in enumerate([(24, 21)] * 6 + [(14, 24)] * 2)]
+        lines = v21_report.margin_lines(results)
+        text = "\n".join(lines)
+        self.assertIn("THE FINAL MARGIN from kick-off: 8 matches", text)
+        row = lambda start: next(l for l in lines if l.strip().startswith(start)).split()
+        self.assertEqual(row("v21 sim expects")[3:8], ["0.0%", "100.0%", "0.0%", "0.0%", "0.0%"])
+        self.assertEqual(row("prior expects")[2:7], ["0.0%", "25.0%", "25.0%", "50.0%", "0.0%"])
+        self.assertEqual(row("real")[1:6], ["0.0%", "75.0%", "0.0%", "25.0%", "0.0%"])
+        keys = next(i for i, l in enumerate(lines) if "the key margins" in l)
+        self.assertEqual(lines[keys + 1].split()[3:9], ["0.0%", "0.0%", "100.0%", "0.0%", "0.0%", "0.0%"])
+        sim = next(l for l in lines if l.strip().startswith("v21 sim") and "its sd" in l)
+        self.assertIn("its sd 0.00", sim)
+        fav = next(l for l in lines if l.strip().startswith("fav by 2-4") and "(v21 sim)" in l).split()
+        self.assertEqual(fav[4:10], ["100.0", "75.0", "0.0", "0.0", "0.0", "25.0"])   # wins 1-7, 8+, loses
+        self.assertEqual(v21_report.margin_lines([]), [])
+
 
 class TestAudit(unittest.TestCase):
 

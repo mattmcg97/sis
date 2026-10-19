@@ -10,6 +10,10 @@ For every settled match in the window with snapshots:
              finals: overall, by band of the side's expected points, by band of the expected margin, by
              gamer and by team, and graded (moneyline log loss and Brier, margin and total RPS) for the
              prior's own score model and the sim.
+  the margin the final margin from kick-off, the sim's and the prior's own score model against the
+             real finals: how often each band (a tie, 1-3, 4-7, 8-14, 15+) and each key margin, the spread
+             against the real misses, where each final falls in the distribution, and how the favourite
+             wins -- whether the sim's margin is too wide, with too few close games
   each step  from every --every-th real PLAY_OVER before a snap: each side's points still to come --
              the input's (its expected points times the league's share of a game's points still to come
              at that clock, model.share), the sim's from the real state, and the real ones -- by part of
@@ -308,6 +312,91 @@ def kickoff_lines(results):
     return lines
 
 
+MARGIN_BANDS = (("tie", 0, 0), ("1-3", 1, 3), ("4-7", 4, 7), ("8-14", 8, 14), ("15+", 15, 999))
+KEY_MARGINS = (1, 2, 3, 6, 7, 8)
+FAV_EDGES = np.array([2.0, 4.0, 7.0])
+FAV_NAMES = ("fav by <2", "fav by 2-4", "fav by 4-7", "fav by 7+")
+
+
+def _margin_pmf(book):
+    """(margins, pmf) off a book's margin pmf (index MARGIN_MAX is a tie)."""
+    from . import v13
+    pmf = np.asarray(book[0], float)
+    return np.arange(len(pmf)) - v13.MARGIN_MAX, pmf
+
+
+def _pit(margins, pmf, y, u):
+    """Where the real margin y falls in the distribution, a tie within its own mass split by u."""
+    return float(pmf[margins < y].sum() + u * pmf[margins == y].sum())
+
+
+def margin_lines(results):
+    """The final margin from kick-off: how often each band (either way), the key margins, the spread of the
+    distribution against the real misses, where each real final falls in it, and how the favourite wins --
+    the sim's and the prior's own score model against the real finals."""
+    have = [x for x in results if x.get("book") is not None]
+    if not have:
+        return []
+    names = ["v21 sim"] + (["prior"] if all(x.get("prior_book") is not None for x in have) else [])
+    books = {"v21 sim": [x["book"] for x in have], "prior": [x.get("prior_book") for x in have]}
+    y = np.array([x["finals"][0] - x["finals"][1] for x in have], float)
+    u = np.array([(_seed(x["code"]) % 10007) / 10007 for x in have])
+    n = len(have)
+    lines = ["", f"  THE FINAL MARGIN from kick-off: {n:,} matches (overtime in the real finals and the sim's)",
+             f"  {'either way':22s}" + "".join(f"{b[0]:>8s}" for b in MARGIN_BANDS)]
+    stats = {}
+    for name in names:
+        bands, keys, sd, mean, pit, fav = np.zeros(len(MARGIN_BANDS)), np.zeros(len(KEY_MARGINS)), [], [], [], []
+        for k, bk in enumerate(books[name]):
+            mg, p = _margin_pmf(bk)
+            a = np.abs(mg)
+            bands += [p[(a >= lo) & (a <= hi)].sum() for _, lo, hi in MARGIN_BANDS]
+            keys += [p[a == v].sum() for v in KEY_MARGINS]
+            mu = float((mg * p).sum())
+            mean.append(mu)
+            sd.append(float(np.sqrt(((mg - mu) ** 2 * p).sum())))
+            pit.append(_pit(mg, p, y[k], u[k]))
+            s = 1.0 if mu >= 0 else -1.0                          # the favourite's side, as this book has it
+            fm = s * mg
+            fav.append((abs(mu), p[(fm >= 1) & (fm <= 7)].sum(), p[fm >= 8].sum(), p[fm <= -1].sum(),
+                        1 <= s * y[k] <= 7, s * y[k] >= 8, s * y[k] <= -1))
+        stats[name] = dict(bands=bands / n, keys=keys / n, sd=np.array(sd), mean=np.array(mean), pit=np.array(pit),
+                           fav=np.array(fav, float))
+        lines.append(f"  {name + ' expects':22s}" + "".join(f"{100 * v:>7.1f}%" for v in stats[name]["bands"]))
+    real = [np.mean((np.abs(y) >= lo) & (np.abs(y) <= hi)) for _, lo, hi in MARGIN_BANDS]
+    lines.append(f"  {'real':22s}" + "".join(f"{100 * v:>7.1f}%" for v in real))
+    lines += ["", f"  {'the key margins':22s}" + "".join(f"{v:>8d}" for v in KEY_MARGINS)]
+    for name in names:
+        lines.append(f"  {name + ' expects':22s}" + "".join(f"{100 * v:>7.1f}%" for v in stats[name]["keys"]))
+    lines.append(f"  {'real':22s}" + "".join(f"{100 * np.mean(np.abs(y) == v):>7.1f}%" for v in KEY_MARGINS))
+    lines += ["", "  the spread: each match's own margin sd against the real misses' (finals less its mean); the"
+                  " sim too wide where its sd is above the misses'"]
+    for name in names:
+        s = stats[name]
+        miss = y - s["mean"]
+        lines.append(f"  {name:22s} its sd {s['sd'].mean():.2f}, the misses' sd {miss.std():.2f} (mean {miss.mean():+.2f}),"
+                     f" the real final inside its central 50% {np.mean(np.abs(s['pit'] - 0.5) < 0.25):.1%}, 80%"
+                     f" {np.mean(np.abs(s['pit'] - 0.5) < 0.4):.1%}")
+    lines += ["", "  where each real final falls in the distribution, by tenth (10% each when right; too wide piles"
+                  " them in the middle, too narrow in the ends)"]
+    for name in names:
+        h, _ = np.histogram(stats[name]["pit"], bins=10, range=(0, 1))
+        lines.append(f"  {name:22s}" + " ".join(f"{100 * v / n:5.1f}" for v in h))
+    lines += ["", "  the favourite (each book's own): wins by 1-7, wins by 8+, loses -- expected against real, by its"
+                  " expected margin", f"  {'':12s}{'':>7s}{'':>3s}{'wins 1-7':>16s}{'wins 8+':>16s}{'loses':>16s}"]
+    for name in names:
+        f = stats[name]["fav"]
+        b = np.searchsorted(FAV_EDGES, f[:, 0], side="right")
+        for i, label in enumerate(FAV_NAMES):
+            k = b == i
+            if k.sum() < 5:
+                continue
+            e, r = f[k, 1:4].mean(0), f[k, 4:7].mean(0)
+            lines.append(f"  {label:12s}{int(k.sum()):>7,d}  " + "".join(
+                f"{100 * e[j]:>7.1f} {100 * r[j]:>6.1f}  " for j in range(3)) + f"({name})")
+    return lines
+
+
 def people_lines(results, key="gamer", top=15, min_matches=MIN_GAMER_MATCHES):
     sides = _sides(results)
     by = {}
@@ -489,6 +578,7 @@ def report(out):
     lines += nudge_lines(res)
     lines += kickoff_lines(res)
     lines += grade_lines(res)
+    lines += margin_lines(res)
     lines += people_lines(res, "gamer")
     lines += people_lines(res, "team", top=10, min_matches=MIN_GAMER_MATCHES)
     lines += step_lines(res, out["share"])

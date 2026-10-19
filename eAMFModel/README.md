@@ -2660,6 +2660,15 @@ sections:
   - by gamer and by team, for points for and against;
   - graded against the prior's own score model: moneyline log loss and Brier, margin and total RPS,
     and the paired log-loss difference.
+- **The final margin.** Is the sim's margin too wide, with too few close games? The sim's and the
+  prior's own score model against the real finals (overtime in both the sim and the real finals):
+  - how often the margin lands in each band, either way: a tie, 1–3, 4–7, 8–14, 15+;
+  - the key margins: 1, 2, 3, 6, 7, 8;
+  - each match's own margin sd against the real misses' sd, and how often the real final lands
+    inside its central 50% and 80%;
+  - where each real final falls in its distribution, by tenth. When the distribution is right, 10%
+    land in each tenth. Too wide piles them in the middle; too narrow, in the ends;
+  - how the favourite wins (by 1–7, by 8+) or loses, expected against real, by its expected margin.
 - **Each step.** From every `--every`-th real state (`--state-paths` games each), each side's points
   still to come:
   - the input's, which is its expected points times the league's share of a game's points still to
