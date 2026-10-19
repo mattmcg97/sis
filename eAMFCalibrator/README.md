@@ -1860,6 +1860,34 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### Only the moments the bets read (the default), `--all-moments`
+
+Simulating v21 is nearly all of a `bets` run's time. A calibration run prices it at every PLAY_OVER prod's
+quotes read, roughly every play of every match. The bets read far fewer, so `bets` (and `report
+--bets`) prices v21 only where they do:
+- **What a bet reads.** After the lags are fitted, each bet's market and the prod message it reads
+  (one lag back in play) are known. That's the message the join finds the candidate's quote at.
+  The candidate's quote there comes from the book of the latest PLAY_OVER before it, while that
+  state lasts. If the message falls outside every state's window, it comes from the latest earlier
+  quote that falls in one. Only those books are simulated.
+- **What stays the same.**
+  - The kick-off and every pre-match quote are priced as before.
+  - A match with only pre-match bets gets no in-play simulation at all.
+- **What changes.**
+  - The states share one random stream a match, so a state's draws depend on which other states
+    are simulated with it. Each price moves within simulation noise, as with another seed. The
+    candidates of one run are still priced at the same moments, so they stay paired.
+  - Own lines (`own`, `hyst`) carry each market's last line from one quote to the next. That's now
+    the last quote priced, not the last tick, so an own-line spread or total can differ a little.
+    Even, prod and anchored lines don't depend on it.
+  - The margin uplift has a model's prices only at those moments. It bets prod's ticks there alone,
+    each at the model's own price there, never a price held over from an earlier moment, and says
+    so on the page.
+- **The run prints it,** e.g. `v21: 1,214 of 18,905 in-play states simulated, the ones the bets
+  read`.
+- **`--all-moments`** prices every moment, as before: slower, with the margin uplift on every tick.
+  A table candidate, and a model version before v21, are priced as ever.
+
 ### A chosen few matches: `bets --only-matches`
 
 ```bash
@@ -1979,6 +2007,9 @@ the bets it takes:
     probability is outside `PROB_RANGE` (0.05 to 0.95).
   - The clock factor is fitted on all of prod's ticks. The matches are the ones the simulation
     covers: those with at least one bet.
+  - v21 is priced by default only at the moments the bets read (see "Only the moments the bets
+    read" above). Its dummy bets are then prod's ticks at those moments alone, each matched only to
+    v21's own price at that very tick. Run with `--all-moments` for every tick.
 
 **What it shows, per candidate and market:**
 - **To candidate:** the share of the dummy handle the candidate's prices take.
@@ -2109,8 +2140,8 @@ adds two sections at the bottom of the report's HTML. **Re-pricing** has:
 **Book comparison** has the two-book table on the real bets, then the margin uplift.
 
 The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
-`--out` folder. Models are priced again for the bets' matches, so the run
-takes longer.
+`--out` folder. Models are priced again for the bets' matches, at the moments
+the bets read (`--all-moments`: every one), so the run takes longer.
 
 ### Book comparison: who would still bet, and which book they would take
 

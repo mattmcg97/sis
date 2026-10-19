@@ -263,6 +263,68 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(summary["uplift"], {"x": 1})
 
 
+class TestBetMoments(unittest.TestCase):
+    """The candidates are priced with the bets' moments in config.BET_MOMENTS (none with --all-moments),
+    and a model priced at them alone is matched in the margin uplift at its own ticks only."""
+
+    def run_bets(self, all_moments):
+        from .. import snowflake_io
+        from .test_bets import MONEYLINE, PRICES, _checks_for, at, odds_for
+        cols = ["OPERATOR_UNIQUE_ID", "MATCH_CODE", "BET_DATE_UTC", "MARKET_TYPE_ID", "SELECTION_ID",
+                "ODDS", "STAKE_GBP", "REVENUE_GBP", "MARKET_LINE", "BET_PLACED_PERIOD_NUMBER",
+                "OPERATOR_NAME", "BET_IN_PLAY", "CUSTOMER_TEMPERATURE"]
+        rows = [(i, "M1", at(c + 7), 1, 1, odds_for(p), 10, 10, None, 2, "FANDUEL", "Yes", "Standard")
+                for i, (c, p) in enumerate(PRICES[1:])]
+        history = [{"MATCH_CODE": "M1", "SCHEDULED_START_TIME_UTC": f"{at(0) - dt.timedelta(minutes=5):%Y-%m-%d %H:%M:%S}",
+                    "PLAYER_1_FINAL_SCORE": "21", "PLAYER_2_FINAL_SCORE": "17"}]
+        seen = []
+
+        def quotes(cur, stream, batch):
+            seen.append((stream, config.BET_MOMENTS))
+            return MONEYLINE
+        with mock.patch.object(bets, "fetch_all", return_value=(cols, rows)), \
+                mock.patch.object(snowflake_io, "fetch_quotes", side_effect=quotes), \
+                mock.patch.object(snowflake_io, "fetch_final_scores", return_value={"M1": (21, 17)}), \
+                mock.patch.object(snowflake_io, "fetch_history", return_value=history), \
+                mock.patch.object(snowflake_io, "at_bet_moments", lambda s: s == "CAND_TABLE" and not all_moments), \
+                mock.patch.object(bets, "write_csv"), mock.patch.object(bets, "write_text"), \
+                mock.patch("builtins.print"), mock.patch("os.makedirs"), \
+                mock.patch.object(bets, "fetch_checks", return_value=_checks_for(MONEYLINE)), \
+                mock.patch.multiple(config, LAG_RANGE=(-20, 30), CANDIDATES=["CAND_TABLE"], ALL_MOMENTS=all_moments), \
+                mock.patch.object(mu, "run", return_value=None) as run:
+            bets.run(None, "out", summary={})
+        return seen, run.call_args.args[1]
+
+    def test_the_moments_reach_the_candidates_alone(self):
+        seen, feeds = self.run_bets(False)
+        self.assertEqual([m for s, m in seen if s == config.STREAMS["prod"]], [None])
+        moments = dict(seen)["CAND_TABLE"]
+        self.assertEqual(set(moments), {"M1"})
+        self.assertTrue(moments["M1"] and {k for k, _ in moments["M1"]} == {50})
+        self.assertLessEqual({m for _, m in moments["M1"]}, {0, 100, 200, 300, 400})   # prod's messages
+        self.assertIsNone(config.BET_MOMENTS)                                     # put back after the run
+        cand = dict(feeds)["CAND_TABLE"]
+        self.assertEqual((cand.at_bets, cand.max_age), (True, 0.0))
+        self.assertEqual((dict(feeds)["prod"].at_bets, dict(feeds)["prod"].max_age), (False, None))
+
+    def test_all_moments(self):
+        seen, feeds = self.run_bets(True)
+        self.assertIsNone(dict(seen)["CAND_TABLE"])
+        self.assertFalse(dict(feeds)["CAND_TABLE"].at_bets)
+
+    def test_a_model_at_the_bets_moments_is_matched_at_its_own_ticks(self):
+        prod = mu.Ticks("prod").add([q("M1", 50, k, 0.5) for k in (3, 4, 5, 6)], STARTS, FINALS)
+        cand = mu.Ticks("v21").add([q("M1", 50, 4, 0.6)], STARTS, FINALS)    # the one moment a bet read
+        self.assertEqual(len(mu.matched([("prod", prod), ("v21", cand)])[0][1]), 3)   # 4, 5, 6: its price held
+        cand.at_bets, cand.max_age = True, 0.0
+        (_, p), (_, c) = mu.matched([("prod", prod), ("v21", cand)])
+        self.assertEqual(list(p.array("minutes")), [4.0])
+        data = mu.compute([("prod", prod), ("v21", cand)], factor=2.0, boot=50)
+        self.assertTrue(data["feeds"][1]["at_bets"])
+        self.assertIn("v21 priced only at the moments the bets read", "\n".join(mu.text(data)))
+        self.assertIn("v21 priced only at the moments the bets read", mu.html(data, str))
+
+
 class TestUpliftFailure(unittest.TestCase):
 
     def test_the_bets_run_reports_without_it(self):

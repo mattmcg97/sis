@@ -752,6 +752,18 @@ def _as_chunk_called(rows_by_code, codes, workers):
     return [r for i in range(w) for c in codes[i::w] for r in rows_by_code.get(c, ())]
 
 
+def at_bet_moments(stream_table):
+    """Whether this candidate is priced only at the moments the bets read: config.BET_MOMENTS is set
+    (a betting simulation without --all-moments) and it is a model whose stream can (PRICES_MOMENTS)."""
+    if getattr(config, "BET_MOMENTS", None) is None or not is_model(stream_table):
+        return False
+    base = model_base(model_version(stream_table)[0])
+    if base not in LINE_MODELS:
+        return False
+    import importlib
+    return bool(getattr(importlib.import_module(f"eAMFModel.{base}_stream"), "PRICES_MOMENTS", False))
+
+
 def _lead_of(stream):
     """The lead at which the second lever's favourite eases off (v21.SHAPE_LEAD)."""
     return getattr(getattr(stream, "v21", None), "SHAPE_LEAD", 9)
@@ -789,8 +801,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     shape = getattr(stream, "shape_of", lambda _n: None)(name)    # v21-shape0.25: the second strength lever
     if shape:
         opts["shape"] = shape
+    # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
+    moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
+    read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
     key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
-                            prematch_only, tuple(sorted(opts.items())))
+                            prematch_only, tuple(sorted(opts.items())), read)
     cache_key = key_of(match_codes)
     caching = getattr(config, "FETCH_CACHE", False)
     if cache_key in _MODEL_QUOTES:              # kept, or priced with an earlier chunk of its group
@@ -837,13 +852,17 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
                                      history=history, prematch_only=prematch_only, **opts,
-                                     **({"batches": [list(b) for b in group]} if seeded else {}))
+                                     **({"batches": [list(b) for b in group]} if seeded else {}),
+                                     **({"moments": moments} if moments is not None else {}))
     took = getattr(stream, "LAST_TIMING", {})
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"
               + (f"; {miss:,} priced on the sim's own means (rebuild it to cover the window: walkthrough, then"
                  " form-prior)" if miss else ""), flush=True)
+    if took.get("moments") and not prematch_only:
+        print(f"  {name}: {took.get('states', 0):,} of {took.get('states_of', 0):,} in-play states simulated, the"
+              " ones the bets read (--all-moments: every one)", flush=True)
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
         print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "

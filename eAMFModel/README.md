@@ -2383,6 +2383,11 @@ A touchdown's PLAY_OVER, with its conversion still to come, has no book, so prod
 window go unpaired. Only the PLAY_OVERs prod's quotes read are simulated, at `--v21-paths` (1000)
 games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`).
 
+A betting simulation (`eAMFCalibrator bets`) hands over `moments`: each bet's market and the prod
+message it reads. Then only the books those bets read are simulated, and the kick-off as ever, which
+is several times quicker. Its README's "Only the moments the bets read" says what that changes, and
+`--all-moments` turns it off.
+
     python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-14 --candidate v21 \
         --v21-model v21_t10 --v21-prior-model v14_model
 

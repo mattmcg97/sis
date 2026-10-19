@@ -11,7 +11,8 @@ nudge: a snap (v21.match_starts) or a kick-off after a score.
 A touchdown's PLAY_OVER, with its conversion still to come, has no book, because the sim has no
 start there. Prod's quotes until the conversion go unpaired. A prod quote reads the book of the
 PLAY_OVER before it while that state lasts (stream.confident_windows), and only those books are
-simulated.
+simulated. Given `moments` (the betting simulation's: each bet's market and the prod message it reads),
+only the books those bets read are simulated, and the quotes are those books' alone.
 
 With an in-play strength update (v21_react: a candidate named v21-snapT or v21-ptsT), every in-play
 state gets its own nudge, the kick-off's moved by what the match has shown of each side by then. With
@@ -45,6 +46,7 @@ PREMATCH = True
 # Every match's sim is seeded by the match (_seed): its quotes are the same whichever matches it is
 # priced with, so the calibrator prices several of its chunks in one pool (snowflake_io._sim_quotes).
 MATCH_SEEDED = True
+PRICES_MOMENTS = True         # quotes_for_matches takes `moments`: only the books the bets read
 
 
 def _model_file(model_dir=None):
@@ -201,6 +203,32 @@ def _needed(keys, prod_quote_rows, windows):
     return need
 
 
+def _read(keys, prod_quote_rows, windows, reads):
+    """The PLAY_OVER messages whose books the bets read. `reads`: (market, prod message) per bet; each
+    reads the latest quote of its market at or before that message (the calibrator's bets.price_at),
+    which is the book of the latest prod quote there that falls in a book's window -- none (the
+    kick-off's price) when that quote is before the first PLAY_OVER."""
+    by_market = {}
+    for market_id, message in paired_prod_rows(prod_quote_rows):
+        if market_id in MARKET_IDS:
+            by_market.setdefault(market_id, []).append(int(message))
+    for msgs in by_market.values():
+        msgs.sort()
+    need = set()
+    for market_id, message in reads:
+        msgs = by_market.get(int(market_id), [])
+        j = bisect_right(msgs, int(message)) - 1
+        while j >= 0:
+            i = bisect_right(keys, msgs[j]) - 1
+            if i < 0:
+                break
+            if keys[i] in windows and msgs[j] < windows[keys[i]]:
+                need.add(keys[i])
+                break
+            j -= 1
+    return need
+
+
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
                kickoff=None):
     """Prod-shaped quote rows (v14_stream.quote_rows's pairing) off v21's books: (message, margin
@@ -250,16 +278,25 @@ def _kickoff(model, pair, teams, target, n_paths, code, share, shape=0.0):
     return v14._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()))
 
 
-def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, shape=0.0):
+def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, shape=0.0,
+                reads=None, tally=None):
     """(books, windows): v21's margin and total distributions at the PLAY_OVERs the match's prod
     quotes read, every other PLAY_OVER keyed with None. `react` (v21_react.spec_of): each state's
     nudge moved by the match so far (kick: the kick-off's points, for the points update). shape: the
-    second strength lever, its edge the kick-off's margin."""
+    second strength lever, its edge the kick-off's margin. `reads` ((market, prod message) per bet):
+    only the books those bets read (_read). `tally` (a dict): the books simulated and the ones prod's
+    quotes read, added to "priced" and "of"."""
     rows = [_as_text(r) for r in sorted(snaps, key=lambda r: int(r["message"]))]
     starts = state_starts(model, rows, pair, teams)
     keys = [m for m, _ in starts]
     windows = confident_windows(snaps, keys)
     need = _needed(keys, prod_rows, windows)
+    of = len(need)
+    if reads is not None:
+        need &= _read(keys, prod_rows, windows, reads)
+    if tally is not None:
+        tally["priced"] = tally.get("priced", 0) + len(need)
+        tally["of"] = tally.get("of", 0) + of
     sel = [(m, s) for m, s in starts if m in need]
     books = {m: (m, None, None) for m in keys}
     if sel:
@@ -284,8 +321,9 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
 
 def _price(model, item, n_paths, lines, prematch_only, share, react=None, shape=0.0):
     """One match's quote rows by line mode: the kick-off (and the pre-match quotes published before
-    results the prior's form follows came in), then the PLAY_OVERs prod's quotes read."""
-    code, snaps, prod_rows, first_play, pair, teams, target, known = item
+    results the prior's form follows came in), then the PLAY_OVERs prod's quotes read (or only the
+    bets', the item's reads). Under "_states": (books simulated, books prod's quotes read)."""
+    code, snaps, prod_rows, first_play, pair, teams, target, known, reads = item
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, shape)
     kickoff = kick if PREMATCH else None
@@ -293,11 +331,15 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None, shape=
         kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, shape)[0] for m in sorted(set(known.values()))}
         at = {publish: kicks[m] for publish, m in known.items()}
         kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
+    tally = {}
     if side_known(snaps) and not prematch_only:
-        books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react, kstats, shape)
+        books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react, kstats, shape,
+                                     reads, tally)
     else:
         books, windows = [], {}
-    return {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
+    out = {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
+    out["_states"] = (tally.get("priced", 0), tally.get("of", 0))
+    return out
 
 
 def _worker(job):
@@ -305,11 +347,13 @@ def _worker(job):
     items, model_file, n_paths, lines, prematch_only, share, react, shape = job
     model = v21.Model.load(model_file)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
-    out = {mode: [] for mode in modes}
+    out, states = {mode: [] for mode in modes}, (0, 0)
     for item in items:
         got = _price(model, item, n_paths, lines, prematch_only, share, react, shape)
         for mode in modes:
             out[mode].extend(got[mode])
+        states = tuple(a + b for a, b in zip(states, got["_states"]))
+    out["_states"] = states
     return out
 
 
@@ -334,14 +378,17 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
-                       prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, shape=None):
+                       prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, shape=None,
+                       moments=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
     0: the sim's own means, no prior needed); `batches`: the calibrator's chunks priced here together,
     each match's earlier pre-match states read off its own chunk's ends of play, as a call for that
     chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none); `shape`:
-    the second strength lever's kappa (v21.SHAPE_TRAIL, shape_of; None: off)."""
+    the second strength lever's kappa (v21.SHAPE_TRAIL, shape_of; None: off); `moments`: {match: (market,
+    prod message) per bet}, only the in-play books those bets read simulated (None: every book prod's
+    quotes read; a match without any: its pre-match prices alone)."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     if react:                                        # the tables a variant reads, once with the build
@@ -408,7 +455,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         if handles and code in handles and not all(pair):
             pair = tuple((x or "").strip().upper() for x in handles[code])
         target = tuple(float(x) for x in means[code]) if code in means else None
-        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code)))
+        reads = None if moments is None else set(moments.get(code, ()))
+        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads))
     if share and pre is not None:                    # which prior, and how many of the matches it has
         LAST_TIMING.update(prior=prior_tables, prior_matches=sum(1 for it in items if it[6] is not None),
                            matches=len(items))
@@ -419,6 +467,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     t0 = time.time()
     if workers == 1:
         out = _worker((items, model_file, n_paths, lines, prematch_only, share, react, shape or 0.0))
+        states = out.pop("_states")
     else:
         # a match at a time to whichever worker is free (a worker handed a fixed share kept the rest
         # waiting on its longest matches), the rows put back in the order the shares gave them: each
@@ -428,5 +477,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
                            chunksize=1)
         order = [k for i in range(workers) for k in range(i, len(items), workers)]
         out = {mode: [row for k in order for row in per[k][mode]] for mode in modes}
-    LAST_TIMING.update(simulate=time.time() - t0, workers=workers)
+        states = tuple(sum(p["_states"][j] for p in per) for j in (0, 1))
+    LAST_TIMING.update(simulate=time.time() - t0, workers=workers, states=states[0], states_of=states[1],
+                       moments=moments is not None)
     return out[lines] if isinstance(lines, str) else out

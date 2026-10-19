@@ -155,6 +155,8 @@ class Ticks:
         self.parts = defaultdict(list)
         self.matches = {}
         self.finals = {}
+        self.at_bets = False             # a model priced only at the moments the bets read
+        self.max_age = None              # its own matching age (None: PAIR_MAX_AGE); 0: its own ticks alone
 
     def add(self, quote_rows, starts, finals):
         """Add snowflake_io.fetch_quotes rows; `starts` {match: scheduled start}, `finals` {match:
@@ -197,6 +199,7 @@ class Ticks:
         keep = [i for code, i in self.matches.items() if code in codes]
         mask = np.isin(self.array("match"), keep)
         out = Ticks(self.name)
+        out.at_bets, out.max_age = self.at_bets, self.max_age
         for key in self.parts:
             out.parts[key] = [self.array(key)[mask]]
         out.matches = {code: i for code, i in self.matches.items() if code in codes}
@@ -240,8 +243,9 @@ def _latest(prod, cand, max_age=PAIR_MAX_AGE):
 
 def matched(feeds, max_age=PAIR_MAX_AGE, prob_range=PROB_RANGE):
     """`feeds` [(label, Ticks)], prod first, cut to prod's ticks that every candidate has a price for
-    (its latest, no older than `max_age` minutes) and where every feed's probability is within
-    `prob_range`. A candidate's tick keeps its own probability, line and result, at prod's match and
+    (its latest, no older than `max_age` minutes, or the candidate's own max_age: 0 for a model priced
+    at the bets' moments alone, its price at prod's very tick) and where every feed's probability is
+    within `prob_range`. A candidate's tick keeps its own probability, line and result, at prod's match and
     minute; the matches are the ones with a tick left."""
     prod = feeds[0][1]
     lo, hi = prob_range
@@ -249,7 +253,7 @@ def matched(feeds, max_age=PAIR_MAX_AGE, prob_range=PROB_RANGE):
     ok = inside(prod.array("prob"))
     hits = []
     for _, t in feeds[1:]:
-        ok_c, hit = _latest(prod, t, max_age)
+        ok_c, hit = _latest(prod, t, max_age if t.max_age is None else t.max_age)
         ok &= ok_c & inside(t.array("prob")[hit] if len(t) else np.zeros(len(ok)))
         hits.append(hit)
     left = set(np.unique(prod.array("match")[ok]).astype(int).tolist())
@@ -407,7 +411,7 @@ def compute(feeds, chart=None, chart_name=None, factor=None, window=None, boot=N
                              bands={i: cut(b["band"] == i) for i in range(len(PRICE_BANDS) + 1)} if gi == 0 else {},
                              priced=int(((b["group"] == gi)).sum()), same_line=int(base.sum()))
         cands.append(dict(label=label, groups=groups, books=b))
-    out = dict(feeds=[dict(label=label, ticks=len(t), of=len(r), mean_end=r.mean_end())
+    out = dict(feeds=[dict(label=label, ticks=len(t), of=len(r), mean_end=r.mean_end(), at_bets=r.at_bets)
                       for (label, t), (_, r) in zip(feeds, raw)],
                matches=len(prod.matches), factor=factor, window=window, boot=boot, cands=cands,
                chart=chart_name or f"proportional {100 * FALLBACK_BOOK:.0f}% (no chart given)")
@@ -533,6 +537,9 @@ def text(data):
              f"  margin chart: {data['chart']}; clock: minutes x {data['factor']:.3f} -> {GAME_MINUTES} game minutes;"
              f" the last {CUT_LAST} left out; 95% over matches ({data['boot']:,} resamples)",
              "  " + "; ".join(f"{f['label']} {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])]
+    if _at_bets(data):
+        lines.append(f"  {_at_bets(data)} priced only at the moments the bets read: the dummy bets are prod's ticks"
+                     " there alone, each at its own price (bets --all-moments for every tick)")
     for c in data["cands"]:
         for g, gd in c["groups"].items():
             st = gd["all"]
@@ -552,6 +559,11 @@ def text(data):
 
 
 TOP = 10
+
+
+def _at_bets(data):
+    """The feeds priced only at the bets' moments, named, or ''."""
+    return ", ".join(f["label"] for f in data["feeds"] if f.get("at_bets"))
 
 
 def match_summary(data, top=TOP):
@@ -712,6 +724,9 @@ def html(data, esc):
       <pre class="dim" style="overflow-x:auto">{esc(chr(10).join(match_summary(data)))}</pre>
     </details>"""
     feeds = " &middot; ".join(f"{esc(f['label'])}: {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])
+    at_bets = (f'\n    <p class="dim">{esc(_at_bets(data))} priced only at the moments the bets read: the dummy bets'
+               " are prod's ticks there alone, each at its own price (bets --all-moments for every tick).</p>"
+               if _at_bets(data) else "")
     return f"""
     <p class="dim">Two books, {esc(data.get('window') or 'the report window')}, {data['matches']:,} matches: every
       live in-play price tick is a dummy bet to win {STAKE_TO_WIN:.0f} at the margin chart's price
@@ -723,7 +738,7 @@ def html(data, esc):
       {PROB_RANGE[0]:g}&ndash;{PROB_RANGE[1]:g}; the spread and totals only where the candidate's line is
       prod's. Minutes from the scheduled start &times; {data['factor']:.3f} make a {GAME_MINUTES}-minute game;
       the last {CUT_LAST} are left out.</p>
-    <p class="dim">{feeds}</p>
+    <p class="dim">{feeds}</p>{at_bets}
     <table class="reach">
       <thead>{head}</thead>
       <tbody>{''.join(rows)}</tbody>

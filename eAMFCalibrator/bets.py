@@ -246,6 +246,19 @@ def fit_lags(bets, tl, lags=None):
     return out
 
 
+def reads_of(bets, lags, prod_tl):
+    """{match: {(market, prod message)}}: the prod quote each bet reads (join's, one lag back in play),
+    for a model to price only the moments the bets read (config.BET_MOMENTS)."""
+    out = defaultdict(set)
+    for b in bets:
+        if b.time is None:
+            continue
+        p = price_at_time(prod_tl, b.match_code, b.feed_market, b.time - dt.timedelta(seconds=bet_lag(b, lags)))
+        if p is not None and p[0] is not None:
+            out[b.match_code].add((b.feed_market, p[0]))
+    return dict(out)
+
+
 def bet_lag(b, lags):
     """The seconds a bet is read back from: its operator's lag in play, none pre-match."""
     lag = lags.get(b.operator)
@@ -661,16 +674,20 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
     results = []
     first_plays = {c: getattr(f, "first_play", None) for c, f in (checks.feeds or {}).items()}
     closing = {"prod": closing_prices(prod_tl, first_plays, matches)} if gamer_info is not None else None
-    cached, prematch_was = config.FETCH_CACHE, config.PREMATCH_ONLY
+    cached, prematch_was, moments_was = config.FETCH_CACHE, config.PREMATCH_ONLY, config.BET_MOMENTS
     config.FETCH_CACHE = True             # one simulation per model, whatever lines each reads
     config.PREMATCH_ONLY = prematch_only
+    config.BET_MOMENTS = None if config.ALL_MOMENTS else reads_of(bets, lags, prod_tl)
     try:
         for stream in candidate_streams():
             print(f"\n  pricing the bets with {label(stream)}", flush=True)
             cand_rows = candidate_quotes(cur, stream, matches)
             cand_tl = timeline(cand_rows)
             if uplift is not None:
-                uplift.append((label(stream), margin_uplift.Ticks(label(stream)).add(cand_rows, starts, finals)))
+                ticks = margin_uplift.Ticks(label(stream)).add(cand_rows, starts, finals)
+                if snowflake_io.at_bet_moments(stream):     # its own ticks alone: no stale price after them
+                    ticks.at_bets, ticks.max_age = True, 0.0
+                uplift.append((label(stream), ticks))
             results.append((label(stream), join(bets, lags, signs, prod_tl, quote_index(cand_rows),
                                                  cand_tl, finals, checks,
                                                  same_state=snowflake_io.is_model(stream))))
@@ -678,7 +695,7 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
                 closing[label(stream)] = closing_prices(cand_tl, first_plays, matches)
             del cand_rows, cand_tl
     finally:
-        config.FETCH_CACHE, config.PREMATCH_ONLY = cached, prematch_was
+        config.FETCH_CACHE, config.PREMATCH_ONLY, config.BET_MOMENTS = cached, prematch_was, moments_was
         snowflake_io.clear_fetch_cache()
     bet_moments.annotate(results, bets, checks, checks.timelines)
     lag_rows = [dict(operator=op, lag_seconds=lag.seconds, bets=lag.bets,
