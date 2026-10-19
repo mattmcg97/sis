@@ -6019,6 +6019,32 @@ class TestV21React(unittest.TestCase):
         self.assertEqual(seen, [(None, None), (0.25, None), (0.5, None)])
         self.assertIn("the second strength lever, kappa 0.25", out.getvalue())
 
+    def test_the_name_picks_the_gap_shrink(self):
+        """v21-gap0.75: v21 with the prior's expected margins x 0.75, its quotes apart."""
+        import importlib
+        from .. import snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("gap"))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-gap0.75", "v21-gap0.6"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, 0.75, 0.6])
+        self.assertIn("the gap shrink, the prior's expected margin x 0.75", out.getvalue())
+
 
     def test_a_betting_simulation_prices_the_bets_moments_alone(self):
         """config.BET_MOMENTS (bets.run's): v21 is handed the moments and caches them apart; --all-moments

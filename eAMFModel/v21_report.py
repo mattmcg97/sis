@@ -29,7 +29,7 @@ import zlib
 
 import numpy as np
 
-from . import sim14 as s14, v13, v21
+from . import sim14 as s14, v13, v21, v21_stream
 
 DEFAULT_PATHS = 1000          # kick-off games per receiving side
 STATE_PATHS = 200
@@ -173,13 +173,15 @@ def _worker(job):
 
 def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFAULT_PATHS,
         state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False, nudge_share=1.0,
-        shape=0.0):
+        shape=0.0, gap=None):
     """Per match: its row, finals, the inputs, the sim's kick-off and its states; and the census of the
     sim's draws and the real games'. `means` {code: (home, away)} are the inputs; `prior_books`
     {code: (margin pmf, total pmf)} the prior's own price, for grading. nudge (a tilt build): each side's
     offense nudged along the strength direction to meet the inputs at kick-off (v21.nudge_solve), the
     same nudge carried into its real states; nudge_share: that share of the way from the sim's own means;
-    shape: the second strength lever's kappa with the nudge (v21.SHAPE_TRAIL; 0: off)."""
+    shape: the second strength lever's kappa with the nudge (v21.SHAPE_TRAIL; 0: off); gap: the gap shrink,
+    the nudge meeting the inputs' margin x gap, their total kept (v21_stream.shrunk; None: off) -- the
+    report still sets the sim against the inputs as given."""
     import os
     model_path = os.path.join(model_dir, v21.MODEL_FILE) if os.path.isdir(model_dir) else model_dir
     model = v21.Model.load(model_path)
@@ -191,7 +193,8 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
     if nudge and getattr(model, "nudge_dir", None) is None:
         raise SystemExit("--nudge needs a tilt build (v21-build --mode tilt)")
     items = [(c, [{k: r.get(k) for k in ROW_KEYS} for r in v21._with_side(matches[c])])
-             + v21.match_people(c, matches[c], hist) + (tuple(means[c]) if nudge else None,) for c in codes]
+             + v21.match_people(c, matches[c], hist) + (v21_stream.shrunk(means[c], gap) if nudge else None,)
+             for c in codes]
     workers = max(1, min(workers, len(items)))
     jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share, float(shape or 0.0))
             for k in range(workers)]
@@ -212,7 +215,7 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
     return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}, model, history),
                 gamer_names={i: g for g, i in model.gamers.items()}, share=model.share, mode=model.mode, since=since, until=until, every=every,
                 n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge), nudge_share=float(nudge_share),
-                shape=float(shape or 0.0))
+                shape=float(shape or 0.0), gap=gap)
 
 
 def _pool():
@@ -585,6 +588,8 @@ def report(out):
     nudged = (", nudged to the inputs" if out.get("nudge_share", 1.0) == 1.0
               else f", nudged {100 * out.get('nudge_share', 1.0):.0f}% of the way to the inputs") if out.get("nudge") else ""
     nudged += f", the second strength lever at kappa {out['shape']:g}" if out.get("nudge") and out.get("shape") else ""
+    nudged += (f", the inputs' margins x {out['gap']:g} (the gap shrink)" if out.get("nudge") and out.get("gap") is not None
+               else "")
     lines = [f"  v2.1 ({out['mode']}{nudged}) on {len(res):,} settled"
              f" matches {out['since']} to {out['until']}: {2 * out['n_paths']:,} kick-off games each,"
              f" {out['state_paths']:,} from every {out['every']} real state", ""]

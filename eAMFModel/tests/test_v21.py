@@ -1072,6 +1072,15 @@ class TestReport(unittest.TestCase):
         self.assertIn("NUDGE:", lines)
         kick = np.array([r["kick"] for r in out["results"]])
         self.assertLess(abs(kick[:, 0].mean() - 12.0), 2.0)
+        with tempfile.TemporaryDirectory() as tmp:                 # the gap shrink: the margin met is half the inputs'
+            m.save(os.path.join(tmp, v21.MODEL_FILE))
+            half = v21_report.run(tmp, {c: MATCHES[c] for c in codes}, HISTORY, means, "2026-10-01", "2026-10-01",
+                                  n_paths=100, state_paths=0, nudge=True, gap=0.5)
+        k2 = np.array([r["kick"] for r in half["results"]])
+        self.assertLess((k2[:, 0] - k2[:, 1]).mean(), (kick[:, 0] - kick[:, 1]).mean() - 1.5)
+        self.assertLess(abs((k2[:, 0] + k2[:, 1]).mean() - (kick[:, 0] + kick[:, 1]).mean()), 1.5)   # the total kept
+        self.assertEqual(half["results"][0]["means"], (12.0, 8.0))            # set against the inputs as given
+        self.assertIn("the inputs' margins x 0.5 (the gap shrink)", "\n".join(v21_report.report(half)))
 
     def test_report_sets_the_sim_against_the_inputs(self):
         out, states = self.run_report()
@@ -1296,6 +1305,36 @@ class TestStream(unittest.TestCase):
         at = lambda m: bisect.bisect_right(keys, m)
         self.assertEqual({at(m) for _, m in live}, {at(read)})
         self.assertEqual(sorted(x for x in fast if (x[1], x[6]) in kick), sorted(none))   # the kick-off as before
+
+    def test_the_gap_shrink(self):
+        """v21-gapL: the prior's expected margin x L, its total kept, met by the nudge -- the prices exactly those of a
+        prior with that margin."""
+        from .. import v21_stream as vs
+        self.assertEqual((vs.gap_of("v21-gap0.75"), vs.gap_of("v21-gap1"), vs.gap_of("v21"), vs.gap_of("v21-shape0.5")),
+                         (0.75, None, None, None))
+        self.assertEqual(vs.shrunk((30.0, 10.0), 0.5), (25.0, 15.0))
+        self.assertEqual(vs.shrunk((30.0, 10.0), None), (30.0, 10.0))
+
+        class Prior:
+            league = (15.0, 15.0)
+
+            def __init__(self, means):
+                self._means = means
+
+            def means(self, rows, results=None):
+                return {r["MATCH_CODE"]: self._means for r in rows}
+
+        prod = [p for p in self._prod() if p[6] is None]
+        price = lambda means, gap: {x[1]: x[3] for x in self._priced(vs, prod, Prior, means, gap)}
+        wide, half, level = price((14.0, 6.0), None), price((14.0, 6.0), 0.5), price((12.0, 8.0), None)
+        self.assertEqual(half, level)
+        self.assertNotEqual(half, wide)
+
+    def _priced(self, vs, prod, prior, means, gap):
+        with mock.patch.object(vs, "prematch_model", lambda _t: prior(means)), \
+                mock.patch.object(vs, "_prior_tables", lambda _d=None: "prior"):
+            return vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=60, workers=1,
+                                         match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0, gap=gap)
 
     def test_the_nudge_moves_the_kick_off_toward_the_prior(self):
         from .. import v21_stream as vs

@@ -801,6 +801,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     shape = getattr(stream, "shape_of", lambda _n: None)(name)    # v21-shape0.25: the second strength lever
     if shape:
         opts["shape"] = shape
+    gap = getattr(stream, "gap_of", lambda _n: None)(name)        # v21-gap0.75: the prior's margins shrunk
+    if gap is not None:
+        opts["gap"] = gap
     # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
     moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
     read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
@@ -836,6 +839,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if shape:
         print(f"  {name}: the second strength lever, kappa {shape:g}: the favourite's strength gap played {shape:g} x"
               f" half its expected margin wider a side when behind, narrower when {_lead_of(stream)}+ ahead", flush=True)
+    if gap is not None:
+        print(f"  {name}: the gap shrink, the prior's expected margin x {gap:g}, its total kept, before the nudge"
+              " meets it", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")

@@ -18,7 +18,9 @@ With an in-play strength update (v21_react: a candidate named v21-snapT or v21-p
 state gets its own nudge, the kick-off's moved by what the match has shown of each side by then. With
 the second strength lever (a candidate named v21-shapeK, v21.SHAPE_TRAIL), the favourite's strength gap
 is played by the score at kick-off and in every state: wider when it is behind, narrower when it is two
-scores up."""
+scores up. With the gap shrink (a candidate named v21-gapL), the prior's expected margin is taken L times
+over, its total kept, before the nudge meets it: the prior's big gaps come out at about half (September)
+to three quarters (October) in the real finals."""
 
 import os
 import re
@@ -132,6 +134,26 @@ def shape_of(name):
     _, _, tag = str(name or "").partition("-")
     m = _SHAPE.match(tag.strip().lower())
     return float(m.group(1)) if m and float(m.group(1)) > 0 else None
+
+
+_GAP = re.compile(r"^gap(\d+(?:\.\d+)?)$")
+
+
+def gap_of(name):
+    """The gap shrink a candidate's name asks for ('v21-gap0.75' -> 0.75: the prior's expected margin x 0.75,
+    its total kept), or None (v21 itself, or 1)."""
+    _, _, tag = str(name or "").partition("-")
+    m = _GAP.match(tag.strip().lower())
+    return float(m.group(1)) if m and float(m.group(1)) != 1.0 else None
+
+
+def shrunk(points, gap):
+    """(home, away) expected points with their margin x gap and their total kept; as given with no gap."""
+    if gap is None:
+        return tuple(float(x) for x in points)
+    h, a = float(points[0]), float(points[1])
+    total, margin = h + a, (h - a) * float(gap)
+    return ((total + margin) / 2, (total - margin) / 2)
 
 
 def react_of(name):
@@ -379,7 +401,7 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
                        prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, shape=None,
-                       moments=None):
+                       moments=None, gap=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
@@ -388,7 +410,9 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none); `shape`:
     the second strength lever's kappa (v21.SHAPE_TRAIL, shape_of; None: off); `moments`: {match: (market,
     prod message) per bet}, only the in-play books those bets read simulated (None: every book prod's
-    quotes read; a match without any: its pre-match prices alone)."""
+    quotes read; a match without any: its pre-match prices alone); `gap`: the gap shrink, the prior's
+    expected margin x gap with its total kept, at kick-off and in every earlier pre-match state (gap_of;
+    None: as the prior says)."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     if react:                                        # the tables a variant reads, once with the build
@@ -447,14 +471,14 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         means = base.means(rows, results=history)
         for (code, publish), at in code_at.items():
             if at != code and at in means:
-                known.setdefault(code, {})[publish] = tuple(means[at])
+                known.setdefault(code, {})[publish] = shrunk(means[at], gap)
     LAST_TIMING.update(prematch=time.time() - t0, cuts=sum(len(set(k.values())) for k in known.values()))
     items = []
     for code, (snaps, first_play) in matches.items():
         pair, teams = v21.match_people(code, snaps, info)
         if handles and code in handles and not all(pair):
             pair = tuple((x or "").strip().upper() for x in handles[code])
-        target = tuple(float(x) for x in means[code]) if code in means else None
+        target = shrunk(means[code], gap) if code in means else None
         reads = None if moments is None else set(moments.get(code, ()))
         items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads))
     if share and pre is not None:                    # which prior, and how many of the matches it has

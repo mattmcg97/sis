@@ -2434,6 +2434,48 @@ section shows how the favourite wins, the sim's against the real), then the bett
 `-shapeK`), the draws are exactly as before. The three tilts a side share the sim's tilt cache (six a
 match, under `TILT_CACHE_MAX`), so the lever costs little time.
 
+**Result: it doesn't beat v21.** The betting sim ran Oct 1–18 on 129,849 bets over 1,230 matches.
+Against plain v21:
+- On one book it's level at every κ (κ 0.5: +0.20 [−0.18, +0.59]).
+- On two books, with each bet going to the better of prod and the candidate, κ 0.5 is worse:
+  −0.40 [−0.68, −0.15], and on the moneyline −0.45 [−0.75, −0.17].
+- In practice it raised the favourite's chance by 0.7–1.1 points pre-match, level and behind, and
+  barely moved it ahead (the ease-off at 9+ seldom fires).
+- The longer underdog prices that follow got taken, and the underdogs won too often for them:
+  pre-match −2.12, favourite behind 3–8 −1.46, level −1.17 (two books, κ 0.5, each interval below
+  zero).
+- The kick-off check at κ 0.25 agrees: favourites by 2–4 lost 41.6% of real games, against 38.5%
+  expected.
+
+So the favourite isn't stronger than v21 already says. The lever stays off.
+
+### The gap shrink (`--candidate v21-gap0.75`, `v21-report --gap`)
+
+The prior's big gaps come out smaller in the real finals. Taking the form table's expected margin
+(`avg_form4_w05.csv`) against the real margin, burn-in left out:
+
+| Months | Matches | Real margin per point of the prior's | Prior 3+ points: prior, real |
+|---|---|---|---|
+| September | 1,611 | 0.45 (se 0.10) | +4.15, +2.11 |
+| October 1–18 | 1,220 | 0.77 (se 0.11) | +4.48, +1.85 |
+
+v2.1's sim already turns a point of the prior's margin into about 0.86 of a point (the kick-off
+check). That leaves about 0.9 (October) to 0.55 (September) still to take off.
+
+The lever takes the prior's expected margin L times over and keeps its total, before the nudge
+meets it (`v21_stream.shrunk`). That holds at kick-off and in every earlier pre-match state. The
+in-play states carry the nudge as ever.
+- A candidate named `v21-gapL` asks for it. `v21-gap1`, or no `-gapL`, is the prior as it is.
+- `v21-report --nudge --gap L` runs the same kick-off check. The report still sets the sim against
+  the inputs as given, so its "by the expected home margin" table shows what the shrink does
+  against the real finals.
+
+L = 0.9, 0.75 and 0.6 bracket the two months. They were chosen off September's fit and the sim's
+own slope, before looking at the October bets:
+
+    python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-19 00:00:00" \
+        --candidate v21,v21-gap0.9,v21-gap0.75,v21-gap0.6 --v21-model v21_t10 --v21-paths 2000
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:

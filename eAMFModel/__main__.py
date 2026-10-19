@@ -445,7 +445,8 @@ def cmd_v21_report(args):
           f" ({workers} processes)", flush=True)
     out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
                          state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books,
-                         nudge=args.nudge, nudge_share=args.nudge_share, shape=args.shape)
+                         nudge=args.nudge, nudge_share=args.nudge_share, shape=args.shape,
+                         gap=None if args.gap in (None, 1.0) else args.gap)
     lines = v21_report.report(out)
     print("\n".join(lines))
     if args.out:
@@ -998,6 +999,10 @@ def build_parser():
                    help="with --nudge: the second strength lever -- the favourite's strength gap played KAPPA x half "
                         "its expected margin wider a side when behind, narrower when two scores up, the nudge still "
                         "meeting the expected points (default 0: off; the betting sim's candidate v21-shapeKAPPA)")
+    p.add_argument("--gap", type=float, metavar="L",
+                   help="with --nudge: the gap shrink -- the nudge meets the inputs' expected margin x L, their total "
+                        "kept; the report still sets the sim against the inputs as given (default: off; the betting "
+                        "sim's candidate v21-gapL)")
     p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
