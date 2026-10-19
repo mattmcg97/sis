@@ -3,8 +3,9 @@
 
 Each match is priced as v21-report prices it. From kick-off the sim plays the match's gamers and
 teams, each side's offense nudged NUDGE_SHARE of the way from the sim's own means to the prior's
-expected points (v21.nudge_solve; the prior is a v13/v14 build's pre-match model, as v21-report's
---prior-model). In play, every PLAY_OVER the sim can start from is priced from there with the same
+expected points (v21.nudge_solve). The prior, as v21-report's --prior-model: by default the form table
+(DEFAULT_PRIOR_TABLE: the walkthrough's avg table moved half way to a rating drifting 4 points^2 a day,
+as `python -m eAMFCalibrator form-prior` writes it), else a v13/v14 build's pre-match model. In play, every PLAY_OVER the sim can start from is priced from there with the same
 nudge: a snap (v21.match_starts) or a kick-off after a score.
 
 A touchdown's PLAY_OVER, with its conversion still to come, has no book, because the sim has no
@@ -31,6 +32,9 @@ from .v14_stream import (EVEN, HELD, LINE_MODES, OWN, PROD_LINES, ANCHORED, _bef
 
 DEFAULT_MODEL_DIR = "v21_model"
 DEFAULT_PRIOR_DIR = "v14_model"
+# the default prior: the walkthrough's avg table, its margin moved half way to a rating drifting 4 points^2 a
+# day (`python -m eAMFCalibrator form-prior`'s default); it beat the v14 glmer build on the Oct bets
+DEFAULT_PRIOR_TABLE = os.path.join("eAMFCalibrator", "out", "form_prior", "priors", "avg_form4_w05.csv")
 DEFAULT_PATHS = 1000          # games a snapshot (the kick-off: each side receiving, so twice that)
 NUDGE_SHARE = 0.75            # how far toward the prior's expected points (v21-report's --nudge-share)
 PREMATCH = True
@@ -57,16 +61,26 @@ def _model_file(model_dir=None):
         " you calibrate, or the comparison is in-sample.")
 
 
+def _prior_candidates():
+    """Where v21 looks for its prior when none is named, in order: $EAMF_V21_PRIOR, the form table
+    (DEFAULT_PRIOR_TABLE, here or beside the package), $EAMF_V14_MODEL, ./v14_model."""
+    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    return [os.environ.get("EAMF_V21_PRIOR"), DEFAULT_PRIOR_TABLE, os.path.join(here, DEFAULT_PRIOR_TABLE),
+            os.environ.get("EAMF_V14_MODEL"), DEFAULT_PRIOR_DIR, os.path.join(here, DEFAULT_PRIOR_DIR)]
+
+
+def default_prior():
+    """The prior v21 nudges toward when none is named (a table's path or a build's directory), or None."""
+    return next((d for d in _prior_candidates() if d and _prior_tables(d) is not None), None)
+
+
 def _prior_tables(prior_dir=None):
     """The prior build's tables (its pre-match model), or a prior table (a walkthrough variant's CSV,
     table_prior.py) as it is; None where none is found."""
     from . import prior_check, table_prior
-    if table_prior.is_table(prior_dir):
-        return prior_dir
-    candidates = [prior_dir] if prior_dir else [
-        os.environ.get("EAMF_V21_PRIOR"), os.environ.get("EAMF_V14_MODEL"), DEFAULT_PRIOR_DIR,
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", DEFAULT_PRIOR_DIR)]
-    for d in candidates:
+    for d in ([prior_dir] if prior_dir else _prior_candidates()):
+        if table_prior.is_table(d):
+            return d
         if not d or not os.path.isdir(d):
             continue
         version = prior_check.version_of(d)
@@ -329,9 +343,11 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     pre = prematch_model(prior_tables)
     if share and pre is None:
         raise SystemExit(
-            "v21 prices toward a prior's expected points (its nudge), and no prior build was found in"
-            f" {prior_dir or DEFAULT_PRIOR_DIR}: point --v21-prior-model (or EAMF_V21_PRIOR) at a v14 build"
-            " made with --history, or price without the nudge (--v21-nudge-share 0)")
+            "v21 prices toward a prior's expected points (its nudge), and no prior was found in"
+            f" {prior_dir or ', '.join([DEFAULT_PRIOR_TABLE, DEFAULT_PRIOR_DIR])}: build the default -- python -m"
+            " eAMFCalibrator walkthrough --history eAMFCalibrator/out/match_history.csv --since <a month before>,"
+            " then python -m eAMFCalibrator form-prior -- or point --v21-prior-model (or EAMF_V21_PRIOR) at a"
+            " table or a v14 build made with --history, or price without the nudge (--v21-nudge-share 0)")
     prod_by = {}
     for r in prod_quote_rows:
         prod_by.setdefault(r[0], []).append(r)
@@ -373,6 +389,9 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
             pair = tuple((x or "").strip().upper() for x in handles[code])
         target = tuple(float(x) for x in means[code]) if code in means else None
         items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code)))
+    if share and pre is not None:                    # which prior, and how many of the matches it has
+        LAST_TIMING.update(prior=prior_tables, prior_matches=sum(1 for it in items if it[6] is not None),
+                           matches=len(items))
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
     if not items:
         return [] if isinstance(lines, str) else {mode: [] for mode in modes}

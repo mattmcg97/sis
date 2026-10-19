@@ -2371,8 +2371,11 @@ missing something. Nothing is ever fitted to close those gaps.
 
 v2.1 prices as v21-report does, and the calibrator pairs it with prod as it pairs any version. From
 kick-off the sim plays the match's gamers and teams, each side's offense nudged `--v21-nudge-share`
-(0.75) of the way from the sim's own means to the prior's expected points. The prior is a v13/v14
-build made with `--history`, given as `--v21-prior-model`; the default is `./v14_model`. Every
+(0.75) of the way from the sim's own means to the prior's expected points. The prior is a
+walkthrough table or a v13/v14 build made with `--history`, given as `--v21-prior-model`. By default
+it is the form table `python -m eAMFCalibrator form-prior` writes
+(`eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv`: the walkthrough's avg table moved half way
+to a rating drifting 4 points² a day), then `./v14_model`. `v21-report` reads the same default. Every
 PLAY_OVER the sim can start from is priced from there with the same nudge: a snap, or the kick-off
 after a conversion or a field goal.
 

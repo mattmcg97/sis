@@ -1278,9 +1278,36 @@ class TestStream(unittest.TestCase):
                                           match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0)
             got[name] = {x[1]: x[3] for x in q}
         self.assertGreater(got["home"][50], got["away"][50] + 20)
+        self.assertEqual((vs.LAST_TIMING["prior"], vs.LAST_TIMING["prior_matches"], vs.LAST_TIMING["matches"]),
+                         ("prior", 1, 1))                         # which prior, and how many matches it has
         with mock.patch.object(vs, "_prior_tables", lambda _d=None: None), self.assertRaises(SystemExit):
             vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=20, workers=1,
                                   match_info=self.info, nudge_share=0.75)
+
+    def test_the_default_prior_is_the_form_table(self):
+        """With no prior named: $EAMF_V21_PRIOR, then the form table form-prior writes, then $EAMF_V14_MODEL,
+        then ./v14_model -- the first that resolves."""
+        from .. import v21_stream as vs
+        with mock.patch.dict(os.environ, {"EAMF_V21_PRIOR": "", "EAMF_V14_MODEL": ""}):
+            c = vs._prior_candidates()
+        self.assertEqual(c[1], os.path.join("eAMFCalibrator", "out", "form_prior", "priors", "avg_form4_w05.csv"))
+        self.assertEqual(os.path.normpath(c[2]), os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(vs.__file__)), "..", vs.DEFAULT_PRIOR_TABLE)))
+        self.assertEqual(c[4], "v14_model")
+        with tempfile.TemporaryDirectory() as d:
+            table = os.path.join(d, "avg_form4_w05.csv")
+            with open(table, "w", encoding="utf-8") as fh:
+                fh.write("MATCH_CODE,home_pts,away_pts\nAF1,20,15\n")
+            build = os.path.join(d, "v14_model")
+            os.makedirs(build)
+            with mock.patch.object(vs, "_prior_candidates", lambda: [None, os.path.join(d, "none.csv"), table, build]):
+                self.assertEqual(vs.default_prior(), table)
+                self.assertEqual(vs._prior_tables(None), table)
+            with mock.patch.object(vs, "_prior_candidates", lambda: [os.path.join(d, "none.csv"), build]):
+                self.assertIsNone(vs.default_prior())               # an empty directory is no build
+            with mock.patch.dict(os.environ, {"EAMF_V21_PRIOR": table}):
+                self.assertEqual(vs._prior_candidates()[0], table)
+                self.assertEqual(vs._prior_tables(), table)
 
     def test_the_prior_is_the_fit_under_the_build_s_layers(self):
         from .. import prior_check, v21_stream as vs
@@ -1622,7 +1649,7 @@ class TestCli(unittest.TestCase):
             with mock.patch("eAMFModel.strength_check.history_rows", return_value=HISTORY[:6]), \
                     mock.patch("eAMFModel.v21_report.prior_inputs", return_value=(means, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
-                cli.main(["v21-report", "--model", out, "--snapshots", snaps, "--since", "2026-10-01",
+                cli.main(["v21-report", "--model", out, "--prior-model", "v14_model", "--snapshots", snaps, "--since", "2026-10-01",
                           "--paths", "40", "--state-paths", "10", "--every", "8", "--workers", "1",
                           "--out", os.path.join(d, "rep")])
             for f in ("v21_report.txt", "v21_matches.csv", "v21_states.csv"):

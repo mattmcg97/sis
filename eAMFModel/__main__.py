@@ -434,8 +434,12 @@ def cmd_v21_report(args):
     if timeouts:
         playover.annotate_timeouts(snaps, timeouts)
     rows = [r for r in history if r["MATCH_CODE"] in snaps]
-    print(f"  the inputs: {args.prior_model}'s pre-match expected points ({args.inputs})", flush=True)
-    means, books = v21_report.prior_inputs(args.prior_model, rows, history, which=args.inputs)
+    from . import v21_stream
+    prior = args.prior_model or v21_stream.default_prior()
+    if prior is None:
+        raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
+    print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
+    means, books = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
           f" ({workers} processes)", flush=True)
@@ -971,9 +975,10 @@ def build_parser():
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
                                           "every step of the real games, and its draws against the real snaps")
     p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
-    p.add_argument("--prior-model", default="v14_model",
+    p.add_argument("--prior-model",
                    help="a v13/v14 build whose pre-match model gives the expected points, or a walkthrough "
-                        "variant's table (eAMFCalibrator walkthrough's priors/VARIANT.csv) (default v14_model)")
+                        "variant's table (eAMFCalibrator walkthrough's priors/VARIANT.csv) (default: v2.1's own --"
+                        " $EAMF_V21_PRIOR, then the form table eAMFCalibrator form-prior writes, then v14_model)")
     p.add_argument("--inputs", choices=["raw", "priced"], default="raw",
                    help="raw: the pre-match model's own expected points; priced: with the build's layers")
     p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")

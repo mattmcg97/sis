@@ -828,6 +828,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      history=history, prematch_only=prematch_only, **opts,
                                      **({"batches": [list(b) for b in group]} if seeded else {}))
     took = getattr(stream, "LAST_TIMING", {})
+    if took.get("prior") and took.get("matches"):
+        miss = took["matches"] - took.get("prior_matches", 0)
+        print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"
+              + (f"; {miss:,} priced on the sim's own means (rebuild it to cover the window: walkthrough, then"
+                 " form-prior)" if miss else ""), flush=True)
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
         print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "

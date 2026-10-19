@@ -87,7 +87,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines`; `--v14-model`, `--v14-paths`, `--v14-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12`, `--candidate v13` and `--candidate v14` |
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
-| `--v21-prior-model DIR` | `--candidate v21`: the v13/v14 build (made with `--history`) whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v13/v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
@@ -3563,6 +3563,9 @@ Writes `ml_states.txt`, `ml_states.csv` and (with `--history`)
 ### Form priors for the betting sim: `form-prior` and `--prior-for`
 
 ```bash
+python -m eAMFCalibrator history --until "2026-10-18 00:00:00"
+python -m eAMFCalibrator walkthrough --history eAMFCalibrator/out/match_history.csv --since 2026-09-01
+python -m eAMFCalibrator form-prior          # v2.1's default prior: out/form_prior/priors/avg_form4_w05.csv
 python -m eAMFCalibrator form-prior --history eAMFCalibrator/out/match_history.csv --table avg=eAMFCalibrator/out/walkthrough_oct/priors/avg.csv --drift 1,2,4 --weight 0.5,1
 python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" --candidate v21,v21-avgf2 --prior-for v21-avgf2=eAMFCalibrator/out/form_prior/priors/avg_form2_w05.csv
 ```
@@ -3588,6 +3591,23 @@ re-priced prod's moneyline by +1.2 to +1.9 points on the same bets, in
 play as well as at kick-off. Its Brier score was no better than prod's.
 The slow ratings (NB2's and glmer's 60-day half-lives) gained nothing
 there. The money follows who is playing well now.
+
+**v2.1's default prior.** With no options, `form-prior` reads
+`out/match_history.csv` and the walkthrough's `out/walkthrough/priors/avg.csv`.
+It moves the margin half way to the rating drifting 4 points² a day and
+writes `out/form_prior/priors/avg_form4_w05.csv`. That is the prior every
+v2.1 sim nudges toward when none is named: `--candidate v21`, `v21-report`
+and `replay-ui` all read it. Against the v14 glmer build on the same bets,
+it gained +1.1 points on the in-play moneyline on Oct 1–12, and +3.7 on
+Oct 13–17, a window held out from choosing the drift.
+
+The table only has the matches its walkthrough priced. Rebuild it after
+each new history (`history`, then `walkthrough`, then `form-prior`). Every
+sim says which prior it read and how many of its matches the prior has. A
+match the table doesn't have is priced on the sim's own means.
+
+To use another prior, pass `--v21-prior-model` (or set `$EAMF_V21_PRIOR`).
+Without the table, v2.1 falls back to `$EAMF_V14_MODEL`, then `./v14_model`.
 
 With `--bets` (bets_sim.csv files) it first says how many of the bet
 matches, and how much of their stake, the history and each table have. On

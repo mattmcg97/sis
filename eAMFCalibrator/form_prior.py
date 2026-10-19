@@ -6,8 +6,14 @@ On the Oct 1-12 bets a rating like this one, drifting 1-4 points^2 a day, re-pri
 its Brier was no better than prod's or worse; the slow ratings (NB2's and glmer's 60-day half-lives, a
 rating drifting 0.01 a day) gained nothing there. These tables put that view into a prior any sim reads.
 
+    python -m eAMFCalibrator form-prior          # v2.1's default prior, from out/walkthrough/priors/avg.csv
     python -m eAMFCalibrator form-prior --history eAMFCalibrator/out/match_history.csv \\
         --table avg=eAMFCalibrator/out/walkthrough_oct/priors/avg.csv --drift 1,2,4 --weight 0.5,1
+
+By default it moves the walkthrough's avg table half way to the rating drifting 4 points^2 a day and
+writes priors/avg_form4_w05.csv to out/form_prior/: v2.1's default prior (eAMFModel's v21_stream
+DEFAULT_PRIOR_TABLE), the one that beat the v14 glmer build on the Oct 1-12 bets and on Oct 13-17 held
+out (the moneyline in play +1.1 and +3.7 points against it, on the same bets).
 
   the rating   every gamer's strength in points of margin, a random walk drifting DRIFT points^2 a day,
                each match's margin a draw about the two strengths and the teams' (SIGMA a match), the
@@ -32,8 +38,8 @@ from .money_layer import _num, _time, read_table
 SIGMA = 12.0               # points: a match's margin about the two strengths (fitted Mar-Sep)
 V0 = 16.0                  # points^2: a new gamer's uncertainty
 TEAM_RATE = 0.002          # a team's rating moves this share of each miss
-DRIFTS = (1.0, 2.0, 4.0)
-WEIGHTS = (0.5, 1.0)
+DRIFTS = (4.0,)                # v2.1's default prior: drift 4, half way
+WEIGHTS = (0.5,)
 DRAWS = 20000
 
 

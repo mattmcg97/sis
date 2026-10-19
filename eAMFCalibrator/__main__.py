@@ -969,11 +969,12 @@ def cmd_prior_bets(args):
 def cmd_form_prior(args):
     """Walkthrough tables moved toward a fast walk-forward form rating (form_prior.py)."""
     from . import form_prior
-    tables = table_specs(args.table)
-    if not tables:
-        raise SystemExit("form-prior: give at least one --table NAME=CSV")
+    tables = table_specs(args.table or [f"avg={os.path.join(DEFAULT_OUT, 'walkthrough', 'priors', 'avg.csv')}"])
+    history = args.history or os.path.join(DEFAULT_OUT, "match_history.csv")
+    if not os.path.isfile(history):
+        raise SystemExit(f"form-prior: no history at {history} (python -m eAMFCalibrator history, or --history)")
     numbers = lambda text: tuple(float(x) for x in text.split(",") if x.strip())
-    form_prior.run(args.out or os.path.join(DEFAULT_OUT, "form_prior"), args.history, tables,
+    form_prior.run(args.out or os.path.join(DEFAULT_OUT, "form_prior"), history, tables,
                    drifts=numbers(args.drift), weights=numbers(args.weight), draws=args.draws, bets=args.bets)
     return 0
 
@@ -1216,8 +1217,9 @@ def common_options():
     tuning.add_argument("--v21-prior-model", metavar="DIR|CSV",
                         help="--candidate v21: a walkthrough variant's table (walkthrough's priors/VARIANT.csv), "
                              "or the v13/v14 build (made with --history) whose pre-match "
-                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then "
-                             "$EAMF_V14_MODEL, then ./v14_model)")
+                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then the form table "
+                             "form-prior writes, out/form_prior/priors/avg_form4_w05.csv, then $EAMF_V14_MODEL, "
+                             "then ./v14_model)")
     tuning.add_argument("--v21-nudge-share", type=float, metavar="S",
                         help="--candidate v21: how far toward the prior's expected points each side's "
                              f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
@@ -1395,16 +1397,18 @@ def build_parser():
     fp_parser = sub.add_parser(
         "form-prior",
         help="walkthrough tables moved toward a fast walk-forward rating (each gamer's strength as his latest "
-             "results have it, drifting DRIFT points^2 a day), WEIGHT of the way, for --prior-for in the betting "
-             "sim (-> out/form_prior/priors/)")
-    fp_parser.add_argument("--history", required=True, metavar="CSV",
-                           help="a match_history.csv (`history`): every result, kick-off, gamer and team")
+             "results have it, drifting DRIFT points^2 a day), WEIGHT of the way; with no options, v2.1's default "
+             "prior: the walkthrough's avg table, drift 4, half way (-> out/form_prior/priors/avg_form4_w05.csv)")
+    fp_parser.add_argument("--history", metavar="CSV",
+                           help=f"a match_history.csv (`history`): every result, kick-off, gamer and team "
+                                f"(default {os.path.join(DEFAULT_OUT, 'match_history.csv')})")
     fp_parser.add_argument("--table", action="append", metavar="NAME=CSV",
-                           help="a walkthrough table (priors/VARIANT.csv) to move, as NAME=CSV; repeat it")
-    fp_parser.add_argument("--drift", default="1,2,4", metavar="LIST",
-                           help="the rating's drift, points^2 a day, comma-separated (default 1,2,4)")
-    fp_parser.add_argument("--weight", default="0.5,1", metavar="LIST",
-                           help="how far toward the rating each table's margin moves, comma-separated (default 0.5,1)")
+                           help="a walkthrough table (priors/VARIANT.csv) to move, as NAME=CSV; repeat it (default "
+                                f"avg={os.path.join(DEFAULT_OUT, 'walkthrough', 'priors', 'avg.csv')})")
+    fp_parser.add_argument("--drift", default="4", metavar="LIST",
+                           help="the rating's drift, points^2 a day, comma-separated (default 4)")
+    fp_parser.add_argument("--weight", default="0.5", metavar="LIST",
+                           help="how far toward the rating each table's margin moves, comma-separated (default 0.5)")
     fp_parser.add_argument("--draws", type=int, default=20000, metavar="N",
                            help="simulated scorelines per match for a table's score model, for p_home (default 20000)")
     fp_parser.add_argument("--bets", nargs="+", metavar="CSV",
@@ -1669,7 +1673,8 @@ def build_parser():
                                                              "then ./v21_model)")
     ru_parser.add_argument("--prior-model", "--v21-prior-model", dest="prior_model", metavar="DIR|CSV",
                            help="the expected points' source: a v14 build or a walkthrough table "
-                                "(priors/avg.csv); default $EAMF_V21_PRIOR, then ./v14_model")
+                                "(priors/avg.csv); default $EAMF_V21_PRIOR, then the form table form-prior writes "
+                                "(out/form_prior/priors/avg_form4_w05.csv), then $EAMF_V14_MODEL, then ./v14_model")
     ru_parser.add_argument("--export", metavar="CSV",
                            help="read the matches off a `scouting` export (out/scouting_playover.csv) instead of "
                                 "Snowflake")

@@ -117,6 +117,26 @@ class TestFormPrior(unittest.TestCase):
         self.assertIn("the avg table has 2 of the 3 bet matches (150 of 175 stake); missing 1", text)
 
 
+class TestDefault(unittest.TestCase):
+    def test_with_no_options_it_writes_v21_s_default_prior(self):
+        """The history and the walkthrough's avg table from out/, drift 4, half way: the table v2.1 reads
+        when no prior is named."""
+        from eAMFCalibrator import __main__ as cli
+        from eAMFModel import v21_stream
+        with tempfile.TemporaryDirectory() as d:
+            rows = _history()
+            _write(os.path.join(d, "match_history.csv"), rows, HISTORY_FIELDS)
+            os.makedirs(os.path.join(d, "walkthrough", "priors"))
+            _write(os.path.join(d, "walkthrough", "priors", "avg.csv"), _table(rows), TABLE_FIELDS)
+            with mock.patch.object(cli, "DEFAULT_OUT", d), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(cli.main(["form-prior", "--draws", "500"]), 0)
+            self.assertEqual(os.listdir(os.path.join(d, "form_prior", "priors")), ["avg_form4_w05.csv"])
+            self.assertTrue(v21_stream.DEFAULT_PRIOR_TABLE.endswith(
+                os.path.join("out", "form_prior", "priors", "avg_form4_w05.csv")))
+            with mock.patch.object(cli, "DEFAULT_OUT", os.path.join(d, "nowhere")), self.assertRaises(SystemExit):
+                cli.main(["form-prior"])
+
+
 class TestPriorFor(unittest.TestCase):
     """--prior-for: each v21 candidate of a betting-sim run nudged toward its own prior."""
 
