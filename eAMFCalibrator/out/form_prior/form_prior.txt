@@ -1,25 +1,4 @@
 
-Form priors: 26,240 matches in eAMFCalibrator/out/match_history.csv (2025-12-10 to 2026-10-12)
+Form priors: 26,649 matches in C:\Users\MMcguinness\sis-v21\eAMFCalibrator\out\match_history.csv (2025-12-10 to 2026-10-18)
   the rating: margin sd 12 a match, a new gamer 16 points^2, teams 0.002 of each miss
-  the history has 812 of the 860 bet matches (7,192,886 of 7,266,956 stake); missing 48
-  the avg table has 812 of the 860 bet matches (7,192,886 of 7,266,956 stake); missing 48
-  the glmer table has 812 of the 860 bet matches (7,192,886 of 7,266,956 stake); missing 48
-  the nb2 table has 812 of the 860 bet matches (7,192,886 of 7,266,956 stake); missing 48
-  avg_form1_w05.csv                avg moved 0.5 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 0.71 points on average
-  avg_form1_w10.csv                avg moved 1 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 1.42 points on average
-  glmer_form1_w05.csv              glmer moved 0.5 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 0.70 points on average
-  glmer_form1_w10.csv              glmer moved 1 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 1.40 points on average
-  nb2_form1_w05.csv                nb2 moved 0.5 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 0.85 points on average
-  nb2_form1_w10.csv                nb2 moved 1 of the way to the rating drifting 1/day: 3,054 of 3,054 matches, the margin moved 1.71 points on average
-  avg_form2_w05.csv                avg moved 0.5 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 0.87 points on average
-  avg_form2_w10.csv                avg moved 1 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 1.73 points on average
-  glmer_form2_w05.csv              glmer moved 0.5 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 0.87 points on average
-  glmer_form2_w10.csv              glmer moved 1 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 1.74 points on average
-  nb2_form2_w05.csv                nb2 moved 0.5 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 1.03 points on average
-  nb2_form2_w10.csv                nb2 moved 1 of the way to the rating drifting 2/day: 3,054 of 3,054 matches, the margin moved 2.06 points on average
-  avg_form4_w05.csv                avg moved 0.5 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 1.05 points on average
-  avg_form4_w10.csv                avg moved 1 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 2.10 points on average
-  glmer_form4_w05.csv              glmer moved 0.5 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 1.06 points on average
-  glmer_form4_w10.csv              glmer moved 1 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 2.13 points on average
-  nb2_form4_w05.csv                nb2 moved 0.5 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 1.22 points on average
-  nb2_form4_w10.csv                nb2 moved 1 of the way to the rating drifting 4/day: 3,054 of 3,054 matches, the margin moved 2.44 points on average
+  avg_form4_w05.csv                avg moved 0.5 of the way to the rating drifting 4/day: 3,463 of 3,463 matches, the margin moved 1.08 points on average
