@@ -8,7 +8,9 @@ can be pointed at any pre-match variant without pricing it again:
 The table has MATCH_CODE and the two sides' expected points (home_pts / away_pts, or
 Pred_P1_Points / Pred_P2_Points, or exp_p1 / exp_p2). Every value was priced before its match as
 the walkthrough's variant would have priced it live, so the table doesn't follow results itself: a
-match it doesn't have gets no expected points (the sim prices it on its own means).
+match it doesn't have gets no expected points (the sim prices it on its own means). Where the table
+carries its score model (score_model, score_params: nb2's dispersions and shared pace, or glmer's
+noise), `score` keeps it, so the report grades the table on its own distribution.
 """
 
 import csv
@@ -38,12 +40,19 @@ class TablePrior:
             if pair is None or key is None:
                 raise SystemExit(f"{path}: a prior table needs MATCH_CODE and "
                                  f"{' / '.join(f'{a}, {b}' for a, b in POINT_COLUMNS)}; it has {', '.join(cols)}")
-            self.points = {}
+            self.points, self.score = {}, {}
             for r in reader:
                 try:
                     self.points[r[key].strip()] = (float(r[pair[0]]), float(r[pair[1]]))
                 except (TypeError, ValueError):
                     continue
+                kind = (r.get("score_model") or "").strip()
+                try:
+                    params = tuple(float(x) for x in str(r.get("score_params") or "").split())
+                except ValueError:
+                    params = ()
+                if kind and params:             # the walkthrough's own score model for the match
+                    self.score[r[key].strip()] = (kind, params)
         if not self.points:
             raise SystemExit(f"{path}: no expected points in the table")
         n = len(self.points)

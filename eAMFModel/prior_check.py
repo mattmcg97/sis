@@ -93,6 +93,30 @@ def raw_books(means, s_obs, s_match, n=RAW_DRAWS, seed=0):
     return v13._distributions(sides[0].astype(int), sides[1].astype(int))
 
 
+def nb2_books(means, a1, a2, shared, n=RAW_DRAWS, seed=0):
+    """Margin and total distributions (v13's shapes) under NB2's own construction: each side negative
+    binomial (variance mu + alpha mu^2), the two sharing a gamma pace factor (eAMFCalibrator's
+    score_model.nb2_draws)."""
+    rng = np.random.default_rng(seed)
+    r1, r2 = 1.0 / max(a1, 1e-4), 1.0 / max(a2, 1e-4)
+    k = min(max(shared, 0.0), 0.999) * min(r1, r2)
+    u = rng.gamma(k, 1.0, n) if k > 1e-12 else np.zeros(n)
+    v1, v2 = rng.gamma(max(r1 - k, 1e-12), 1.0, n), rng.gamma(max(r2 - k, 1e-12), 1.0, n)
+    mu1, mu2 = means
+    return v13._distributions(rng.poisson((mu1 / r1) * (u + v1)).astype(int), rng.poisson((mu2 / r2) * (u + v2)).astype(int))
+
+
+def table_books(means, score, n=RAW_DRAWS, seed=0):
+    """A walkthrough table's own score model on its means: (kind, params) nb2 (alpha1, alpha2, shared)
+    or lognormal (sigma_obs, sigma_match); plain Poisson for anything else."""
+    kind, params = score
+    if kind == "nb2" and len(params) >= 3:
+        return nb2_books(means, *params[:3], n=n, seed=seed)
+    if kind == "lognormal" and len(params) >= 2:
+        return raw_books(means, *params[:2], n=n, seed=seed)
+    return raw_books(means, 0.0, 0.0, n=n, seed=seed)
+
+
 def _sim_worker(job):
     model_dir, items, n_paths, seed = job[:4]
     m, st = _modules(job[4] if len(job) > 4 else "v13")

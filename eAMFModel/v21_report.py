@@ -224,7 +224,8 @@ def _finals(r):
 def prior_inputs(model_dir, rows, history, which="raw"):
     """({code: (home, away) expected points}, {code: (margin pmf, total pmf)}) off a v13/v14 build's
     pre-match model -- its own means (raw) or the means the build prices with (priced) -- or a prior table
-    (a walkthrough variant's CSV), and the prior's own score model on them."""
+    (a walkthrough variant's CSV), and the prior's own score model on them (a table's, the one each of its
+    rows carries)."""
     from . import prior_check, table_prior
     if table_prior.is_table(model_dir):              # a walkthrough variant's table
         pre = table_prior.TablePrior(model_dir)
@@ -237,11 +238,14 @@ def prior_inputs(model_dir, rows, history, which="raw"):
     base = prior_check.base_prior(pre)
     means = (base if which == "raw" else pre).means(rows, results=history)
     books = {}
+    own = getattr(pre, "score", {})                    # a table's own score model, match by match
     for r in rows:
         c = r["MATCH_CODE"]
         if c in means:
-            books[c] = prior_check.raw_books(means[c], *prior_check.sigmas(base, prior_check._start(r).date()),
-                                             seed=_seed(c))
+            score = own.get(str(c).strip())
+            books[c] = (prior_check.table_books(means[c], score, seed=_seed(c)) if score else
+                        prior_check.raw_books(means[c], *prior_check.sigmas(base, prior_check._start(r).date()),
+                                              seed=_seed(c)))
     return means, books
 
 
