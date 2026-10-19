@@ -446,6 +446,24 @@ def cmd_expected_points(args):
     return 0
 
 
+def prior_spec(value, candidates):
+    """'v21-avgf2=<prior>' -> ('v21-avgf2', '<prior>'): the name must be a v21 candidate of this run
+    and the prior a table or build directory that exists."""
+    name, eq, prior = value.partition("=")
+    name, prior = name.strip().lower(), prior.strip()
+    if not eq or not name or not prior:
+        raise ValueError(f"{value!r}: give NAME=PRIOR, e.g. v21-avgf2=priors/avg_form2_w05.csv")
+    names = {snowflake_io.model_version(c)[0] for c in candidates if snowflake_io.is_model(c)}
+    if name not in names:
+        raise ValueError(f"{value!r}: {name} is not a --candidate of this run"
+                         + (f" ({', '.join(sorted(names))})" if names else ""))
+    if snowflake_io.model_base(name) != "v21":
+        raise ValueError(f"{value!r}: only v21 takes a prior")
+    if not os.path.exists(prior):
+        raise ValueError(f"{value!r}: no such table or build directory, {prior}")
+    return name, prior
+
+
 def read_match_list(value):
     """Match codes from a file (one a line, the first word; # starts a comment) or a comma-separated
     list."""
@@ -894,6 +912,81 @@ def cmd_cross(args):
     return 0
 
 
+def cmd_pair_check(args):
+    """Prod's first live row on each PLAY_OVER's message against its last (pair_check.py)."""
+    from . import pair_check
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            pair_check.run(cur, args.out or DEFAULT_OUT)
+    finally:
+        conn.close()
+    return 0
+
+
+def cmd_money_layer(args):
+    """What the money already bet says about who wins (money_layer.py): the days before, as a prior table,
+    and the match so far."""
+    from . import money_layer
+
+    def go(cur):
+        return money_layer.run(args.out or os.path.join(DEFAULT_OUT, "money"), args.base, history=args.history,
+                               bets=args.bets, cur=cur, shrink=args.shrink, half_life=args.half_life, cut=args.cut,
+                               slope=args.slope, share=args.share, test_since=args.test_since, grid=not args.no_grid)
+    if args.bets:
+        go(None)
+        return 0
+    conn = snowflake_io.get_connection()
+    try:
+        with conn.cursor() as cur:
+            go(cur)
+    finally:
+        conn.close()
+    return 0
+
+
+def table_specs(specs):
+    """[(name, path)] off --table NAME=CSV options."""
+    tables = []
+    for spec in specs or []:
+        name, eq, path = spec.partition("=")
+        if not eq or not name.strip() or not path.strip():
+            raise SystemExit(f"--table {spec!r}: give it as NAME=CSV, e.g. nb2=eAMFCalibrator/out/walkthrough/priors/nb2.csv")
+        if not os.path.isfile(path.strip()):
+            raise SystemExit(f"--table {spec!r}: no such file")
+        tables.append((name.strip(), path.strip()))
+    return tables
+
+
+def cmd_prior_bets(args):
+    """The pre-match report: prod against the priors' own prices and a sim's (prior_bets.py)."""
+    from . import prior_bets
+    prior_bets.run(args.out or os.path.join(DEFAULT_OUT, "prior_bets"), args.bets, table_specs(args.table),
+                   sim_name=args.sim_name, draws=args.draws)
+    return 0
+
+
+def cmd_form_prior(args):
+    """Walkthrough tables moved toward a fast walk-forward form rating (form_prior.py)."""
+    from . import form_prior
+    tables = table_specs(args.table or [f"avg={os.path.join(DEFAULT_OUT, 'walkthrough', 'priors', 'avg.csv')}"])
+    history = args.history or os.path.join(DEFAULT_OUT, "match_history.csv")
+    if not os.path.isfile(history):
+        raise SystemExit(f"form-prior: no history at {history} (python -m eAMFCalibrator history, or --history)")
+    numbers = lambda text: tuple(float(x) for x in text.split(",") if x.strip())
+    form_prior.run(args.out or os.path.join(DEFAULT_OUT, "form_prior"), history, tables,
+                   drifts=numbers(args.drift), weights=numbers(args.weight), draws=args.draws, bets=args.bets)
+    return 0
+
+
+def cmd_ml_states(args):
+    """The moneyline by game situation, prod against a candidate (ml_states.py)."""
+    from . import ml_states
+    ml_states.run(args.out or os.path.join(DEFAULT_OUT, "ml_states"), args.pairs, args.bets, label=args.label,
+                  history=args.history)
+    return 0
+
+
 def cmd_report(args):
     """One pairing pass per candidate, the console view of each, and one
     combined HTML file with every candidate beside prod.
@@ -1041,7 +1134,9 @@ def common_options():
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
                              "several, comma-separated (v8,v9), set each against prod "
                              "side by side in the report; a second build of a version is "
-                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917 "
+                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917; v21 with an in-play "
+                             "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
+                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react) "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
@@ -1115,19 +1210,25 @@ def common_options():
                              "(default $EAMF_V21_MODEL, then ./v21_model)")
     tuning.add_argument("--v21-paths", type=int, metavar="N",
                         help=f"games simulated per snapshot for --candidate v21 "
-                             f"(default {config.V21_PATHS}; the kick-off twice that)")
+                             f"(default {config.V21_PATHS}; the kick-off twice that, each side receiving)")
     tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
                         help="--candidate v21: as --v10-lines "
                              f"(default {config.V21_LINES})")
     tuning.add_argument("--v21-prior-model", metavar="DIR|CSV",
                         help="--candidate v21: a walkthrough variant's table (walkthrough's priors/VARIANT.csv), "
                              "or the v13/v14 build (made with --history) whose pre-match "
-                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then "
-                             "$EAMF_V14_MODEL, then ./v14_model)")
+                             "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then the form table "
+                             "form-prior writes, out/form_prior/priors/avg_form4_w05.csv, then $EAMF_V14_MODEL, "
+                             "then ./v14_model)")
     tuning.add_argument("--v21-nudge-share", type=float, metavar="S",
                         help="--candidate v21: how far toward the prior's expected points each side's "
                              f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
                              "0: the sim's own means, no prior)")
+    tuning.add_argument("--prior-for", action="append", metavar="NAME=PRIOR",
+                        help="a v21 candidate's own prior, as --v21-prior-model takes (a walkthrough table or "
+                             "a build), so v21 candidates nudged toward different priors are priced in one run "
+                             "on the same bets, e.g. --candidate v21,v21-avgf2 --prior-for "
+                             "v21-avgf2=eAMFCalibrator/out/form_prior/priors/avg_form2_w05.csv (repeat it)")
     tuning.add_argument("--drop-flipped", action="store_true",
                         help="drop matches whose PLAYER_1 / PLAYER_2 handles "
                              "swap sides; the default reports them instead")
@@ -1193,6 +1294,11 @@ def apply_overrides(args):
             raise SystemExit(f"--candidate {error}")
         config.CANDIDATES = names
         config.STREAMS["candidate"] = names[0]
+    for spec in getattr(args, "prior_for", None) or ():
+        try:
+            config.MODEL_PRIORS.update([prior_spec(spec, config.CANDIDATES)])
+        except ValueError as error:
+            raise SystemExit(f"--prior-for {error}")
 
     clock = getattr(args, "clock", None)
     if clock is not None:
@@ -1238,6 +1344,91 @@ def build_parser():
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("preflight", parents=[shared], help="check tables, clock column and window volume")
+
+    pc_parser = sub.add_parser(
+        "pair-check", parents=[shared],
+        help="prod's moneyline at each PLAY_OVER: its first live row on the message the report pairs "
+             "on against its last, graded on the result -- whether the report's pairing flatters a "
+             "candidate (-> out/pair_check.csv)")
+    pc_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT})")
+
+    mo_parser = sub.add_parser(
+        "money-layer", parents=[shared],
+        help="what the money already bet says about who wins: each gamer's pre-match price moved by their backers' "
+             "edge on the matches before (walk-forward, a prior table for --v21-prior-model, tested on the results), "
+             "and with --bets each moneyline price moved toward the stake already on its side of the match "
+             "(re-priced bets and two books) (-> out/money/)")
+    mo_parser.add_argument("--base", required=True, metavar="CSV|prod",
+                           help="the prior table it moves (a walkthrough's priors/VARIANT.csv), or prod: prod's "
+                                "pre-match price off --bets, tested only")
+    mo_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv: the kick-offs, gamers and results a table lacks (--base prod needs it)")
+    mo_parser.add_argument("--bets", nargs="+", metavar="CSV",
+                           help="betting-sim bets_sim.csv files: each bet at prod's price, and the match-so-far test "
+                                "(default: config.BET_TABLE over the window, at the operator's odds less its margin)")
+    mo_parser.add_argument("--shrink", type=float, metavar="STAKE",
+                           help="the stake a gamer's backers' edge is shrunk by (default 50,000)")
+    mo_parser.add_argument("--half-life", type=float, metavar="DAYS", help="older bets count for less (default: none)")
+    mo_parser.add_argument("--cut", choices=["kickoff", "daily"], default="kickoff",
+                           help="the bets a match is priced off: settled by its kick-off, or by the start of its day "
+                                "(default kickoff)")
+    mo_parser.add_argument("--slope", type=float, help="a fixed slope (default: fitted day by day on the days before)")
+    mo_parser.add_argument("--share", type=float,
+                           help="the share of the way a sim goes to the table's points (default v21's nudge share, 0.75)")
+    mo_parser.add_argument("--test-since", metavar="DATE", help="the test's first day (default: a week into the window)")
+    mo_parser.add_argument("--no-grid", action="store_true", help="skip the settings side by side")
+    mo_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/money)")
+
+    pb_parser = sub.add_parser(
+        "prior-bets",
+        help="the pre-match report, no simulation: prod against each walkthrough table's own price (its score "
+             "distribution) and a sim's pre-match price from a betting-sim run -- the moneyline graded on the "
+             "results by how heavily each match was bet, and every pre-match bet (and the kick-off moneyline money) "
+             "re-priced, same bets and two books (-> out/prior_bets/)")
+    pb_parser.add_argument("--bets", nargs="+", required=True, metavar="CSV",
+                           help="betting-sim bets_sim.csv files: prod's price at each bet, and the sim's (its candidate)")
+    pb_parser.add_argument("--table", action="append", metavar="NAME=CSV",
+                           help="a walkthrough table (priors/VARIANT.csv) to price with, as NAME=CSV; repeat it")
+    pb_parser.add_argument("--sim-name", default="sim", help="what to call the bets' candidate (default sim)")
+    pb_parser.add_argument("--draws", type=int, default=40000, metavar="N",
+                           help="simulated scorelines per match for a table's score model (default 40000)")
+    pb_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/prior_bets)")
+
+    fp_parser = sub.add_parser(
+        "form-prior",
+        help="walkthrough tables moved toward a fast walk-forward rating (each gamer's strength as his latest "
+             "results have it, drifting DRIFT points^2 a day), WEIGHT of the way; with no options, v2.1's default "
+             "prior: the walkthrough's avg table, drift 4, half way (-> out/form_prior/priors/avg_form4_w05.csv)")
+    fp_parser.add_argument("--history", metavar="CSV",
+                           help=f"a match_history.csv (`history`): every result, kick-off, gamer and team "
+                                f"(default {os.path.join(DEFAULT_OUT, 'match_history.csv')})")
+    fp_parser.add_argument("--table", action="append", metavar="NAME=CSV",
+                           help="a walkthrough table (priors/VARIANT.csv) to move, as NAME=CSV; repeat it (default "
+                                f"avg={os.path.join(DEFAULT_OUT, 'walkthrough', 'priors', 'avg.csv')})")
+    fp_parser.add_argument("--drift", default="4", metavar="LIST",
+                           help="the rating's drift, points^2 a day, comma-separated (default 4)")
+    fp_parser.add_argument("--weight", default="0.5", metavar="LIST",
+                           help="how far toward the rating each table's margin moves, comma-separated (default 0.5)")
+    fp_parser.add_argument("--draws", type=int, default=20000, metavar="N",
+                           help="simulated scorelines per match for a table's score model, for p_home (default 20000)")
+    fp_parser.add_argument("--bets", nargs="+", metavar="CSV",
+                           help="betting-sim bets_sim.csv files: how many of their matches (and stake) the history "
+                                "and each table have")
+    fp_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/form_prior)")
+
+    ms_parser = sub.add_parser(
+        "ml-states",
+        help="the moneyline by game situation off the report's pairs, no Snowflake: what prod and the candidate price "
+             "the pre-match favourite at after the first score (who, TD or FG, the opening drive or later) and at each "
+             "quarter's start by its lead, against how often it won; with --bets, what the bets struck there did "
+             "(-> out/ml_states/)")
+    ms_parser.add_argument("--pairs", nargs="+", required=True, metavar="CSV",
+                           help="the report's directional_pairs.csv (prod's and the candidate's prices at every snapshot)")
+    ms_parser.add_argument("--bets", nargs="+", metavar="CSV", help="betting-sim bets_sim.csv files on the same matches")
+    ms_parser.add_argument("--label", default="candidate", help="what to call the candidate (default candidate)")
+    ms_parser.add_argument("--history", metavar="CSV",
+                           help="a match_history.csv: the gamers' handles, for every gamer's numbers")
+    ms_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/ml_states)")
 
     run_parser = sub.add_parser("run", parents=[shared], help="calibrate one stream, or both")
     run_parser.add_argument("stream", choices=sorted(config.STREAMS) + ["both"])
@@ -1482,7 +1673,8 @@ def build_parser():
                                                              "then ./v21_model)")
     ru_parser.add_argument("--prior-model", "--v21-prior-model", dest="prior_model", metavar="DIR|CSV",
                            help="the expected points' source: a v14 build or a walkthrough table "
-                                "(priors/avg.csv); default $EAMF_V21_PRIOR, then ./v14_model")
+                                "(priors/avg.csv); default $EAMF_V21_PRIOR, then the form table form-prior writes "
+                                "(out/form_prior/priors/avg_form4_w05.csv), then $EAMF_V14_MODEL, then ./v14_model")
     ru_parser.add_argument("--export", metavar="CSV",
                            help="read the matches off a `scouting` export (out/scouting_playover.csv) instead of "
                                 "Snowflake")
@@ -1736,6 +1928,16 @@ def main(argv=None):
         return cmd_replay_ui(args)
     if args.command == "report":
         return cmd_report(args)
+    if args.command == "pair-check":
+        return cmd_pair_check(args)
+    if args.command == "money-layer":
+        return cmd_money_layer(args)
+    if args.command == "prior-bets":
+        return cmd_prior_bets(args)
+    if args.command == "ml-states":
+        return cmd_ml_states(args)
+    if args.command == "form-prior":
+        return cmd_form_prior(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":

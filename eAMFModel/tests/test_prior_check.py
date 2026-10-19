@@ -49,6 +49,33 @@ class TestRawBooks(unittest.TestCase):
         self.assertGreater(sd(tp, kt), sd(plain_t, kt) + 2)        # glmer's noise widens the total
         self.assertAlmostEqual(sd(plain_t, kt), np.sqrt(42), delta=0.2)
 
+    def test_a_table_is_priced_on_its_own_score_model(self):
+        """NB2's construction keeps the means, its variance mu + alpha mu^2 a side, the shared pace taking the
+        covariance out of the margin; a table's rows carry it into the report."""
+        mu1, mu2, a1, a2, shared = 20.0, 15.0, 0.09, 0.15, 0.4
+        mp_, tp = prior_check.nb2_books((mu1, mu2), a1, a2, shared, n=200000, seed=3)
+        k, kt = np.arange(len(mp_)) - v13.MARGIN_MAX, np.arange(len(tp))
+        var = lambda p, ks: float((p * (ks - (ks * p).sum()) ** 2).sum())
+        self.assertAlmostEqual(float((k * mp_).sum()), 5.0, delta=0.1)
+        r1, r2 = 1 / a1, 1 / a2
+        cov = (mu1 / r1) * (mu2 / r2) * shared * min(r1, r2)
+        v1, v2 = mu1 + a1 * mu1 ** 2, mu2 + a2 * mu2 ** 2
+        self.assertAlmostEqual(var(mp_, k), v1 + v2 - 2 * cov, delta=1.5)
+        self.assertAlmostEqual(var(tp, kt), v1 + v2 + 2 * cov, delta=2.5)
+        same = prior_check.table_books((mu1, mu2), ("nb2", (a1, a2, shared)), n=200000, seed=3)
+        self.assertTrue(np.allclose(same[0], mp_))
+        plain = prior_check.table_books((mu1, mu2), ("normal", (9.0,)), n=200000, seed=3)
+        self.assertLess(var(plain[0], k), var(mp_, k) - 20)         # plain Poisson: far too narrow
+        from .. import table_prior
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "avg.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("MATCH_CODE,home_pts,away_pts,score_model,score_params\n"
+                         "AF1,20,15,nb2,0.09 0.15 0.4\nAF2,18,18,,\n")
+            t = table_prior.TablePrior(path)
+        self.assertEqual(t.score, {"AF1": ("nb2", (0.09, 0.15, 0.4))})
+        self.assertEqual(set(t.points), {"AF1", "AF2"})
+
     def test_sigmas_come_from_the_fit_that_prices_the_day(self):
         self.assertEqual(prior_check.sigmas(Fit(0.38, 0.2), DAY.date()), (0.38, 0.2))
         rolling = mock.Mock(spec=["fit_for"])

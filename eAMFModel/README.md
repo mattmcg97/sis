@@ -2371,8 +2371,11 @@ missing something. Nothing is ever fitted to close those gaps.
 
 v2.1 prices as v21-report does, and the calibrator pairs it with prod as it pairs any version. From
 kick-off the sim plays the match's gamers and teams, each side's offense nudged `--v21-nudge-share`
-(0.75) of the way from the sim's own means to the prior's expected points. The prior is a v13/v14
-build made with `--history`, given as `--v21-prior-model`; the default is `./v14_model`. Every
+(0.75) of the way from the sim's own means to the prior's expected points. The prior is a
+walkthrough table or a v13/v14 build made with `--history`, given as `--v21-prior-model`. By default
+it is the form table `python -m eAMFCalibrator form-prior` writes
+(`eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv`: the walkthrough's avg table moved half way
+to a rating drifting 4 points² a day), then `./v14_model`. `v21-report` reads the same default. Every
 PLAY_OVER the sim can start from is priced from there with the same nudge: a snap, or the kick-off
 after a conversion or a field goal.
 
@@ -2392,6 +2395,96 @@ matches it is priced with. Two things follow from that:
   still price a chunk at a time.
 - **One match at a time:** within a pool, a match goes to whichever worker is free; a fixed share of
   matches per worker left the rest waiting on its longest ones.
+
+### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
+
+Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:
+the kick-off's, moved by what the match has shown of each side by then. The nudge is in points a
+game for the side's offense, so a side outplaying its price is priced up for the rest of the game.
+The calibrator names a variant as a candidate, priced off the same `--v21-model` build:
+
+| Name | What moves the nudge | Its setting |
+|---|---|---|
+| `v21-snapT` | every real snap scored against the draw the sim makes in its place (the league's snaps for the situation, its blended levels and field window, tilted by the side's strength): the snap's features less the draw's mean along the strength direction, over the draw's variance. One Newton step from the kick-off, shrunk by a prior of 1/T² (v14's react, in v2.1's terms) | T: the prior sd, points a game |
+| `v21-ptsT` | points so far against the kick-off mean × the share of a game's points that has come (`points_share`); the kick-off's simulated spread of points is the noise | T: the prior sd, points a game |
+| `v21-wpaC` | every snap looked up in a win-probability table: the side's chance after it less before it. The nudge is C × the chance its snaps added. A snap counts for how far it moved the match, not how far it was from its situation's usual | C: points a game for a whole win chance |
+
+**Gamer by gamer** (`v21-gsnapT`, `v21-gptsT`, `v21-gwpaC`): the approach's nudge × the gamer's own
+scale. That scale is the slope of the gamer's rest-of-game points beyond the sim's, against what the
+approach said, shrunk toward the pooled slope by an average gamer's evidence. `v21-react-fit` writes
+it to `react_gamers.json` beside the table. A gamer it has none for takes the pooled slope.
+
+The snap update moves most early: a snap's score is divided by the information so far plus 1/T², so
+one 20-yard gain on the first snap moves a side further than the same gain an hour in. `wpaC` reads
+its table from `react_wp.json` beside the build, written by `v21-react-fit`; without it the run stops
+before pricing. No variant (`v21` itself) leaves every row as it was: the stream's quotes match the
+previous code row for row.
+
+    python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" \
+        --candidate v21,v21-snap2,v21-snap4,v21-pts4,v21-wpa10 --v21-model v21_t10 --v21-prior-model v14_model
+
+Each candidate is a pricing of its own, so each one adds a full v2.1 run's time.
+
+**Choosing the settings (`v21-react-fit`).** On the matches before the window, by day:
+- The first 60% fit the win-probability table `wpaC` reads. It's a logistic fit of who won on each
+  PLAY_OVER's state: the margin, the field and the down over the root of the time left, and prod's
+  pre-match price times that root.
+- The last 40% score every update at a spread of settings, through the build:
+  - **Baseline:** at each kick-off after a score, the sim plays the rest of the game with the kick-off
+    nudge (toward prod's pre-match spread and total, at the stream's share).
+  - **Score:** each side's points still to come beyond the sim's expectation, against the update's
+    nudge × the share of the game left. This is the squared-error change, with a 95% interval over
+    matches.
+  - **Slope:** of what came on what the update said. 1 means right, under 1 means it moves too far.
+
+It scores three more things on the same matches:
+- **Earlier matches (`c-`):** each update with the gamer's earlier matches of the session carried in.
+  Each one back is worth ×0.7, and it is scored from the opening kick-off. This is fit-only for now:
+  it gets priced if it scores.
+- **Gamer by gamer:** each approach's gamer scales fitted on the first 60% of the scored matches,
+  then set against the pooled slope on the last 40%.
+- **The sim's own game script by the lead:** the slope of points still to come beyond the
+sim's on the side's lead × the share left. Below zero, the sim gives the side ahead too much of the
+rest of the game. That is a sim fix of its own, and any update that follows the lead (`pts`, `wpa`)
+looks the worse for it.
+
+A table fitted on real games has already learned that the side ahead is likelier the better one, so
+it isn't the test: v2.1's sim prices a state off the prior's strength alone, and an update is worth
+what it adds to that.
+
+    python -m eAMFModel v21-react-fit --model v21_t10 --until 2026-10-01
+
+It reads the export alone (no Snowflake), at `--paths` (500) games a kick-off.
+
+### How far the draws set each gamer apart (`v21-gamers`)
+
+Every gamer in the build plays an average opponent from kick-off, home and away, with no nudge. It
+prints the sim's points for and against, the margin and the win chance. Beside them are the gamer's
+real points a match and the gamer's offense and defense tilts read along the strength direction.
+The summary gives the spread of the sim's margins across gamers, and how much of a point of real
+scoring the sim follows. Pre-match the kick-off nudge then moves each side most of the way to the
+prior's expected points, so the rest of a gamer's pre-match strength is the prior's.
+
+    python -m eAMFModel v21-gamers --model v21_t10 --gamers KILLJOY,MERLIN,HERMES --out v21_gamers.csv
+
+### What the money backing a gamer sees (`gamer-dig`)
+
+Off the export, the history and a betting simulation's `bets_sim.csv`, each side of every match gets
+a play profile: yards a snap, explosive gains (15+), stuffed snaps, first downs, 3rd downs made,
+turnovers, touchdowns and seconds a snap. Each gamer has a baseline over the 30 days before the window.
+- **Targeted gamers:** the gamers the money wins on (their backers' edge over prod's price), or those
+  `--gamers` names. It gives their record against prod's pre-match price, their baseline against the
+  league's, and their play in the window against their own baseline.
+- **Earlier matches:** whether the gamer's play in the last three matches of the session, against
+  their baseline, tells their result beyond prod's pre-match price (every match the export prices).
+- **This match:** whether the backed gamer's or the opponent's play so far tells the bet's result
+  beyond prod's price at the bet, with match-clustered intervals.
+- **The snap before:** the snap each bet followed (touchdown, turnover, explosive, first down,
+  stuffed), how often, and the edge after it.
+
+Each section is repeated for bets backing a gamer on 3+ wins this session.
+
+    python -m eAMFModel gamer-dig --bets eAMFCalibrator/out_bets_react/bets_sim.csv --out gamer_dig
 
 ### Timing (`v21-timing`)
 
@@ -2570,6 +2663,15 @@ sections:
   - by gamer and by team, for points for and against;
   - graded against the prior's own score model: moneyline log loss and Brier, margin and total RPS,
     and the paired log-loss difference.
+- **The final margin.** Is the sim's margin too wide, with too few close games? The sim's and the
+  prior's own score model against the real finals (overtime in both the sim and the real finals):
+  - how often the margin lands in each band, either way: a tie, 1–3, 4–7, 8–14, 15+;
+  - the key margins: 1, 2, 3, 6, 7, 8;
+  - each match's own margin sd against the real misses' sd, and how often the real final lands
+    inside its central 50% and 80%;
+  - where each real final falls in its distribution, by tenth. When the distribution is right, 10%
+    land in each tenth. Too wide piles them in the middle; too narrow, in the ends;
+  - how the favourite wins (by 1–7, by 8+) or loses, expected against real, by its expected margin.
 - **Each step.** From every `--every`-th real state (`--state-paths` games each), each side's points
   still to come:
   - the input's, which is its expected points times the league's share of a game's points still to

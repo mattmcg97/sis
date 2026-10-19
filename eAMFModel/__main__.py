@@ -434,8 +434,12 @@ def cmd_v21_report(args):
     if timeouts:
         playover.annotate_timeouts(snaps, timeouts)
     rows = [r for r in history if r["MATCH_CODE"] in snaps]
-    print(f"  the inputs: {args.prior_model}'s pre-match expected points ({args.inputs})", flush=True)
-    means, books = v21_report.prior_inputs(args.prior_model, rows, history, which=args.inputs)
+    from . import v21_stream
+    prior = args.prior_model or v21_stream.default_prior()
+    if prior is None:
+        raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
+    print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
+    means, books = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
           f" ({workers} processes)", flush=True)
@@ -452,6 +456,61 @@ def cmd_v21_report(args):
         v21_report.write_states_csv(os.path.join(args.out, "v21_states.csv"), out)
         print(f"\n  -> {args.out}/v21_report.txt, v21_matches.csv and v21_states.csv")
     print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_gamer_dig(args):
+    import csv as csv_
+    import datetime as dt
+    from . import gamer_dig, nb2_prior
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    bets = gamer_dig.read_bets(args.bets) if args.bets else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    lines, rows = gamer_dig.run(data, history, bets, since, until, args.gamers.split(",") if args.gamers else None)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "gamer_dig.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        if rows:
+            with open(os.path.join(args.out, "gamer_dig_bets.csv"), "w", newline="", encoding="utf-8") as fh:
+                w = csv_.DictWriter(fh, list(rows[0]))
+                w.writeheader()
+                w.writerows(rows)
+        print(f"\n  -> {args.out}/gamer_dig.txt" + (" and gamer_dig_bets.csv" if rows else ""))
+    return 0
+
+
+def cmd_v21_gamers(args):
+    from . import v21, v21_gamers, v21_stream
+    model = v21.Model.load(v21_stream._model_file(args.model))
+    rows, summary = v21_gamers.run(model, args.paths)
+    print("\n".join(summary))
+    print("\n".join(v21_gamers.lines_for(rows, args.gamers.split(",") if args.gamers else None)))
+    if args.out:
+        print(f"\n  -> {v21_gamers.write(args.out, rows)}")
+    return 0
+
+
+def cmd_v21_react_fit(args):
+    import datetime as dt
+    from . import nb2_prior, v21_react, v21_react_fit, v21_stream
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    model_file = v21_stream._model_file(args.model) if args.model else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    lines, got = v21_react_fit.run(data, history, model_file, since, until, args.test_share, args.matches,
+                                   args.paths, workers)
+    print("\n".join(lines))
+    out = args.out or (os.path.join(args.model, v21_react.WP_FILE) if args.model else v21_react.WP_FILE)
+    print(f"\n  -> {v21_react_fit.write(out, got)}")
+    if got.get("gamers"):
+        print(f"  -> {v21_react_fit.write(os.path.join(os.path.dirname(out) or '.', v21_react.GAMERS_FILE), got['gamers'])}"
+              "  (each gamer's own scale, for v21-gsnapT, v21-gptsT, v21-gwpaC)")
     return 0
 
 
@@ -916,9 +975,10 @@ def build_parser():
     p = sub.add_parser("v21-report", help="v2.1 against the pre-match expected points, from kick-off and from "
                                           "every step of the real games, and its draws against the real snaps")
     p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
-    p.add_argument("--prior-model", default="v14_model",
+    p.add_argument("--prior-model",
                    help="a v13/v14 build whose pre-match model gives the expected points, or a walkthrough "
-                        "variant's table (eAMFCalibrator walkthrough's priors/VARIANT.csv) (default v14_model)")
+                        "variant's table (eAMFCalibrator walkthrough's priors/VARIANT.csv) (default: v2.1's own --"
+                        " $EAMF_V21_PRIOR, then the form table eAMFCalibrator form-prior writes, then v14_model)")
     p.add_argument("--inputs", choices=["raw", "priced"], default="raw",
                    help="raw: the pre-match model's own expected points; priced: with the build's layers")
     p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
@@ -938,6 +998,50 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
     p.set_defaults(func=cmd_v21_report)
+
+    p = sub.add_parser("gamer-dig",
+                       help="what the money backing particular gamers sees in their play: the targeted gamers' "
+                            "profiles, whether earlier matches of the session or the match so far tell the result "
+                            "beyond prod's price, and the snap each bet followed (hot-streak bets apart)")
+    p.add_argument("--bets", help="a betting simulation's bets_sim.csv (the window and the money); without it, the "
+                                  "earlier-matches test alone over --since to --until")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the bets' first)")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: the bets' last)")
+    p.add_argument("--gamers", help="these gamers as the targeted ones, comma-separated (default: the money's top)")
+    p.add_argument("--out", help="the report (gamer_dig.txt) and every in-play bet's row (gamer_dig_bets.csv) here")
+    p.set_defaults(func=cmd_gamer_dig)
+
+    p = sub.add_parser("v21-gamers",
+                       help="how far v2.1's own draws set each gamer apart: every gamer against an average opponent "
+                            "from kick-off (no nudge), the sim's points for and against and win chance, beside the "
+                            "gamer's real points and tilts")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--gamers", help="these gamers' rows only, comma-separated (the summary is every gamer's)")
+    p.add_argument("--paths", type=int, default=1000, help="games each gamer plays each way (default 1000)")
+    p.add_argument("--out", help="every gamer's row as a CSV here")
+    p.set_defaults(func=cmd_v21_gamers)
+
+    p = sub.add_parser("v21-react-fit",
+                       help="v2.1's in-play strength updates on real games: the win-probability table the wpa update "
+                            "reads (react_wp.json beside the build), and every update (snapT, ptsT, wpaC) scored on "
+                            "who won, before any is priced")
+    p.add_argument("--model", help="a v21-build directory: the table goes beside it, and the snap update is scored "
+                                   "(it reads the build's draws)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", required=True, help="the day the priced window starts, YYYY-MM-DD: only matches before it")
+    p.add_argument("--test-share", type=float, default=0.4,
+                   help="the later share of the matches the updates are scored on, the rest fitting the table "
+                        "(default 0.4)")
+    p.add_argument("--matches", type=int, help="the last N matches before --until only (default: all)")
+    p.add_argument("--paths", type=int, default=500,
+                   help="games the sim plays from each kick-off the updates are scored at (default 500)")
+    p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
+    p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
+    p.set_defaults(func=cmd_v21_react_fit)
 
     p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
                                           "matches timed part by part, the sim profiled, the window's run projected")

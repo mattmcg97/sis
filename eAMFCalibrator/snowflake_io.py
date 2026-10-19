@@ -774,6 +774,13 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     opts = {arg: getattr(config, f"{key}_{attr}") for arg, attr in (("prior_dir", "PRIOR_MODEL_DIR"),
                                                                      ("nudge_share", "NUDGE_SHARE"))
             if getattr(config, f"{key}_{attr}", None) is not None}
+    own_prior = getattr(config, "MODEL_PRIORS", {}).get(name)    # --prior-for v21-avgf2=<table>
+    if own_prior:
+        opts["prior_dir"] = own_prior
+        print(f"  {name}: its own prior, {own_prior}", flush=True)
+    react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
+    if react:
+        opts["react"] = react
     key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
                             prematch_only, tuple(sorted(opts.items())))
     cache_key = key_of(match_codes)
@@ -803,6 +810,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         history = fetch_history(cur, until=config.CUTOFF_END)
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
+    if react:
+        print(f"  {name}: in-play strength update {react[0]}, "
+              + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")
+                 else f"a prior sd of {react[1]:g} points a game")
+              + (", each gamer's own scale on it" if react[0].startswith("g") else ""), flush=True)
     print(f"  {name}: {sum(len(v) for v in snapshots.values()):,} PLAY_OVER snapshots across "
           f"{len(snapshots):,} of {len(codes):,} matches"
           + (f" ({len(group)} chunks at once)" if len(group) > 1 else "")
@@ -816,6 +828,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      history=history, prematch_only=prematch_only, **opts,
                                      **({"batches": [list(b) for b in group]} if seeded else {}))
     took = getattr(stream, "LAST_TIMING", {})
+    if took.get("prior") and took.get("matches"):
+        miss = took["matches"] - took.get("prior_matches", 0)
+        print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"
+              + (f"; {miss:,} priced on the sim's own means (rebuild it to cover the window: walkthrough, then"
+                 " form-prior)" if miss else ""), flush=True)
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
         print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "

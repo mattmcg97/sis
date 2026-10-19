@@ -87,7 +87,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
 | `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines`; `--v14-model`, `--v14-paths`, `--v14-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12`, `--candidate v13` and `--candidate v14` |
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
-| `--v21-prior-model DIR` | `--candidate v21`: the v13/v14 build (made with `--history`) whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v13/v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
@@ -288,6 +288,23 @@ then the two halves it is made of.
 |---|---|---|---|---|---|---|---|---|
 | Same line | Δ is ΔBrier per match |
 | Different line | Δ is Δpoints per match |
+
+### Which prod row a pair reads: `pair-check`
+
+A pair reads prod's **first** live row on the first message after a
+PLAY_OVER; the betting simulation reads prod's **latest** row at the bet.
+Where prod publishes a quick price and corrects it on the same message,
+the pairing grades a candidate against the quick one. `pair-check` reads
+prod's moneyline alone (no simulation) and sets the first row against the
+last at every PLAY_OVER, graded on the result:
+
+```
+py -m eAMFCalibrator pair-check --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00"
+```
+
+Brier first − last above zero means the last row was the closer one. Set it
+beside a candidate's moneyline edge to see how much of that edge the
+pairing alone could account for (`out/pair_check.csv`, a row per quote).
 
 ### The report is a dashboard, not a write-up
 
@@ -3404,3 +3421,206 @@ Restricted and VIP, each place gets:
 
 A place where the stake share runs above its share of gamer-matches is where
 the money is lumped. Writes `out/bets_sessions.txt`.
+
+### What the money already bet says: `money-layer`
+
+```bash
+python -m eAMFCalibrator money-layer --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" --base prod --history eAMFCalibrator/out/match_history.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv
+python -m eAMFCalibrator money-layer --since "2026-09-01 00:00:00" --until "2026-10-13 00:00:00" --base eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+On the moneyline the bettors beat prod by about 9.5 points of the operator's
+margin. All of the gap is informed money:
+- bets under 10 lose at the margin prod's prices say they should (10.4% in
+  play against 10.5%);
+- bets of 200 and up carry nearly two-thirds of the shortfall;
+- most of it is on a handful of gamers whose level jumped beyond chance from
+  September to October, with the money on them from their first days.
+
+This tests two ways of using that money.
+
+**The days before.** Each gamer's pre-match price is moved by their backers'
+edge on the gamer's matches settled before this one, walk-forward:
+- **the edge:** each bet's result less the price it was laid at, which is
+  prod's probability at the bet with `--bets`, or else the operator's odds with
+  its margin taken out (the bet table alone; the two agree to three places);
+- **the signal:** stake-weighted, over the stake plus `--shrink` (default
+  50,000), settled by the match's kick-off (`--cut daily`: by the start of its
+  day);
+- **the slope:** fitted on the days before;
+- **the price move:** goes into a copy of the base table as `p_home` and the
+  points (over the nudge share, so v21's kick-off lands on the whole move).
+  `money.csv` reads like any other table with `--v21-prior-model`.
+
+The test grades base and money on the results: Brier and log loss with 95%
+intervals over days, the slope on the test days, fifths of the signal, each
+week, and the settings side by side. On Oct 1–12 the Brier moved by −0.0003
+[−0.0035, +0.0023]; even the best slope picked in hindsight only reached
+−0.0018. That is no material gain.
+
+**The match so far** (with `--bets`). Each moneyline price is moved in logit
+by beta × the money already on its side of the match:
+- **the money:** (this side − the other) / (both + 500);
+- **beta:** fitted on the bets of the days before;
+- **the outputs:** the same bets re-priced as the betting sim does, and two
+  books, with 95% intervals over matches, for prod and each candidate in the
+  file.
+
+On Oct 1–12 this re-priced prod's bets by +2.3 points [+1.5, +3.2] and v21's
+by +1.7 [+1.1, +2.4]. That is the only first-pass gain with an interval clear
+of zero, and it comes from following the money, not from the model: about a
+quarter of the gap. Pricing that way live needs the bets as they are placed.
+
+Writes `money_layer.txt`, `money_gamers.csv` and (for a table base)
+`money.csv` to `--out` (default `out/money/`).
+
+### The pre-match report, no simulation: `prior-bets`
+
+```bash
+python -m eAMFCalibrator prior-bets --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --sim-name glmer-sim --table nb2=eAMFCalibrator/out/walkthrough/priors/nb2.csv --table glmer=eAMFCalibrator/out/walkthrough/priors/glmer.csv --table avg=eAMFCalibrator/out/walkthrough/priors/avg.csv
+```
+
+This sets prod against each walkthrough table's own price and against a
+sim's pre-match price, all on the same bets, with no simulation run here.
+- **A table's price:** each row's score model rebuilt about its `home_pts` /
+  `away_pts`, read at the bet's line as `prior-replay` reads an arm. That is
+  NB2's shared-gamma joint model for `nb2` and the averages, and NB2's
+  construction fitted to glmer's errors for `glmer`.
+- **The sim's price:** the bets file's candidate, at its kick-off price
+  pre-match. Its bets are re-priced as the betting sim made them. Point
+  `--bets` at a run of v21 on a glmer build for the glmer-driven sim.
+
+**The grades.** These are for the moneyline, on every match with a result:
+- Brier and log loss, each less prod's, with 95% intervals over days;
+- the same by how heavily the match was bet (quarters of its moneyline
+  stake), and weighted by stake;
+- each price's disagreement with prod as a second term on the result (1:
+  take its whole view, 0: none of it).
+
+The spread and the total are graded at prod's pre-match line, using each
+match's last pre-match bet in the market.
+
+**The bets.** Each bet is re-priced as the betting sim does (odds × prod /
+price, the operator's margin kept), on the same bets and in two books, with
+95% intervals over matches. The groups are:
+- **every pre-match bet, by market:** the clean ones first, placed once both
+  gamers' previous results were in;
+- **the kick-off money:** in-play moneyline bets struck while prod's price was
+  still within 2 points of its pre-match one, the game's first 15 seconds
+  apart. Here a table's price is moved by prod's small move since kick-off.
+
+Writes `prior_bets.txt` and `prior_bets.csv` (a row per match: the result, the
+moneyline stake and every price) to `--out` (default `out/prior_bets/`).
+
+### The moneyline by game situation: `ml-states`
+
+```bash
+python -m eAMFCalibrator ml-states --pairs eAMFCalibrator/out_cal_v21_glmer/directional_pairs.csv --bets eAMFCalibrator/out_bets_v21_4k/bets_sim.csv --label v21 --history eAMFCalibrator/out/match_history.csv
+```
+
+This asks what prod and a candidate price the pre-match favourite at in a
+given situation, against how often the favourite goes on to win. It reads
+the report's pairs: prod's and the candidate's moneyline at each snapshot,
+with the score, the quarter and who has the ball. It needs no Snowflake.
+
+**The favourite** is the side prod's price is on at the opening kick-off,
+with prices within 1 point of 50% left out.
+
+**The situations:**
+- **the first score of the game:** who scored (favourite or underdog), a
+  touchdown or a field goal, and when: on the opening drive (before the ball
+  first changed hands), later in the first quarter, or after. Each is read
+  at the first snapshot with the other side on the ball, so the try and the
+  kick-off are in.
+- **each later quarter's start,** by the favourite's lead.
+
+Each match counts once per situation, with 95% intervals over matches. The
+opening-drive touchdowns are also split by how strong a favourite.
+
+**With `--bets`:** every settled in-play moneyline bet placed in the
+situation (from its snapshot to the next score). For each it gives the
+margin and what prod's price says it should be, the backed side's result
+less prod's price and less the candidate's, and the candidate's re-priced
+margin against prod's. Then every bet by the quarter, the favourite's lead
+and the side backed.
+
+**With `--history`** (a match_history.csv, for the handles): every gamer with
+12 or more matches gets their own lines:
+- their results against each book's price on them at kick-off;
+- their result less each book's price at every snapshot (a match's mean);
+- having conceded the first score, and having scored it, their win rate and
+  the prices on them then;
+- their share of the games decided by 3 or fewer;
+- the bets backing them.
+
+On 24 Aug – 22 Sep (prod), none of these carried over from one half of the
+window to the other: comeback −0.05, close games 0.00, front-running +0.26
+(p 0.09). Read them as a gamer's record, not as a trait.
+
+Writes `ml_states.txt`, `ml_states.csv` and (with `--history`)
+`ml_states_gamers.csv` to `--out` (default `out/ml_states/`).
+
+### Form priors for the betting sim: `form-prior` and `--prior-for`
+
+```bash
+python -m eAMFCalibrator history --until "2026-10-18 00:00:00"
+python -m eAMFCalibrator walkthrough --history eAMFCalibrator/out/match_history.csv --since 2026-09-01
+python -m eAMFCalibrator form-prior          # v2.1's default prior: out/form_prior/priors/avg_form4_w05.csv
+python -m eAMFCalibrator form-prior --history eAMFCalibrator/out/match_history.csv --table avg=eAMFCalibrator/out/walkthrough_oct/priors/avg.csv --drift 1,2,4 --weight 0.5,1
+python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-13 00:00:00" --candidate v21,v21-avgf2 --prior-for v21-avgf2=eAMFCalibrator/out/form_prior/priors/avg_form2_w05.csv
+```
+
+`form-prior` moves each walkthrough table's expected margin toward a fast
+walk-forward rating. The rating is every gamer's strength as their latest
+results have it:
+- each gamer's strength (in points of margin) is a random walk that drifts
+  DRIFT points² a day;
+- each match's margin is a draw about the two strengths and the teams'
+  ratings, with an sd of 12 points;
+- the gamers are updated after every result, in kick-off order (a Kalman
+  filter), and the teams by 0.002 of each miss;
+- each match is priced only off the results before it.
+
+Each table row's margin moves WEIGHT of the way to the rating's. The total
+is kept (half the move goes to each side's points), and `p_home` is re-read
+off the row's own score model. A match the rating has no view of is left
+as it is.
+
+**Why:** on the Oct 1–12 bets, a rating drifting 1–4 points² a day
+re-priced prod's moneyline by +1.2 to +1.9 points on the same bets, in
+play as well as at kick-off. Its Brier score was no better than prod's.
+The slow ratings (NB2's and glmer's 60-day half-lives) gained nothing
+there. The money follows who is playing well now.
+
+**v2.1's default prior.** With no options, `form-prior` reads
+`out/match_history.csv` and the walkthrough's `out/walkthrough/priors/avg.csv`.
+It moves the margin half way to the rating drifting 4 points² a day and
+writes `out/form_prior/priors/avg_form4_w05.csv`. That is the prior every
+v2.1 sim nudges toward when none is named: `--candidate v21`, `v21-report`
+and `replay-ui` all read it. Against the v14 glmer build on the same bets,
+it gained +1.1 points on the in-play moneyline on Oct 1–12, and +3.7 on
+Oct 13–17, a window held out from choosing the drift.
+
+The table only has the matches its walkthrough priced. Rebuild it after
+each new history (`history`, then `walkthrough`, then `form-prior`). Every
+sim says which prior it read and how many of its matches the prior has. A
+match the table doesn't have is priced on the sim's own means.
+
+To use another prior, pass `--v21-prior-model` (or set `$EAMF_V21_PRIOR`).
+Without the table, v2.1 falls back to `$EAMF_V14_MODEL`, then `./v14_model`.
+
+With `--bets` (bets_sim.csv files) it first says how many of the bet
+matches, and how much of their stake, the history and each table have. On
+Oct 1–12 a history short of the finals left 180 of the 860 bet matches out.
+
+Writes `priors/<base>_form<drift>_w<weight>.csv` for every table, drift
+and weight (`w05` is 0.5, `w10` is 1), and `form_prior.txt`, to `--out`
+(default `out/form_prior/`).
+
+**`--prior-for NAME=PRIOR`** (repeat it) gives a v21 candidate its own
+prior: a table, or a build, as `--v21-prior-model` takes. Name the
+candidate `v21-<tag>` without a build directory, so it prices off
+`--v21-model`. Every v21 candidate is then priced in one run, on the same
+bets, prod quotes and lags, each nudged toward its own prior. One without
+a `--prior-for` reads `--v21-prior-model`. The name must be a
+`--candidate` of the run, and the prior must exist.

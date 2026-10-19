@@ -1,0 +1,20 @@
+
+  the bets by a gamer's run tonight when placed (moneyline and spread): 'piles on' backs a gamer who won the last 2+ or opposes one who lost them, 'fades' the other way; the book's margin (revenue / stake), as placed and re-priced, on the bets every candidate re-priced:
+  pre-match                   bets      stake     prod          v21    v21-avgf4   v21-avgf2x   v21-avgf4x   v21-avgf8x
+    piles on a run of 2        843     46,175    -3.4%        -2.5%        -2.4%        -4.8%        -1.1%        +2.8%
+    piles on a run of 3        327     24,988   -44.0%       -55.1%       -46.8%       -46.3%       -40.4%       -41.6%
+    piles on a run of 4+       303     10,079   -14.1%       -10.8%        -2.4%        -1.4%       +10.4%       +13.9%
+    fades a run of 2           594     32,615   -29.5%       -25.8%       -38.0%       -46.0%       -49.4%       -63.4%
+    fades a run of 3           146      5,357   +23.4%       +29.3%       +24.9%       +21.2%       +14.9%       +12.2%
+    fades a run of 4+          107      4,652   +34.7%       +35.6%       +37.4%       +35.6%       +32.2%       +26.5%
+    mixed                      326     12,183    +1.1%        -1.4%        -0.2%        +0.8%        -2.0%        -0.9%
+    none                     1,396     66,040   +16.5%       +17.7%       +18.6%       +18.2%       +17.2%       +15.7%
+  in play                     bets      stake     prod          v21    v21-avgf4   v21-avgf2x   v21-avgf4x   v21-avgf8x
+    piles on a run of 2      2,400    159,483    -8.9%        -9.7%        -4.8%        -2.7%        +0.4%        +1.5%
+    piles on a run of 3      1,021     60,143   -15.3%       -18.3%       -12.6%       -10.2%        -6.7%        -4.4%
+    piles on a run of 4+     1,230     86,624   -17.3%       -18.0%        -7.7%        -4.7%        -3.7%        +1.6%
+    fades a run of 2         1,782    126,594   -28.6%        -6.8%        -9.4%        -8.7%       -11.5%       -14.1%
+    fades a run of 3           855     51,600   +18.0%       +18.3%       +16.2%       +13.4%        +6.8%        +6.0%
+    fades a run of 4+          595     26,471   +50.9%       +53.2%       +51.6%       +50.3%       +49.6%       +47.9%
+    mixed                    1,258     87,105   -12.4%       -18.3%       -12.2%       -10.3%        -9.9%        -4.9%
+    none                     6,166    392,166    +4.7%        +4.5%        +4.9%        +6.2%        +7.4%        +5.7%
