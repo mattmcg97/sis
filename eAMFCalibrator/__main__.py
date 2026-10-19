@@ -1315,8 +1315,8 @@ def apply_overrides(args):
 
 
 def uplift_options(parser):
-    """The margin uplift's options (margin_uplift.py: prod against each candidate, the partner's
-    dummy bets), for report --bets and bets."""
+    """The margin uplift's options (margin_uplift.py: prod against each candidate, every in-play
+    tick a dummy bet between the two books), for report --bets and bets."""
     group = parser.add_argument_group("margin uplift")
     group.add_argument("--margin-chart", metavar="CSV",
                        help="the margin chart the dummy bets are priced at (probability, numerator, "

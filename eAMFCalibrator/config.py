@@ -28,10 +28,11 @@ PREMATCH_ONLY = False
 GAMERS = []
 # `bets --only-matches FILE`: only these matches' bets (a quick test on a chosen few).
 ONLY_MATCHES = []
-# The margin uplift every betting simulation runs (margin_uplift.py, the partner's dummy-bet
-# method): prod against each candidate over the window, priced off UPLIFT_CHART (a margin chart
-# CSV: probability, numerator, denominator; None: a proportional 109% book). UPLIFT_FACTOR scales
-# minutes from the scheduled start to the game clock (None: fitted on prod).
+# The margin uplift every betting simulation runs (margin_uplift.py: every in-play tick a dummy
+# bet, prod and each candidate as two books, every match counting the same) over the window,
+# priced off UPLIFT_CHART (a margin chart CSV: probability, numerator, denominator; None: a
+# proportional 109% book). UPLIFT_FACTOR scales minutes from the scheduled start to the game clock
+# (None: fitted on prod).
 UPLIFT_CHART = None
 UPLIFT_FACTOR = None
 # Answer repeated identical queries from memory (set by a report that runs

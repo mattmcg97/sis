@@ -1913,83 +1913,104 @@ stood to a gamer's run this session when it was placed:
 If punters make money by piling onto trends that carry on, the "piles on" rows show a lower margin
 than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) should then raise it.
 
-### Margin uplift, the partner's way: `margin_uplift.txt`
+### Margin uplift, two books: `margin_uplift.txt`
 
-Every `bets` run (and so `report --bets`) also runs the dummy-bet method from the partner's
-eBasketball notebook. It's applied to AF as they applied it, weaknesses and all, but as a direct
-comparison: prod against each candidate over the report window, on matched ticks only (below). It
-reuses the quotes the simulation has already fetched, so it costs nothing
-extra.
+Every `bets` run (and so `report --bets`) also scores each candidate against prod on dummy bets,
+one on every live in-play price tick. It reuses the quotes the simulation has already fetched, so
+it adds almost nothing to the run time.
 
 ```
 python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v13 --v13-model v13_model --bets --margin-chart FD_109_BALANCED.csv
 ```
 
-- **Dummy bets.** Every live in-play tick on the moneyline (50/51, home is their side A) and
-  totals (54/55) is a bet to win 100. It's priced at the margin chart's price for the probability
-  rounded to 3 places: their `FD_109_BALANCED.csv`, probability then `numerator`, `denominator`,
-  so the price is numerator / denominator + 1. The file can have a header naming those columns, or,
-  as theirs does, no header with the three in that order. The chart is read when the run starts, so
-  a chart it can't use stops the run at once. Without `--margin-chart`, a proportional 109% book
-  stands in.
-- **Per bet.**
-  - Stake = 100 / (price − 1).
-  - Expected margin = 1 − price × probability.
-  - GGR = stake − price × stake if it won, else the stake. A moneyline tie loses both sides, and
-    a totals push loses both.
+**Why not the partner's version.** Their notebook had each book take every dummy bet at its own
+price, staked to win 100, and compared the margins. That rewards an overconfident book:
+- A winner always costs the book 100, while a loser pays it the whole stake, and short prices
+  carry the big stakes.
+- So a book that prices its favourites too short keeps big stakes when they lose, and pays the
+  same 100 when they win.
+- On simulated ticks with the truth known, the margins were:
+
+  | Book | Margin |
+  | --- | --- |
+  | calibrated | 8.4% |
+  | overconfident (logit × 1.15) | 10.5% |
+  | overconfident (logit × 1.3) | 12.2% |
+  | underconfident (× 0.85) | 6.1% |
+
+- Flat stakes turn it round: the underconfident book scores 10.7%.
+- Every tick of a match also settles on the same result. A match with more ticks counted for more,
+  though it is one result.
+
+Two books leave no such reward. A book that is too sure, or not sure enough, offers the better price
+exactly where it is wrong, and is taken there. Against a calibrated prod, what each book makes on
+the bets it takes:
+
+| Book | Margin |
+| --- | --- |
+| calibrated | 8.2% |
+| overconfident (× 1.15) | 2.5% |
+| overconfident (× 1.3) | −3.0% |
+
+**How it works.**
+- **Dummy bets.** Every live in-play tick on the moneyline (50/51), the spread (52/53) and the
+  totals (54/55) is a bet to win 100.
+  - It's priced at the margin chart's price for the probability rounded to 3 places.
+  - The chart is their `FD_109_BALANCED.csv`: probability, then `numerator`, `denominator`, so
+    the price is numerator / denominator + 1.
+  - The file can have a header naming those columns or, as theirs does, no header with the three
+    in that order.
+  - The chart is read when the run starts, so a chart it can't use stops the run at once. Without
+    `--margin-chart`, a proportional 109% book stands in.
+- **Two books.** Each bet goes to whichever book's price is longer (prod on a tie).
+  - Stake = 100 / (price − 1). GGR = −100 if the selection won, else the stake.
+  - It's settled the way the calibrator settles every market, and a push is left out.
+  - The spread and the totals are compared only where the candidate's line is prod's, so it's the
+    same bet. The page shows how many matched ticks that leaves.
+- **Every match counts the same.** Each tick weighs 1 / its match's ticks in that market, and every
+  interval is a 95% bootstrap over matches (`--boot`).
 - **The clock.** Minutes run from the scheduled start, scaled so prod's matches end at 60 game
-  minutes on average (their 0.146 cut made basketball's 20). The same factor applies to every
-  feed (`--uplift-factor` sets it). The money leaves out the last 6 minutes (their last 2 of 20),
-  and anything with a fair price of 1.001 or less.
-- **Headline.** Margin % (GGR / handle) and expected margin % for each feed and market, and the
-  uplift: each candidate's margin less prod's.
-- **Calibration.** Their weighted MAE: |mean probability − win rate| for each game minute left,
-  selection and band, weighted by ticks.
-  - Moneyline bands are tenths of probability.
-  - Totals bands are AF's (≤35.5, 36–40.5, 41–45.5, 46–50.5, 51–55.5, 56+). Theirs were
-    basketball's.
-- **Checkpoints.** At 54, 45, 36, 30, 21 and 15 minutes left (their 18, 15, 12, 10, 7 and 5),
-  each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
-  feed; its margin needs more than 50.
-- **Matched ticks only.** The feeds tick at different rates, so every table bets at prod's ticks
-  alone. At each one, each candidate's latest live price for the same match, market and selection
-  is taken (no more than `PAIR_MAX_AGE`, 2 minutes, old). A prod tick without one in every
-  candidate is dropped from every feed, and so is one where any feed's probability is outside
-  `PROB_RANGE` (0.05 to 0.95). The moments and bets are the same for all, only the probabilities
-  differ, so the uplift is the model's alone. Each feed's matched ticks are shown against all its
-  ticks. The clock factor is still fitted on all of prod's ticks. The matches are the ones
-  the simulation covers: those with at least one bet.
+  minutes on average (`--uplift-factor` sets the factor). The bets leave out the last 6 minutes
+  (their last 2 of 20), and anything with a fair price of 1.001 or less.
+- **Matched ticks only.** Every book is bet at prod's ticks.
+  - At each one, each candidate's latest live price for the same match, market and selection is
+    taken, no more than `PAIR_MAX_AGE` (2 minutes) old.
+  - A prod tick without such a price in every candidate is dropped, and so is one where any feed's
+    probability is outside `PROB_RANGE` (0.05 to 0.95).
+  - The clock factor is fitted on all of prod's ticks. The matches are the ones the simulation
+    covers: those with at least one bet.
 
-The page's betting simulation has three panels:
+**What it shows, per candidate and market:**
+- **To candidate:** the share of the dummy handle the candidate's prices take.
+- **Candidate takes / prod keeps:** each book's margin on what it is left with.
+- **Candidate − prod:** the headline. Above zero, the candidate's prices hold up better where the
+  two differ.
+- **Both books − prod alone:** the two books together against prod taking every bet. A second book
+  only lowers it, as the bettor always gets the better price. The smaller the fall, the less the
+  candidate is picked off.
+- **Log loss, candidate − prod:** a proper score on the same ticks and weights, as a cross-check
+  (lower is better).
+- **Cuts:** by quarter, and on the moneyline by prod's chance of the selection (0.05–0.20,
+  0.20–0.35, … 0.80–0.95). They're folded under the headline on the page.
+
+**By match: `margin_uplift_matches.txt` and `.csv`.**
+- Every match, with its start, players, final score and, per candidate and market:
+  - its dummy bets;
+  - the share the candidate takes;
+  - each book's margin;
+  - its log loss less prod's.
+- **Part:** the match's part of candidate − prod. That's its GGR on what the candidate takes over
+  the candidate's whole taken handle, less its GGR on what prod keeps over prod's whole kept
+  handle. The parts add up to the headline exactly.
+- The matches that cost the candidate most come first, with a running sum.
+- `margin_uplift.txt` (and the page's "By match" fold) lists the 10 matches that cost it most and
+  the 10 that gain it most.
+
+`margin_uplift.csv` holds every number: one row per candidate, market and cut.
+
+The page's betting simulation has two sections:
 - **Re-pricing:** the real bets at each candidate's probability.
-- **Book comparison.**
-- **Margin uplift.**
-
-`margin_uplift.csv` holds the sums behind every table: one row per feed, market, minute,
-selection and band.
-
-- **Brier and log loss, same ticks.** The headline also scores every feed on exactly the matched
-  ticks with more than 6 game minutes left, every tick alike (lower is better). It's a proper
-  score: it's best when the probabilities are right. The dummy-bet margin isn't:
-  - A bet to win 100 at a short price carries a big stake. At a 0.92 favourite, the 1.01 floor of
-    the proportional book makes it a stake of 10,000.
-  - So a book keeps a lot when it was sure of a side that lost, and the margin rewards confidence.
-  - At a true 75% for one side, pricing it 80% scores about 12.9%, pricing it 75% scores 8.3%, and
-    pricing it 70% scores 4.6%.
-  - Read the uplift next to the Brier score: a candidate behind on the uplift but ahead on Brier
-    is the less confident book, not the worse one.
-- **By match: `margin_uplift_matches.txt` and `.csv`.**
-  - **Contents.** Every match with its start, players, final score and dummy bets (ticks) per
-    market. Each feed has its share of the handle (wt), GGR, margin, Brier and "sure": the highest
-    probability it gave a selection that lost.
-  - **Part.** Each candidate's part of the uplift: the match's GGR over the candidate's whole
-    handle, less prod's over prod's. The parts add up to the uplift exactly.
-  - **Order.** Matches are sorted so the ones that cost the candidate most come first, with a
-    running sum.
-  - **Summary.** `margin_uplift.txt` (and the page's "By match" fold) sums it up for each market:
-    - the 10 matches that cost the candidate most and the 10 that gain it most;
-    - the uplift without them;
-    - how many matches hold half of prod's handle.
+- **Book comparison:** the real bets between two books, then this margin uplift.
 
 ### The operators' margin
 
@@ -2077,14 +2098,15 @@ python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshot
 ```
 
 `--bets` runs the betting simulation for the same window and candidates, and
-adds a "Betting simulation" section at the bottom of the report's HTML. The
-section has:
+adds two sections at the bottom of the report's HTML. **Re-pricing** has:
 - each candidate on the bets it re-priced: prod's margin, the candidate's,
   the change, and the change split into odds and line;
 - every candidate side by side on the bets they all re-priced, by the same
   cuts as the console;
 - why bets were not re-priced;
 - the lag by operator.
+
+**Book comparison** has the two-book table on the real bets, then the margin uplift.
 
 The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
 `--out` folder. Models are priced again for the bets' matches, so the run
@@ -2120,8 +2142,9 @@ does, so every reading is a like-for-like comparison with prod.
 - **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
   (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
   side of zero.
-- **On the page** (headed Acceptance and Two books): each margin is green where the book is ahead,
-  red behind; its interval sits underneath.
+- **On the page** (under Book comparison, Two books): each margin is green where the book is ahead,
+  red behind; its interval sits underneath. Acceptance is in `bets_book_comparison.txt` only. With
+  no sharp bets in the window, and the default elasticity of 0, it's just the re-pricing again.
 
 ```bash
 python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model

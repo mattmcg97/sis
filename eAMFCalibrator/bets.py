@@ -1312,9 +1312,10 @@ def _change_cell(change):
 
 
 def html_section(summary):
-    """The betting simulation as a section of the calibration page: each candidate on its own
-    coverage, then every candidate side by side on the bets they all re-priced, the price and
-    result effects, why bets were not re-priced, and the lag by operator."""
+    """The betting simulation as two sections of the calibration page. Re-pricing: each candidate on
+    its own coverage, then every candidate side by side on the bets they all re-priced, the price and
+    result effects, why bets were not re-priced, and the lag by operator. Book comparison: the real
+    bets between two books, then the margin uplift (every in-play tick a dummy bet, two books)."""
     from .html_full import SHORT_NAMES
     results = [(SHORT_NAMES.get(str(n).upper(), n), rows) for n, rows in summary.get("results") or []]
     if not results:
@@ -1374,7 +1375,7 @@ def html_section(summary):
     uplift = margin_uplift.html(summary.get("uplift"), _esc)
     return f"""
   <section class="panel" id="bets">
-    <h2>Betting simulation &middot; Re-pricing</h2>
+    <h2>Re-pricing</h2>
     <p class="dim">{summary.get('bets', 0):,} bets &middot; {summary.get('matches', 0):,} matches: each real
       bet re-priced at the candidate's probability with the operator's own margin kept</p>
     <h3>Re-priced</h3>
@@ -1399,10 +1400,9 @@ def html_section(summary):
     <p class="dim">Lag: {lag_line or 'none fitted'}</p>
   </section>
   <section class="panel" id="books">
-    <h2>Betting simulation &middot; Book comparison</h2>
-    {books or '<p class="dim">No book comparison.</p>'}
-  </section>
-  <section class="panel" id="uplift">
-    <h2>Betting simulation &middot; Margin uplift</h2>
+    <h2>Book comparison</h2>
+    <h3>Two books</h3>
+    {books or '<p class="dim">No two-book comparison.</p>'}
+    <h3 id="uplift">Margin uplift</h3>
     {uplift}
   </section>"""

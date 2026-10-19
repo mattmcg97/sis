@@ -263,20 +263,12 @@ def _change(x):
 
 
 def html(data, esc):
-    """The book comparison as HTML tables: acceptance and two books, each candidate's cuts under
-    its own heading row."""
+    """The two-book table, each candidate's cuts under its own heading row. Acceptance stays in
+    bets_book_comparison.txt only: with no sharp bets and SIM_ELASTICITY 0 it is the re-pricing again."""
     if not data:
         return ""
-    sharp = ", ".join(config.SIM_SHARP_GROUPS)
-    acc_rows, two_rows = [], []
+    two_rows = []
     for entry in data:
-        edge = ", ".join(f"{esc(k)} {100 * v:+.1f}%" for k, v in sorted(entry["edges"].items()))
-        acc_rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"8\">{esc(entry['name'])}"
-                        f"<span class=\"pp dim\"> &middot; sharp edge {edge or 'none'}</span></th></tr>")
-        for r in entry["accept"]:
-            acc_rows.append(f"<tr><th>{esc(r['label'])}</th><td>{r['bets']:,}</td><td>{r['stake']:,.0f}</td>"
-                            + _pct_cell(r["prod"], esc) + _pct_cell(r["same"], esc) + _pct_cell(r["acc"], esc)
-                            + f"<td>{100 * r['kept']:.1f}%</td>" + _change(r["change"]) + "</tr>")
         two_rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"10\">{esc(entry['name'])}</th></tr>")
         for r in entry["two"]:
             two_rows.append(f"<tr><th>{esc(r['label'])}</th><td>{r['bets']:,}</td><td>{r['stake']:,.0f}</td>"
@@ -284,14 +276,7 @@ def html(data, esc):
                             + _pct_cell(r["cand"], esc) + _change(r["head"]) + _pct_cell(r["both"], esc)
                             + _pct_cell(r["alone"], esc) + _change(r["change"]) + "</tr>")
     return f"""
-    <p class="dim">Each candidate set against prod as a book; sharp: {esc(sharp)}</p>
-    <h3>Acceptance</h3>
-    <table class="reach">
-      <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod (as bet)</th><th>Same bets</th>
-        <th>Acceptance</th><th>Kept</th><th>Change</th></tr></thead>
-      <tbody>{''.join(acc_rows)}</tbody>
-    </table>
-    <h3>Two books</h3>
+    <p class="dim">The real bets: {esc(TWO_NOTE)}.</p>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>To candidate</th><th>Prod keeps</th>
         <th>Candidate takes</th><th>Candidate &minus; prod</th><th>Both books</th><th>Prod alone</th>
