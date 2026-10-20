@@ -3012,16 +3012,16 @@ loaded: it has no PLAY_OVERs to replay.
 
 | part | what it shows |
 |---|---|
-| timeline | every PLAY_OVER: quarter, clock, score, the play, and prod's and v21's home win chance. Click one to jump to it |
-| scoreboard | the score, who has the ball, down, distance and field position |
-| controls | first / back / next / last, play at a chosen speed, "only states v21 prices", and "Price the whole match" |
-| prices | moneyline, spread and total, v21 and prod side by side with the difference. The spread and total are shown at prod's line and at v21's own key-number line, with v21's ladder around it. Marked suspended where prod wasn't live |
-| expected | v21's expected score, margin and total from here |
-| distributions | v21's final margin and total, with prod's line marked |
-| nudge | the expected points, the share, and what v21 makes of them (below) |
-| pre-match | prod's closing quote against v21's kick-off price |
-| chart | after "Price the whole match": the home win chance through the match, v21 against prod, with quarter lines. Hover for the numbers, click to jump |
+| Play-by-play | every PLAY_OVER: time, score, play, next down and spot, and prod's and v21's home win %. Click a row to jump to it. The badge counts the states v21 prices |
+| scoreboard | match code, kick-off and final score, the score and clock, who has the ball, and chips for the play, down, spot, feed, bet state and message number |
+| controls | first / back / next / last, Play at 0.5×/1×/3×, and Skip unpriced |
+| Prices | moneyline (ML), spread and over: v21 against prod with the difference in percentage points, and fair odds beside each. Spread and over rows appear at prod's line and, if different, at v21's own line. SUSP marks a market prod had suspended. Below: v21's expected points for each side, margin and total |
+| Distribution | v21's final margin and total, with prod's line marked |
+| Nudge | the expected points and share, with Apply and Reset. The table shows prior, target, v21's own means, the nudged means and alpha. The badge reads Off when the build has no nudge, or notes a match missing from the prior |
+| Pre-match | prod's closing quote against v21's kick-off price |
+| Home win % | after Price all: v21 against prod through the match, with quarter lines. Hover for the numbers, click to jump |
 
+Header chips show the model, the prior and the source. "Sims" is the games played for each price.
 Keys: ← / → step, Home / End jump to the ends, space plays and pauses.
 
 **The nudge:** v21 starts from its own kick-off means (the gamers' and teams' effects in the
@@ -3030,20 +3030,19 @@ kick-off means sit `share` of the way from v21's own to the expected points (`v2
 the price stream does). The same nudge then applies to every later state.
 
 The expected points start as the prior's (`--v21-prior-model`: a walkthrough table or a v14 build),
-read with only the results before the match. They can be changed by hand:
-- "Apply" solves the nudge again and every price follows;
-- "Back to the prior" undoes the change;
-- the readout shows the target, v21's own means, the nudged means and the nudge itself.
+read with only the results before the match. They can be changed by hand: Apply solves the nudge
+again and every price follows; Reset goes back to the prior and the default share.
 
 Share 0, or no expected points, prices with v21's own means. A nudge needs a tilt build
-(`v21-build --mode tilt`). With any other build, v21 prices off its own means and the page says so.
+(`v21-build --mode tilt`). With any other build, v21 prices off its own means and the Nudge badge
+reads Off.
 
 **What v21 can't price:** a PLAY_OVER with a conversion still to come has no v21 state, as in the
-price stream. The page shows prod's quote there and says why v21 has none.
+price stream. The page shows prod's quote there with the badge "No v21 state".
 
-**Speed:** a price is `--paths` games (default 1000, about half a second). The whole-match chart
-plays 400 games for each state in one run, a few seconds a match. Each state is played from a fixed
-seed, so the same state prices the same each time.
+**Speed:** a price is `--paths` games (default 1000, about half a second). Price all plays 400
+games for each state in one run, a few seconds a match. Each state is played from a fixed seed, so
+the same state prices the same each time.
 
 ### The priors against each other, offline: `prior-offline`
 

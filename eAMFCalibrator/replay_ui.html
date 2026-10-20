@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>v21 replay</title>
+<title>v21 Replay</title>
 <style>
 :root {
   color-scheme: light;
@@ -16,8 +16,8 @@
   --axis: #c3c2b7;
   --ring: rgba(11, 11, 11, 0.10);
   --wash: rgba(11, 11, 11, 0.05);
-  --v21: #2a78d6;           /* categorical slot 1 */
-  --prod: #eb6834;          /* categorical slot 2 */
+  --v21: #2a78d6;
+  --prod: #eb6834;
   --up: #006300;
   --down: #b42f2f;
 }
@@ -58,68 +58,103 @@
 * { box-sizing: border-box; }
 body {
   margin: 0; background: var(--page); color: var(--ink);
-  font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-header { padding: 12px 16px; border-bottom: 1px solid var(--ring); display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
-header h1 { font-size: 16px; margin: 0; }
-header .meta { color: var(--ink-2); font-size: 12px; }
-.bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 16px; border-bottom: 1px solid var(--ring); }
-.bar label { color: var(--ink-2); font-size: 12px; }
+.num { font-variant-numeric: tabular-nums; }
+header {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--ring); background: var(--surface);
+}
+header h1 { font-size: 15px; margin: 0 8px 0 0; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { padding: 1px 8px; border-radius: 999px; background: var(--wash); color: var(--ink-2); font-size: 12px; white-space: nowrap; }
+.chip.off { color: var(--muted); }
+.bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 8px 16px; border-bottom: 1px solid var(--ring); }
+.bar label { color: var(--muted); font-size: 12px; }
+.bar .sep { width: 1px; height: 20px; background: var(--ring); margin: 0 4px; }
 input, select, button {
   font: inherit; color: var(--ink); background: var(--surface);
-  border: 1px solid var(--ring); border-radius: 6px; padding: 5px 8px;
+  border: 1px solid var(--ring); border-radius: 6px; padding: 4px 8px;
 }
 button { cursor: pointer; }
 button:hover { background: var(--wash); }
 button.primary { border-color: var(--v21); }
 button:disabled { opacity: 0.5; cursor: default; }
-select#match { min-width: 320px; max-width: 100%; }
-main { display: grid; grid-template-columns: 300px minmax(0, 1fr) 300px; gap: 12px; padding: 12px 16px; align-items: start; }
-@media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
-.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 10px; padding: 12px; }
-.card h2 { font-size: 12px; font-weight: 600; color: var(--ink-2); margin: 0 0 8px; text-transform: uppercase; letter-spacing: 0.04em; }
+select#match { min-width: 300px; max-width: 100%; }
+#status { color: var(--muted); font-size: 12px; margin-left: auto; }
+#status.err { color: var(--down); }
+main { display: grid; grid-template-columns: 410px minmax(0, 1fr) 290px; gap: 12px; padding: 12px 16px; align-items: start; }
+@media (max-width: 1150px) { main { grid-template-columns: minmax(0, 1fr); } }
+.card { background: var(--surface); border: 1px solid var(--ring); border-radius: 8px; padding: 10px 12px; }
+.card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.card-head h2 { font-size: 11px; font-weight: 600; color: var(--ink-2); margin: 0; text-transform: uppercase; letter-spacing: 0.05em; }
+.card-head .right { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .stack > * + * { margin-top: 12px; }
-#timeline { max-height: calc(100vh - 170px); overflow-y: auto; padding: 0; }
-#timeline .item {
-  display: grid; grid-template-columns: 70px 44px 1fr; gap: 4px 6px; padding: 6px 10px;
-  border-bottom: 1px solid var(--ring); cursor: pointer; font-size: 12px;
-}
-#timeline .item:hover { background: var(--wash); }
-#timeline .item.current { box-shadow: inset 3px 0 0 var(--v21); background: var(--wash); }
-#timeline .item.unpriced .sit { color: var(--muted); }
-#timeline .when { color: var(--ink-2); font-variant-numeric: tabular-nums; }
-#timeline .score { font-variant-numeric: tabular-nums; font-weight: 600; }
-#timeline .probs { grid-column: 2 / 4; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.key { display: inline-block; width: 14px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
-.key.v21 { border-color: var(--v21); }
-.key.prod { border-color: var(--prod); }
-.scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
-.scoreboard .side { font-size: 13px; }
-.scoreboard .side.away { text-align: right; }
-.scoreboard .side .who { font-weight: 600; font-size: 15px; }
-.scoreboard .side .team { color: var(--ink-2); }
-.scoreboard .pts { font-size: 28px; font-weight: 600; text-align: center; font-variant-numeric: tabular-nums; }
-.scoreboard .pts .sub { display: block; font-size: 12px; font-weight: 400; color: var(--ink-2); }
-.situation { margin-top: 8px; display: flex; gap: 12px; flex-wrap: wrap; color: var(--ink-2); font-size: 13px; }
-.situation b { color: var(--ink); font-weight: 600; }
-.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.status { color: var(--ink-2); font-size: 12px; }
+.badge { font-size: 11px; color: var(--muted); border: 1px solid var(--ring); border-radius: 4px; padding: 0 5px; }
 table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
-th, td { padding: 5px 6px; text-align: right; border-bottom: 1px solid var(--ring); }
-th { color: var(--ink-2); font-weight: 600; font-size: 12px; }
+th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--ring); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; }
 th:first-child, td:first-child { text-align: left; }
 td.diff.pos { color: var(--up); }
 td.diff.neg { color: var(--down); }
-td .odds { color: var(--muted); font-size: 12px; margin-left: 4px; }
-.note { color: var(--ink-2); font-size: 12px; }
-.warn { color: var(--down); font-size: 12px; }
+td .odds { color: var(--muted); font-size: 11px; margin-left: 4px; }
+td .susp { color: var(--muted); font-size: 10px; margin-left: 4px; text-transform: uppercase; }
+td.na { color: var(--muted); }
+.key { display: inline-block; width: 12px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: 4px; }
+.key.v21 { border-color: var(--v21); }
+.key.prod { border-color: var(--prod); }
+
+/* play-by-play */
+#tlCard { padding: 0; overflow: hidden; }
+#tlCard .card-head { padding: 10px 12px 0; }
+#tl { max-height: calc(100vh - 150px); overflow: auto; }
+#tl table { font-size: 12px; }
+#tl th, #tl td { padding: 4px 5px; }
+#tl th { position: sticky; top: 0; background: var(--surface); z-index: 1; }
+#tl th:first-child, #tl td:first-child { padding-left: 12px; }
+#tl th:last-child, #tl td:last-child { padding-right: 12px; }
+#tl tbody tr { cursor: pointer; }
+#tl tbody tr:hover { background: var(--wash); }
+#tl tbody tr.current { background: var(--wash); box-shadow: inset 3px 0 0 var(--v21); }
+#tl tbody tr.unpriced td.play, #tl tbody tr.unpriced td.dn { color: var(--muted); }
+#tl td.play, #tl td.dn { text-align: left; color: var(--ink-2); }
+#tl td.sc { font-weight: 600; text-align: center; }
+#tl th.sc, #tl th.play, #tl th.dn { text-align: left; }
+#tl th.sc { text-align: center; }
+
+/* scoreboard */
+.scoreboard { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; }
+.scoreboard .who { font-weight: 600; font-size: 15px; }
+.scoreboard .team { color: var(--muted); font-size: 12px; }
+.scoreboard .away { text-align: right; }
+.scoreboard .ball::after { content: " ●"; color: var(--ink-2); font-size: 10px; vertical-align: middle; }
+.scoreboard .pts { text-align: center; font-size: 28px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.scoreboard .clock { display: block; font-size: 12px; font-weight: 500; color: var(--ink-2); }
+#situation { margin-top: 8px; }
+.controls { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--ring); }
+.controls label { color: var(--ink-2); font-size: 12px; display: flex; gap: 4px; align-items: center; }
+
+/* prices */
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.stat .k { font-size: 11px; color: var(--muted); }
+.stat .v { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .dists { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 700px) { .dists { grid-template-columns: 1fr; } }
-svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
-.nudge-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
+.sub-h { font-size: 11px; color: var(--muted); }
+svg text { fill: var(--muted); font-size: 10px; font-family: inherit; }
+.legend { display: flex; gap: 12px; font-size: 11px; color: var(--ink-2); }
+
+/* nudge */
+.nudge-grid { display: grid; grid-template-columns: 70px 1fr; gap: 6px 8px; align-items: center; }
+.nudge-grid label { color: var(--ink-2); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nudge-grid input[type="number"] { width: 90px; }
-.readout { display: grid; grid-template-columns: auto auto auto; gap: 2px 10px; font-variant-numeric: tabular-nums; font-size: 12px; margin-top: 8px; }
-.readout .h { color: var(--ink-2); }
+.share { display: flex; gap: 8px; align-items: center; }
+.share input { flex: 1; min-width: 0; }
+.btns { display: flex; gap: 6px; margin-top: 10px; }
+#nudgeTable { margin-top: 10px; }
+#nudgeTable td:first-child { color: var(--muted); }
+
+/* chart */
 #chartWrap { position: relative; }
 #tip {
   position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--ring);
@@ -128,110 +163,110 @@ svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 }
 #tip .v { font-weight: 600; color: var(--ink); }
 #tip .l { color: var(--ink-2); }
-.legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-2); margin-bottom: 6px; }
 .full { grid-column: 1 / -1; }
 </style>
 </head>
 <body>
 <header>
-  <h1>v21 replay</h1>
-  <span class="meta" id="metaLine">loading…</span>
+  <h1>v21 Replay</h1>
+  <div class="chips" id="metaChips"></div>
 </header>
 
 <div class="bar">
-  <label for="day">Day</label>
+  <label for="day">Date</label>
   <input type="date" id="day">
-  <button id="loadDay">Matches</button>
   <label for="match">Match</label>
-  <select id="match"><option value="">pick a day first</option></select>
-  <label for="code">or code</label>
-  <input id="code" placeholder="AF…" size="14">
+  <select id="match"><option value="">–</option></select>
+  <label for="code">Code</label>
+  <input id="code" size="12">
   <button id="loadMatch" class="primary">Load</button>
-  <label for="paths">Games a price</label>
-  <input type="number" id="paths" min="200" max="20000" step="200" style="width: 90px">
-  <span class="status" id="status"></span>
+  <span class="sep"></span>
+  <label for="paths">Sims</label>
+  <input type="number" id="paths" min="200" max="20000" step="200" style="width: 80px">
+  <span id="status" role="status"></span>
 </div>
 
 <main>
-  <section class="card" id="timelineCard" aria-label="PLAY_OVER messages">
-    <h2>PLAY_OVER messages</h2>
-    <div id="timeline" role="listbox" tabindex="0"><div class="note" style="padding:10px">Load a match.</div></div>
+  <section class="card" id="tlCard" aria-label="Play-by-play">
+    <div class="card-head"><h2>Play-by-play</h2><span class="right badge num" id="tlCount"></span></div>
+    <div id="tl">
+      <table>
+        <thead><tr><th>Time</th><th class="sc">Score</th><th class="play">Play</th><th class="dn">Next</th><th><span class="key prod"></span>Prod</th><th><span class="key v21"></span>v21</th></tr></thead>
+        <tbody id="timeline"></tbody>
+      </table>
+    </div>
   </section>
 
   <section class="stack">
     <div class="card">
+      <div class="sub-h num" id="matchLine"></div>
       <div class="scoreboard">
-        <div class="side home"><div class="who" id="homeWho">Home</div><div class="team" id="homeTeam"></div></div>
-        <div class="pts"><span id="score">–</span><span class="sub" id="clock"></span></div>
-        <div class="side away"><div class="who" id="awayWho">Away</div><div class="team" id="awayTeam"></div></div>
+        <div class="home"><div class="who" id="homeWho">Home</div><div class="team" id="homeTeam"></div></div>
+        <div class="pts"><span id="score">–</span><span class="clock" id="clock"></span></div>
+        <div class="away"><div class="who" id="awayWho">Away</div><div class="team" id="awayTeam"></div></div>
       </div>
-      <div class="situation" id="situation"></div>
-    </div>
-
-    <div class="card">
+      <div class="chips" id="situation"></div>
       <div class="controls">
         <button id="first" title="Kick-off (Home)">⏮</button>
-        <button id="prev" title="Previous (←)">◀</button>
+        <button id="prev" title="Back (←)">◀</button>
         <button id="next" title="Next (→)">▶</button>
-        <button id="last" title="Last (End)">⏭</button>
+        <button id="last" title="End (End)">⏭</button>
         <button id="play" title="Play / pause (space)">Play</button>
         <select id="speed" aria-label="Speed">
-          <option value="400">fast</option>
-          <option value="1200" selected>normal</option>
-          <option value="3000">slow</option>
+          <option value="3000">0.5×</option>
+          <option value="1200" selected>1×</option>
+          <option value="400">3×</option>
         </select>
-        <label class="note"><input type="checkbox" id="pricedOnly" checked> only states v21 prices</label>
-        <button id="priceAll">Price the whole match</button>
+        <label><input type="checkbox" id="pricedOnly" checked> Skip unpriced</label>
       </div>
     </div>
 
     <div class="card">
-      <h2>Prices at this message</h2>
-      <div id="priceNote" class="note"></div>
-      <table aria-label="v21 against prod">
-        <thead><tr><th>Market</th><th>Line</th><th><span class="key v21"></span>v21</th><th><span class="key prod"></span>prod</th><th>v21 − prod</th></tr></thead>
+      <div class="card-head"><h2>Prices</h2><span class="right" id="priceBadge"></span></div>
+      <table aria-label="v21 and prod prices">
+        <thead><tr><th>Market</th><th>Line</th><th><span class="key v21"></span>v21</th><th><span class="key prod"></span>Prod</th><th>Diff</th></tr></thead>
         <tbody id="markets"></tbody>
       </table>
-      <div class="note" id="expected" style="margin-top:8px"></div>
+      <div class="stats" id="expected"></div>
     </div>
 
     <div class="card">
-      <h2>v21's final margin and total</h2>
-      <div class="legend"><span><span class="key v21"></span>v21's chance of each final</span><span><span class="key prod"></span>prod's line</span></div>
+      <div class="card-head"><h2>Distribution</h2>
+        <div class="right legend"><span><span class="key v21"></span>v21</span><span><span class="key prod"></span>Prod line</span></div>
+      </div>
       <div class="dists">
-        <div><div class="note">Final margin (home less away)</div><svg id="marginDist" width="100%" height="140"></svg></div>
-        <div><div class="note">Final total</div><svg id="totalDist" width="100%" height="140"></svg></div>
+        <div><div class="sub-h">Margin</div><svg id="marginDist" width="100%" height="130"></svg></div>
+        <div><div class="sub-h">Total</div><svg id="totalDist" width="100%" height="130"></svg></div>
       </div>
     </div>
   </section>
 
   <section class="stack">
     <div class="card">
-      <h2>Nudge</h2>
-      <div class="note" id="priorLine"></div>
-      <div class="nudge-grid" style="margin-top:8px">
-        <label for="meanHome" id="meanHomeLabel">Home pts</label><input type="number" step="0.1" id="meanHome">
-        <label for="meanAway" id="meanAwayLabel">Away pts</label><input type="number" step="0.1" id="meanAway">
-        <label for="share">Share</label><div><input type="range" id="share" min="0" max="1" step="0.05"> <span id="shareText"></span></div>
+      <div class="card-head"><h2>Nudge</h2><span class="right badge" id="nudgeBadge"></span></div>
+      <div class="nudge-grid">
+        <label for="meanHome" id="meanHomeLabel">Home</label><input type="number" step="0.1" id="meanHome" class="num">
+        <label for="meanAway" id="meanAwayLabel">Away</label><input type="number" step="0.1" id="meanAway" class="num">
+        <label for="share">Share</label><div class="share"><input type="range" id="share" min="0" max="1" step="0.05"><span id="shareText" class="num"></span></div>
       </div>
-      <div class="controls" style="margin-top:8px">
+      <div class="btns">
         <button id="applyNudge" class="primary">Apply</button>
-        <button id="resetNudge">Back to the prior</button>
+        <button id="resetNudge">Reset</button>
       </div>
-      <div class="readout" id="nudgeReadout"></div>
-      <div class="note" id="nudgeNote" style="margin-top:6px"></div>
+      <table id="nudgeTable"><thead id="nudgeHead"></thead><tbody id="nudgeRows"></tbody></table>
     </div>
     <div class="card">
-      <h2>Pre-match</h2>
-      <table><thead><tr><th>Market</th><th>Line</th><th>v21 KO</th><th>prod</th></tr></thead><tbody id="prematch"></tbody></table>
-      <div class="note" style="margin-top:6px">prod: its last quote before the first play; v21: the kick-off, nudged.</div>
+      <div class="card-head"><h2>Pre-match</h2></div>
+      <table><thead><tr><th>Market</th><th>Line</th><th><span class="key v21"></span>v21</th><th><span class="key prod"></span>Prod</th></tr></thead><tbody id="prematch"></tbody></table>
     </div>
   </section>
 
   <section class="card full">
-    <h2>Home win chance through the match</h2>
-    <div class="legend"><span><span class="key v21"></span>v21</span><span><span class="key prod"></span>prod</span><span id="chartNote"></span></div>
-    <div id="chartWrap"><svg id="chart" width="100%" height="240"></svg><div id="tip" role="status"></div></div>
+    <div class="card-head"><h2>Home win %</h2>
+      <div class="right"><span class="legend"><span><span class="key v21"></span>v21</span><span><span class="key prod"></span>Prod</span></span>
+        <button id="priceAll">Price all</button></div>
+    </div>
+    <div id="chartWrap"><svg id="chart" width="100%" height="240"></svg><div id="tip"></div></div>
   </section>
 </main>
 
@@ -240,7 +275,7 @@ svg text { fill: var(--muted); font-size: 11px; font-family: inherit; }
 const $ = (id) => document.getElementById(id);
 const S = {
   meta: null, match: null, steps: [], pos: 0, prices: new Map(), chartV21: new Map(),
-  means: null, share: 0.75, paths: 1000, playing: null, busy: false, nudgeKey: "",
+  means: null, share: 0.75, paths: 1000, playing: null, nudgeKey: "",
 };
 
 async function api(path, body) {
@@ -250,9 +285,11 @@ async function api(path, body) {
   if (!r.ok) throw new Error(j.error || r.statusText);
   return j;
 }
-function setStatus(t) { $("status").textContent = t || ""; }
+function setStatus(t, err) { const s = $("status"); s.textContent = t || ""; s.classList.toggle("err", !!err); }
 function pct(p) { return p == null ? "–" : (100 * p).toFixed(1) + "%"; }
+function pct1(p) { return p == null ? "" : (100 * p).toFixed(1); }
 function fair(p) { return p == null || p <= 0 ? "" : (1 / p).toFixed(2); }
+function signed(x, k) { return (x > 0 ? "+" : "") + x.toFixed(k); }
 function el(tag, attrs, text) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v);
@@ -266,16 +303,22 @@ function svgEl(tag, attrs) {
 }
 function ordinal(n) { return ({ 1: "1st", 2: "2nd", 3: "3rd" })[n] || (n + "th"); }
 function spot(y) { return y == null ? "" : y < 50 ? "own " + y : y === 50 ? "50" : "opp " + (100 - y); }
-function sideName(side) { if (!S.match) return side; return side === "home" ? S.match.home : side === "away" ? S.match.away : ""; }
-function situation(t) {
-  if (!t.offense || !t.down) return "";
-  const togo = t.field != null && t.distance != null && t.field + t.distance >= 100 ? "goal" : t.distance;
-  return `${sideName(t.offense)} ${ordinal(t.down)} & ${togo} at ${spot(t.field)}`;
-}
+function sideName(side) { return !S.match ? "" : side === "home" ? S.match.home : side === "away" ? S.match.away : ""; }
+function togo(t) { return t.field != null && t.distance != null && t.field + t.distance >= 100 ? "G" : t.distance; }
+function downShort(t) { return t.offense && t.down ? `${t.down}&${togo(t)} ${spot(t.field)}` : ""; }
+function playName(p) { const s = (p || "").toLowerCase().replace(/_/g, " "); return s.charAt(0).toUpperCase() + s.slice(1); }
+function period(t) { return t.period > 4 ? "OT" + (t.period - 4) : "Q" + t.period; }
+function betState(s) { s = (s || "").toUpperCase(); return !s ? "" : s.includes("UNSUSPEND") ? "Open" : s.includes("SUSPEND") ? "Suspended" : s.toLowerCase(); }
 function gameSeconds(t) {
   if (!t || !t.period) return 0;
   const [m, s] = (t.clock || "4:00").split(":").map(Number);
   return (t.period - 1) * 240 + (240 - (m * 60 + s));
+}
+function shortPath(p) {
+  if (!p) return "";
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  const last = parts[parts.length - 1] || p;
+  return /^v21model\.pkl$/i.test(last) && parts.length > 1 ? parts[parts.length - 2] : last;
 }
 
 // ---------------------------------------------------------------- meta and the match list
@@ -283,36 +326,42 @@ function gameSeconds(t) {
 async function init() {
   const m = await api("/api/meta");
   S.meta = m; S.paths = m.paths; S.share = m.share;
-  $("metaLine").textContent = `model ${m.model} (${m.mode || "?"}) · prior ${m.prior || "none"} · ${m.source}`;
+  const chips = $("metaChips");
+  chips.textContent = "";
+  const chip = (text, title, off) => chips.append(el("span", { class: "chip" + (off ? " off" : ""), title: title || "" }, text));
+  chip(shortPath(m.model) + (m.mode ? ` · ${m.mode}` : ""), m.model);
+  chip(m.prior ? `Prior ${shortPath(m.prior)}` : "No prior", m.prior || "", !m.prior);
+  chip(m.source_kind || "Snowflake", m.source);
   $("paths").value = m.paths;
   $("share").value = m.share; $("shareText").textContent = Math.round(100 * m.share) + "%";
-  if (m.last_day) $("day").value = m.last_day;
-  if (!m.nudge) $("nudgeNote").textContent = "This build has no strength direction (not a tilt build): v21 prices off its own means.";
-  if (m.last_day) loadDay();
+  $("nudgeBadge").textContent = m.nudge ? "" : "Off";
+  $("nudgeBadge").style.display = m.nudge ? "none" : "";
+  if (m.last_day) { $("day").value = m.last_day; loadDay(); }
 }
 
 async function loadDay() {
   const day = $("day").value;
   if (!day) return;
-  setStatus("reading the day's matches…");
+  setStatus("Loading matches…");
   try {
     const { matches } = await api("/api/matches", { day });
     const sel = $("match");
     sel.textContent = "";
-    if (!matches.length) sel.append(el("option", { value: "" }, "no matches that day"));
+    sel.append(el("option", { value: "" }, matches.length ? `${matches.length} matches` : "No matches"));
     for (const x of matches) {
-      const fin = x.final && x.final[0] != null ? `  ${x.final[0]}–${x.final[1]}` : "";
-      sel.append(el("option", { value: x.code }, `${x.start}  ${x.home} (${x.home_team}) v ${x.away} (${x.away_team})${fin}  · ${x.code}`));
+      const fin = x.final && x.final[0] != null ? `   ${x.final[0]}–${x.final[1]}` : "";
+      const who = x.home ? `${x.home} (${x.home_team}) v ${x.away} (${x.away_team})` : x.code;
+      sel.append(el("option", { value: x.code }, `${x.start}  ${who}${fin}`));
     }
-    setStatus(`${matches.length} matches`);
-  } catch (e) { setStatus(e.message); }
+    setStatus("");
+  } catch (e) { setStatus(e.message, true); }
 }
 
 async function loadMatch() {
   const code = $("code").value.trim() || $("match").value;
   if (!code) return;
   stopPlay();
-  setStatus(`loading ${code} (the first time from Snowflake, then from the cache)…`);
+  setStatus(`Loading ${code}…`);
   try {
     const m = await api("/api/load", { code });
     S.match = m; S.prices.clear(); S.chartV21.clear();
@@ -320,34 +369,35 @@ async function loadMatch() {
     S.means = m.prior ? m.prior.slice() : null;
     $("homeWho").textContent = m.home; $("homeTeam").textContent = m.home_team;
     $("awayWho").textContent = m.away; $("awayTeam").textContent = m.away_team;
-    $("meanHomeLabel").textContent = `${m.home} pts`; $("meanAwayLabel").textContent = `${m.away} pts`;
-    $("priorLine").textContent = m.prior ? `The prior: ${m.home} ${m.prior[0]}, ${m.away} ${m.prior[1]}.` : (m.prior_note || "");
+    $("meanHomeLabel").textContent = m.home; $("meanAwayLabel").textContent = m.away;
     $("meanHome").value = S.means ? S.means[0] : ""; $("meanAway").value = S.means ? S.means[1] : "";
+    $("tlCount").textContent = `${m.n_priced}/${m.timeline.length}`;
+    $("tlCount").title = "priced / plays";
     renderTimeline();
-    setStatus(`${m.code}: ${m.timeline.length} PLAY_OVERs, ${m.n_priced} v21 can price · final ${m.final[0]}–${m.final[1]}`);
+    $("matchLine").textContent = [m.code, m.start, `FT ${m.final[0]}–${m.final[1]}`].join(" · ");
+    setStatus("");
     await go(0);
     renderPrematch();
-  } catch (e) { setStatus(e.message); }
+  } catch (e) { setStatus(e.message, true); }
 }
 
-// ---------------------------------------------------------------- the timeline
+// ---------------------------------------------------------------- the play-by-play
 
 function renderTimeline() {
-  const box = $("timeline");
-  box.textContent = "";
+  const body = $("timeline");
+  body.textContent = "";
   S.steps.forEach((t, i) => {
-    const it = el("div", { class: "item" + (t.kick || t.priced ? "" : " unpriced"), "data-i": i, role: "option" });
+    const tr = el("tr", { class: t.kick || t.priced ? "" : "unpriced", "data-i": i });
     if (t.kick) {
-      it.append(el("span", { class: "when" }, "Kick-off"), el("span", { class: "score" }, "0–0"),
-                el("span", { class: "sit" }, "pre-match"));
+      tr.append(el("td", { class: "num" }, "KO"), el("td", { class: "sc num" }, "0–0"),
+                el("td", { class: "play" }, "Pre-match"), el("td", { class: "dn" }, ""));
     } else {
-      it.append(el("span", { class: "when" }, `Q${t.period} ${t.clock}`), el("span", { class: "score" }, `${t.home}–${t.away}`),
-                el("span", { class: "sit" }, (t.play ? t.play.toLowerCase() + " · " : "") + (situation(t) || "")));
+      tr.append(el("td", { class: "num" }, `${period(t)} ${t.clock}`), el("td", { class: "sc num" }, `${t.home}–${t.away}`),
+                el("td", { class: "play" }, playName(t.play)), el("td", { class: "dn num" }, downShort(t)));
     }
-    const probs = el("span", { class: "probs" });
-    it.append(probs);
-    it.addEventListener("click", () => { stopPlay(); go(i); });
-    box.append(it);
+    tr.append(el("td", { class: "pr num" }), el("td", { class: "vv num" }));
+    tr.addEventListener("click", () => { stopPlay(); go(i); });
+    body.append(tr);
   });
   refreshTimelineProbs();
 }
@@ -366,27 +416,20 @@ function v21Home(i) {
   return S.chartV21.has(key) ? S.chartV21.get(key) : null;
 }
 function refreshTimelineProbs() {
-  const items = $("timeline").querySelectorAll(".item");
-  items.forEach((it, i) => {
-    const pr = prodHome(i), v = v21Home(i);
-    const probs = it.querySelector(".probs");
-    probs.textContent = "";
-    if (pr != null) { probs.append(el("span", { class: "key prod" })); probs.append(document.createTextNode(`prod ${pct(pr)}  `)); }
-    if (v != null) { probs.append(el("span", { class: "key v21" })); probs.append(document.createTextNode(`v21 ${pct(v)}`)); }
+  $("timeline").querySelectorAll("tr").forEach((tr, i) => {
+    tr.querySelector(".pr").textContent = pct1(prodHome(i));
+    tr.querySelector(".vv").textContent = pct1(v21Home(i));
   });
 }
 function markCurrent() {
-  const items = $("timeline").querySelectorAll(".item");
-  items.forEach((it, i) => it.classList.toggle("current", i === S.pos));
-  const cur = items[S.pos];
-  if (cur) cur.scrollIntoView({ block: "nearest" });
+  const rows = $("timeline").querySelectorAll("tr");
+  rows.forEach((tr, i) => tr.classList.toggle("current", i === S.pos));
+  if (rows[S.pos]) rows[S.pos].scrollIntoView({ block: "nearest" });
 }
 
 // ---------------------------------------------------------------- stepping and pricing
 
-function nudgeBody() {
-  return { means: S.means, share: S.share, paths: S.paths };
-}
+function nudgeBody() { return { means: S.means, share: S.share, paths: S.paths }; }
 function priceKey(key) { return `${key}|${S.nudgeKey}`; }
 function currentNudgeKey() { return JSON.stringify([S.means, S.share, S.paths]); }
 
@@ -401,19 +444,17 @@ async function go(i) {
   let pr = S.prices.get(priceKey(key));
   if (!pr) {
     if (!t.kick && !t.priced) {
-      pr = { priced: false, prod: t.prod, why: "v21 has no state here (a conversion still to come, or no snap to start from)" };
+      pr = { priced: false, prod: t.prod };
     } else {
-      setStatus("pricing…");
-      S.busy = true;
+      setStatus("Pricing…");
       try {
         pr = await api("/api/price", Object.assign({ code: S.match.code, message: t.kick ? null : t.message }, nudgeBody()));
         S.prices.set(priceKey(key), pr);
         setStatus("");
-      } catch (e) { setStatus(e.message); S.busy = false; return; }
-      S.busy = false;
+      } catch (e) { setStatus(e.message, true); return; }
     }
   }
-  renderPrice(pr, t);
+  renderPrice(pr);
   if (pr.nudge) renderNudge(pr.nudge);
   if (t.kick) renderPrematch(pr);
   refreshTimelineProbs();
@@ -422,60 +463,73 @@ async function go(i) {
 
 function renderBoard() {
   const t = S.steps[S.pos];
+  const sit = $("situation");
+  sit.textContent = "";
+  const chip = (text) => { if (text) sit.append(el("span", { class: "chip" }, text)); };
+  $("homeWho").classList.toggle("ball", !t.kick && t.offense === "home");
+  $("awayWho").classList.toggle("ball", !t.kick && t.offense === "away");
   if (t.kick) {
-    $("score").textContent = "0–0"; $("clock").textContent = "Kick-off";
-    $("situation").textContent = "Pre-match: v21's kick-off price, against prod's last quote before the first play.";
+    $("score").textContent = "0–0"; $("clock").textContent = "Pre-match";
     return;
   }
   $("score").textContent = `${t.home}–${t.away}`;
-  $("clock").textContent = `Q${t.period > 4 ? "OT" + (t.period - 4) : t.period} ${t.clock}`;
-  const sit = $("situation");
-  sit.textContent = "";
-  const add = (label, value) => { const s = el("span"); s.append(document.createTextNode(label + " ")); s.append(el("b", {}, value)); sit.append(s); };
-  if (t.play) add("Play over:", t.play.toLowerCase());
-  const s = situation(t);
-  if (s) add("Next:", s);
-  if (t.messages) add("Feed:", t.messages);
-  if (t.bet_state) add("Bets:", t.bet_state.toLowerCase());
-  add("Message", String(t.message));
+  $("clock").textContent = `${period(t)} ${t.clock}`;
+  chip(playName(t.play));
+  if (t.offense && t.down) chip(`${ordinal(t.down)} & ${togo(t) === "G" ? "goal" : togo(t)}`);
+  if (t.offense && t.field != null) chip(spot(t.field));
+  chip(t.messages);
+  chip(betState(t.bet_state));
+  chip(`#${t.message}`);
 }
 
-function row(tbody, name, line, v, p, note) {
+function row(tbody, name, line, v, p, susp) {
   const tr = el("tr");
   tr.append(el("td", {}, name), el("td", {}, line == null ? "" : String(line)));
-  const tdv = el("td"); tdv.textContent = pct(v); if (v != null) tdv.append(el("span", { class: "odds" }, fair(v)));
-  const tdp = el("td"); tdp.textContent = pct(p); if (p != null) tdp.append(el("span", { class: "odds" }, fair(p) + (note || "")));
+  const tdv = el("td", v == null ? { class: "na" } : {}); tdv.textContent = pct(v);
+  if (v != null) tdv.append(el("span", { class: "odds" }, fair(v)));
+  const tdp = el("td", p == null ? { class: "na" } : {}); tdp.textContent = pct(p);
+  if (p != null) tdp.append(el("span", { class: "odds" }, fair(p)));
+  if (p != null && susp) tdp.append(el("span", { class: "susp" }, "susp"));
   const d = v != null && p != null ? 100 * (v - p) : null;
-  const tdd = el("td", { class: "diff" + (d == null ? "" : d > 0.05 ? " pos" : d < -0.05 ? " neg" : "") },
-                 d == null ? "" : (d > 0 ? "+" : "") + d.toFixed(1) + " pts");
-  tr.append(tdv, tdp, tdd);
+  tr.append(tdv, tdp, el("td", { class: "diff" + (d == null ? "" : d > 0.05 ? " pos" : d < -0.05 ? " neg" : "") },
+                          d == null ? "" : signed(d, 1)));
   tbody.append(tr);
 }
 
-function renderPrice(pr, t) {
+function renderPrice(pr) {
   const tb = $("markets");
   tb.textContent = "";
   const prod = pr.prod || {};
-  const live = (q) => q && q.live === false ? " (suspended)" : "";
+  const susp = (q) => !!(q && q.live === false);
+  const badge = $("priceBadge");
+  badge.textContent = "";
+  const home = S.match.home, away = S.match.away;
+  const exp = $("expected");
+  exp.textContent = "";
   if (!pr.priced) {
-    $("priceNote").textContent = pr.why || "";
-    $("expected").textContent = "";
-    if (prod["50"]) row(tb, `${S.match.home} win`, null, null, prod["50"].p, live(prod["50"]));
-    if (prod["52"]) row(tb, `${S.match.home} spread`, prod["52"].line, null, prod["52"].p, live(prod["52"]));
-    if (prod["54"]) row(tb, "Total over", prod["54"].line, null, prod["54"].p, live(prod["54"]));
+    badge.append(el("span", { class: "badge" }, "No v21 state"));
+    if (prod["50"]) row(tb, `${home} ML`, null, null, prod["50"].p, susp(prod["50"]));
+    if (prod["52"]) row(tb, `${home} spread`, prod["52"].line, null, prod["52"].p, susp(prod["52"]));
+    if (prod["54"]) row(tb, "Over", prod["54"].line, null, prod["54"].p, susp(prod["54"]));
     drawDist($("marginDist"), null); drawDist($("totalDist"), null);
     return;
   }
-  $("priceNote").textContent = Object.keys(prod).length ? "" : "prod had no quote at this message";
+  if (!Object.keys(prod).length) badge.append(el("span", { class: "badge" }, "No prod quote"));
   const at = pr.at_prod || {};
-  row(tb, `${S.match.home} win`, null, pr.moneyline.home, prod["50"] ? prod["50"].p : null, live(prod["50"]));
-  row(tb, `${S.match.away} win`, null, pr.moneyline.away, prod["50"] ? 1 - prod["50"].p : null, live(prod["50"]));
-  if (prod["52"] && prod["52"].line != null) row(tb, `${S.match.home} spread (prod's line)`, prod["52"].line, at["52"], prod["52"].p, live(prod["52"]));
-  row(tb, `${S.match.home} spread (v21's line)`, pr.spread.line, pr.spread.home, null);
-  if (prod["54"] && prod["54"].line != null) row(tb, "Total over (prod's line)", prod["54"].line, at["54"], prod["54"].p, live(prod["54"]));
-  row(tb, "Total over (v21's line)", pr.total.line, pr.total.over, null);
+  row(tb, `${home} ML`, null, pr.moneyline.home, prod["50"] ? prod["50"].p : null, susp(prod["50"]));
+  row(tb, `${away} ML`, null, pr.moneyline.away, prod["50"] ? 1 - prod["50"].p : null, susp(prod["50"]));
+  const prodSpread = prod["52"] && prod["52"].line != null;
+  if (prodSpread) row(tb, `${home} spread`, prod["52"].line, at["52"], prod["52"].p, susp(prod["52"]));
+  if (!prodSpread || pr.spread.line !== prod["52"].line) row(tb, `${home} spread`, pr.spread.line, pr.spread.home, null);
+  const prodTotal = prod["54"] && prod["54"].line != null;
+  if (prodTotal) row(tb, "Over", prod["54"].line, at["54"], prod["54"].p, susp(prod["54"]));
+  if (!prodTotal || pr.total.line !== prod["54"].line) row(tb, "Over", pr.total.line, pr.total.over, null);
   const e = pr.expected;
-  $("expected").textContent = `v21 expects ${S.match.home} ${e.home}, ${S.match.away} ${e.away}: margin ${e.margin > 0 ? "+" : ""}${e.margin}, total ${e.total} · ${pr.paths} games`;
+  const stat = (k, v) => { const d = el("div", { class: "stat" }); d.append(el("div", { class: "k" }, k), el("div", { class: "v" }, v)); exp.append(d); };
+  stat(`${home} exp`, e.home.toFixed(2));
+  stat(`${away} exp`, e.away.toFixed(2));
+  stat("Margin", signed(e.margin, 2));
+  stat("Total", e.total.toFixed(2));
   drawDist($("marginDist"), pr.margin_dist, prod["52"] ? prod["52"].line : null);
   drawDist($("totalDist"), pr.total_dist, prod["54"] ? prod["54"].line : null);
 }
@@ -489,27 +543,36 @@ function renderPrematch(pr) {
   const at = (kick && kick.at_prod) || {};
   const add = (name, line, v, p) => {
     const tr = el("tr");
-    tr.append(el("td", {}, name), el("td", {}, line == null ? "" : String(line)), el("td", {}, pct(v)), el("td", {}, pct(p)));
+    tr.append(el("td", {}, name), el("td", {}, line == null ? "" : String(line)),
+              el("td", v == null ? { class: "na" } : {}, pct(v)), el("td", p == null ? { class: "na" } : {}, pct(p)));
     tb.append(tr);
   };
-  add(`${S.match.home} win`, null, kick && kick.priced ? kick.moneyline.home : null, pm["50"] ? pm["50"].p : null);
+  add(`${S.match.home} ML`, null, kick && kick.priced ? kick.moneyline.home : null, pm["50"] ? pm["50"].p : null);
   if (pm["52"]) add(`${S.match.home} spread`, pm["52"].line, at["52"], pm["52"].p);
-  if (pm["54"]) add("Total over", pm["54"].line, at["54"], pm["54"].p);
+  if (pm["54"]) add("Over", pm["54"].line, at["54"], pm["54"].p);
 }
 
 function renderNudge(n) {
-  const r = $("nudgeReadout");
-  r.textContent = "";
-  const head = ["", S.match.home, S.match.away];
-  head.forEach((h) => r.append(el("span", { class: "h" }, h)));
-  const line = (label, xs) => { r.append(el("span", { class: "h" }, label)); xs.forEach((x) => r.append(el("span", {}, x == null ? "–" : String(x)))); };
-  line("target", n.target || [null, null]);
-  line("v21's own", n.own);
-  line("nudged", n.nudged);
-  if (n.alpha) line("nudge", n.alpha);
-  if (!n.available) $("nudgeNote").textContent = "This build has no strength direction (not a tilt build): v21 prices off its own means.";
-  else if (!n.target) $("nudgeNote").textContent = "No expected points: v21 prices off its own means. Enter them and Apply.";
-  else $("nudgeNote").textContent = `Kick-off means pulled ${Math.round(100 * n.share)}% of the way from v21's own to the target; the same nudge on every later state.`;
+  const head = $("nudgeHead"), body = $("nudgeRows");
+  head.textContent = ""; body.textContent = "";
+  const hr = el("tr");
+  hr.append(el("th", {}, ""), el("th", {}, S.match.home), el("th", {}, S.match.away));
+  head.append(hr);
+  const line = (label, xs, k) => {
+    const tr = el("tr");
+    tr.append(el("td", {}, label));
+    (xs || [null, null]).forEach((x) => tr.append(el("td", x == null ? { class: "na" } : {}, x == null ? "–" : Number(x).toFixed(k))));
+    body.append(tr);
+  };
+  line("Prior", S.match.prior, 2);
+  line("Target", n.target, 2);
+  line("Own", n.own, 2);
+  line("Nudged", n.nudged, 2);
+  line("Alpha", n.alpha, 3);
+  const b = $("nudgeBadge"), note = S.match.prior_note;
+  b.textContent = !n.available ? "Off" : note ? (note.startsWith("Prior failed") ? "Prior failed" : note) : "";
+  b.title = n.available && note ? note : "";
+  b.style.display = b.textContent ? "" : "none";
 }
 
 // ---------------------------------------------------------------- the distributions
@@ -517,15 +580,14 @@ function renderNudge(n) {
 function drawDist(svg, dist, line) {
   svg.textContent = "";
   if (!dist) return;
-  const W = svg.clientWidth || 360, H = 140, pad = { l: 4, r: 4, t: 6, b: 18 };
+  const W = svg.clientWidth || 360, H = 130, pad = { l: 4, r: 4, t: 12, b: 18 };
   const n = dist.p.length, max = Math.max(...dist.p, 1e-9);
   const step = (W - pad.l - pad.r) / n, bw = Math.max(1, step - 2);
   const y = (p) => pad.t + (H - pad.t - pad.b) * (1 - p / max);
   svg.append(svgEl("line", { x1: pad.l, x2: W - pad.r, y1: H - pad.b, y2: H - pad.b, stroke: "var(--axis)" }));
   dist.p.forEach((p, k) => {
     const x = pad.l + k * step + (step - bw) / 2, top = y(p);
-    const h = Math.max(0, H - pad.b - top);
-    const r = svgEl("rect", { x, y: top, width: bw, height: h, rx: Math.min(2, bw / 2), fill: "var(--v21)" });
+    const r = svgEl("rect", { x, y: top, width: bw, height: Math.max(0, H - pad.b - top), rx: Math.min(2, bw / 2), fill: "var(--v21)" });
     const title = svgEl("title"); title.textContent = `${dist.start + k}: ${pct(p)}`;
     r.append(title);
     svg.append(r);
@@ -542,23 +604,19 @@ function drawDist(svg, dist, line) {
     const x = pad.l + (line - dist.start + 0.5) * step;
     if (x > pad.l && x < W - pad.r) {
       svg.append(svgEl("line", { x1: x, x2: x, y1: pad.t, y2: H - pad.b, stroke: "var(--prod)", "stroke-width": 2 }));
-      const t = svgEl("text", { x: x + 3, y: pad.t + 9 }); t.textContent = `prod ${line}`; svg.append(t);
+      const t = svgEl("text", { x: x + 3, y: pad.t - 2 }); t.textContent = String(line); svg.append(t);
     }
   }
 }
 
 // ---------------------------------------------------------------- the chart
 
-function chartData() {
-  const pts = S.steps.map((t, i) => ({ i, x: t.kick ? 0 : gameSeconds(t), prod: prodHome(i), v21: v21Home(i) }));
-  return pts;
-}
 function drawChart() {
   const svg = $("chart");
   svg.textContent = "";
   if (!S.match) return;
-  const W = svg.clientWidth || 900, H = 240, pad = { l: 40, r: 70, t: 10, b: 24 };
-  const pts = chartData();
+  const W = svg.clientWidth || 900, H = 240, pad = { l: 40, r: 44, t: 10, b: 24 };
+  const pts = S.steps.map((t, i) => ({ i, x: t.kick ? 0 : gameSeconds(t), prod: prodHome(i), v21: v21Home(i) }));
   const maxX = Math.max(960, ...pts.map((p) => p.x));
   const X = (x) => pad.l + (W - pad.l - pad.r) * x / maxX;
   const Y = (p) => pad.t + (H - pad.t - pad.b) * (1 - p);
@@ -582,7 +640,7 @@ function drawChart() {
   const endProd = path("prod", "var(--prod)");
   const endV21 = path("v21", "var(--v21)");
   const labels = [];
-  if (endProd) labels.push({ y: Y(endProd.prod), text: "prod" });
+  if (endProd) labels.push({ y: Y(endProd.prod), text: "Prod" });
   if (endV21) labels.push({ y: Y(endV21.v21), text: "v21" });
   if (labels.length === 2 && Math.abs(labels[0].y - labels[1].y) < 12) labels[1].y = labels[0].y + (labels[1].y >= labels[0].y ? 12 : -12);
   labels.forEach((l) => { const t = svgEl("text", { x: W - pad.r + 6, y: l.y + 4 }); t.textContent = l.text; svg.append(t); });
@@ -605,15 +663,14 @@ function drawChart() {
     const k = nearest(evt), p = pts[k], t = S.steps[k];
     hair.setAttribute("x1", X(p.x)); hair.setAttribute("x2", X(p.x)); hair.setAttribute("visibility", "visible");
     tip.textContent = "";
-    const head = el("div", { class: "l" }, t.kick ? "Kick-off" : `Q${t.period} ${t.clock} · ${t.home}–${t.away}`);
-    tip.append(head);
-    const lineRow = (cls, label, v) => { const d = el("div"); d.append(el("span", { class: "key " + cls })); d.append(el("span", { class: "v" }, pct(v))); d.append(el("span", { class: "l" }, " " + label)); tip.append(d); };
+    tip.append(el("div", { class: "l" }, t.kick ? "Pre-match" : `${period(t)} ${t.clock} · ${t.home}–${t.away}`));
+    const lineRow = (cls, label, v) => { const d = el("div"); d.append(el("span", { class: "key " + cls }), el("span", { class: "v" }, pct(v)), el("span", { class: "l" }, " " + label)); tip.append(d); };
     lineRow("v21", "v21", p.v21);
-    lineRow("prod", "prod", p.prod);
+    lineRow("prod", "Prod", p.prod);
     tip.style.display = "block";
     const wrap = $("chartWrap").getBoundingClientRect();
-    const left = Math.min(evt.clientX - wrap.left + 12, wrap.width - tip.offsetWidth - 4);
-    tip.style.left = left + "px"; tip.style.top = "8px";
+    tip.style.left = Math.min(evt.clientX - wrap.left + 12, wrap.width - tip.offsetWidth - 4) + "px";
+    tip.style.top = "8px";
   });
   hit.addEventListener("pointerleave", () => { tip.style.display = "none"; hair.setAttribute("visibility", "hidden"); });
   hit.addEventListener("click", (evt) => { stopPlay(); go(nearest(evt)); });
@@ -623,17 +680,16 @@ function drawChart() {
 
 async function priceAll() {
   if (!S.match) return;
-  setStatus(`pricing every state (${S.meta.chart_paths} games each)…`);
+  setStatus("Pricing all…");
   $("priceAll").disabled = true;
   try {
     const r = await api("/api/price_all", Object.assign({ code: S.match.code, chart_paths: S.meta.chart_paths }, nudgeBody()));
     S.chartV21.clear();
     for (const p of r.points) S.chartV21.set(p.message == null ? "kick" : p.message, p.home);
-    $("chartNote").textContent = `v21 at every state: ${r.paths} games each (${r.seconds}s)`;
     setStatus("");
     refreshTimelineProbs();
     drawChart();
-  } catch (e) { setStatus(e.message); }
+  } catch (e) { setStatus(e.message, true); }
   $("priceAll").disabled = false;
 }
 
@@ -643,7 +699,6 @@ function applyNudge() {
   S.share = parseFloat($("share").value);
   S.paths = parseInt($("paths").value, 10) || S.meta.paths;
   S.prices.clear(); S.chartV21.clear();
-  $("chartNote").textContent = "";
   go(S.pos);
 }
 function resetNudge() {
@@ -673,9 +728,9 @@ function togglePlay() {
   S.playing = setTimeout(tickPlay, 10);
 }
 
-$("loadDay").addEventListener("click", loadDay);
 $("day").addEventListener("change", loadDay);
 $("loadMatch").addEventListener("click", loadMatch);
+$("code").addEventListener("keydown", (e) => { if (e.key === "Enter") loadMatch(); });
 $("match").addEventListener("change", () => { $("code").value = ""; loadMatch(); });
 $("first").addEventListener("click", () => { stopPlay(); go(0); });
 $("prev").addEventListener("click", () => { stopPlay(); go(nextIndex(S.pos, -1)); });
@@ -694,8 +749,16 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "End") { e.preventDefault(); stopPlay(); go(S.steps.length - 1); }
   else if (e.key === " ") { e.preventDefault(); togglePlay(); }
 });
-window.addEventListener("resize", () => { drawChart(); const t = S.steps[S.pos]; if (t) { const pr = S.prices.get(priceKey(t.kick ? "kick" : t.message)); if (pr && pr.priced) { drawDist($("marginDist"), pr.margin_dist, (pr.prod["52"] || {}).line); drawDist($("totalDist"), pr.total_dist, (pr.prod["54"] || {}).line); } } });
-init().catch((e) => setStatus(e.message));
+window.addEventListener("resize", () => {
+  drawChart();
+  const t = S.steps[S.pos];
+  const pr = t && S.prices.get(priceKey(t.kick ? "kick" : t.message));
+  if (pr && pr.priced) {
+    drawDist($("marginDist"), pr.margin_dist, (pr.prod["52"] || {}).line);
+    drawDist($("totalDist"), pr.total_dist, (pr.prod["54"] || {}).line);
+  }
+});
+init().catch((e) => setStatus(e.message, true));
 </script>
 </body>
 </html>
