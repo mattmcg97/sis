@@ -553,6 +553,13 @@ def cmd_bets(args):
                 from . import totals_signals
                 path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
+            elif args.action == "money":
+                from . import bet_money
+                paths = bet_money.run(cur, out_dir, sim_file=args.sim_file, sim_candidate=args.sim_candidate,
+                                      window=args.money_window,
+                                      split=dt.date.fromisoformat(args.money_split) if args.money_split else None)
+                if paths:
+                    print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "ml-moves":
                 from . import bet_ml_moves
                 paths = bet_ml_moves.run(cur, out_dir, min_bets=args.min_bets)
@@ -1496,7 +1503,7 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "ml-moves", "totals-signals", "sessions", "favourite", "ml-losers",
+                                      "totals-moves", "ml-moves", "money", "totals-signals", "sessions", "favourite", "ml-losers",
                                       "rematches", "inference"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
@@ -1532,6 +1539,10 @@ def build_parser():
                                   "half (pace, time between plays, clock per play, drives) against prod's "
                                   "total there and where the totals money went next, by temperature "
                                   "(out/totals_signals.csv); "
+                                  "money: where the money is, as prices -- every market's price moved by the money "
+                                  "toward a side (fitted on the window's earlier matches, scored on the later), and "
+                                  "what the money knows beside prod's move, the game script, a recent score and "
+                                  "v2.1's price (--sim-file) (out/bets_money.txt and bets_money_points.csv); "
                                   "ml-moves: prod's moneyline price either side of every moneyline bet -- where "
                                   "the money came, at what prices, and whether prod moved the bettors' way after, "
                                   "a score in between or not, and pre-match the closing-line value "
@@ -1554,6 +1565,15 @@ def build_parser():
                                   f"(default {config.SIM_ELASTICITY:g}: bets as placed)")
     bets_parser.add_argument("--max-scale", type=float, metavar="X",
                              help=f"book comparison: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
+    bets_parser.add_argument("--sim-file", metavar="CSV",
+                             help="money: a bets run's bets_sim.csv (or .zip) for v2.1's price at each bet")
+    bets_parser.add_argument("--sim-candidate", metavar="NAME",
+                             help="money: the candidate in --sim-file (default: its first v21 one)")
+    bets_parser.add_argument("--money-window", type=float, default=120.0, metavar="SECONDS",
+                             help="money: in play, the money over the last this many seconds (default 120)")
+    bets_parser.add_argument("--money-split", metavar="YYYY-MM-DD",
+                             help="money: fit on the matches before this day, score on the rest (default: the "
+                                  "window's middle day)")
     bets_parser.add_argument("--boot", type=int, metavar="N",
                              help=f"book comparison and `bets prematch`: bootstrap resamples over matches (default {config.SIM_BOOT})")
     bets_parser.add_argument("--gamer", action="append", metavar="HANDLE",

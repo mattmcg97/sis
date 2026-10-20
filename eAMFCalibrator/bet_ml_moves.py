@@ -240,7 +240,10 @@ def report(rows, min_bets=MIN_BETS):
                         k, s, mm = money(sel)
                         L.append(f"      {lab:20s} {k:8,d} bets {s:12,.0f} stake  margin {_f(mm, '+.2f', 7)}%")
         L.append("")
-    L += ["  THE CUSTOMERS WITH THE MOST MONEYLINE STAKE"] + customers(rs)
+    if any(r.get("CUSTOMER_NAME_HASH") for r in rs):
+        L += ["  THE CUSTOMERS WITH THE MOST MONEYLINE STAKE"] + customers(rs)
+    else:
+        L.append("  (no customer ids in the bets: CUSTOMER_NAME_HASH is blank for the window, so no customer table)")
     return L
 
 

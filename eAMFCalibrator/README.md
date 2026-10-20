@@ -2456,6 +2456,52 @@ Output:
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
 
+### Where the money is, as prices: `bets money`
+
+```bash
+python -m eAMFCalibrator bets money --since 2026-10-01 --until 2026-10-19 --sim-file eAMFCalibrator/out_bets_gap/bets_sim.zip
+```
+
+Every bet is money on a side: home or away on the moneyline and the spread, over or under on the total.
+
+**The money.** At any moment, the money toward the home (over) side is the stake on it less the stake
+on the other, over both, from −1 to +1.
+- In play it's over the last `--money-window` seconds (120); pre-match, over every pre-match bet
+  before then.
+- It's kept by customer temperature as well as in total.
+- Each bet sees only the money before it, on prod's clock (bet time less the operator's lag).
+
+**Layer 1, the money's price.** Prod's log-odds, moved by beta × the money.
+- beta is fitted on the results, by market, pre-match and in play apart. One model has a single tilt
+  for all the money, another one a temperature.
+- It's fitted on the window's earlier matches (before `--money-split`, by default the middle day) and
+  scored on the later ones:
+  - **Log loss.** At every PLAY_OVER prod priced the market (pre-match, its last price before the
+    kick-off), the money's price against prod's, each match counting the same.
+  - **Re-pricing.** Every later bet re-priced at it, the operator's margin kept. This is the book's
+    margin change, with a 95% interval over matches.
+
+**Layer 2, what the money knows.** On the bets: the money's tilt alone, then beside each thing a
+punter could have seen at that moment, then beside all of them. The things are:
+- prod's own move over the last minute;
+- the game script: home's lead (or the points the total still needs) × the share of the game left;
+- a score in the last 30 seconds;
+- v2.1's price against prod's, from `--sim-file` (a bets run's `bets_sim.csv` or its zip;
+  `--sim-candidate` picks the candidate).
+
+Where the tilt falls when a thing comes in, the money was that thing. What's left, it knows and none
+of them say. The report also shows **what the money follows**: the money regressed on the same
+things.
+
+`bets_money.txt` has the report and `bets_money_points.csv` a row a bet: its money by temperature and
+the things beside it. There's no simulation: v2.1's price comes off the sim file.
+
+A first look off the Oct 1–18 bets file:
+- Pre-match, the money moved the moneyline by +0.23 (z 2.7) and the total by +0.11, but added
+  nothing on the spread.
+- In play, the last two minutes' money moved the moneyline by +0.38 [+0.20, +0.57], still +0.32
+  [+0.16, +0.52] beside v2.1's price, and added nothing on the spread or the total.
+
 ### Prod's moneyline either side of every bet: `bets ml-moves`
 
 ```bash
