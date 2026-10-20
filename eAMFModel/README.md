@@ -2611,6 +2611,50 @@ python -m eAMFModel v21-pace-fit --model v21_t10 --until 2026-10-01
 - On the tests' build, +3 on the home side's tilt takes its snaps ahead from 20.7 s to 23.0 s, and
   leaves its snaps behind and the other side's as they were.
 
+**The betting sim (Oct 1–18, 144,043 bets).** No gain. On one book v21-pace was −0.12 [−0.44,
++0.18] against v21 (moneyline +0.08 [−0.19, +0.34], Q4 moneyline −0.16 [−0.53, +0.20]), and on two
+books its head-to-head was −1.90 [−6.41, +2.37] against v21's. It stays off.
+
+### The endgame (`v21-endgame`)
+
+```
+python -m eAMFModel v21-endgame --model v21_t10 --since 2026-10-01 --until 2026-10-18 --nudge --nudge-share 0.75 --out eAMFModel/out/endgame
+```
+
+The real gamers seem to do what they can to keep a game out of overtime. The sim sends about twice as
+many there: v21-report's census has 0.04 a game against the real 0.02 (Oct 1–17). Its final margins
+are off around the key numbers too: by 1, 9.1% against 7.4% real; by 2, 3.7% against 5.1%; by 6, 6.6%
+against 4.7%; and by 7, 12.2% against 10.7%. This report looks at where that comes from, three ways.
+It reads the export alone, with no Snowflake. Nothing in it feeds back into the model.
+
+- **From kick-off.** The sim's games from kick-off, with the match's gamers and teams, nudged to its
+  expected points as the stream prices (`--nudge --nudge-share 0.75`), against the real games:
+  - overtime a game;
+  - games level at the end of regulation, per 100 games, by the score that made them level, and
+    whether it came in Q4's last 3:00. The scores are the kick after a six from 7 behind, two after a
+    six from 8 behind, a field goal from 3 behind, a six from 6 behind, and a safety;
+  - the final margin's lumps (by 1, 2, 3, 6, 7 and 8 either way), and how many of them came in
+    overtime.
+- **From the same late states.** Every real snap of Q4 with the sides 8 or fewer apart is played out
+  from the real state with the kick-off's nudge (`--state-paths`, 200). The report sets overtime and the
+  side with the ball winning against what really followed, by the time left and that side's lead,
+  each match counting the same. Each time band also gives overtime sim less real, with a 95% interval
+  over matches. The sim starts from the same states the real game reached, so what differs here is
+  the endgame itself, not how the game got there.
+- **The fork.** Where a side picks between a tie and a win, the real choices against the sim's (from
+  kick-off and from the late states):
+  - the conversion 1 behind after the six (the kick ties) and 2 behind (two ties), in Q4's last 3:00
+    and in overtime;
+  - 4th down, and a kick on downs 1–3 in the last minute, 3 behind (the field goal ties) and 1–2 behind
+    or level (it wins), in Q4's last 2:00.
+
+To do it, the sim's census (`stats`) now also keeps each path's last score of regulation
+(`last_score`: its kind, the clock, the scorer's lead before it and its points) and, when asked
+(`_dec_fine`), each decision's state. Neither touches the random numbers: the draws are the same with
+the census as without it.
+
+It writes `v21_endgame.txt`, and `v21_endgame_states.csv` with a row for each late state.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:

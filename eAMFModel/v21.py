@@ -95,6 +95,8 @@ TIMEOUTS, OT_TIMEOUTS = 3, 2
 MAX_STEPS = 900
 
 KICK, SNAP, DONE = 0, 1, 2
+SIX, PAT, TWO, KICK3, SAFETY = range(5)    # the census's scores (v21_endgame): a six, the kick after it, two, a field goal, a safety
+SCORE_KINDS = ("a six", "the kick after a six", "two after a six", "a field goal", "a safety")
 GAIN, TURNOVER, DEF_TD = s14.GAIN, s14.TURNOVER, s14.DEF_TD
 
 # the features, each a small integer
@@ -2790,6 +2792,20 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
     reg_score = score.copy()                  # the score when regulation ended (a start in overtime: its own)
+    # the census's last score of regulation on each path (SCORE_KINDS; -1 none yet): its kind, the clock,
+    # the scorer's lead before it and its points -- how a level game was made level (v21_endgame)
+    last_score = np.full((P, 4), -1.0) if st is not None else None
+
+    def scored(ix, side, pts, kind):
+        """The census: `side` scores `pts` of `kind` on paths ix (before the score goes up), in regulation."""
+        if last_score is None or not len(ix):
+            return
+        ix = np.asarray(ix, np.int64)
+        side, pts, kind = (np.broadcast_to(np.asarray(v), ix.shape) for v in (side, pts, kind))
+        reg = period[ix] <= 4
+        ix, side, pts, kind = ix[reg], side[reg], pts[reg], kind[reg]
+        last_score[ix] = np.stack([kind.astype(float), clock[ix], (score[ix, side] - score[ix, 1 - side]).astype(float),
+                                   pts.astype(float)], 1)
     # how the start's own drive ended (DRIVE_ENDS; -1 not yet): the audit's late drives
     drive_end = np.full(P, -1, np.int64)
     start_team = team.copy()
@@ -2823,6 +2839,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         k = model.choices[name].draw(cols, who, rng.random(len(who)), combine(learned, ot))
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
+            if "_dec_fine" in st and fine is not None and ix is not None:
+                st["_dec_fine"].append((name, ix.copy(), k.copy(), *(np.asarray(fine[f]).copy()
+                                                                      for f in ("period", "left", "lead", "togo"))))
             ch = model.choices[name]          # the league's shares in each decision's cell (no lean, no rule)
             st.setdefault("_dec_base", []).append(ch.base(cols))
             if name == "two":                 # the audit's conversions: the clock's cell, the lead after the six
@@ -2878,6 +2897,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         own = np.asarray(side) == start_team[ix]
         mark(ix[own], 0)
         mark(ix[~own], 4)                     # the other side's: a defensive touchdown
+        scored(ix, side, np.full(len(ix), 6), SIX)
         score[ix, side] += 6
         tally("touchdowns", len(ix))
         lead = score[ix, side] - score[ix, 1 - side]
@@ -2903,6 +2923,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         by = getattr(model, "two_good_by", None)
         two_good = by[conv_late(cell)] if by is not None else model.two_good
         good = rng.random(len(ix)) < np.where(two, two_good, model.kick_good)
+        scored(ix[good], side[good], np.where(two[good], 2, 1), np.where(two[good], TWO, PAT))
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
         tally("two_point_tries", two.sum())
         kick_to(ix, 1 - side)
@@ -2930,6 +2951,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         mk, ms = ix[made], ix[~made]
         mark(mk, 1)
         mark(ms, 2)
+        scored(mk, team[mk], np.full(len(mk), 3), KICK3)
         score[mk, team[mk]] += 3
         kick_to(mk, 1 - team[mk])
         set_ball(ms, 1 - team[ms], np.maximum(20, 100 - y[ms]))
@@ -3221,6 +3243,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         if sf.any():
             s = gx[sf]
             tally("safeties", len(s))
+            scored(s, 1 - team[s], np.full(len(s), 2), SAFETY)
             score[s, 1 - team[s]] += 2
             mark(s, 4)
             set_ball(s, 1 - team[s], model.safety_fields[rng.integers(0, len(model.safety_fields), len(s))])
@@ -3352,6 +3375,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         st["games"] = st.get("games", 0) + P
         st["final"] = score.copy()
         st["regulation"] = reg_score.copy()
+        st["last_score"] = last_score
         st["drive_end"] = drive_end.copy()
         st["drive_last"] = drive_last.copy()
         # a game decided in overtime (or ended) mid-period: the period's points never reached end_period

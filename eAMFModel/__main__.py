@@ -460,6 +460,42 @@ def cmd_v21_report(args):
     return 0
 
 
+def cmd_v21_endgame(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_endgame, v21_report, v21_stream
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    rows = [r for r in history if r["MATCH_CODE"] in snaps]
+    prior = args.prior_model or v21_stream.default_prior()
+    if prior is None:
+        raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
+    print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
+    means, _ = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  simulating {len(rows):,} matches from kick-off and from their late states ({workers} processes)", flush=True)
+    out = v21_endgame.run(args.model, snaps, history, means, since, until, kick_paths=args.paths,
+                          state_paths=args.state_paths, workers=workers, nudge=args.nudge, nudge_share=args.nudge_share)
+    lines = v21_endgame.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_endgame.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_endgame.write_states_csv(os.path.join(args.out, "v21_endgame_states.csv"), out)
+        print(f"\n  -> {args.out}/v21_endgame.txt and v21_endgame_states.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
 def cmd_gamer_dig(args):
     import csv as csv_
     import datetime as dt
@@ -1058,6 +1094,27 @@ def build_parser():
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
     p.set_defaults(func=cmd_v21_report)
+
+    p = sub.add_parser("v21-endgame", help="v2.1's endgame against the real games: overtime and how a level game "
+                                           "was made level, from kick-off and from the same late states, and the "
+                                           "choices between a tie and a win")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--prior-model", help="the expected points, as v21-report's --prior-model")
+    p.add_argument("--inputs", choices=["raw", "priced"], default="raw", help="as v21-report's --inputs")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=250, help="kick-off games per receiving side (default 250)")
+    p.add_argument("--state-paths", type=int, default=200,
+                   help="games from each real snap of Q4 within 8 points (default 200; 0: none)")
+    p.add_argument("--nudge", action="store_true", help="a tilt build: nudged to the expected points, as the stream prices")
+    p.add_argument("--nudge-share", type=float, default=1.0,
+                   help="with --nudge: this share of the way to the inputs (default 1; the stream's 0.75)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_endgame.txt and v21_endgame_states.csv here")
+    p.set_defaults(func=cmd_v21_endgame)
 
     p = sub.add_parser("gamer-dig",
                        help="what the money backing particular gamers sees in their play: the targeted gamers' "
