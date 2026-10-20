@@ -268,6 +268,7 @@ MODES = ("full", "adjusted", "tilt")
 # A draw resamples TILT_CANDIDATES real snaps of its group (or window) on their weights.
 PHI_DIST = ("yards", "touchdown", "turnover", "first down", "loss")
 PHI_TIME = ("seconds",)
+PACE_LEAD = 1                 # pace when ahead (v21_pace): the side with the ball this many points or more ahead
 TILT_PRIOR = 200.0
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
@@ -2768,6 +2769,15 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         if tz_reg is not None:
             tz_reg = (tz_reg[0], tz_reg[1].reshape(3, P, 2))
     tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
+    # pace when ahead (v21_pace): each side's time tilt two ways -- as it is, and with its gamer's own extra
+    # while the side is PACE_LEAD or more ahead -- each snap's time drawn on its score's
+    pace_on = th_time is not None and "pace" in start and bool(np.any(np.asarray(start["pace"], float) != 0))
+    th_up = tz_up = None
+    if pace_on:
+        th_up = th_time + rep(start["pace"], float)[:, :, None]
+        tz_up = model.time.tilt_z(np.stack([th_time, th_up]).reshape((2 * P,) + th_time.shape[1:]), P)
+        if tz_up is not None:
+            tz_up = (tz_up[0], tz_up[1].reshape(2, P, 2))
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
@@ -3013,6 +3023,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
         th = th_time[ix, off] if th_time is not None else None
         tz = tz_of(tz_time, ix, off) if th is not None and not stopped else None
+        if pace_on:
+            up = (score[ix, off] - score[ix, 1 - off] >= PACE_LEAD).astype(np.int64)
+            th = np.where(up[:, None] == 1, th_up[ix, off], th)
+            tz = None if stopped or tz_up is None else (tz_up[0], tz_up[1][up, ix, off])
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
             else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th, tz=tz) if near is not None \
             else model.time.draw_tilted(b, u, th, rng, tz=tz) if th is not None \

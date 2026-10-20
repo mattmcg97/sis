@@ -2526,6 +2526,47 @@ It reads the export alone: no Snowflake and no simulation, minutes on a full exp
 - **The checks.** On planted data a ±0.3 slope across 15 gamers is found (the halves correlate
   above 0.9) and grouped right. With nothing planted it says "not a trait".
 
+### Pace when ahead (`v21-pace-fit`, `--candidate v21-pace`)
+
+The playstyle report found one trait: how much a gamer slows the clock when ahead. Beyond the league,
+this repeats from one half of a gamer's matches to the other: r = +0.58 [+0.40, +0.73], Aug 23 –
+Oct 17, 65 gamers. OFFICER takes about 5 s a snap longer than the league when ahead. STRIDER is about
+6 s quicker, and in fact quicker ahead than behind.
+
+**What the build has.** A tilt build's time draws are the league's real snaps for the state, the
+lead among it, so the league's slowing down when ahead is in them. They're reweighted by one time
+tilt a gamer (and team), the same whether the gamer is ahead or not.
+
+**What this adds.** A second time tilt a gamer, used on its side's snaps while the side is
+`PACE_LEAD` (1) or more points ahead.
+- It's fitted as the build fits its own: Newton steps on the penalized log-likelihood of the gamer's
+  real snaps ahead, against the league's draws for those states with the build's tilts on them.
+- A league part is fitted with it, for whatever the build's draws miss of every side's clock ahead.
+  Each gamer's own part sits beyond that, shrunk by the build's `TILT_PRIOR`.
+- A gamer the table hasn't met takes the league part alone.
+
+```
+python -m eAMFModel v21-pace-fit --model v21_t10 --until 2026-10-01
+```
+
+**The fit command.**
+- It fits on the matches before `--until`.
+- It scores on the matches after (to `--test-until`): each ahead snap's log-likelihood with the
+  tilts against without, with a 95% interval over matches. It also checks whether the seconds a
+  gamer's tilt says it gains ahead are the ones it gained on those later matches (r across gamers,
+  and the slope: 1 right).
+- It writes `pace_ahead.json` beside the build and reads the export alone: no Snowflake, no
+  simulation.
+
+**Pricing with it.**
+- The calibrator's candidate `v21-pace` prices the same build with the table: `--candidate
+  v21,v21-pace --v21-model v21_t10`. It stops before any fetching if the table is missing.
+- In the sim, each side's time tilt is kept two ways, as it is and with its gamer's extra. Each
+  snap's time is drawn on its score's: the second lever's pattern, with the tilt cache covering both.
+- Without the table (`v21` itself), the draws are exactly as before.
+- On the tests' build, +3 on the home side's tilt takes its snaps ahead from 20.7 s to 23.0 s, and
+  leaves its snaps behind and the other side's as they were.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:

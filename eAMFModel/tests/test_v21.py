@@ -1496,6 +1496,119 @@ class TestShape(unittest.TestCase):
         self.assertNotEqual(live(got[None]), live(got[1.0]))
 
 
+class TestPace(unittest.TestCase):
+    """Pace when ahead (v21_pace): each gamer's own time tilt while its side is ahead."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.hist = copy.deepcopy(HISTORY)
+        for i, h in enumerate(cls.hist):                                 # the matches over ten days
+            h["SCHEDULED_START_TIME_UTC"] = f"2026-10-{1 + i % 10:02d} 12:00:00"
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, cls.hist, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
+                          blend=40.0, field=0.2, decision_blend=25.0, clock=0.2)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.model = m
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def _seconds(self, pace, n=2000):
+        start = v21.kickoff_start(self.model, ("G0", "G1"), ("T0", "T1"))
+        st = dict(start, pace=np.tile(np.asarray(pace, float), (len(start["period"]), 1)))
+        stats = {}
+        got = v21.simulate(self.model, st, n, seed=5, stats=stats)
+        S = stats["_snaps"]
+        cat = lambda k: np.concatenate([x[k] for x in S])
+        return got, cat(4), cat(10), cat(12)
+
+    def test_off_the_draws_are_as_before(self):
+        start = v21.kickoff_start(self.model, ("G0", "G1"), ("T0", "T1"))
+        a = v21.simulate(self.model, start, 300, seed=4)
+        b = v21.simulate(self.model, dict(start, pace=np.zeros((len(start["period"]), 2))), 300, seed=4)
+        for x, y in zip(a, b):
+            self.assertTrue(np.array_equal(x, y))
+
+    def test_a_side_takes_its_own_time_only_while_ahead(self):
+        _, sec0, side0, lead0 = self._seconds((0.0, 0.0))
+        _, sec1, side1, lead1 = self._seconds((3.0, 0.0))
+        mean = lambda sec, side, lead, sd, up: sec[(side == sd) & ((lead >= 1) if up else (lead <= 0))].mean()
+        self.assertGreater(mean(sec1, side1, lead1, 0, True), mean(sec0, side0, lead0, 0, True) + 1.0)
+        self.assertLess(abs(mean(sec1, side1, lead1, 0, False) - mean(sec0, side0, lead0, 0, False)), 0.5)
+        self.assertLess(abs(mean(sec1, side1, lead1, 1, True) - mean(sec0, side0, lead0, 1, True)), 0.5)
+
+    def test_the_fit_finds_a_planted_pace(self):
+        from .. import v21_pace as vp
+        rng = np.random.default_rng(2)
+        B, n, G = 12, 12000, 6
+        phi = np.linspace(0.3, 4.0, B)[:, None]
+        planted = np.array([-0.4, -0.2, 0.0, 0.0, 0.2, 0.4])
+        gamer = rng.integers(0, G, n)
+        lead = rng.integers(-10, 11, n).astype(float)
+        H = np.full((n, B), 1.0 / B)
+        d = np.where(lead >= vp.PACE_LEAD, 0.3 + planted[gamer], 0.0)[:, None]
+        p = vp._probs(H, phi, d)
+        obs = np.array([rng.choice(B, p=row) for row in p])
+        frame = dict(H=H, obs=obs, phi=phi, gamer=gamer, lead=lead, code=np.arange(n) // 20, weights=np.ones(n))
+        stub = type("Build", (), {"gamers": {f"G{i}": i for i in range(G)}, "tilt_prior": 200.0})()
+        delta, gain, n_up, league = vp.fit(stub, frame)
+        self.assertAlmostEqual(league, 0.3, delta=0.1)
+        self.assertGreater(np.corrcoef(delta[:G, 0], planted)[0, 1], 0.95)
+        self.assertEqual(delta[G, 0], league)                            # a gamer it has not met: the league's
+        self.assertGreater(gain, 0)
+        got = vp.scored(frame, delta)
+        self.assertEqual(len(got["ll"]), int((lead >= vp.PACE_LEAD).sum()))
+
+    def test_the_fit_command_writes_the_table_the_stream_reads(self):
+        from .. import __main__ as cli, v21_pace as vp, v21_stream as vs
+        d = self.tmp.name
+        snaps, history = os.path.join(d, "snaps.csv"), os.path.join(d, "history.csv")
+        rows = [r for c in sorted(MATCHES) for r in MATCHES[c]]
+        with open(snaps, "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, sorted({k for r in rows for k in r}))
+            w.writeheader()
+            w.writerows(rows)
+        hist = [dict(h, SPORT_CODE="AF", STREAM_NUMBER="1") for h in self.hist]
+        with open(history, "w", newline="", encoding="utf-8") as fh:
+            w = csv.DictWriter(fh, sorted(hist[0]))
+            w.writeheader()
+            w.writerows(hist)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            cli.main(["v21-pace-fit", "--model", d, "--snapshots", snaps, "--history", history, "--until", "2026-10-07"])
+        text = out.getvalue()
+        for part in ("pace when ahead", "fitted on", "on the 32 matches after", "log-likelihood gained", "pace_ahead.json"):
+            self.assertIn(part, text)
+        table = vp.load(d)
+        self.assertIn("G0", table)
+        self.assertEqual(vp.side_pace(table, ("G0", "NOBODY"))[1], table[""])      # the league's part
+        self.assertTrue(vs.pace_of("v21-pace"))
+        self.assertFalse(vs.pace_of("v21") or vs.pace_of("v21-shape0.5"))
+        self.assertEqual(vs.pace_table(d), table)
+        with tempfile.TemporaryDirectory() as bare:
+            self.model.save(os.path.join(bare, v21.MODEL_FILE))
+            with self.assertRaises(SystemExit):
+                vs.pace_table(bare)
+
+    def test_the_stream_prices_with_it(self):
+        from .. import v21_pace as vp, v21_stream as vs
+        code = sorted(MATCHES)[0]
+        rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))
+        info = [h for h in self.hist if h["MATCH_CODE"] == code]
+        lines = ((50, ""), (54, "Total points over 40.5"))
+        prod = [(code, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true") for r in rows for k, line in lines]
+        with tempfile.TemporaryDirectory() as d:
+            self.model.save(os.path.join(d, v21.MODEL_FILE))
+            pair = v21.match_people(code, rows, {h["MATCH_CODE"]: h for h in self.hist})[0]
+            vp.write(os.path.join(d, vp.PACE_FILE), dict(gamers={pair[0]: 3.0, pair[1]: -3.0}, league=0.0))
+            price = lambda pace: vs.quotes_for_matches({code: rows}, prod, d, n_paths=60, workers=1, match_info=info,
+                                                       lines=vs.PROD_LINES, nudge_share=0.0, pace=pace)
+            off, on = price(False), price(True)
+        self.assertEqual(len(off), len(on))
+        self.assertNotEqual([x[3] for x in off], [x[3] for x in on])
+
+
 class TestReact(unittest.TestCase):
     """v2.1's in-play strength update (v21_react): the variants by name, each side's nudge moved the way
     its play says, the stream's prices untouched without one, and v21-react-fit's table."""

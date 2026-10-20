@@ -515,6 +515,26 @@ def cmd_v21_react_fit(args):
     return 0
 
 
+def cmd_v21_pace_fit(args):
+    import datetime as dt
+    from . import nb2_prior, v21_pace, v21_stream
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts}), as the build read them")
+    history = nb2_prior.load_history(args.history)
+    model_file = v21_stream._model_file(args.model)
+    until = dt.date.fromisoformat(args.until)
+    test_until = dt.date.fromisoformat(args.test_until) if args.test_until else None
+    lines, table = v21_pace.run(model_file, data, history, until, test_until, prior=args.prior)
+    print("\n".join(lines))
+    out = args.out or os.path.join(os.path.dirname(model_file), v21_pace.PACE_FILE)
+    print(f"\n  -> {v21_pace.write(out, table)}  (each gamer's pace ahead, for the candidate v21-pace)")
+    return 0
+
+
 def cmd_playstyle(args):
     import datetime as dt
     from . import nb2_prior, playstyle, table_prior
@@ -1067,6 +1087,21 @@ def build_parser():
     p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
     p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
     p.set_defaults(func=cmd_v21_react_fit)
+
+    p = sub.add_parser("v21-pace-fit",
+                       help="v2.1's pace when ahead: each gamer's own time tilt while its side is ahead, fitted on a "
+                            "build's frame on the matches before --until and scored on the ones after; writes "
+                            "pace_ahead.json beside the build for the candidate v21-pace")
+    p.add_argument("--model", required=True, help="a v21 tilt build directory")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts CSV, as the build read it (default {DATA['timeouts']}"
+                                      " where it exists)")
+    p.add_argument("--until", required=True, help="fit on the matches before this day, YYYY-MM-DD (the priced window's start)")
+    p.add_argument("--test-until", help="score on the matches from --until to this day (default: the export's last)")
+    p.add_argument("--prior", type=float, help="the tilts' shrinkage in snaps (default: the build's own)")
+    p.add_argument("--out", help="where the table goes (default: pace_ahead.json beside the build)")
+    p.set_defaults(func=cmd_v21_pace_fit)
 
     p = sub.add_parser("playstyle", help="how each gamer plays by the score, on real games: the league's points still to "
                                          "come by the lead, each gamer's slope beyond it (front-runner or closes up) "

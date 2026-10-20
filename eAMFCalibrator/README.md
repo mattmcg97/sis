@@ -80,7 +80,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept), `v21-pace` (each gamer's own pace when ahead, `eAMFModel v21-pace-fit`'s table beside the build) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
