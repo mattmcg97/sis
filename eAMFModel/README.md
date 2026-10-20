@@ -30,6 +30,7 @@ The code that runs:
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
 | `nb2_prior.py`, `glmer_prior.py` | the pre-match models |
 | `remaining.py` | points still to come against reality |
+| `playstyle.py` | how each gamer plays by the score on real games, and whether it is a trait |
 
 ## Versions
 
@@ -2475,6 +2476,55 @@ own slope, before looking at the October bets:
 
     python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-19 00:00:00" \
         --candidate v21,v21-gap0.9,v21-gap0.75,v21-gap0.6 --v21-model v21_t10 --v21-paths 2000
+
+### Playstyle by the score (`playstyle`)
+
+Does a gamer play differently ahead from behind, in a way that repeats? The second strength lever
+guessed one answer for every gamer. This report measures it on real games instead, gamer by gamer,
+and tests whether it's a trait before anything is built on it.
+
+    python -m eAMFModel playstyle --snapshots eAMFCalibrator/out/scouting_playover.csv \
+        --history eAMFCalibrator/out/match_history.csv --out eAMFCalibrator/out/playstyle
+
+It reads the export alone: no Snowflake and no simulation, minutes on a full export.
+
+- **The states.** The opening kick-off, and the kick-off after every score in regulation (a
+  conversion's, a made field goal's or a safety's PLAY_OVER). There the score and the time left
+  are the whole state: the receiver's ball at its 25.
+- **What's measured.** Each side's points still to come, against its expected points times the
+  league's share of a game's points still to come at that time left. The expected points come from
+  prod's pre-match spread and total in the export, or `--prior`'s table.
+- **The league.**
+  - The leftover is fitted on possession (the side that conceded receives, so a trailing side has
+    the ball more) and on the lead × the share of the game left.
+  - The report shows the receiver's margin still to come by its lead and half.
+  - v2.1's sim plays real snaps for the situation, so this part is in it already. `v21-react-fit`
+    found its game script right: −0.028 [−0.070, +0.013].
+- **Each gamer, beyond the league.** The margin still to come (own points less the other side's) is
+  fitted on the share left and on the lead × the share left.
+  - The first term is the gamer's own over- or under-performance of its price, kept apart so a
+    gamer prod prices short doesn't pass for a front-runner.
+  - The second is the slope. Above 0 is a front-runner: leads grow, and deficits too. Below 0, leads
+    shrink and deficits close.
+  - The slope is also shown for own points and the other side's apart, and with ahead and behind
+    apart.
+  - A slope of +0.10 means a 7-point lead at half-time grows 0.35 points more than the league's
+    over the rest of the game.
+- **Is it a trait?**
+  - Every gamer's matches are split by alternate days, the slope fitted on each half, and the two
+    halves correlated across gamers. A playstyle shows in both halves; noise doesn't.
+  - Only when that correlation's 95% interval is above 0 are the gamers grouped: front-runner,
+    closes up, or steady. A group needs the shrunk slope 80% sure away from the gamers' mean.
+  - tau is the spread of the true slopes beyond noise (DerSimonian–Laird on the bootstrap errors).
+    Each slope is shrunk toward the others by it.
+- **Pace.** Every snap of the second half, except its last two minutes and those a quarter's end cut
+  short, gives the seconds it took off the clock, ahead against behind. The league's pace is shown,
+  each gamer's beyond the league's, and the same split-half test, with groups "burns the clock
+  ahead" and "keeps the tempo ahead".
+- **What it gives.** Intervals are 95% over matches. `playstyle.txt` has the report and
+  `playstyle_gamers.csv` every number, a row a gamer.
+- **The checks.** On planted data a ±0.3 slope across 15 gamers is found (the halves correlate
+  above 0.9) and grouped right. With nothing planted it says "not a trait".
 
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 

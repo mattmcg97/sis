@@ -515,6 +515,22 @@ def cmd_v21_react_fit(args):
     return 0
 
 
+def cmd_playstyle(args):
+    import datetime as dt
+    from . import nb2_prior, playstyle, table_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    prior = table_prior.TablePrior(args.prior).points if args.prior else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = playstyle.run(data, history, prior, since, until, args.min_matches, args.min_half, args.boot)
+    lines = playstyle.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'playstyle.txt')} and playstyle_gamers.csv")
+    return 0
+
+
 def cmd_v21_timing(args):
     import datetime as dt
     from . import strength_check as sc, v21_timing
@@ -1051,6 +1067,23 @@ def build_parser():
     p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
     p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
     p.set_defaults(func=cmd_v21_react_fit)
+
+    p = sub.add_parser("playstyle", help="how each gamer plays by the score, on real games: the league's points still to "
+                                         "come by the lead, each gamer's slope beyond it (front-runner or closes up) "
+                                         "and pace ahead against behind, each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--prior", help="a prior table (form-prior's or the walkthrough's CSV) for the expected points "
+                                   "(default: prod's pre-match spread and total in the export)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches for a slope (default 40)")
+    p.add_argument("--min-half", type=int, default=15,
+                   help="and in each half of its matches (alternate days) for the trait test (default 15)")
+    p.add_argument("--boot", type=int, default=400, help="bootstrap resamples over matches (default 400)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "playstyle"),
+                   help="where playstyle.txt and playstyle_gamers.csv go (default eAMFCalibrator/out/playstyle)")
+    p.set_defaults(func=cmd_playstyle)
 
     p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
                                           "matches timed part by part, the sim profiled, the window's run projected")
