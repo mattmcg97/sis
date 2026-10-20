@@ -12,9 +12,17 @@ whole with that many. Two feature sets (xgb/features.py):
   stack    scores + the walk-forward glmer's expected points and the Kalman form rating -- the deck's
            "meta-predictions": XGBoost learns corrections to the models we have
 
+With xgb/drives.py's play-by-play in the features, two more: drives (scores + each gamer's drive and
+snap rates) and stack_drives (stack + the same).
+
 Every method's expected margin is turned into a moneyline the same way (a normal, sd MARGIN_SD, ties
 left out), so the comparison is of the expectations themselves. Baseline tables (--table name=path,
-eAMFCalibrator's walkthrough or form-prior tables) are scored on the matches they cover.
+eAMFCalibrator's walkthrough or form-prior tables) are scored on the matches they cover. Where the
+features carry prod's pre-match quotes, every method is also set against prod's lines as the trader
+deck does: the total line and the spread line against the results (bias, MAE, within 5 and 10).
+
+Each XGBoost variant's prices are written as a prior table (priors/xgb_<set>.csv: MATCH_CODE,
+Pred_P1_Points, Pred_P2_Points, p_home), which v21 reads with --v21-prior-model.
 
     python -m xgb.backtest --features xgb/out/features.csv --since 2026-07-01 \
         --table v21=eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv
@@ -46,9 +54,15 @@ GLMER = ["glmer_p1", "glmer_p2", "glmer_margin", "glmer_total"]
 
 def feature_sets(cols):
     ident = {"code", "start", "p1", "p2", "t1", "t2", "s1", "s2"}
-    scores = [c for c in cols if c not in ident and c not in RATING and c not in GLMER]
+    usable = [c for c in cols if c not in ident and not c.startswith("prod_")]
+    drv = [c for c in usable if "_drv_" in c]
+    scores = [c for c in usable if c not in RATING and c not in GLMER and c not in drv]
     stack = scores + [c for c in RATING + GLMER if c in cols]
-    return {"scores": scores, "stack": stack}
+    sets = {"scores": scores, "stack": stack}
+    if drv:
+        sets["drives"] = scores + drv
+        sets["stack_drives"] = stack + drv
+    return sets
 
 
 def side_frame(d, feats):
@@ -157,6 +171,56 @@ def scores(margin_pred, total_pred, s1, s2, p_own=None):
     return out
 
 
+def prod_lines(frame, methods):
+    """The trader deck's view: prod's pre-match total and spread lines, and each method's, against the
+    results -- bias (result less line), MAE, the share within 5 and 10 points -- on the matches prod
+    quoted both before kick-off. Prod's spread line is read in whichever sign runs with its moneyline."""
+    f = frame[frame.prod_total_line.notna() & frame.prod_spread_line.notna() & frame.prod_p_home.notna()]
+    f = f[f[[f"{m}_margin" for m in methods]].notna().all(axis=1)]
+    if len(f) < 50:
+        return []
+    with np.errstate(invalid="ignore", divide="ignore"):
+        corr = np.corrcoef(f.prod_spread_line, f.prod_p_home)[0, 1]
+    sign = 1.0 if np.isfinite(corr) and corr > 0 else -1.0     # a home favourite's handicap is negative
+    margin, total = f.s1 - f.s2, f.s1 + f.s2
+    est = {"prod": (sign * f.prod_spread_line, f.prod_total_line)}
+    for m in methods:
+        est[m] = (f[f"{m}_margin"], f[f"{m}_total"])
+    w = max(12, max(len(m) for m in est) + 2)
+    lines = [f"  against prod's pre-match lines: {len(f):,} matches prod quoted before kick-off "
+             f"(its spread line read as {'+' if sign > 0 else '-'}line = the home margin)", "",
+             f"  {'':{w}s}{'total bias':>11s}{'MAE':>8s}{'<=5':>7s}{'<=10':>7s}{'spread bias':>13s}{'MAE':>8s}"
+             f"{'<=5':>7s}{'<=10':>7s}{'ML ll':>8s}"]
+    won = (margin > 0).astype(float)
+    dec = margin != 0
+    for name, (m_est, t_est) in est.items():
+        te, me = total - t_est, margin - m_est
+        if name == "prod":
+            p = np.clip(f.prod_p_home.values, 1e-9, 1 - 1e-9)
+        else:
+            p = np.clip(1 - norm_cdf(-m_est.values / MARGIN_SD), 1e-9, 1 - 1e-9)
+        ll = -(won * np.log(p) + (1 - won) * np.log(1 - p))[dec].mean()
+        lines.append(f"  {name:{w}s}{te.mean():+11.2f}{te.abs().mean():8.3f}{(te.abs() <= 5).mean():7.1%}"
+                     f"{(te.abs() <= 10).mean():7.1%}{me.mean():+13.2f}{me.abs().mean():8.3f}"
+                     f"{(me.abs() <= 5).mean():7.1%}{(me.abs() <= 10).mean():7.1%}{ll:8.4f}")
+    lines.append("  (prod's moneyline is its own probability; every model's, a normal about its margin)")
+    return lines
+
+
+def write_prior(frame, name, path):
+    """A method's prices as a prior table v21 reads (--v21-prior-model)."""
+    f = frame[frame[f"{name}_margin"].notna()]
+    t = pd.DataFrame({"MATCH_CODE": f.code, "start": f.start.dt.strftime("%Y-%m-%d %H:%M:%S"), "home": f.p1,
+                      "away": f.p2, "home_score": f.s1, "away_score": f.s2,
+                      "Pred_P1_Points": ((f[f"{name}_total"] + f[f"{name}_margin"]) / 2).round(4),
+                      "Pred_P2_Points": ((f[f"{name}_total"] - f[f"{name}_margin"]) / 2).round(4),
+                      "exp_margin": f[f"{name}_margin"].round(4), "exp_total": f[f"{name}_total"].round(4),
+                      "p_home": (1 - norm_cdf(-f[f"{name}_margin"].values / MARGIN_SD)).round(5)})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    t.to_csv(path, index=False)
+    return len(t)
+
+
 def report(frame, methods, ref, title):
     """Lines: each method's scores on the matches every method priced, then each against `ref`."""
     keep = frame[[f"{m}_margin" for m in methods] + [f"{m}_total" for m in methods]].notna().all(axis=1)
@@ -217,7 +281,8 @@ def main(argv=None):
     if "glmer_p1" not in d:
         log("  (no glmer in the features: the stack set has the rating only)")
     test = d[(d.start >= since) & (d.start < until) & d.s1.notna()].copy()
-    frame = test[["code", "start", "p1", "p2", "s1", "s2"]].reset_index(drop=True)
+    keep = ["code", "start", "p1", "p2", "s1", "s2"] + [c for c in d.columns if c.startswith("prod_")]
+    frame = test[keep].reset_index(drop=True)
     gains_all = {}
     for name, feats in sets.items():
         log(f"\n  XGBoost on the {name} features ({len(feats)}), refitted every {a.refit_days} days on {TRAIN_DAYS}:")
@@ -244,7 +309,7 @@ def main(argv=None):
         tables.append(name)
 
     base = [m for m in ("glmer",) if f"{m}_margin" in frame]
-    xgbs = ["xgb_scores", "xgb_stack", "xgb_scores_direct", "xgb_stack_direct"]
+    xgbs = [f"xgb_{n}" for n in sets] + ["xgb_scores_direct", "xgb_stack_direct"]
     extra = ["glmer+xgb"] if "glmer+xgb_margin" in frame else []
     log("")
     lines_all = report(frame, base + xgbs + extra, base[0] if base else "xgb_scores", "the whole span")
@@ -252,9 +317,18 @@ def main(argv=None):
         log(s)
     if tables:
         log("")
-        for s in report(frame, base + ["xgb_scores", "xgb_stack"] + extra + tables, tables[-1],
+        for s in report(frame, base + [f"xgb_{n}" for n in sets] + extra + tables, tables[-1],
                         "where the tables have the matches"):
             log(s)
+    if "prod_total_line" in frame:
+        for group in ([base + [f"xgb_{n}" for n in sets] + extra]
+                      + ([base + [f"xgb_{n}" for n in sets] + tables] if tables else [])):
+            log("")
+            for s in prod_lines(frame, group):
+                log(s)
+    for n in sets:
+        k = write_prior(frame, f"xgb_{n}", os.path.join(a.out, "priors", f"xgb_{n}.csv"))
+        log(f"  prior table: {a.out}/priors/xgb_{n}.csv ({k:,} matches; v21 --v21-prior-model)")
     for name, gains in gains_all.items():
         tot = sum(v for (m, _), v in gains.items() if m == "margin")
         top = sorted(((v, k) for (m, k), v in gains.items() if m == "margin"), reverse=True)[:15]

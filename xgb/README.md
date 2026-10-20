@@ -122,9 +122,44 @@ The deck's gains were measured against prod's opening line, not against a model 
 further edge has to come from information the scores don't carry, which is step 2: drive-level
 efficiency from the play-by-play.
 
+## Step 2: the play-by-play (`drives.py`)
+
+The scouting export (one row per play, a gigabyte or more) is reduced locally to one row per match:
+each side's drive and snap counts, plus prod's last pre-match quotes.
+
+```bash
+py -m eAMFCalibrator scouting --since "2026-01-01 00:00:00" --until "2026-10-19 00:00:00" --no-probe --sample 0 --out eAMFCalibrator/out_scouting_xgb
+py -m xgb.drives --export eAMFCalibrator/out_scouting_xgb/scouting_playover.csv --out xgb/data/drive_stats.csv
+python -m xgb.features --history eAMFCalibrator/out/match_history.csv \
+    --glmer xgb/out/glmer/cadence_matches.csv --drives xgb/data/drive_stats.csv --out xgb/out/features.csv
+python -m xgb.backtest --features xgb/out/features.csv --since 2026-07-01 \
+    --table avg=eAMFCalibrator/out/walkthrough/priors/avg.csv \
+    --table v21=eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv
+```
+
+- **What `drives.py` reads.** Every scrimmage snap (its gain, success, 20+ and 40+ yard plays,
+  losses, turnovers, 3rd and 4th downs, the clock it used) and every drive (touchdown, field goal
+  made or missed, punt, turnover, turnover on downs or the half; red-zone trips and touchdowns
+  from them; plays; where it started).
+- **What it writes.** Counts only, in `drive_stats.csv`, plus a league summary in
+  `drive_stats.txt` to sanity-check against the game.
+- **What `features.py --drives` adds.** For each gamer, over his last 15 and 50 matches with
+  play-by-play, his offence's rates and the offences he faced (`drv_off_`, `drv_def_`): points,
+  touchdowns, field goals, punts, turnovers and downs per drive, red zone, plays per drive, start,
+  yards and success a snap, explosive plays, losses, 3rd downs converted, drives a match and
+  seconds a snap.
+- **What `backtest.py` adds.** Two more variants, `drives` and `stack_drives`. Prod's quotes come
+  through as `prod_` columns, never features. The report sets every method against prod's
+  pre-match total and spread lines as the deck does (bias, MAE, within 5 and 10 points).
+- **v21 tables.** Every variant is written as a prior table
+  (`priors/xgb_<set>.csv`) that v21 reads with `--v21-prior-model`.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
 - `backtest.py`: the walk-forward models and the comparison (`python -m xgb.backtest`). It writes
-  `backtest_report.txt` and `backtest_matches.csv` (every match, every method's expected margin
-  and total).
+  `backtest_report.txt`, `backtest_matches.csv` (every match, every method's expected margin and
+  total) and `priors/xgb_<set>.csv`.
+- `drives.py`: the scouting export reduced to drive and snap stats per match
+  (`python -m xgb.drives`).
+- `tests/`: `python -m unittest xgb.tests.test_drives`.

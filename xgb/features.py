@@ -26,6 +26,14 @@ Per match:
   derived              simple expectations: each side's points as the mean of its scoring and the
                        other's conceding (5, 15, 50 and all-time), their margin and total
   glmer (optional)     a walk-forward glmer's expected points (glmer/cadence.R's matches table)
+  drives (optional)    xgb/drives.py's table: each gamer's offence and the offences he has faced over
+                       his last 15 and 50 matches with play-by-play (drv_off_ / drv_def_): points,
+                       touchdowns, field goals, punts, turnovers and turnovers on downs per drive,
+                       red-zone trips and touchdowns from them, plays per drive and where drives
+                       start, yards and success per snap, 20+ and 40+ yard plays, losses, 3rd downs
+                       converted, drives a match and seconds a snap
+  prod (optional)      prod's last pre-match quotes from the same table (prod_): for scoring against,
+                       never a feature
 
     python -m xgb.features --history eAMFCalibrator/out/match_history.csv --glmer cadence_matches.csv \
         --out xgb/out/features.csv
@@ -42,6 +50,18 @@ from collections import defaultdict, deque
 import numpy as np
 
 RESULT_LAG = dt.timedelta(minutes=36)
+DRIVE_WINDOWS = (15, 50)
+DRIVE_STATS = ("drives", "td", "fg", "fg_miss", "punt", "downs", "turnover", "half_end", "rz_trips", "rz_td",
+               "drive_plays", "start_field", "snaps", "gains", "yards", "success", "big20", "big40", "loss",
+               "third_n", "third_conv", "fourth_n", "fourth_conv", "seconds")
+# rate name -> (numerator, denominator); "points" and "matches" are kept beside the drive stats
+DRIVE_RATES = {"ppd": ("points", "drives"), "td": ("td", "drives"), "fg": ("fg", "drives"),
+               "punt": ("punt", "drives"), "turnover": ("turnover", "drives"), "downs": ("downs", "drives"),
+               "rz": ("rz_trips", "drives"), "rz_td": ("rz_td", "rz_trips"), "plays": ("drive_plays", "drives"),
+               "start": ("start_field", "drives"), "ypp": ("yards", "gains"), "success": ("success", "snaps"),
+               "big20": ("big20", "snaps"), "big40": ("big40", "snaps"), "loss": ("loss", "snaps"),
+               "third": ("third_conv", "third_n"), "drives": ("drives", "matches"), "pace": ("seconds", "snaps")}
+DRIVE_KEYS = DRIVE_STATS + ("points", "matches")
 SESSION_GAP = dt.timedelta(hours=2)
 FORM_HALF_LIFE = 10
 TEAM_SHRINK = 10
@@ -90,6 +110,39 @@ def read_history(path, sport="AF"):
     return out
 
 
+def read_drives(path):
+    """{match: {"h": [stats...], "a": [...], prod quotes}} off xgb/drives.py's table."""
+    out = {}
+    with open(path, newline="", encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            f1, f2 = _num(r.get("final_p1")), _num(r.get("final_p2"))
+            row = {}
+            for tag, pts in (("h", f1), ("a", f2)):
+                row[tag] = np.array([_num(r.get(f"{tag}_{k}")) or 0.0 for k in DRIVE_STATS]
+                                    + [pts if pts is not None else math.nan, 1.0])
+            row["prod"] = {"prod_p_home": _num(r.get("prematch_prob_50")),
+                           "prod_spread_line": _num(r.get("prematch_line_52")),
+                           "prod_spread_prob": _num(r.get("prematch_prob_52")),
+                           "prod_total_line": _num(r.get("prematch_line_54")),
+                           "prod_total_prob": _num(r.get("prematch_prob_54"))}
+            out[r["match_code"]] = row
+    return out
+
+
+def drive_features(g):
+    """A side's drive rates, its offence and the offences it faced, over its last DRIVE_WINDOWS
+    matches with play-by-play."""
+    f = {}
+    for role, rows in (("off", g.drv_off), ("def", g.drv_def)):
+        for w in DRIVE_WINDOWS:
+            if rows:
+                tot = np.nansum(np.asarray(rows[-w:]), axis=0)
+                val = dict(zip(DRIVE_KEYS, tot))
+            for name, (num, den) in DRIVE_RATES.items():
+                f[f"drv_{role}_{name}_{w}"] = (val[num] / val[den] if rows and val[den] else math.nan)
+    return f
+
+
 def read_glmer(path):
     """{match: (home points, away points)} off a glmer/cadence.R matches table (its single arm)."""
     out = {}
@@ -111,6 +164,7 @@ class Gamer:
         self.pf, self.pa, self.won = [], [], []
         self.by_team = defaultdict(lambda: [0.0, 0.0, 0])   # team -> [scored, conceded, matches]
         self.ewma_f = self.ewma_a = None
+        self.drv_off, self.drv_def = [], []   # per match with play-by-play: his offence, the one he faced
         self.kickoffs = []            # every kick-off, settled or not
         self.settled_at = []          # kick-off of each settled result, matching pf
 
@@ -170,7 +224,7 @@ def side_features(g, team, t):
     return f
 
 
-def build(matches, glmer=None):
+def build(matches, glmer=None, drive_table=None):
     """[row dict] for every match: identity, result and features."""
     alpha = 1 - 2 ** (-1 / FORM_HALF_LIFE)
     gamers = defaultdict(Gamer)
@@ -198,6 +252,12 @@ def build(matches, glmer=None):
             g.settled_at.append(m["t"])
             g.ewma_f = a if g.ewma_f is None else g.ewma_f + alpha * (a - g.ewma_f)
             g.ewma_a = b if g.ewma_a is None else g.ewma_a + alpha * (b - g.ewma_a)
+        if drive_table is not None and m["code"] in drive_table:
+            dr = drive_table[m["code"]]
+            gamers[m["p1"]].drv_off.append(dr["h"])
+            gamers[m["p1"]].drv_def.append(dr["a"])
+            gamers[m["p2"]].drv_off.append(dr["a"])
+            gamers[m["p2"]].drv_def.append(dr["h"])
         key = tuple(sorted((m["p1"], m["p2"])))
         h2h[key].append(((s1 - s2) if key[0] == m["p1"] else (s2 - s1), s1 + s2))
         for team, a, b in ((m["t1"], s1, s2), (m["t2"], s2, s1)):
@@ -281,6 +341,13 @@ def build(matches, glmer=None):
             row["glmer_p1"], row["glmer_p2"] = g if g else (math.nan, math.nan)
             row["glmer_margin"] = row["glmer_p1"] - row["glmer_p2"]
             row["glmer_total"] = row["glmer_p1"] + row["glmer_p2"]
+        if drive_table is not None:
+            row.update({f"p1_{k}": v for k, v in drive_features(gamers[m["p1"]]).items()})
+            row.update({f"p2_{k}": v for k, v in drive_features(gamers[m["p2"]]).items()})
+            prod = drive_table.get(m["code"], {}).get("prod", {})
+            for k in ("prod_p_home", "prod_spread_line", "prod_spread_prob", "prod_total_line", "prod_total_prob"):
+                v = prod.get(k)
+                row[k] = math.nan if v is None else v
         rows.append(row)
     return rows
 
@@ -301,10 +368,11 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--history", default="eAMFCalibrator/out/match_history.csv")
     ap.add_argument("--glmer", help="glmer/cadence.R's cadence_matches.csv for one walk-forward arm")
+    ap.add_argument("--drives", help="xgb/drives.py's table (drive and snap stats, prod's pre-match quotes)")
     ap.add_argument("--out", default="xgb/out/features.csv")
     a = ap.parse_args(argv)
     matches = read_history(a.history)
-    rows = build(matches, read_glmer(a.glmer) if a.glmer else None)
+    rows = build(matches, read_glmer(a.glmer) if a.glmer else None, read_drives(a.drives) if a.drives else None)
     write(rows, a.out)
     print(f"{len(rows):,} matches, {len(rows[0]) - 8} features -> {a.out}")
 
