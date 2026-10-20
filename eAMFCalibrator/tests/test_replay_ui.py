@@ -99,7 +99,7 @@ class TestReplay(unittest.TestCase):
         rp = replay()
         meta = rp.meta()
         self.assertTrue(meta["nudge"])
-        self.assertEqual(meta["mode"], "tilt")
+        self.assertEqual((meta["mode"], meta["source_kind"]), ("tilt", "Export"))
         self.assertEqual((meta["first_day"], meta["last_day"]), ("2026-10-01", "2026-10-01"))
         day = rp.matches("2026-10-01")
         self.assertEqual(len(day), 40)
@@ -116,8 +116,7 @@ class TestReplay(unittest.TestCase):
         self.assertEqual(len(view["timeline"]), len(rows))
         self.assertEqual(view["final"], [int(rows[-1]["final_p1"]), int(rows[-1]["final_p2"])])
         self.assertEqual(view["prematch"]["54"], dict(p=0.5, line=30.5, live=True))
-        self.assertEqual(view["prior"], None)
-        self.assertIn("no prior", view["prior_note"])
+        self.assertEqual((view["prior"], view["prior_note"]), (None, None))
         priced = [t for t in view["timeline"] if t["priced"]]
         self.assertEqual(view["n_priced"], len(priced))
         self.assertGreater(len(priced), len(rows) // 2)
@@ -139,7 +138,7 @@ class TestReplay(unittest.TestCase):
         start = dt.datetime.fromisoformat(view["start"])
         self.assertTrue(all(dt.datetime.fromisoformat(r["SCHEDULED_START_TIME_UTC"]) < start for r in results))
         other = sorted(SETUP["matches"])[0]
-        self.assertIn("enter them", replay(prior=prior).load(other)["prior_note"])
+        self.assertEqual(replay(prior=prior).load(other)["prior_note"], "Not in prior")
 
     def test_prices_at_the_kick_off_a_state_and_none_where_v21_has_no_state(self):
         rp = replay()
@@ -165,7 +164,7 @@ class TestReplay(unittest.TestCase):
         lost = next(t for t in view["timeline"] if not t["priced"])
         q = rp.price(code, lost["message"], [20.0, 14.0], 0.75)
         self.assertFalse(q["priced"])
-        self.assertIn("conversion", q["why"])
+        self.assertEqual(q["why"], "No v21 state")
         with self.assertRaises(ValueError):
             rp.price(code, 99999)
 

@@ -71,6 +71,7 @@ def _round(x, k=4):
 
 class SnowflakeSource:
     """Matches off the history, each match's PLAY_OVERs and prod's quotes off Snowflake (cached)."""
+    kind = "Snowflake"
 
     def __init__(self, cursor, history_csv=None):
         self.cur = cursor
@@ -109,6 +110,7 @@ class SnowflakeSource:
 class ExportSource:
     """Matches and their PLAY_OVERs off a `scouting` export file (and a history CSV for the gamers,
     teams and kick-offs): no Snowflake."""
+    kind = "Export"
 
     def __init__(self, export_csv, history_csv=None):
         self.export_csv, self.history_csv = export_csv, history_csv
@@ -211,7 +213,7 @@ class Replay:
                        for r in hist if _start(r.get("SCHEDULED_START_TIME_UTC"))})
         return dict(model=self.model_file, prior=self.prior_name or (self.prior.describe()
                     if self.prior is not None and hasattr(self.prior, "describe") else None),
-                    source=self.source.describe(), paths=self.paths, share=self.share,
+                    source=self.source.describe(), source_kind=getattr(self.source, "kind", None), paths=self.paths, share=self.share,
                     nudge=getattr(self.model, "nudge_dir", None) is not None,
                     mode=getattr(self.model, "mode", None), last_day=days[-1] if days else None,
                     first_day=days[0] if days else None, chart_paths=CHART_PATHS)
@@ -264,11 +266,9 @@ class Replay:
                 if code in got:
                     prior = [round(float(x), 2) for x in got[code]]
                 else:
-                    note = "the prior has no expected points for this match: enter them"
+                    note = "Not in prior"
             except (Exception, SystemExit) as e:
-                note = f"the prior failed ({e}): enter the expected points"
-        else:
-            note = "no prior: enter the expected points"
+                note = f"Prior failed: {e}"
         r0 = rows[0]
         final = [_i(r0.get("final_p1")), _i(r0.get("final_p2"))]
         if final[0] is None:
@@ -336,7 +336,7 @@ class Replay:
             prod = row["prod"]
             if message not in m["starts"]:
                 return dict(priced=False, message=message, prod=prod, nudge=nudge,
-                            why="v21 has no state here (a conversion still to come, or no snap to start from)")
+                            why="No v21 state")
             with self.lock:
                 h, a = self.v21.simulate(self.model, self._state(m, message, alpha), paths,
                                          seed=self.stream._seed(code) + 1 + message)
