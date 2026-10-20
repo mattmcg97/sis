@@ -2685,6 +2685,50 @@ the score that made a game level and the fork.)
   Backing a side 3 ahead, v2.1 said 0.649 and it won 0.510. The punters pick their moments, so the
   bets' gap is about twice the late states' one.
 
+**September (2,226 matches) says the 1–3-behind gap is new.** The side with the ball 1–3 behind won
+39.5% in September, and the sim had it right (−0.2 [−3.5, +3.1]). Week by week the real share went 41,
+34, 39, 40, 48, 50 and 57%, from Aug 31 to Oct 12, while the sim stayed at 38–44%. The 1–3 ahead side
+went the other way: 89–94% a week in September, 81–85% in October. Level sides did too: the sim was
+6–9 points short of them in September and about right in October. The overtime excess held in both
+months (+2.3 to +2.5 points from the late states). The late game changed from the last week of
+September, so a correction fitted on September alone would miss it.
+
+### The late Q4 correction (`v21-late-fit`, `--candidate v21-late`)
+
+```
+python -m eAMFModel v21-late-fit --model v21_t10 --states eAMFCalibrator/out_v21_endgame_sep/v21_endgame_states.csv eAMFCalibrator/out_v21_endgame/v21_endgame_states.csv
+```
+
+A rolling correction for the drift above, while the sim itself plays the endgame as it always has.
+- **The cells.** The lead of the side with the ball (4–8 behind, 3 behind, 1–2 behind, level, 1–3
+  ahead, 4–8 ahead) times Q4's time left (4:00–2:01, 2:00–1:01, 1:00–0:00).
+- **The fit.** For each match day, a shift on the log-odds of the side with the ball winning in each
+  cell. It's fitted on v21-endgame's late states of the 14 days before (`--window`): the sim's chance
+  against what really followed, each match counting the same. It's shrunk toward none by 30 matches
+  (`--shrink`). A day's own games never fit its own shift.
+- **The days.** By default the fit covers every day from the states' first plus the window, to the
+  day after their last; `--since` and `--until` set them. It writes `late_q4.json` beside the build.
+- **Pricing.** The calibrator's candidate `v21-late` prices off the same build with the table:
+  `--candidate v21,v21-late --v21-model v21_t10`. It stops before any fetching if the table is
+  missing.
+  - Each in-play book of Q4 with the sides 8 or fewer apart has its margin's mass either side of a
+    level game scaled, so the side with the ball wins at its shifted chance. The spreads move with it.
+  - The kick-off, the earlier quarters, overtime and the totals are as v21 prices them.
+  - A match whose day isn't in the table is priced as v21; the run says how many.
+
+On October's own late states, the rolling shifts take the sim's chance for the side with the ball:
+
+| Lead | Real | Sim | Corrected |
+|---|---|---|---|
+| 1–2 behind | 54.2% | 43.4% | 48.7% |
+| 3 behind | 49.6% | 40.3% | 46.3% |
+| 4–8 behind | 20.5% | 25.6% | 21.9% |
+| Level | 73.4% | 71.1% | 77.2% |
+| 1–3 ahead | 84.0% | 88.7% | 87.5% |
+
+Level overshoots: September's level gap had gone by October, and the correction lags drift in both
+directions. The betting sim is the judge.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:

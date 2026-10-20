@@ -571,6 +571,25 @@ def cmd_v21_pace_fit(args):
     return 0
 
 
+def cmd_v21_late_fit(args):
+    import datetime as dt
+    from . import v21_late, v21_stream
+    states = v21_late.read_states(args.states)
+    if not states:
+        raise SystemExit("no late states in " + ", ".join(args.states) + " (v21-endgame's v21_endgame_states.csv)")
+    have = sorted({x["day"] for x in states})
+    first = dt.date.fromisoformat(args.since) if args.since else have[0] + dt.timedelta(days=args.window)
+    last = dt.date.fromisoformat(args.until) if args.until else have[-1] + dt.timedelta(days=1)
+    days = [first + dt.timedelta(days=k) for k in range((last - first).days + 1)]
+    table = v21_late.fit(states, days, window=args.window, shrink=args.shrink)
+    print("\n".join(v21_late.report(states, table, args.window, args.shrink)))
+    model_file = v21_stream._model_file(args.model)
+    out = args.out or os.path.join(os.path.dirname(model_file), v21_late.LATE_FILE)
+    v21_late.write(out, table, window=args.window, shrink=args.shrink, states=list(args.states))
+    print(f"\n  -> {out}  (each day's late-Q4 shifts, for the candidate v21-late)")
+    return 0
+
+
 def cmd_ats(args):
     import datetime as dt
     from . import ats, nb2_prior
@@ -1159,6 +1178,19 @@ def build_parser():
     p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
     p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
     p.set_defaults(func=cmd_v21_react_fit)
+
+    p = sub.add_parser("v21-late-fit",
+                       help="v2.1's late Q4 moneyline, a rolling correction: each day's shift on the log-odds of the side "
+                            "with the ball winning, by its lead and the time left, fitted on v21-endgame's late states of "
+                            "the days before; writes late_q4.json beside the build for the candidate v21-late")
+    p.add_argument("--model", required=True, help="the v21 build the endgame runs priced (the table goes beside it)")
+    p.add_argument("--states", nargs="+", required=True, help="v21-endgame's v21_endgame_states.csv, one or more")
+    p.add_argument("--since", help="the first day to fit a shift for, YYYY-MM-DD (default: the states' first + --window)")
+    p.add_argument("--until", help="the last day, YYYY-MM-DD (default: the day after the states' last)")
+    p.add_argument("--window", type=int, default=14, help="days of late states before each day it is fitted on (default 14)")
+    p.add_argument("--shrink", type=float, default=30.0, help="matches the shift is shrunk toward none by (default 30)")
+    p.add_argument("--out", help="where the table goes (default: late_q4.json beside the build)")
+    p.set_defaults(func=cmd_v21_late_fit)
 
     p = sub.add_parser("v21-pace-fit",
                        help="v2.1's pace when ahead: each gamer's own time tilt while its side is ahead, fitted on a "

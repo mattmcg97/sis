@@ -592,6 +592,8 @@ def check_models(streams):
                 stream_mod.model_paths(snowflake_io.build_dir(version))
             if getattr(stream_mod, "pace_of", lambda _n: False)(version):     # v21-pace: its table beside the build
                 stream_mod.pace_table(snowflake_io.build_dir(version))
+            if getattr(stream_mod, "late_of", lambda _n: False)(version):     # v21-late: its table beside the build
+                stream_mod.late_table(snowflake_io.build_dir(version))
 
 
 def fetch_checks(cur, matches, prod_rows, keep=None):

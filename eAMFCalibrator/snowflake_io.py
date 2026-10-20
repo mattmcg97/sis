@@ -806,6 +806,8 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         opts["gap"] = gap
     if getattr(stream, "pace_of", lambda _n: False)(name):         # v21-pace: each gamer's own pace when ahead
         opts["pace"] = True
+    if getattr(stream, "late_of", lambda _n: False)(name):         # v21-late: the rolling late-Q4 correction
+        opts["late"] = True
     # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
     moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
     read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
@@ -847,6 +849,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if opts.get("pace"):
         print(f"  {name}: pace when ahead, each side's clock while it is ahead drawn on its gamer's own time tilt"
               f" there ({stream.v21_pace.PACE_FILE} beside the build)", flush=True)
+    if opts.get("late"):
+        print(f"  {name}: the late Q4 correction, each match day's rolling shifts on the side with the ball's chance"
+              f" ({stream.v21_late.LATE_FILE} beside the build)", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")
@@ -866,6 +871,10 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      **({"batches": [list(b) for b in group]} if seeded else {}),
                                      **({"moments": moments} if moments is not None else {}))
     took = getattr(stream, "LAST_TIMING", {})
+    if opts.get("late") and took.get("late_of"):
+        print(f"  {name}: {took['late_matches']:,} of {took['late_of']:,} matches have their day in the late table"
+              + ("" if took["late_matches"] == took["late_of"] else " (the rest priced as v21: refit with --until"
+                 " the window's last day)"), flush=True)
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"
