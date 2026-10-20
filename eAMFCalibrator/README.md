@@ -2456,6 +2456,85 @@ Output:
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
 
+### Where the money is, as prices: `bets money`
+
+```bash
+python -m eAMFCalibrator bets money --since 2026-10-01 --until 2026-10-19 --sim-file eAMFCalibrator/out_bets_gap/bets_sim.zip
+```
+
+Every bet is money on a side: home or away on the moneyline and the spread, over or under on the total.
+
+**The money.** At any moment, the money toward the home (over) side is the stake on it less the stake
+on the other, over both, from −1 to +1.
+- In play it's over the last `--money-window` seconds (120); pre-match, over every pre-match bet
+  before then.
+- It's kept by customer temperature as well as in total.
+- Each bet sees only the money before it, on prod's clock (bet time less the operator's lag).
+
+**Layer 1, the money's price.** Prod's log-odds, moved by beta × the money.
+- beta is fitted on the results, by market, pre-match and in play apart. One model has a single tilt
+  for all the money, another one a temperature.
+- It's fitted on the window's earlier matches (before `--money-split`, by default the middle day) and
+  scored on the later ones:
+  - **Log loss.** At every PLAY_OVER prod priced the market (pre-match, its last price before the
+    kick-off), the money's price against prod's, each match counting the same.
+  - **Re-pricing.** Every later bet re-priced at it, the operator's margin kept. This is the book's
+    margin change, with a 95% interval over matches.
+
+**Layer 2, what the money knows.** On the bets: the money's tilt alone, then beside each thing a
+punter could have seen at that moment, then beside all of them. The things are:
+- prod's own move over the last minute;
+- the game script: home's lead (or the points the total still needs) × the share of the game left;
+- a score in the last 30 seconds;
+- v2.1's price against prod's, from `--sim-file` (a bets run's `bets_sim.csv` or its zip;
+  `--sim-candidate` picks the candidate).
+
+Where the tilt falls when a thing comes in, the money was that thing. What's left, it knows and none
+of them say. The report also shows **what the money follows**: the money regressed on the same
+things.
+
+`bets_money.txt` has the report and `bets_money_points.csv` a row a bet: its money by temperature and
+the things beside it. There's no simulation: v2.1's price comes off the sim file.
+
+A first look off the Oct 1–18 bets file:
+- Pre-match, the money moved the moneyline by +0.23 (z 2.7) and the total by +0.11, but added
+  nothing on the spread.
+- In play, the last two minutes' money moved the moneyline by +0.38 [+0.20, +0.57], still +0.32
+  [+0.16, +0.52] beside v2.1's price, and added nothing on the spread or the total.
+
+### Prod's moneyline either side of every bet: `bets ml-moves`
+
+```bash
+python -m eAMFCalibrator bets ml-moves --since 2026-10-01 --until 2026-10-19 --min-bets 30
+```
+
+Where the money comes on prod's moneyline, at what prices, and how prod's price moved either side of
+each bet. No candidate is priced and nothing is simulated: it reads the bets and prod's quotes alone.
+
+- **The price a bet read.** Prod's chance of the side backed at the bet time less the operator's lag,
+  pre-match at the bet time.
+- **Where the money came.** Bets, stake, its share and the book's margin. These are cut by prod's
+  chance of the side backed, the customer temperature, the stake, the operator and (in play) the
+  moment, pre-match and in play apart.
+- **The path.** Prod's chance of the side at −300, −120, −60, −30 and −10 s before the moment the bet
+  was priced, and +10, +30, +60, +120 and +300 s after, less the chance it was struck at.
+  - After the bet, above 0 means prod shortened the side: it moved the bettor's way, and the bet beat
+    the price.
+  - Before it, above 0 means the side had drifted into the bet (the bettor faded a move), and below 0
+    that it had shortened (they followed one).
+  - A move is a point of chance or more; less and the price held.
+  - Each offset is a mean a bet, with 2 standard errors clustered by match, and a mean by stake.
+- **The book's margin by what prod did** in the 60 s after the bet (moved their way, held, moved
+  against) and in the 60 s before (followed, still, faded).
+- **In play, with no score in the 60 s after.** Prod re-pricing the same state: the drift a bettor was
+  ahead of, the part a model could have had. A move across a score is the game.
+- **Pre-match, the closing-line value.** The side's chance at the kick-off less at the bet, and the
+  margin on the bets that beat the close, held, or were beaten by it.
+- **The customers with the most moneyline stake**, with their margin, their +60 s move and their
+  closing-line value.
+
+`bets_ml_moves.txt` has the report and `bets_ml_moves.csv` a row a bet, with every offset.
+
 ### Restricted accounts on totals: `bets totals-moves`
 
 ```bash
