@@ -1,0 +1,67 @@
+  WHERE THE MONEY IS, AS PRICES -- the money toward the home (over) side: stake on it less on the other, over both, -1 to +1; in play over the last 120s, pre-match every pre-match bet before; each bet sees only the money before it; 95% intervals over matches
+
+  LAYER 1, THE MONEY'S PRICE: prod's log-odds moved by beta x the money, fitted on the matches before 2026-10-10, scored on the rest (each match counting the same)
+    market               model           money                       beta [95%]   points       log loss less prod [95%]    bets  as bet  at money             change [95%]
+    moneyline  pre-match one tilt        all            -7.963 [-9.019, +0.000]      607         +11.93 [+0.00, +35.79]   6,387  -2.67% -41488.86% -41486.18 [-53078.97, -29857.29]
+                         by temperature  Restricted     +0.000 [+0.000, +0.000]      607         +11.12 [+0.00, +33.35]   6,387  -2.67% -33497.87% -33495.19 [-43428.23, -24044.76]
+                                         VIP            +0.000 [+0.000, +0.000]
+                                         Standard       -7.468 [-8.441, +0.000]
+                                         none           -0.422 [-0.477, +0.000]
+    moneyline  in play   one tilt        all            +0.002 [-0.108, +0.106]   56,282           -0.01 [-0.03, +0.01]  20,989  -5.91%    -5.88%     +0.03 [+0.02, +0.04]
+                         by temperature  Restricted     +0.002 [-0.234, +0.232]   56,282           +0.55 [+0.00, +1.10]  20,989  -5.91%    -6.04%     -0.14 [-0.41, +0.14]
+                                         VIP            +0.046 [-0.057, +0.147]
+                                         Standard       +0.028 [-0.076, +0.126]
+                                         none           -0.075 [-0.168, +0.024]
+    spread     pre-match one tilt        all            -7.336 [-8.311, +0.000]      608           +0.00 [+0.00, +0.00]   2,298  +4.71% -21722.58% -21727.28 [-27608.19, -16589.27]
+                         by temperature  Restricted     +0.000 [+0.000, +0.000]      608           +0.00 [+0.00, +0.00]   2,298  +4.71% -14044.35% -14049.05 [-22570.63, -7404.66]
+                                         VIP            +0.000 [+0.000, +0.000]
+                                         Standard       -3.975 [-4.466, +0.000]
+                                         none           -3.975 [-4.466, +0.000]
+    spread     in play   one tilt        all            +0.058 [-0.021, +0.136]   53,013           +0.10 [-0.37, +0.61]  13,838 +10.21%   +10.53%     +0.32 [+0.07, +0.54]
+                         by temperature  Restricted     -0.096 [-0.369, +0.169]   53,013           -0.23 [-0.88, +0.43]  13,838 +10.21%   +10.26%     +0.05 [-0.33, +0.41]
+                                         VIP            -0.032 [-0.151, +0.078]
+                                         Standard       +0.032 [-0.065, +0.104]
+                                         none           +0.086 [-0.008, +0.165]
+    total      pre-match one tilt        all            -8.373 [-9.530, +0.000]      608           +0.00 [+0.00, +0.00]   5,315  -9.00% -96380.45% -96371.44 [-128783.51, -63201.41]
+                         by temperature  Restricted     +0.000 [+0.000, +0.000]      608           +0.00 [+0.00, +0.00]   5,315  -9.00% -16840.04% -16831.04 [-24312.89, -9415.22]
+                                         VIP            -3.164 [-3.546, +0.000]
+                                         Standard       -2.411 [-2.702, +0.000]
+                                         none           -3.164 [-3.546, +0.000]
+    total      in play   one tilt        all            +0.038 [-0.047, +0.118]   53,592           -0.26 [-0.52, -0.01]  18,901  +2.08%    +2.36%     +0.29 [+0.19, +0.39]
+                         by temperature  Restricted     +0.252 [+0.034, +0.512]   53,592           -0.47 [-1.10, +0.12]  18,901  +2.08%    +2.57%     +0.49 [+0.13, +0.84]
+                                         VIP            +0.011 [-0.096, +0.102]
+                                         Standard       +0.049 [-0.043, +0.128]
+                                         none           +0.007 [-0.079, +0.098]
+    beta: how far a side's log-odds move with all the money on it (at an even price +0.40 is about 10 points of chance); log loss less prod in thousandths, below 0 the money's price the better; change: the book's margin re-priced at the money's price less as bet, in points
+
+  LAYER 2, WHAT THE MONEY KNOWS: the money's tilt on the bets alone, beside each thing a punter could have seen then, and beside all of them -- where it falls, the money was that thing; what is left, it knows that none of them say
+    moneyline pre-match: 12,056 bets on 1,194 matches
+      alone                                    the money +0.101 [-0.026, +0.231]
+      beside v21                               the money +0.034 [-0.104, +0.148]   (v2.1's price against prod's +0.754 [+0.429, +1.140])
+      what the money follows (10,994 bets with money before them, R2 0.150): one sd more of v2.1's price against prod's +0.203 of money toward the side; prod's log-odds +0.957 a unit
+    moneyline in play: 47,829 bets on 1,201 matches
+      alone                                    the money +0.075 [-0.015, +0.159]
+      beside momentum                          the money +0.063 [-0.029, +0.144]   (prod's move, the last minute +0.231 [+0.150, +0.350])
+      beside script                            the money +0.114 [+0.025, +0.196]   (the game script (lead x time left) +0.064 [+0.036, +0.100])
+      beside recent                            the money +0.075 [-0.015, +0.159]   (a score in the last 30s -0.002 [-0.169, +0.233])
+      beside v21                               the money +0.013 [-0.075, +0.083]   (v2.1's price against prod's +0.823 [+0.533, +1.191])
+      beside all of them                       the money +0.037 [-0.053, +0.110]   (prod's move, the last minute +0.195 [+0.103, +0.319]; the game script (lead x time left) +0.053 [+0.026, +0.090]; a score in the last 30s +0.001 [-0.173, +0.247]; v2.1's price against prod's +0.797 [+0.503, +1.187])
+      what the money follows (44,993 bets with money before them, R2 0.114): one sd more of prod's move, the last minute +0.117, the game script (lead x time left) -0.108, a score in the last 30s +0.003, v2.1's price against prod's +0.158 of money toward the side; prod's log-odds -0.121 a unit
+    spread pre-match: 4,641 bets on 1,100 matches
+      alone                                    the money +0.003 [-0.115, +0.122]
+    spread in play: 31,951 bets on 1,193 matches
+      alone                                    the money -0.025 [-0.100, +0.037]
+      beside momentum                          the money -0.025 [-0.099, +0.038]   (prod's move, the last minute -0.363 [-0.596, -0.142])
+      beside script                            the money -0.025 [-0.099, +0.039]   (the game script (lead x time left) -0.000 [-0.018, +0.020])
+      beside recent                            the money -0.025 [-0.100, +0.037]   (a score in the last 30s +0.010 [-0.243, +0.290])
+      beside all of them                       the money -0.025 [-0.098, +0.039]   (prod's move, the last minute -0.363 [-0.602, -0.140]; the game script (lead x time left) -0.001 [-0.018, +0.020]; a score in the last 30s +0.014 [-0.242, +0.290])
+      what the money follows (28,534 bets with money before them, R2 0.016): one sd more of prod's move, the last minute +0.024, the game script (lead x time left) +0.095, a score in the last 30s +0.003 of money toward the side; prod's log-odds -0.300 a unit
+    total pre-match: 11,266 bets on 1,198 matches
+      alone                                    the money +0.058 [-0.051, +0.150]
+    total in play: 42,546 bets on 1,193 matches
+      alone                                    the money +0.135 [+0.063, +0.205]
+      beside momentum                          the money +0.134 [+0.062, +0.204]   (prod's move, the last minute -0.186 [-0.395, +0.048])
+      beside script                            the money +0.087 [+0.015, +0.153]   (the game script (lead x time left) -0.008 [-0.013, -0.003])
+      beside recent                            the money +0.134 [+0.062, +0.204]   (a score in the last 30s -0.057 [-0.252, +0.130])
+      beside all of them                       the money +0.087 [+0.015, +0.152]   (prod's move, the last minute -0.184 [-0.389, +0.050]; the game script (lead x time left) -0.008 [-0.013, -0.003]; a score in the last 30s +0.056 [-0.139, +0.224])
+      what the money follows (39,652 bets with money before them, R2 0.003): one sd more of prod's move, the last minute -0.019, the game script (lead x time left) -0.037, a score in the last 30s -0.003 of money toward the side; prod's log-odds +0.134 a unit
