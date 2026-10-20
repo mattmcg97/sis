@@ -1,0 +1,6 @@
+xgb.drives off eAMFCalibrator\out_scouting_xgb\scouting_playover.csv
+  13,635 matches -> xgb\data\drive_stats.csv (0 skipped: TEAM_A's side unknown)
+  per side a match: 5.07 drives, 19.7 snaps
+  per drive: touchdown 36.4%, field goal 9.4% (missed 1.2%), punt 6.6%, turnover 26.2%, downs 4.5%, half over 15.6%; 4.2 plays, starting at the own 39
+  per snap: 7.58 yards, success 42.3%, 20+ yards 13.7%, 40+ 3.8%, loss 11.7%; 3rd down converted 52.7%, 4th 51.4% of 1.34 a side
+  red zone: 36.4% of drives, touchdown on 63.0%
