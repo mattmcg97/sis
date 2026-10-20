@@ -535,6 +535,21 @@ def cmd_v21_pace_fit(args):
     return 0
 
 
+def cmd_ats(args):
+    import datetime as dt
+    from . import ats, nb2_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = ats.run(data, history, since, until, args.min_matches, args.min_half)
+    lines = ats.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'ats.txt')} and ats_gamers.csv")
+    return 0
+
+
 def cmd_playstyle(args):
     import datetime as dt
     from . import nb2_prior, playstyle, table_prior
@@ -1102,6 +1117,19 @@ def build_parser():
     p.add_argument("--prior", type=float, help="the tilts' shrinkage in snaps (default: the build's own)")
     p.add_argument("--out", help="where the table goes (default: pace_ahead.json beside the build)")
     p.set_defaults(func=cmd_v21_pace_fit)
+
+    p = sub.add_parser("ats", help="the spread against the moneyline: prod's pre-match and in-play lines and moneyline "
+                                   "against the real finals, the league and each gamer (against the spread, wins over "
+                                   "the moneyline), each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches to be shown (default 40)")
+    p.add_argument("--min-half", type=int, default=15, help="and in each half of its matches for the trait test (default 15)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "ats"),
+                   help="where ats.txt and ats_gamers.csv go (default eAMFCalibrator/out/ats)")
+    p.set_defaults(func=cmd_ats)
 
     p = sub.add_parser("playstyle", help="how each gamer plays by the score, on real games: the league's points still to "
                                          "come by the lead, each gamer's slope beyond it (front-runner or closes up) "

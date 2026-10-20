@@ -31,6 +31,7 @@ The code that runs:
 | `nb2_prior.py`, `glmer_prior.py` | the pre-match models |
 | `remaining.py` | points still to come against reality |
 | `playstyle.py` | how each gamer plays by the score on real games, and whether it is a trait |
+| `ats.py` | prod's lines and moneyline against the real finals, the league and gamer by gamer |
 
 ## Versions
 
@@ -2525,6 +2526,49 @@ It reads the export alone: no Snowflake and no simulation, minutes on a full exp
   `playstyle_gamers.csv` every number, a row a gamer.
 - **The checks.** On planted data a ±0.3 slope across 15 gamers is found (the halves correlate
   above 0.9) and grouped right. With nothing planted it says "not a trait".
+
+### The spread against the moneyline (`ats`)
+
+Punters have an edge on prod's moneyline and none on its handicap. This report sets both of prod's
+prices against the real finals.
+
+    python -m eAMFModel ats --snapshots eAMFCalibrator/out/scouting_playover.csv \
+        --history eAMFCalibrator/out/match_history.csv --out eAMFCalibrator/out/ats
+
+It reads the export alone: no Snowflake, no simulation.
+
+- **Pre-match.** Each match's prod quotes before the first play: `prematch_line_52` (the home margin
+  the spread is set at), `prematch_prob_52` and `prematch_prob_50`.
+  - **The line.** How often prod's favourite covers its line, which is 50% when the line is the
+    margin's median. Also the real margin less the line, its mean against its median.
+  - **The moneyline.** How often the favourite wins, against prod's moneyline.
+  - **The two against each other.** A favourite wins whenever it covers, and also when it wins by less
+    than the line: a 1.5-point favourite by exactly 1. So prod's moneyline less its cover chance
+    should be how often that happens. If it's less, the moneyline is too flat for the line it sits
+    on.
+- **In play.** The favourite at every PLAY_OVER of regulation with both prices live, against prod's
+  moneyline and its line, by price and half.
+- **Gamer by gamer.**
+  - From the gamer's side: its margin less prod's line (against the spread), how often it covered,
+    and its wins less prod's moneyline chance.
+  - Each is tested for a trait as playstyle does: alternate days apart, the halves correlated across
+    gamers, and grouped (beats prod, short of prod, as priced) only when that holds.
+- **What it gives.** Intervals are 95% over matches. `ats.txt` has the report and `ats_gamers.csv` a
+  row a gamer.
+
+**A first look off the bets file (Oct 1–18, 1,013 matches with both of prod's pre-match prices).**
+- Prod's favourite covered exactly 50.0% of the time, and the real margin less the line had mean
+  −0.66 and median −0.50. So the line sits on the margin's middle, and mean against median isn't
+  the story.
+- The favourite won 56.4% against prod's moneyline of 54.9%. Almost all of the gap is in 1–2.5 point
+  favourites: prod 51.6%, real 54.2%.
+- With a 1.5-point line the favourite also wins by exactly 1, but prod's moneyline leaves it little
+  room above the cover chance. It's as if the margin were spread over about 22 points, where the real
+  misses have an sd of about 10.
+- This fits the bets: backing prod's pre-match favourites, the book lost 3.4%; backing its underdogs,
+  it made 5.4%.
+- v2.1's kick-off moneyline comes off its own simulated scores, wins by 1 included: its favourite
+  won 57.1% against the 57.2% it said.
 
 ### Pace when ahead (`v21-pace-fit`, `--candidate v21-pace`)
 
