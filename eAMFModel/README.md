@@ -2654,6 +2654,36 @@ To do it, the sim's census (`stats`) now also keeps each path's last score of re
 the census as without it.
 
 It writes `v21_endgame.txt`, and `v21_endgame_states.csv` with a row for each late state.
+(`v21-audit` has an overtime-from-Q4-states table too, without the nudge. This report adds the nudge,
+the score that made a game level and the fork.)
+
+**Oct 1–18 (`v21_t10`, the form prior, nudged 75%; 1,154 matches):**
+- **Overtime:** real 1.6% of games (19), the sim 3.7%. The extra level games come mostly from the
+  kick after a six from 7 behind (0.35 per 100 games real, 1.53 sim) and a field goal from 3 behind
+  (1.13 against 1.84).
+- **From the same late states the sim goes to overtime more:** +2.5 to +3.0 points in every Q4 time
+  band, and +7.2 [+4.3, +9.6] from level.
+- **The bigger finding is who wins.** A side 1–3 behind with the ball in Q4 really wins 51.0% of the
+  time, but the sim gives it 9.6 points less [−14.1, −5.0]. A side 1–3 ahead with the ball gets
+  +4.7 [+1.0, +8.8] too many, and one 4–8 behind +5.1 [+1.9, +8.4]. It isn't the nudge's strength:
+  the 1–3-behind gap holds when the side with the ball is the prior's favourite (−11.8), its
+  underdog (−6.1) and near even (−8.4).
+- **The fork:**
+  - On 4th down in Q4's last 2:00, 1–2 behind or level, real sides kick 60.9% (n 115). The sim
+    kicks 45–47%, goes for it more and punts more (10% against 4%).
+  - 3 behind, real sides go for it 83% (n 47) against the sim's 75%. On downs 1–3 in the last
+    minute they kick to tie 3.7% (n 270) against the sim's 8%.
+  - Conversions 1 behind after a late six match from the late states (two 70.3% sim, 69.6% real).
+- **The bets agree** (the Oct 1–18 betting sim, Q4 moneyline, which closes with about 1:53 left).
+  The book lost about 30% on bets backing a side 1–3 behind:
+
+  | Backed side | prod | v2.1 | won |
+  |---|---|---|---|
+  | 3 behind (1,630 bets) | 0.377 | 0.393 | 0.569 |
+  | 1–2 behind (591 bets) | 0.447 | 0.458 | 0.662 |
+
+  Backing a side 3 ahead, v2.1 said 0.649 and it won 0.510. The punters pick their moments, so the
+  bets' gap is about twice the late states' one.
 
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
