@@ -160,6 +160,8 @@ BET_COLUMNS = {
 BET_FILTERS = ["UPPER(BET_TYPE) = 'SINGLE'"]
 BET_EXTRA_COLUMNS = ["OPERATOR_NAME", "CUSTOMER_NAME_HASH", "CUSTOMER_TEMPERATURE", "BET_TYPE",
                      "BET_IN_PLAY", "BET_CASHED_OUT", "CUSTOMER_WIN_LOSS"]
+# `bets money` reads a bet's customer id off this column (--customer-column) for who starts a run.
+BET_CUSTOMER_COLUMN = "CUSTOMER_NAME_HASH"
 # The lag is fitted per BET_GROUP_COLUMN (the operator) off its in-play bets
 # (BET_IN_PLAY_COLUMN = 'Yes'); the report cuts the margin by BET_VIP_COLUMN
 # and without BET_VIP_VALUE.

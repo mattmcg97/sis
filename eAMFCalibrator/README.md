@@ -2476,8 +2476,10 @@ on the other, over both, from −1 to +1.
   for all the money, another one a temperature.
 - It's fitted on the window's earlier matches (before `--money-split`, by default the middle day) and
   scored on the later ones:
-  - **Log loss.** At every PLAY_OVER prod priced the market (pre-match, its last price before the
-    kick-off), the money's price against prod's, each match counting the same.
+  - **Log loss.** At every PLAY_OVER prod priced the market, the money's price against prod's, each
+    match counting the same. Pre-match it's prod's last price before the kick-off against the money of
+    every pre-match bet: prod posts that price once, before most of the betting, and it stands till the
+    kick-off. ("Fitted on" shows how many of the points have some money.)
   - **Re-pricing.** Every later bet re-priced at it, the operator's margin kept. This is the book's
     margin change, with a 95% interval over matches.
 
@@ -2496,11 +2498,43 @@ things.
 `bets_money.txt` has the report and `bets_money_points.csv` a row a bet: its money by temperature and
 the things beside it. There's no simulation: v2.1's price comes off the sim file.
 
-A first look off the Oct 1–18 bets file:
-- Pre-match, the money moved the moneyline by +0.23 (z 2.7) and the total by +0.11, but added
-  nothing on the spread.
-- In play, the last two minutes' money moved the moneyline by +0.38 [+0.20, +0.57], still +0.32
-  [+0.16, +0.52] beside v2.1's price, and added nothing on the spread or the total.
+**Who starts a run, by customer id.** With a customer id on the bets (`--customer-column`, by default
+`config.BET_CUSTOMER_COLUMN` = `CUSTOMER_NAME_HASH`; if the bet table has no such column the report
+lists the ones that look like a customer's):
+- After each bet, the other customers' money toward its side on the same match and market over the
+  next `--run-window` seconds in play (120; 1800 pre-match). The customer's own bets are left out, so
+  one punter splitting a stake isn't a run.
+- The money comes in runs anyway (after a score, after a price move), so each bet's follow is set
+  against what the other customers' money before it and a score in the last 30 seconds say. What's
+  left is the bet's **lead**; a customer's lead is the mean over their matches, with its interval, and
+  shrunk toward 0 by how much the leads really differ.
+- **Is it a trait?** Each customer's matches split alternately in two, the halves' leads correlated
+  across customers. This is the test: near 0, whoever tops the table got there by luck.
+- **Runs started**: bets that were first on their side and had 3+ other customers follow.
+- **Do they know?** Each customer's own edge (won less prod's chance, in points) and the book's margin
+  on them, and the same on their followers' bets.
+- **Pairs**: one customer betting the side another just bet, within the window, on 3+ matches (a tip
+  shared, or one punter on two accounts), with the matches both bet and how often it went the other
+  way.
+
+It writes `bets_money_customers.csv` and `bets_money_pairs.csv` beside the report.
+
+The Oct 1–18 run:
+- **Pre-match (layer 1)** was broken: it read the money before prod's last pre-match price, which is
+  posted before the betting, so almost no point had any money and the fit ran off (betas near −8).
+  It now reads every pre-match bet's money; rerun for its numbers.
+- **In play, moneyline**: the money adds nothing to prod's price out of sample (beta +0.002
+  [−0.108, +0.106]). On the bets, its tilt is +0.075 [−0.015, +0.159] alone and +0.013 beside v2.1's
+  price, whose own gap is +0.82 [+0.53, +1.19]. What the money knows on the moneyline, v2.1 already
+  has. (An earlier scratch look said +0.38: it read bet times in microseconds as nanoseconds, so its
+  "last 120 s" was the whole match so far, and it left cash-outs out of the money.)
+- **In play, totals**: the money knows something nothing else here says: +0.135 [+0.063, +0.205]
+  alone, +0.087 [+0.015, +0.152] beside everything, Restricted money the most (+0.25 [+0.03, +0.51]
+  out of sample). v2.1 isn't in it: its total line rarely matches prod's.
+- **Spread**: nothing, pre-match or in play.
+- The re-pricing change flatters the money's price: the bets stay as they were, and shortening the
+  side the money is on pays every winner on it less whatever the money knows. Read the log loss.
+- `CUSTOMER_NAME_HASH` is empty on every Oct 1–18 bet.
 
 ### Prod's moneyline either side of every bet: `bets ml-moves`
 

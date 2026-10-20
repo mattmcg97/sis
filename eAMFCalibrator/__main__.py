@@ -557,7 +557,8 @@ def cmd_bets(args):
                 from . import bet_money
                 paths = bet_money.run(cur, out_dir, sim_file=args.sim_file, sim_candidate=args.sim_candidate,
                                       window=args.money_window,
-                                      split=dt.date.fromisoformat(args.money_split) if args.money_split else None)
+                                      split=dt.date.fromisoformat(args.money_split) if args.money_split else None,
+                                      customer_column=args.customer_column, run_after=args.run_window)
                 if paths:
                     print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "ml-moves":
@@ -1571,6 +1572,11 @@ def build_parser():
                              help="money: the candidate in --sim-file (default: its first v21 one)")
     bets_parser.add_argument("--money-window", type=float, default=120.0, metavar="SECONDS",
                              help="money: in play, the money over the last this many seconds (default 120)")
+    bets_parser.add_argument("--customer-column", metavar="COLUMN",
+                             help=f"money: the bet table's customer id column (default {config.BET_CUSTOMER_COLUMN})")
+    bets_parser.add_argument("--run-window", type=float, default=120.0, metavar="SECONDS",
+                             help="money: in play, the seconds after a customer's bet the other customers' money is read"
+                                  " over (default 120; pre-match 1800)")
     bets_parser.add_argument("--money-split", metavar="YYYY-MM-DD",
                              help="money: fit on the matches before this day, score on the rest (default: the "
                                   "window's middle day)")

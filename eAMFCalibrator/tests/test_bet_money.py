@@ -67,6 +67,20 @@ class TestMoney(unittest.TestCase):
         self.assertEqual(f["VIP"], 0.0)
         self.assertEqual(stake, 40)
 
+    def test_the_pre_match_price_against_every_pre_match_bet(self):
+        """Prod posts its pre-match price once, before the betting: the money is every pre-match bet's."""
+        start = T0 + dt.timedelta(hours=1)
+        quotes = [("M1", 50, start - dt.timedelta(hours=6), 50.0, 2.0, "", None, "open", "true"),
+                  ("M1", 50, start + dt.timedelta(seconds=30), 50.0, 2.0, "", 1, "open", "true")]
+        b = lambda i, sel, mins: bets.Bet(bet_id=i, match_code="M1", time=start - dt.timedelta(minutes=mins), market_type=1,
+                                          selection=sel, odds=2.0, stake=10.0, revenue=0.0,
+                                          extra={config.BET_IN_PLAY_COLUMN: "No", config.BET_VIP_COLUMN: "Standard"})
+        money = bm.Money([b("a", 1, 90), b("b", 1, 30), b("c", 2, 5)], {}, 120)
+        points = bm.moment_points(bets.timeline(quotes), money, None, {"M1": (21, 14)}, {"M1": start})
+        pre = next(x for x in points if not x["in_play"])
+        self.assertAlmostEqual(pre["money"]["all"], (20 - 10) / 30)
+        self.assertEqual(pre["stake"], 30)
+
 
 class TestLayers(unittest.TestCase):
 

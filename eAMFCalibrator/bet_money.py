@@ -10,7 +10,7 @@ money:
 
 beta fitted on the results by market, pre-match and in play apart, on the earlier half of the window's
 matches, and scored on the later half: at every PLAY_OVER prod priced the market (pre-match, its last price
-before the kick-off), each match counting the same, the log loss of the money's price less prod's; and
+before the kick-off against every pre-match bet's money), each match counting the same, the log loss of the money's price less prod's; and
 every later bet re-priced at it, the operator's margin kept (bets.reprice's way), the book's margin change.
 
 Layer 2, what the money knows. On the bets: the money's tilt alone, then with each thing a punter could have
@@ -19,6 +19,9 @@ game script), a score in the last 30 seconds, and v2.1's price against prod's (-
 with a v21 candidate) -- and all of them at once. Where the tilt falls when a thing comes in, the money was
 that thing; what is left is what it knows that none of them say. And what the money follows: the money
 regressed on the same things.
+
+And who starts a run (bet_runs.py): with a customer id on the bets, whether the other customers' money
+follows a customer's bets, and which customers follow which.
 
 Every interval is 95% over matches. Each bet sees only the money before it (bet time less the operator's
 lag, on prod's clock).
@@ -35,7 +38,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from . import bets, config, snowflake_io
+from . import bet_runs, bets, config, snowflake_io
 from .bet_totals import kickoff_time, message_at
 
 PLUS = {"moneyline": 50, "spread": 52, "total": 54}
@@ -175,7 +178,8 @@ def features(tl, checks, match, group, t, p, line, in_play):
 
 def moment_points(tl, money, checks, finals, kickoffs):
     """Every PLAY_OVER prod priced the home (over) side of each market, live, and each match's last
-    pre-match price: (match, group, in play, t, p, line, outcome, the money, its stake)."""
+    pre-match price, against the money of all its pre-match bets: (match, group, in play, t, p, line,
+    outcome, the money, its stake)."""
     out = []
     for (match, market), (times, quotes) in tl.items():
         group = GROUP.get(market)
@@ -194,7 +198,9 @@ def moment_points(tl, money, checks, finals, kickoffs):
         if last_pre is not None:
             y = _outcome(group, last_pre[2], final)
             if y is not None:
-                f, stake = money.at(match, group, _ts(last_pre[0]) + 1e-6, False)
+                # prod's pre-match price is posted once, before most of the betting, and stands till the
+                # kick-off: against it, the money of every pre-match bet
+                f, stake = money.at(match, group, float("inf"), False)
                 out.append(dict(match=match, group=group, in_play=False, t=last_pre[0], p=last_pre[1], line=last_pre[2],
                                 y=y, money=f, stake=stake))
         for msg, (t, p, line) in seen_msg.items():
@@ -335,6 +341,7 @@ def layer1(points, bets_pts, split, B=BOOT):
                 row = dict(group=group, in_play=in_play, label=label, cols=cols, beta=b,
                            beta_ci=[_ci(draws[:, j]) for j in range(len(cols))], train=int(train.sum()),
                            test=int(test.sum()), train_matches=len(u), test_matches=len(ut),
+                           with_money=int((X[train] != 0).any(axis=1).sum()),
                            ll=float(per.sum() / len(ut)), ll_ci=(lo, hi))
                 row.update(reprice(bets_pts, group, in_play, cols, b, split))
                 out.append(row)
@@ -426,7 +433,8 @@ def report(l1, l2, split, window):
          " the money before it; 95% intervals over matches", "",
          f"  LAYER 1, THE MONEY'S PRICE: prod's log-odds moved by beta x the money, fitted on the matches before {split},"
          " scored on the rest (each match counting the same)",
-         f"    {'market':10s} {'':9s} {'model':15s} {'money':11s} {'beta [95%]':>26s} {'points':>8s} {'log loss less prod [95%]':>30s}"
+         f"    {'market':10s} {'':9s} {'model':15s} {'money':11s} {'beta [95%]':>26s} {'fitted on':>18s} {'points':>8s}"
+         f" {'log loss less prod [95%]':>30s}"
          f" {'bets':>7s} {'as bet':>7s} {'at money':>9s} {'change [95%]':>24s}"]
     for r in l1:
         for j, c in enumerate(r["cols"]):
@@ -435,7 +443,9 @@ def report(l1, l2, split, window):
             name = "all" if c == "all" else c
             tail = ""
             if first:
-                tail = (f" {r['test']:8,d} {_iv(r['ll'] * 1000, (r['ll_ci'][0] * 1000, r['ll_ci'][1] * 1000), 2):>30s}")
+                fitted = f"{r['with_money']:,} of {r['train']:,}"
+                tail = (f" {fitted:>18s} {r['test']:8,d}"
+                        f" {_iv(r['ll'] * 1000, (r['ll_ci'][0] * 1000, r['ll_ci'][1] * 1000), 2):>30s}")
                 if r.get("stake"):
                     tail += (f" {r['bets']:7,d} {r['as_bet']:+6.2f}% {r['at_money']:+8.2f}%"
                              f" {_iv(r['change'], r['change_ci'], 2):>24s}")
@@ -444,7 +454,8 @@ def report(l1, l2, split, window):
                      f" {(ph if first and r['label'] == 'all money' else ''):9s} {model:15s} {name:11s}"
                      f" {_iv(r['beta'][j], r['beta_ci'][j]):>26s}{tail}")
     L += ["    beta: how far a side's log-odds move with all the money on it (at an even price +0.40 is about 10 points of"
-          " chance); log loss less prod in thousandths, below 0 the money's price the better; change: the book's margin"
+          " chance); fitted on: the earlier points with some money, of all of them; points: the later ones it is scored"
+          " on; log loss less prod in thousandths, below 0 the money's price the better; change: the book's margin"
           " re-priced at the money's price less as bet, in points", ""]
     L += ["  LAYER 2, WHAT THE MONEY KNOWS: the money's tilt on the bets alone, beside each thing a punter could have seen"
           " then, and beside all of them -- where it falls, the money was that thing; what is left, it knows that none of"
@@ -464,11 +475,32 @@ def report(l1, l2, split, window):
     return L
 
 
-def run(cur, out_dir, sim_file=None, sim_candidate=None, window=WINDOW, split=None):
-    """Fetch every bet of the window and prod's quotes, build the money, fit both layers; print, and write
-    the text and the bets' points."""
-    sql, params, _ = bets.bets_sql()
-    cols, raw = bets.fetch_all(cur, sql, tuple(params))
+def _customer_column(cur, column):
+    """The customer id column if the bet table has it, and a line on it if not."""
+    try:
+        cols, _ = bets.fetch_all(cur, f"SELECT * FROM {bets.bet_table()} LIMIT 0")
+    except (Exception, SystemExit) as exc:                      # noqa: BLE001 -- the probe is an extra
+        return None, f"    (reading {bets.bet_table()}'s columns failed: {exc}; no customer probe)"
+    found, like = bet_runs.find_column(cols, column)
+    if found is None:
+        return None, (f"    {bets.bet_table()} has no {column} (--customer-column); the columns that look like a customer's: "
+                      + (", ".join(like) or "none"))
+    return found, None
+
+
+def run(cur, out_dir, sim_file=None, sim_candidate=None, window=WINDOW, split=None, customer_column=None,
+        run_after=bet_runs.AFTER):
+    """Fetch every bet of the window and prod's quotes, build the money, fit both layers and the customer
+    probe; print, and write the text and the bets' points."""
+    column, note = _customer_column(cur, customer_column or config.BET_CUSTOMER_COLUMN)
+    extras = config.BET_EXTRA_COLUMNS
+    if column is not None and column not in extras:
+        config.BET_EXTRA_COLUMNS = extras + [column]
+    try:
+        sql, params, _ = bets.bets_sql()
+        cols, raw = bets.fetch_all(cur, sql, tuple(params))
+    finally:
+        config.BET_EXTRA_COLUMNS = extras
     every = [b for b in bets.to_bets(cols, raw) if b.feed_market in GROUP]
     matches = sorted({b.match_code for b in every})
     print(f"  {len(every):,} bets on {len(matches):,} matches ({sum(b.in_play for b in every):,} in play)")
@@ -498,6 +530,12 @@ def run(cur, out_dir, sim_file=None, sim_candidate=None, window=WINDOW, split=No
     l1 = layer1(points, bpts, split)
     l2 = layer2(bpts)
     lines = report(l1, l2, split, window)
+    runs = None
+    if column is not None:
+        runs = bet_runs.analyse(every, joined, lags, column, checks, after=run_after)
+        lines += [""] + bet_runs.report(runs)
+    else:
+        lines += ["", "  WHO STARTS A RUN, by customer id", note]
     print("\n".join(lines))
     os.makedirs(out_dir, exist_ok=True)
     path_txt = os.path.join(out_dir, "bets_money.txt")
@@ -506,4 +544,11 @@ def run(cur, out_dir, sim_file=None, sim_candidate=None, window=WINDOW, split=No
     flat = [dict({k: v for k, v in x.items() if k != "money"}, **{f"money_{s}": v for s, v in x["money"].items()})
             for x in bpts]
     bets.write_csv(path_csv, flat, list(dict.fromkeys(k for r in flat for k in r)))
+    if runs is not None and runs.get("customers") is not None:
+        rows = bet_runs.customer_rows(runs)
+        bets.write_csv(os.path.join(out_dir, "bets_money_customers.csv"), rows)
+        bets.write_csv(os.path.join(out_dir, "bets_money_pairs.csv"), runs["pairs"],
+                       ["leader", "follower", "followed", "together", "back"])
+        print(f"  -> {out_dir}/bets_money_customers.csv ({len(rows):,} customers) and bets_money_pairs.csv"
+              f" ({len(runs['pairs']):,} pairs)")
     return path_txt, path_csv
