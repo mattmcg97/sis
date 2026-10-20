@@ -49,13 +49,13 @@ from collections import defaultdict, deque
 
 import numpy as np
 
+from .drives import STATS
+
 RESULT_LAG = dt.timedelta(minutes=36)
 DRIVE_WINDOWS = (15, 50)
-DRIVE_STATS = ("drives", "td", "fg", "fg_miss", "punt", "downs", "turnover", "half_end", "rz_trips", "rz_td",
-               "drive_plays", "start_field", "snaps", "gains", "yards", "success", "big20", "big40", "loss",
-               "third_n", "third_conv", "fourth_n", "fourth_conv", "seconds")
+DRIVE_STATS = STATS                      # xgb/drives.py's counts, in its order
 # rate name -> (numerator, denominator); "points" and "matches" are kept beside the drive stats
-DRIVE_RATES = {"ppd": ("points", "drives"), "td": ("td", "drives"), "fg": ("fg", "drives"),
+DRIVE_RATES = {"ppd": ("points", "drives"), "dppd": ("drive_pts", "drives"), "td": ("td", "drives"), "fg": ("fg", "drives"),
                "punt": ("punt", "drives"), "turnover": ("turnover", "drives"), "downs": ("downs", "drives"),
                "rz": ("rz_trips", "drives"), "rz_td": ("rz_td", "rz_trips"), "plays": ("drive_plays", "drives"),
                "start": ("start_field", "drives"), "ypp": ("yards", "gains"), "success": ("success", "snaps"),

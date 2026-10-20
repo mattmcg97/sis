@@ -73,20 +73,20 @@ def side_frame(d, feats):
     flip = {"h2h_margin", "rating_margin"} | {c for c in match_cols if c.startswith("exp_margin_")}
     out = []
     for own, opp, home in (("p1", "p2", 1), ("p2", "p1", 0)):
-        x = pd.DataFrame({"is_home": home}, index=d.index)
+        x = {"is_home": pd.Series(home, index=d.index)}
         for c in side_cols:
             x[f"own_{c}"] = d[f"{own}_{c}"]
             x[f"opp_{c}"] = d[f"{opp}_{c}"]
         for c in match_cols:
             if c == "h2h_wins_5" and not home:
-                x[c] = np.nan                      # the deck's count is PLAYER_1's; no away twin
+                x[c] = pd.Series(np.nan, index=d.index)   # the deck's count is PLAYER_1's; no away twin
             else:
                 x[c] = -d[c] if (c in flip and not home) else d[c]
         if "glmer_p1" in feats:
             x["glmer_own"], x["glmer_opp"] = d[f"glmer_{own}"], d[f"glmer_{opp}"]
         x["y"] = d["s1"] if home else d["s2"]
-        x["code"], x["home"] = d["code"], home
-        out.append(x)
+        x["code"], x["home"] = d["code"], pd.Series(home, index=d.index)
+        out.append(pd.DataFrame(x))
     return pd.concat(out, ignore_index=True)
 
 
@@ -120,7 +120,7 @@ def walk(d, feats, since, until, refit_days, log):
         str_, sva, ste = side_frame(tr, feats), side_frame(va, feats), side_frame(test, feats)
         xcols = [c for c in str_.columns if c not in ("y", "code", "home")]
         side, r_side = fit_one(str_[xcols], str_.y, sva[xcols], sva.y)
-        ste["mu"] = side.predict(xgb.DMatrix(ste[xcols]))
+        ste = ste.assign(mu=side.predict(xgb.DMatrix(ste[xcols])))
         # the margin and total models, one row a match
         mcols = list(feats)
         marg, r_m = fit_one(tr[mcols], tr.s1 - tr.s2, va[mcols], va.s1 - va.s2)

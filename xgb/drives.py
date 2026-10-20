@@ -16,7 +16,12 @@ of play it was (eAMFCalibrator/scouting.py's classify_play). Read here:
   drives   each side's runs of plays with the ball, ended by a touchdown, a field goal (made or
            missed), a punt, a turnover on downs, a turnover, or the half: their outcomes, red-zone
            trips (a snap from the opponent's 20 or closer) and touchdowns from them, the plays
-           they took and where they started
+           they took, where they started and the points they scored
+
+Scores are read off the scoreboard, not the play's messages: the feed's touchdown message can land
+after the play's PLAY_OVER, which files the play as a scrimmage one. A snap is a touchdown when its
+side's score has risen 6 or more by the next snap; a drive scored what its side's score rose from
+its first snap to the next possession (a conversion included).
   prod     prod's last pre-match quotes (moneyline, spread and total), as the export carries them
 
 Counts and sums only, so features.py can turn any window of matches into rates.
@@ -30,13 +35,14 @@ from collections import Counter
 
 KEEP = ("match_code", "message", "period", "clock_seconds", "play_kind", "team_a_side", "offense", "down",
         "distance", "field_position", "play_messages", "final_p1", "final_p2", "home_handle", "away_handle",
+        "score_p1", "score_p2", "score_p1_at_start", "score_p2_at_start",
         "prematch_line_52", "prematch_prob_52", "prematch_line_54", "prematch_prob_54", "prematch_prob_50")
 POSSESSION_KINDS = ("SCRIMMAGE", "TURNOVER_ON_DOWNS", "FIELD_GOAL", "PUNT", "TOUCHDOWN")
 SNAP_KINDS = ("SCRIMMAGE", "TURNOVER_ON_DOWNS")
 RED_ZONE = 80
 STATS = ("drives", "td", "fg", "fg_miss", "punt", "downs", "turnover", "half_end", "rz_trips", "rz_td",
          "drive_plays", "start_field", "snaps", "gains", "yards", "success", "big20", "big40", "loss",
-         "third_n", "third_conv", "fourth_n", "fourth_conv", "seconds")
+         "third_n", "third_conv", "fourth_n", "fourth_conv", "seconds", "drive_pts")
 
 
 def _i(v):
@@ -64,39 +70,54 @@ def _scorer(row, prefix):
     return None
 
 
-def snaps(rows, out):
+def _board(r, a_side, at_start=True):
+    """{TEAM_A: score, TEAM_B: score} at a row's PLAY_STARTED (or its PLAY_OVER), or None."""
+    p1 = _i(r["score_p1_at_start" if at_start else "score_p1"])
+    p2 = _i(r["score_p2_at_start" if at_start else "score_p2"])
+    if p1 is None or p2 is None:
+        return None
+    return {"TEAM_A": p1, "TEAM_B": p2} if a_side == "home" else {"TEAM_A": p2, "TEAM_B": p1}
+
+
+def _other(team):
+    return "TEAM_B" if team == "TEAM_A" else "TEAM_A"
+
+
+def snaps(rows, out, a_side):
     """Add every scrimmage snap's outcome to out[team]."""
     for a, b in zip(rows, rows[1:]):
         if a["play_kind"] not in SNAP_KINDS or a["offense"] not in out:
             continue
         down, dist, y = _i(a["down"]), _i(a["distance"]), _i(a["field_position"])
         pa, pb = _i(a["period"]), _i(b["period"])
-        if down is None or not dist or y is None or pa is None or pa != pb:
+        if down is None or not dist or y is None or pa is None or pb is None or _half(pa) != _half(pb):
             continue
-        s = out[a["offense"]]
+        off, dfn = a["offense"], _other(a["offense"])
+        s = out[off]
+        sa, sb = _board(a, a_side), _board(b, a_side)
+        scored = sb[off] - sa[off] if sa and sb else 0
+        conceded = sb[dfn] - sa[dfn] if sa and sb else 0
         bk = b["play_kind"]
         turnover = False
-        if bk == "TOUCHDOWN":
-            scorer = _scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
-            if scorer == a["offense"]:
-                gain = 100 - y
-            else:
-                turnover, gain = True, None
-        elif bk in POSSESSION_KINDS:
+        if scored >= 6 or (bk == "TOUCHDOWN" and (_scorer(b, "TOUCHDOWN_TEAM") or b["offense"]) == off):
+            gain = 100 - y
+        elif conceded >= 6 or bk == "TOUCHDOWN":
+            turnover, gain = True, None    # a defensive touchdown
+        elif bk in POSSESSION_KINDS and pa == pb:
             by = _i(b["field_position"])
             if by is None:
                 continue
-            if b["offense"] == a["offense"]:
+            if b["offense"] == off:
                 gain = by - y
             elif a["play_kind"] == "TURNOVER_ON_DOWNS" or down == 4:
                 gain = 100 - by - y        # a failed 4th down: the other side takes over where it ended
             else:
                 turnover, gain = True, None
         else:
-            continue                       # a kick-off or conversion next: the half or a score in between
+            continue                       # a kick-off or conversion next with no score: the half
         ca, cb = _f(a["clock_seconds"]), _f(b["clock_seconds"])
         s["snaps"] += 1
-        if ca is not None and cb is not None and 0 <= ca - cb <= 60:
+        if pa == pb and ca is not None and cb is not None and 0 <= ca - cb <= 60:
             s["seconds"] += ca - cb
         success = False
         if not turnover:
@@ -124,46 +145,67 @@ def _team_of(r):
     return r["offense"]
 
 
-def _close(run, s, turnover_next):
-    """Add one drive's outcome to its side's counts."""
-    team = run[0][1]
-    last = run[-1][0]
+def _close(run, s, turnover_next, rows, a_side, finals):
+    """Add one drive's outcome to its side's counts. `run` is [(row index, row, team)]."""
+    team = run[0][2]
+    j, last, _ = run[-1]
     kind = last["play_kind"]
     s["drives"] += 1
-    plays = [r for r, _ in run if r["play_kind"] in SNAP_KINDS]
+    plays = [r for _, r, _ in run if r["play_kind"] in SNAP_KINDS]
     s["drive_plays"] += len(plays)
-    start = _i(run[0][0]["field_position"])
+    start = _i(run[0][1]["field_position"])
     s["start_field"] += start if start is not None else 25
     fields = [_i(r["field_position"]) for r in plays if _i(r["field_position"]) is not None]
     red = bool(fields) and max(fields) >= RED_ZONE
     s["rz_trips"] += red
-    if kind == "TOUCHDOWN":
-        if (_scorer(last, "TOUCHDOWN_TEAM") or team) == team:
-            s["td"] += 1
-            s["rz_td"] += red
-        else:
-            s["turnover"] += 1             # a defensive touchdown
+    # the scoreboard from the drive's first snap to the next play that is not its conversion
+    before = _board(run[0][1], a_side)
+    k = j + 1
+    while k < len(rows) and rows[k]["play_kind"] == "CONVERSION":
+        k += 1
+    after = _board(rows[k], a_side) if k < len(rows) else finals
+    pts = after[team] - before[team] if before and after else 0
+    against = after[_other(team)] - before[_other(team)] if before and after else 0
+    if not before or not after:            # no scoreboard: the play kinds alone
+        if kind == "TOUCHDOWN" and (_scorer(last, "TOUCHDOWN_TEAM") or team) == team:
+            pts = 7
+        elif kind == "FIELD_GOAL" and "FIELD_GOAL_GOOD" in (last.get("play_messages") or ""):
+            pts = 3
+        elif kind == "TOUCHDOWN":
+            against = 7
+    s["drive_pts"] += max(pts, 0)
+    if pts >= 6:
+        s["td"] += 1
+        s["rz_td"] += red
+    elif pts >= 3:
+        s["fg"] += 1
+    elif against >= 6:
+        s["turnover"] += 1                 # a defensive touchdown
     elif kind == "FIELD_GOAL":
-        s["fg" if "FIELD_GOAL_GOOD" in (last.get("play_messages") or "") else "fg_miss"] += 1
+        s["fg_miss"] += 1
     elif kind == "PUNT":
         s["punt"] += 1
-    elif kind == "TURNOVER_ON_DOWNS":
-        s["downs"] += 1
+    elif kind == "TURNOVER_ON_DOWNS" or (turnover_next and _i(last["down"]) == 4):
+        s["downs"] += 1                    # flagged, or a 4th down the other side took over from
     elif turnover_next:
         s["turnover"] += 1                 # the other side had the next snap of the half
     else:
         s["half_end"] += 1                 # the half ran out (or a safety)
 
 
-def drives(rows, out):
+def drives(rows, out, a_side, finals):
     """Add each side's drives to out[team]: runs of its possession rows, each ended by a touchdown, a
     kick, a turnover on downs, the other side's next snap of the half, a kick-off or the half."""
     run, half = [], None
-    for r in rows:
+
+    def close(turnover_next):
+        _close(run, out[run[0][2]], turnover_next, rows, a_side, finals)
+
+    for i, r in enumerate(rows):
         kind, period = r["play_kind"], _i(r["period"])
         if kind == "KICKOFF" or period is None:
             if run:
-                _close(run, out[run[0][1]], False)
+                close(False)
                 run = []
             continue
         if kind not in POSSESSION_KINDS:
@@ -171,24 +213,24 @@ def drives(rows, out):
         h = _half(period)
         if kind == "TOUCHDOWN":            # ends the drive in progress, whoever scored
             if run and h == half:
-                run.append((r, run[0][1]))
-                _close(run, out[run[0][1]], False)
+                run.append((i, r, run[0][2]))
+                close(False)
             run = []
             continue
         team = _team_of(r)
         if team not in out:
             continue
-        if run and (team != run[0][1] or h != half):
-            _close(run, out[run[0][1]], team != run[0][1] and h == half)
+        if run and (team != run[0][2] or h != half):
+            close(team != run[0][2] and h == half)
             run = []
         if not run:
             half = h
-        run.append((r, team))
+        run.append((i, r, team))
         if kind in ("FIELD_GOAL", "PUNT", "TURNOVER_ON_DOWNS"):
-            _close(run, out[team], False)
+            close(False)
             run = []
     if run:
-        _close(run, out[run[0][1]], False)
+        close(False)
 
 
 def match_stats(code, rows):
@@ -198,10 +240,12 @@ def match_stats(code, rows):
     if a_side is None:
         return None
     out = {"TEAM_A": Counter(dict.fromkeys(STATS, 0)), "TEAM_B": Counter(dict.fromkeys(STATS, 0))}
-    snaps(rows, out)
-    drives(rows, out)
     home, away = ("TEAM_A", "TEAM_B") if a_side == "home" else ("TEAM_B", "TEAM_A")
     first = rows[0]
+    f1, f2 = _i(first.get("final_p1")), _i(first.get("final_p2"))
+    finals = {home: f1, away: f2} if f1 is not None and f2 is not None else None
+    snaps(rows, out, a_side)
+    drives(rows, out, a_side, finals)
     row = {"match_code": code, "home": first.get("home_handle", ""), "away": first.get("away_handle", ""),
            "final_p1": first.get("final_p1", ""), "final_p2": first.get("final_p2", "")}
     for k in ("prematch_line_52", "prematch_prob_52", "prematch_line_54", "prematch_prob_54", "prematch_prob_50"):
@@ -241,6 +285,7 @@ def run(export, out_path, verbose=True):
             for t in ("h", "a"):
                 for k in STATS:
                     league[k] += row[f"{t}_{k}"]
+            league["final"] += (_f(row["final_p1"]) or 0) + (_f(row["final_p2"]) or 0)
             if verbose and n % 2000 == 0:
                 print(f"  {n:,} matches", flush=True)
 
@@ -269,6 +314,8 @@ def run(export, out_path, verbose=True):
           f"{league['fourth_conv'] / max(league['fourth_n'], 1):.1%} of {league['fourth_n'] / games:.2f} a side")
     summary.append(f"  red zone: {league['rz_trips'] / d:.1%} of drives, touchdown on "
                    f"{league['rz_td'] / max(league['rz_trips'], 1):.1%}")
+    summary.append(f"  points: {league['drive_pts'] / d:.2f} a drive, {league['drive_pts'] / games:.1f} a side "
+                   f"from drives, of {league['final'] / games:.1f} on the scoreboard")
     print("\n" + "\n".join(summary))
     with open(os.path.splitext(out_path)[0] + ".txt", "w", encoding="utf-8") as fh:
         fh.write(f"xgb.drives off {export}\n" + "\n".join(summary) + "\n")

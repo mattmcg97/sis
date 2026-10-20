@@ -154,6 +154,65 @@ python -m xgb.backtest --features xgb/out/features.csv --since 2026-07-01 \
 - **v21 tables.** Every variant is written as a prior table
   (`priors/xgb_<set>.csv`) that v21 reads with `--v21-prior-model`.
 
+### Step 2 results (20 Oct 2026; play-by-play from 27 Apr, 97% of matches from June)
+
+**1 Aug – 18 Oct, 6,313 matches:**
+
+| | log loss | margin RMSE | total RMSE |
+|---|---|---|---|
+| glmer | 0.6727 | 9.447 | 12.475 |
+| XGBoost, results only | 0.6789 | 9.513 | 12.477 |
+| XGBoost, results + drives | 0.6792 | 9.515 | 12.483 |
+| XGBoost, stacked | 0.6739 | 9.456 | 12.442 |
+| XGBoost, stacked + drives | 0.6741 | 9.461 | 12.444 |
+
+- **The drive and snap rates add nothing.** With them, the results-only model is no better
+  (+0.0003 log loss) and neither is the stacked one (+0.0002). In the stacked model no drive rate
+  carries more than 0.6% of the margin model's gain. Over these weeks the stacked models trail
+  glmer on the moneyline (+0.0012, t +1.8) and beat it on totals (t −2.2).
+- **On the deck's own measure, glmer already beats prod's pre-match lines** by what CV3 claimed.
+  On 6,162 matches prod quoted before kick-off:
+
+  | | total MAE | spread MAE | moneyline log loss |
+  |---|---|---|---|
+  | prod | 10.041 | 7.570 | 0.6847 (its own price) |
+  | glmer | 9.810 (−2.3%) | 7.423 (−1.9%) | 0.6738 |
+  | XGBoost, stacked | 9.799 | 7.436 | 0.6751 |
+
+  The deck's CV3 took total MAE −2.2% and spread −1.2% against its opening line. Whatever prod
+  has on us, it isn't in the pre-match expectation.
+
+### Pace (`pace.py`)
+
+```bash
+python -m xgb.pace --features xgb/out/features.csv --drives xgb/data/drive_stats.csv --since 2026-08-01
+```
+
+Should a pre-match model put out a pace beside expected points? Three checks, 1 Aug – 18 Oct:
+
+1. **Pace is a gamer's trait.** Split-half (odd v even ISO weeks, 74 gamers with 30+ matches in
+   each), correlations are:
+   - drives in his matches: 0.86;
+   - snaps: 0.86;
+   - seconds a snap: 0.89.
+
+   That's about as steady as points per drive (0.84). The gamers spread by 0.7 drives a match
+   about a mean of 10.1.
+2. **It's mostly in the expected points already.** A match's foreseen pace correlates 0.62 with
+   glmer's expected total. The two gamers' drives over their last 50 matches call the match's
+   drives with r 0.26 (one match's drives vary a lot: sd 2.7). It's calibrated: real drives run
+   9.4 → 11.3 across the foreseen fifths, 9.6 → 11.3.
+3. **It widens the margin.** Given glmer's expected points, the margin's sd about glmer runs 8.6
+   (slowest fifth) to 10.3 (fastest), t +5.4 for the squared miss net of the expected total. The
+   total's sd follows the expected total (t +5.1), not pace (t +1.5). On the moneyline, scaling
+   the margin's sd by the square root of the foreseen drives is worth −0.0001 (t −1.4). It matters
+   more for spreads and lines away from the middle, where the margin's spread decides the price.
+
+So pace belongs in the pre-match output as the margin's spread, not the mean. The sim makes its
+margin's spread from each gamer's pace profile. Before adding a pace output, check whether v21's
+kick-off distributions already widen 8.6 → 10.3 across these fifths. If they do, the profiles
+carry it.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -161,5 +220,9 @@ python -m xgb.backtest --features xgb/out/features.csv --since 2026-07-01 \
   `backtest_report.txt`, `backtest_matches.csv` (every match, every method's expected margin and
   total) and `priors/xgb_<set>.csv`.
 - `drives.py`: the scouting export reduced to drive and snap stats per match
-  (`python -m xgb.drives`).
+  (`python -m xgb.drives`). Scores come off the scoreboard: the feed's touchdown message can land
+  after its play's PLAY_OVER and file the play as a scrimmage. `data/drive_stats.csv` (pushed 20
+  Oct) was made before that fix. Its touchdown, turnover and half-over counts are off; its drives,
+  snaps, yards, pace and points per drive (off the final score) are not.
+- `pace.py`: the three pace checks.
 - `tests/`: `python -m unittest xgb.tests.test_drives`.
