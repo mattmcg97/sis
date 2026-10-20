@@ -213,6 +213,71 @@ margin's spread from each gamer's pace profile. Before adding a pace output, che
 kick-off distributions already widen 8.6 → 10.3 across these fifths. If they do, the profiles
 carry it.
 
+### Pace and efficiency as the pre-match model's outputs (`pace_eff.py`)
+
+```bash
+python -m xgb.pace_eff --features xgb/out/features.csv --drives xgb/data/drive_stats.csv \
+    --since 2026-07-01 --score-from 2026-08-01
+```
+
+This pre-match model puts out pace and efficiency, then prices off them. It's walk-forward,
+refitted weekly on 180 days, with rows weighted as glmer's (60-day half-life):
+- **Pace:** the match's expected drives. It's a ridge regression of each match's drives on each
+  gamer's and team's pace effects.
+- **Efficiency:** each side's touchdowns and field goals a drive. These are Poisson regressions
+  with the side's drives as exposure, on the side's attack and the opponent's defence (ridge-shrunk
+  as random effects), both teams, home, and glmer's form and experience covariates. The gamer
+  effects' sd (0.25) is chosen on July, the calibration span, out of 0.15, 0.25 and 0.35.
+- **Points:** drives / 2 × (7 × touchdowns a drive + 3 × field goals a drive).
+- **Spread:** a side's points sum its drives' 7, 3 or 0, so each side's variance is drives / 2 ×
+  (49 p_td + 9 p_fg − ppd²). One scale factor, fitted on July, sets the margin's and the total's sd.
+
+It's set against glmer and against a points-only model fitted the same way. Touchdowns come from
+the final score less the field goals the feed saw (the drive table pushed on 20 Oct undercounts
+them).
+
+**Scored 1 Aug – 18 Oct (6,313 matches), each against glmer, match by match:**
+
+| | log loss | margin sq err | total sq err | margin RPS | total RPS |
+|---|---|---|---|---|---|
+| points only (same fitting as pace × efficiency) | +0.0002 (t +0.5) | +0.01 | +0.20 | +0.0017 | +0.0060 |
+| points only, the matches with play-by-play | +0.0017 (t +2.4) | +0.33 | +0.69 | +0.0124 | +0.0191 |
+| pace × efficiency | +0.0073 (t +5.4) | +1.62 (t +5.6) | +2.83 (t +5.4) | +0.0548 | +0.0450 |
+| glmer's points, sd by pace | −0.0000 | same | same | **−0.0055 (t −4.4)** | **−0.0078 (t −4.8)** |
+| glmer's points, sd by pace × efficiency | −0.0001 (t −1.0) | same | same | **−0.0060 (t −4.5)** | **−0.0090 (t −5.2)** |
+
+- **Pace × efficiency as the mean loses to points.**
+  - Its expected margins are squeezed (sd 1.5 against glmer's 2.2) and track the results less
+    well (r 0.19 against 0.23).
+  - Less data explains only a sixth of it: points alone on the play-by-play matches cost +0.0017.
+  - The rest is the split itself. A match's drive count and how its drives go pull against each
+    other, and a side's touchdowns run tighter than Poisson (variance / mean 0.59). So a
+    predicted pace times a predicted rate adds noise that the points already avoid.
+- **Pace and the touchdown / field-goal mix are worth having for the spread.** With glmer's points
+  as the means, a spread from pace and efficiency improves the whole distribution:
+  - margin RPS −0.0060 (t −4.5);
+  - total RPS −0.0090 (t −5.2);
+  - the moneyline level (only the means set the favourite).
+
+  Across the fifths of foreseen pace (9.0 to 11.3 drives), the real margin sd about the means runs
+  8.75 → 10.28, and this model's sd 8.70 → 9.81.
+
+So the pre-match model should put out three things:
+- expected points for the means (glmer's, as now);
+- expected drives;
+- each side's touchdown and field-goal rate a drive, for the spread.
+
+`pace_eff_prior.csv` holds all of them per match:
+- `Pred_P1_Points` / `Pred_P2_Points` (glmer's);
+- `exp_drives`;
+- `P1/P2_td_per_drive` and `P1/P2_fg_per_drive`;
+- `margin_sd` and `total_sd`;
+- `p_home`.
+
+v21 reads the points (`--v21-prior-model`). Its spread comes from its own simulation and player
+profiles, so to use these it would take the match's expected drives as its pace in place of each
+gamer's long-run profile.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -225,4 +290,6 @@ carry it.
   Oct) was made before that fix. Its touchdown, turnover and half-over counts are off; its drives,
   snaps, yards, pace and points per drive (off the final score) are not.
 - `pace.py`: the three pace checks.
+- `pace_eff.py`: the pace-and-efficiency pre-match model and its comparison
+  (`python -m xgb.pace_eff`), writing `pace_eff_prior.csv`.
 - `tests/`: `python -m unittest xgb.tests.test_drives`.
