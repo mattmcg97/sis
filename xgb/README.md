@@ -278,6 +278,23 @@ v21 reads the points (`--v21-prior-model`). Its spread comes from its own simula
 profiles, so to use these it would take the match's expected drives as its pace in place of each
 gamer's long-run profile.
 
+### Does v21 already widen with pace? (`v21_pace.py`)
+
+`v21-report` now writes each match's kick-off spread to `v21_matches.csv`:
+- `sim_margin_sd` and `sim_total_sd`, from v21's own kick-off distributions;
+- `prior_margin_sd` and `prior_total_sd`, from the prior's score model, where it has one.
+
+`v21_pace.py` joins that with `pace_eff_prior.csv`. By fifth of expected drives, it sets the real
+misses' spread against v21's own spread. It also regresses each match's squared miss about v21's
+mean on v21's own variance and the expected drives. A drives term clear of zero is spread v21's
+snap draws are missing.
+
+```bash
+python -m eAMFModel v21-report --since 2026-09-01 --until 2026-10-18 --nudge --nudge-share 0.75 \
+    --state-paths 0 --out eAMFCalibrator/out_v21_pace
+python -m xgb.v21_pace --v21 eAMFCalibrator/out_v21_pace/v21_matches.csv --pace xgb/out/pace_eff/pace_eff_prior.csv
+```
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -292,4 +309,5 @@ gamer's long-run profile.
 - `pace.py`: the three pace checks.
 - `pace_eff.py`: the pace-and-efficiency pre-match model and its comparison
   (`python -m xgb.pace_eff`), writing `pace_eff_prior.csv`.
+- `v21_pace.py`: v21's kick-off spread by pace against the real one (`python -m xgb.v21_pace`).
 - `tests/`: `python -m unittest xgb.tests.test_drives`.

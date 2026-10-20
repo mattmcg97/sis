@@ -329,6 +329,18 @@ def _margin_pmf(book):
     return np.arange(len(pmf)) - v13.MARGIN_MAX, pmf
 
 
+def _spreads(book):
+    """(margin sd, total sd) of a book, or blanks when there is none."""
+    if book is None:
+        return "", ""
+    mg, mp = _margin_pmf(book)
+    tp = np.asarray(book[1], float)
+    tk = np.arange(len(tp))
+    m_mu, t_mu = float((mg * mp).sum()), float((tk * tp).sum())
+    return (round(float(np.sqrt(((mg - m_mu) ** 2 * mp).sum())), 3),
+            round(float(np.sqrt(((tk - t_mu) ** 2 * tp).sum())), 3))
+
+
 def _pit(margins, pmf, y, u):
     """Where the real margin y falls in the distribution, a tie within its own mass split by u."""
     return float(pmf[margins < y].sum() + u * pmf[margins == y].sum())
@@ -597,12 +609,14 @@ def write_csv(path, out):
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["MATCH_CODE", "start", "home", "away", "home_team", "away_team", "input_home", "input_away",
-                    "sim_home", "sim_away", "real_home", "real_away", "sim_p_home"])
+                    "sim_home", "sim_away", "real_home", "real_away", "sim_p_home",
+                    "sim_margin_sd", "sim_total_sd", "prior_margin_sd", "prior_total_sd"])
         for x in out["results"]:
             (g1, g2), (t1, t2) = x["people"]
             w.writerow([x["code"], x["row"].get("SCHEDULED_START_TIME_UTC", ""), g1, g2, t1, t2,
                         *(round(v, 3) for v in x["means"]), *(round(v, 3) for v in x["kick"]),
-                        *x["finals"], round(x["p_home"], 4)])
+                        *x["finals"], round(x["p_home"], 4),
+                        *_spreads(x.get("book")), *_spreads(x.get("prior_book"))])
 
 
 def write_states_csv(path, out):

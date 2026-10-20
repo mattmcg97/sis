@@ -1034,7 +1034,21 @@ class TestReport(unittest.TestCase):
             v21_report.write_states_csv(os.path.join(d, "s.csv"), out)
             with open(os.path.join(d, "s.csv"), newline="") as fh:
                 states = list(csv.DictReader(fh))
+            with open(os.path.join(d, "m.csv"), newline="") as fh:
+                self.matches_csv = list(csv.DictReader(fh))
         return out, states
+
+    def test_the_matches_csv_carries_each_books_spread(self):
+        out, _ = self.run_report()
+        rows = {r["MATCH_CODE"]: r for r in self.matches_csv}
+        for x in out["results"]:
+            r = rows[x["code"]]
+            mg, mp = v21_report._margin_pmf(x["book"])
+            mu = (mg * mp).sum()
+            self.assertAlmostEqual(float(r["sim_margin_sd"]), np.sqrt(((mg - mu) ** 2 * mp).sum()), places=2)
+            self.assertGreater(float(r["sim_total_sd"]), 0)
+            self.assertGreater(float(r["prior_margin_sd"]), 0)      # the prior's own score model
+        self.assertEqual(v21_report._spreads(None), ("", ""))
 
     def test_the_nudge_meets_the_inputs(self):
         m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
