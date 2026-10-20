@@ -2456,6 +2456,39 @@ Output:
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
 
+### Prod's moneyline either side of every bet: `bets ml-moves`
+
+```bash
+python -m eAMFCalibrator bets ml-moves --since 2026-10-01 --until 2026-10-19 --min-bets 30
+```
+
+Where the money comes on prod's moneyline, at what prices, and how prod's price moved either side of
+each bet. No candidate is priced and nothing is simulated: it reads the bets and prod's quotes alone.
+
+- **The price a bet read.** Prod's chance of the side backed at the bet time less the operator's lag,
+  pre-match at the bet time.
+- **Where the money came.** Bets, stake, its share and the book's margin. These are cut by prod's
+  chance of the side backed, the customer temperature, the stake, the operator and (in play) the
+  moment, pre-match and in play apart.
+- **The path.** Prod's chance of the side at −300, −120, −60, −30 and −10 s before the moment the bet
+  was priced, and +10, +30, +60, +120 and +300 s after, less the chance it was struck at.
+  - After the bet, above 0 means prod shortened the side: it moved the bettor's way, and the bet beat
+    the price.
+  - Before it, above 0 means the side had drifted into the bet (the bettor faded a move), and below 0
+    that it had shortened (they followed one).
+  - A move is a point of chance or more; less and the price held.
+  - Each offset is a mean a bet, with 2 standard errors clustered by match, and a mean by stake.
+- **The book's margin by what prod did** in the 60 s after the bet (moved their way, held, moved
+  against) and in the 60 s before (followed, still, faded).
+- **In play, with no score in the 60 s after.** Prod re-pricing the same state: the drift a bettor was
+  ahead of, the part a model could have had. A move across a score is the game.
+- **Pre-match, the closing-line value.** The side's chance at the kick-off less at the bet, and the
+  margin on the bets that beat the close, held, or were beaten by it.
+- **The customers with the most moneyline stake**, with their margin, their +60 s move and their
+  closing-line value.
+
+`bets_ml_moves.txt` has the report and `bets_ml_moves.csv` a row a bet, with every offset.
+
 ### Restricted accounts on totals: `bets totals-moves`
 
 ```bash

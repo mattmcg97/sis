@@ -553,6 +553,11 @@ def cmd_bets(args):
                 from . import totals_signals
                 path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
+            elif args.action == "ml-moves":
+                from . import bet_ml_moves
+                paths = bet_ml_moves.run(cur, out_dir, min_bets=args.min_bets)
+                if paths:
+                    print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "totals-moves":
                 from . import bet_totals
                 paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets,
@@ -1491,7 +1496,7 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers",
+                                      "totals-moves", "ml-moves", "totals-signals", "sessions", "favourite", "ml-losers",
                                       "rematches", "inference"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
@@ -1527,6 +1532,10 @@ def build_parser():
                                   "half (pace, time between plays, clock per play, drives) against prod's "
                                   "total there and where the totals money went next, by temperature "
                                   "(out/totals_signals.csv); "
+                                  "ml-moves: prod's moneyline price either side of every moneyline bet -- where "
+                                  "the money came, at what prices, and whether prod moved the bettors' way after, "
+                                  "a score in between or not, and pre-match the closing-line value "
+                                  "(out/bets_ml_moves.txt and .csv; no candidate priced); "
                                   "totals-moves: prod's totals line before and after every totals bet, "
                                   "restricted accounts against everyone else, and whether each "
                                   "candidate already leaned their way (out/bets_totals_moves.html); "
