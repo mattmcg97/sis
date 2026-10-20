@@ -6045,6 +6045,39 @@ class TestV21React(unittest.TestCase):
         self.assertEqual(seen, [None, 0.75, 0.6])
         self.assertIn("the gap shrink, the prior's expected margin x 0.75", out.getvalue())
 
+    def test_the_name_picks_pace_when_ahead(self):
+        """v21-pace: v21's build with each gamer's pace ahead (pace_ahead.json beside it), stopped before any
+        fetching where the table is missing."""
+        import importlib
+        from .. import bets, snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("pace"))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-pace"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, True])
+        self.assertIn("v21-pace: pace when ahead", out.getvalue())
+        with mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "pace_table", side_effect=SystemExit("no table")) as table:
+            with self.assertRaises(SystemExit):
+                bets.check_models(["MODEL:v21-pace"])
+            bets.check_models(["MODEL:v21"])
+        self.assertEqual(table.call_count, 1)
+
 
     def test_a_betting_simulation_prices_the_bets_moments_alone(self):
         """config.BET_MOMENTS (bets.run's): v21 is handed the moments and caches them apart; --all-moments

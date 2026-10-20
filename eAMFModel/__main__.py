@@ -515,6 +515,57 @@ def cmd_v21_react_fit(args):
     return 0
 
 
+def cmd_v21_pace_fit(args):
+    import datetime as dt
+    from . import nb2_prior, v21_pace, v21_stream
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts}), as the build read them")
+    history = nb2_prior.load_history(args.history)
+    model_file = v21_stream._model_file(args.model)
+    until = dt.date.fromisoformat(args.until)
+    test_until = dt.date.fromisoformat(args.test_until) if args.test_until else None
+    lines, table = v21_pace.run(model_file, data, history, until, test_until, prior=args.prior)
+    print("\n".join(lines))
+    out = args.out or os.path.join(os.path.dirname(model_file), v21_pace.PACE_FILE)
+    print(f"\n  -> {v21_pace.write(out, table)}  (each gamer's pace ahead, for the candidate v21-pace)")
+    return 0
+
+
+def cmd_ats(args):
+    import datetime as dt
+    from . import ats, nb2_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = ats.run(data, history, since, until, args.min_matches, args.min_half)
+    lines = ats.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'ats.txt')} and ats_gamers.csv")
+    return 0
+
+
+def cmd_playstyle(args):
+    import datetime as dt
+    from . import nb2_prior, playstyle, table_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    prior = table_prior.TablePrior(args.prior).points if args.prior else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = playstyle.run(data, history, prior, since, until, args.min_matches, args.min_half, args.boot)
+    lines = playstyle.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'playstyle.txt')} and playstyle_gamers.csv")
+    return 0
+
+
 def cmd_v21_timing(args):
     import datetime as dt
     from . import strength_check as sc, v21_timing
@@ -1051,6 +1102,51 @@ def build_parser():
     p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
     p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
     p.set_defaults(func=cmd_v21_react_fit)
+
+    p = sub.add_parser("v21-pace-fit",
+                       help="v2.1's pace when ahead: each gamer's own time tilt while its side is ahead, fitted on a "
+                            "build's frame on the matches before --until and scored on the ones after; writes "
+                            "pace_ahead.json beside the build for the candidate v21-pace")
+    p.add_argument("--model", required=True, help="a v21 tilt build directory")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts CSV, as the build read it (default {DATA['timeouts']}"
+                                      " where it exists)")
+    p.add_argument("--until", required=True, help="fit on the matches before this day, YYYY-MM-DD (the priced window's start)")
+    p.add_argument("--test-until", help="score on the matches from --until to this day (default: the export's last)")
+    p.add_argument("--prior", type=float, help="the tilts' shrinkage in snaps (default: the build's own)")
+    p.add_argument("--out", help="where the table goes (default: pace_ahead.json beside the build)")
+    p.set_defaults(func=cmd_v21_pace_fit)
+
+    p = sub.add_parser("ats", help="the spread against the moneyline: prod's pre-match and in-play lines and moneyline "
+                                   "against the real finals, the league and each gamer (against the spread, wins over "
+                                   "the moneyline), each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches to be shown (default 40)")
+    p.add_argument("--min-half", type=int, default=15, help="and in each half of its matches for the trait test (default 15)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "ats"),
+                   help="where ats.txt and ats_gamers.csv go (default eAMFCalibrator/out/ats)")
+    p.set_defaults(func=cmd_ats)
+
+    p = sub.add_parser("playstyle", help="how each gamer plays by the score, on real games: the league's points still to "
+                                         "come by the lead, each gamer's slope beyond it (front-runner or closes up) "
+                                         "and pace ahead against behind, each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--prior", help="a prior table (form-prior's or the walkthrough's CSV) for the expected points "
+                                   "(default: prod's pre-match spread and total in the export)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches for a slope (default 40)")
+    p.add_argument("--min-half", type=int, default=15,
+                   help="and in each half of its matches (alternate days) for the trait test (default 15)")
+    p.add_argument("--boot", type=int, default=400, help="bootstrap resamples over matches (default 400)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "playstyle"),
+                   help="where playstyle.txt and playstyle_gamers.csv go (default eAMFCalibrator/out/playstyle)")
+    p.set_defaults(func=cmd_playstyle)
 
     p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
                                           "matches timed part by part, the sim profiled, the window's run projected")

@@ -804,6 +804,8 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     gap = getattr(stream, "gap_of", lambda _n: None)(name)        # v21-gap0.75: the prior's margins shrunk
     if gap is not None:
         opts["gap"] = gap
+    if getattr(stream, "pace_of", lambda _n: False)(name):         # v21-pace: each gamer's own pace when ahead
+        opts["pace"] = True
     # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
     moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
     read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
@@ -842,6 +844,9 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if gap is not None:
         print(f"  {name}: the gap shrink, the prior's expected margin x {gap:g}, its total kept, before the nudge"
               " meets it", flush=True)
+    if opts.get("pace"):
+        print(f"  {name}: pace when ahead, each side's clock while it is ahead drawn on its gamer's own time tilt"
+              f" there ({stream.v21_pace.PACE_FILE} beside the build)", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")

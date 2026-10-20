@@ -20,7 +20,9 @@ the second strength lever (a candidate named v21-shapeK, v21.SHAPE_TRAIL), the f
 is played by the score at kick-off and in every state: wider when it is behind, narrower when it is two
 scores up. With the gap shrink (a candidate named v21-gapL), the prior's expected margin is taken L times
 over, its total kept, before the nudge meets it: the prior's big gaps come out at about half (September)
-to three quarters (October) in the real finals."""
+to three quarters (October) in the real finals. With pace when ahead (a candidate named v21-pace,
+v21_pace), each side's clock while it is ahead is drawn on its gamer's own extra time tilt there, the
+table v21-pace-fit writes beside the build."""
 
 import os
 import re
@@ -30,7 +32,7 @@ from bisect import bisect_left, bisect_right
 
 import numpy as np
 
-from . import playover, sim14 as s14, v14, v21, v21_react
+from . import playover, sim14 as s14, v14, v21, v21_pace, v21_react
 from .state import HOME, AWAY, MARKET_IDS
 from .stream import (confident_windows, known_states, match_ends, prematch_publish_times, side_known)
 # the line rules, as v14's (the calibrator reads every one of LINE_MODES off one simulation)
@@ -145,6 +147,22 @@ def gap_of(name):
     _, _, tag = str(name or "").partition("-")
     m = _GAP.match(tag.strip().lower())
     return float(m.group(1)) if m and float(m.group(1)) != 1.0 else None
+
+
+def pace_of(name):
+    """Whether a candidate's name asks for pace when ahead ('v21-pace')."""
+    _, _, tag = str(name or "").partition("-")
+    return tag.strip().lower() == "pace"
+
+
+def pace_table(model_dir):
+    """{gamer: extra time tilt ahead} beside the build (v21_pace.PACE_FILE); stops with how to fit it."""
+    table = v21_pace.load(_model_file(model_dir))
+    if table is None:
+        raise SystemExit(f"v21-pace reads each gamer's pace ahead, {v21_pace.PACE_FILE}, beside the build"
+                         f" ({os.path.dirname(_model_file(model_dir))}): fit it once on real games before the window --\n"
+                         "  python -m eAMFModel v21-pace-fit --model <the build> --until <the window's start>")
+    return table
 
 
 def shrunk(points, gap):
@@ -288,10 +306,13 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
     return out
 
 
-def _kickoff(model, pair, teams, target, n_paths, code, share, shape=0.0):
+def _kickoff(model, pair, teams, target, n_paths, code, share, shape=0.0, pace=None):
     """(kick-off margin and total distributions, the nudge alpha or None, each side's simulated mean
-    and variance of its points). shape: the second strength lever (v21.SHAPE_TRAIL), with the nudge."""
+    and variance of its points). shape: the second strength lever (v21.SHAPE_TRAIL), with the nudge;
+    pace: each side's extra time tilt while ahead (v21_pace), None off."""
     start = v21.kickoff_start(model, pair, teams)
+    if pace is not None:
+        start["pace"] = np.tile(np.asarray(pace, float), (len(start["period"]), 1))
     if target is not None and share and getattr(model, "nudge_dir", None) is not None:
         (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), share=share, shape=shape or 0.0)
     else:
@@ -301,13 +322,13 @@ def _kickoff(model, pair, teams, target, n_paths, code, share, shape=0.0):
 
 
 def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, shape=0.0,
-                reads=None, tally=None):
+                reads=None, tally=None, pace=None):
     """(books, windows): v21's margin and total distributions at the PLAY_OVERs the match's prod
     quotes read, every other PLAY_OVER keyed with None. `react` (v21_react.spec_of): each state's
     nudge moved by the match so far (kick: the kick-off's points, for the points update). shape: the
     second strength lever, its edge the kick-off's margin. `reads` ((market, prod message) per bet):
     only the books those bets read (_read). `tally` (a dict): the books simulated and the ones prod's
-    quotes read, added to "priced" and "of"."""
+    quotes read, added to "priced" and "of". `pace`: each side's extra time tilt while ahead (v21_pace)."""
     rows = [_as_text(r) for r in sorted(snaps, key=lambda r: int(r["message"]))]
     starts = state_starts(model, rows, pair, teams)
     keys = [m for m, _ in starts]
@@ -334,6 +355,8 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
             n = len(S["period"])
             S["edge"] = np.full(n, float(kick["mean"][0] - kick["mean"][1]))
             S["shape"] = np.full(n, float(shape))
+        if pace is not None:
+            S["pace"] = np.tile(np.asarray(pace, float), (len(S["period"]), 1))
         sh, sa = v21.simulate(model, S, n_paths, seed=_seed(code) + 1)
         for k, (m, _) in enumerate(sel):
             mp_, tp = v14._distributions(sh[k], sa[k])
@@ -345,18 +368,19 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None, shape=
     """One match's quote rows by line mode: the kick-off (and the pre-match quotes published before
     results the prior's form follows came in), then the PLAY_OVERs prod's quotes read (or only the
     bets', the item's reads). Under "_states": (books simulated, books prod's quotes read)."""
-    code, snaps, prod_rows, first_play, pair, teams, target, known, reads = item
+    code, snaps, prod_rows, first_play, pair, teams, target, known, reads, pace = item
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
-    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, shape)
+    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, shape, pace)
     kickoff = kick if PREMATCH else None
     if kickoff is not None and known:
-        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, shape)[0] for m in sorted(set(known.values()))}
+        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, shape, pace)[0]
+                 for m in sorted(set(known.values()))}
         at = {publish: kicks[m] for publish, m in known.items()}
         kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
     tally = {}
     if side_known(snaps) and not prematch_only:
         books, windows = match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react, kstats, shape,
-                                     reads, tally)
+                                     reads, tally, pace)
     else:
         books, windows = [], {}
     out = {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
@@ -401,7 +425,7 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
                        prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, shape=None,
-                       moments=None, gap=None):
+                       moments=None, gap=None, pace=False):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
@@ -412,9 +436,11 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     prod message) per bet}, only the in-play books those bets read simulated (None: every book prod's
     quotes read; a match without any: its pre-match prices alone); `gap`: the gap shrink, the prior's
     expected margin x gap with its total kept, at kick-off and in every earlier pre-match state (gap_of;
-    None: as the prior says)."""
+    None: as the prior says); `pace`: pace when ahead, each side's clock while it is ahead on its gamer's own
+    time tilt there (pace_table, v21_pace; False: off)."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
+    paces = pace_table(model_file) if pace else None
     if react:                                        # the tables a variant reads, once with the build
         fit_it = ("fit them once on real games before the window --\n  python -m eAMFModel v21-react-fit --model"
                   " <the build> --snapshots <scouting_playover.csv> --history <match_history.csv> --until"
@@ -480,7 +506,8 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
             pair = tuple((x or "").strip().upper() for x in handles[code])
         target = shrunk(means[code], gap) if code in means else None
         reads = None if moments is None else set(moments.get(code, ()))
-        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads))
+        side_pace = v21_pace.side_pace(paces, pair) if paces is not None else None
+        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads, side_pace))
     if share and pre is not None:                    # which prior, and how many of the matches it has
         LAST_TIMING.update(prior=prior_tables, prior_matches=sum(1 for it in items if it[6] is not None),
                            matches=len(items))

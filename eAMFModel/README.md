@@ -30,6 +30,8 @@ The code that runs:
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
 | `nb2_prior.py`, `glmer_prior.py` | the pre-match models |
 | `remaining.py` | points still to come against reality |
+| `playstyle.py` | how each gamer plays by the score on real games, and whether it is a trait |
+| `ats.py` | prod's lines and moneyline against the real finals, the league and gamer by gamer |
 
 ## Versions
 
@@ -2475,6 +2477,139 @@ own slope, before looking at the October bets:
 
     python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-19 00:00:00" \
         --candidate v21,v21-gap0.9,v21-gap0.75,v21-gap0.6 --v21-model v21_t10 --v21-paths 2000
+
+### Playstyle by the score (`playstyle`)
+
+Does a gamer play differently ahead from behind, in a way that repeats? The second strength lever
+guessed one answer for every gamer. This report measures it on real games instead, gamer by gamer,
+and tests whether it's a trait before anything is built on it.
+
+    python -m eAMFModel playstyle --snapshots eAMFCalibrator/out/scouting_playover.csv \
+        --history eAMFCalibrator/out/match_history.csv --out eAMFCalibrator/out/playstyle
+
+It reads the export alone: no Snowflake and no simulation, minutes on a full export.
+
+- **The states.** The opening kick-off, and the kick-off after every score in regulation (a
+  conversion's, a made field goal's or a safety's PLAY_OVER). There the score and the time left
+  are the whole state: the receiver's ball at its 25.
+- **What's measured.** Each side's points still to come, against its expected points times the
+  league's share of a game's points still to come at that time left. The expected points come from
+  prod's pre-match spread and total in the export, or `--prior`'s table.
+- **The league.**
+  - The leftover is fitted on possession (the side that conceded receives, so a trailing side has
+    the ball more) and on the lead × the share of the game left.
+  - The report shows the receiver's margin still to come by its lead and half.
+  - v2.1's sim plays real snaps for the situation, so this part is in it already. `v21-react-fit`
+    found its game script right: −0.028 [−0.070, +0.013].
+- **Each gamer, beyond the league.** The margin still to come (own points less the other side's) is
+  fitted on the share left and on the lead × the share left.
+  - The first term is the gamer's own over- or under-performance of its price, kept apart so a
+    gamer prod prices short doesn't pass for a front-runner.
+  - The second is the slope. Above 0 is a front-runner: leads grow, and deficits too. Below 0, leads
+    shrink and deficits close.
+  - The slope is also shown for own points and the other side's apart, and with ahead and behind
+    apart.
+  - A slope of +0.10 means a 7-point lead at half-time grows 0.35 points more than the league's
+    over the rest of the game.
+- **Is it a trait?**
+  - Every gamer's matches are split by alternate days, the slope fitted on each half, and the two
+    halves correlated across gamers. A playstyle shows in both halves; noise doesn't.
+  - Only when that correlation's 95% interval is above 0 are the gamers grouped: front-runner,
+    closes up, or steady. A group needs the shrunk slope 80% sure away from the gamers' mean.
+  - tau is the spread of the true slopes beyond noise (DerSimonian–Laird on the bootstrap errors).
+    Each slope is shrunk toward the others by it.
+- **Pace.** Every snap of the second half, except its last two minutes and those a quarter's end cut
+  short, gives the seconds it took off the clock, ahead against behind. The league's pace is shown,
+  each gamer's beyond the league's, and the same split-half test, with groups "burns the clock
+  ahead" and "keeps the tempo ahead".
+- **What it gives.** Intervals are 95% over matches. `playstyle.txt` has the report and
+  `playstyle_gamers.csv` every number, a row a gamer.
+- **The checks.** On planted data a ±0.3 slope across 15 gamers is found (the halves correlate
+  above 0.9) and grouped right. With nothing planted it says "not a trait".
+
+### The spread against the moneyline (`ats`)
+
+Punters have an edge on prod's moneyline and none on its handicap. This report sets both of prod's
+prices against the real finals.
+
+    python -m eAMFModel ats --snapshots eAMFCalibrator/out/scouting_playover.csv \
+        --history eAMFCalibrator/out/match_history.csv --out eAMFCalibrator/out/ats
+
+It reads the export alone: no Snowflake, no simulation.
+
+- **Pre-match.** Each match's prod quotes before the first play: `prematch_line_52` (the home margin
+  the spread is set at), `prematch_prob_52` and `prematch_prob_50`.
+  - **The line.** How often prod's favourite covers its line, which is 50% when the line is the
+    margin's median. Also the real margin less the line, its mean against its median.
+  - **The moneyline.** How often the favourite wins, against prod's moneyline.
+  - **The two against each other.** A favourite wins whenever it covers, and also when it wins by less
+    than the line: a 1.5-point favourite by exactly 1. So prod's moneyline less its cover chance
+    should be how often that happens. If it's less, the moneyline is too flat for the line it sits
+    on.
+- **In play.** The favourite at every PLAY_OVER of regulation with both prices live, against prod's
+  moneyline and its line, by price and half.
+- **Gamer by gamer.**
+  - From the gamer's side: its margin less prod's line (against the spread), how often it covered,
+    and its wins less prod's moneyline chance.
+  - Each is tested for a trait as playstyle does: alternate days apart, the halves correlated across
+    gamers, and grouped (beats prod, short of prod, as priced) only when that holds.
+- **What it gives.** Intervals are 95% over matches. `ats.txt` has the report and `ats_gamers.csv` a
+  row a gamer.
+
+**A first look off the bets file (Oct 1–18, 1,013 matches with both of prod's pre-match prices).**
+- Prod's favourite covered exactly 50.0% of the time, and the real margin less the line had mean
+  −0.66 and median −0.50. So the line sits on the margin's middle, and mean against median isn't
+  the story.
+- The favourite won 56.4% against prod's moneyline of 54.9%. Almost all of the gap is in 1–2.5 point
+  favourites: prod 51.6%, real 54.2%.
+- With a 1.5-point line the favourite also wins by exactly 1, but prod's moneyline leaves it little
+  room above the cover chance. It's as if the margin were spread over about 22 points, where the real
+  misses have an sd of about 10.
+- This fits the bets: backing prod's pre-match favourites, the book lost 3.4%; backing its underdogs,
+  it made 5.4%.
+- v2.1's kick-off moneyline comes off its own simulated scores, wins by 1 included: its favourite
+  won 57.1% against the 57.2% it said.
+
+### Pace when ahead (`v21-pace-fit`, `--candidate v21-pace`)
+
+The playstyle report found one trait: how much a gamer slows the clock when ahead. Beyond the league,
+this repeats from one half of a gamer's matches to the other: r = +0.58 [+0.40, +0.73], Aug 23 –
+Oct 17, 65 gamers. OFFICER takes about 5 s a snap longer than the league when ahead. STRIDER is about
+6 s quicker, and in fact quicker ahead than behind.
+
+**What the build has.** A tilt build's time draws are the league's real snaps for the state, the
+lead among it, so the league's slowing down when ahead is in them. They're reweighted by one time
+tilt a gamer (and team), the same whether the gamer is ahead or not.
+
+**What this adds.** A second time tilt a gamer, used on its side's snaps while the side is
+`PACE_LEAD` (1) or more points ahead.
+- It's fitted as the build fits its own: Newton steps on the penalized log-likelihood of the gamer's
+  real snaps ahead, against the league's draws for those states with the build's tilts on them.
+- A league part is fitted with it, for whatever the build's draws miss of every side's clock ahead.
+  Each gamer's own part sits beyond that, shrunk by the build's `TILT_PRIOR`.
+- A gamer the table hasn't met takes the league part alone.
+
+```
+python -m eAMFModel v21-pace-fit --model v21_t10 --until 2026-10-01
+```
+
+**The fit command.**
+- It fits on the matches before `--until`.
+- It scores on the matches after (to `--test-until`): each ahead snap's log-likelihood with the
+  tilts against without, with a 95% interval over matches. It also checks whether the seconds a
+  gamer's tilt says it gains ahead are the ones it gained on those later matches (r across gamers,
+  and the slope: 1 right).
+- It writes `pace_ahead.json` beside the build and reads the export alone: no Snowflake, no
+  simulation.
+
+**Pricing with it.**
+- The calibrator's candidate `v21-pace` prices the same build with the table: `--candidate
+  v21,v21-pace --v21-model v21_t10`. It stops before any fetching if the table is missing.
+- In the sim, each side's time tilt is kept two ways, as it is and with its gamer's extra. Each
+  snap's time is drawn on its score's: the second lever's pattern, with the tilt cache covering both.
+- Without the table (`v21` itself), the draws are exactly as before.
+- On the tests' build, +3 on the home side's tilt takes its snaps ahead from 20.7 s to 23.0 s, and
+  leaves its snaps behind and the other side's as they were.
 
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
