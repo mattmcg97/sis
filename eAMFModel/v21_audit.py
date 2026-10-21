@@ -25,7 +25,7 @@ import zlib
 
 import numpy as np
 
-from . import v21
+from . import feed, markets, v21
 
 SLICES = ("Q1", "Q2 to 2:00", "Q2 2:00-1:01", "Q2 1:00-0:31", "Q2 last 0:30", "Q3", "Q4 to 2:00", "Q4 2:00-1:01",
           "Q4 1:00-0:31", "Q4 last 0:30", "OT")
@@ -151,7 +151,7 @@ def real_drive_end(rows, i, final=None):
     """How the drive with the ball at row i ended (v21.DRIVE_ENDS index): the next score, kick, punt,
     change of side or the half's end after it. final: the game's (home, away) final, for a drive the
     rows end on in regulation -- the feed can miss the game's last play, not its final score."""
-    _i = v21.s14._i
+    _i = feed._i
     a = rows[i]
     off, period = a.get("offense"), _i(a.get("period"))
     a_home = (a.get("team_a_side") or "home") != "away"
@@ -182,7 +182,7 @@ def real_drive_end(rows, i, final=None):
                 period = _i(r.get("period"))
                 continue
             return 6
-        if r.get("offense") in ("TEAM_A", "TEAM_B") and r.get("offense") != off and kind in v21.s14.SNAP_KINDS:
+        if r.get("offense") in ("TEAM_A", "TEAM_B") and r.get("offense") != off and kind in feed.SNAP_KINDS:
             return 5 if "TURNOVER_ON_DOWNS" in (rows[j - 1].get("play_messages") or "") else 4
     if final is not None and period == 4 and not any((_i(r.get("period")) or 0) >= 5 for r in rows):
         pts = v21.end_points(dict(a, score_p1=rows[-1].get("score_p1"), score_p2=rows[-1].get("score_p2")),
@@ -235,28 +235,28 @@ def _half_score(rows):
     feed missed is in it), else the first half's last."""
     h = a = 0
     for r in rows:
-        p = v21.s14._i(r.get("period"))
+        p = feed._i(r.get("period"))
         if p is None:
             continue
         if p >= 3:
-            return v21.s14._i(r.get("score_p1")) or 0, v21.s14._i(r.get("score_p2")) or 0
-        h = max(h, v21.s14._i(r.get("score_p1")) or 0)
-        a = max(a, v21.s14._i(r.get("score_p2")) or 0)
+            return feed._i(r.get("score_p1")) or 0, feed._i(r.get("score_p2")) or 0
+        h = max(h, feed._i(r.get("score_p1")) or 0)
+        a = max(a, feed._i(r.get("score_p2")) or 0)
     return h, a
 
 
 def _regulation(rows, final=None):
     """The real (home, away) score when regulation ended: the final (home's, away's) where the game did
     not go to overtime and the history has it, else the rows' (the scores only rise)."""
-    if final is not None and not any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows):
+    if final is not None and not any((feed._i(r.get("period")) or 0) >= 5 for r in rows):
         return int(final[0]), int(final[1])
     h = a = 0
     for r in rows:
-        p = v21.s14._i(r.get("period"))
+        p = feed._i(r.get("period"))
         if p is None or p > 4:
             continue
-        h = max(h, v21.s14._i(r.get("score_p1")) or 0)
-        a = max(a, v21.s14._i(r.get("score_p2")) or 0)
+        h = max(h, feed._i(r.get("score_p1")) or 0)
+        a = max(a, feed._i(r.get("score_p2")) or 0)
     return h, a
 
 
@@ -280,7 +280,7 @@ def _worker(job):
         v21.simulate(model, v21.kickoff_start(model, pair, teams), n_paths, seed=seed, stats=st)
         flow["games"] += st["games"]
         flow["ot_games"] += float(st["went_ot"].sum())
-        real["ot_games"] += float(any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows))
+        real["ot_games"] += float(any((feed._i(r.get("period")) or 0) >= 5 for r in rows))
         log = v21.snap_log(st)
         if len(log["path"]):
             c = _sim_cols(log)
@@ -315,7 +315,7 @@ def _worker(job):
         lead_q4 = np.array([int(v21.fg4_of(_side_lead(s)[2])) if int(s["period"][0]) == 4
                             and float(s["clock"][0]) <= v21.LATE else -1 for _, s in starts])
         down_start = np.array([s["down"][0] for _, s in starts])
-        mine = [by_start.get(v21.s14._i(r["message"])) for r in st_rows]
+        mine = [by_start.get(feed._i(r["message"])) for r in st_rows]
         pairs = [(r, s) for (_, s), r in zip(starts, mine) if r is not None]
         got = [r for r, _ in pairs]
         if got:
@@ -402,7 +402,7 @@ def _worker(job):
         # overtime: from every real Q4 state to the end, against whether the real game went to overtime
         q4 = [(j, s) for j, (i, s) in enumerate(starts) if int(s["period"][0]) == 4]
         if q4:
-            went_real = float(any((v21.s14._i(r.get("period")) or 0) >= 5 for r in rows))
+            went_real = float(any((feed._i(r.get("period")) or 0) >= 5 for r in rows))
             st = {}
             v21.simulate(model, v21.concat_starts([s for _, s in q4]), state_paths, seed=seed + 2, stats=st)
             went = st["went_ot"].reshape(len(q4), state_paths).mean(1)
@@ -468,8 +468,7 @@ def run(model_dir, matches, history, n_paths=500, state_paths=50, every=1, worke
     if workers == 1:
         parts = [_worker(j) for j in jobs]
     else:
-        from . import v14
-        with v14.pool_context().Pool(workers) as p:
+        with markets.pool_context().Pool(workers) as p:
             parts = p.map(_worker, jobs)
     real, flow, step = parts[0]
     for r, f, s in parts[1:]:

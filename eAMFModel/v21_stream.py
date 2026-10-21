@@ -31,12 +31,12 @@ from bisect import bisect_left, bisect_right
 
 import numpy as np
 
-from . import playover, progress, sim14 as s14, v14, v21, v21_react
+from . import books, feed, markets, playover, progress, v21, v21_react
 from .state import HOME, AWAY, MARKET_IDS
 from .stream import (confident_windows, known_states, match_ends, prematch_publish_times, side_known)
-# the line rules, as v14's (the calibrator reads every one of LINE_MODES off one simulation)
-from .v14_stream import (EVEN, HELD, LINE_MODES, OWN, PROD_LINES, ANCHORED, _before_play, _quote,  # noqa: F401
-                         paired_prod_rows)
+# the line rules every stream shares (the calibrator reads every one of LINE_MODES off one simulation)
+from .stream import (EVEN, HELD, LINE_MODES, OWN, PROD_LINES, ANCHORED, _before_play, _quote,  # noqa: F401
+                     paired_prod_rows)
 
 DEFAULT_MODEL_DIR = "v21_model"
 DEFAULT_PRIOR_DIR = "v14_model"
@@ -86,12 +86,13 @@ def default_prior():
 def _prior_tables(prior_dir=None):
     """The prior build's tables (its pre-match model), or a prior table (a walkthrough variant's CSV,
     table_prior.py) as it is; None where none is found."""
-    from . import prior_check, table_prior
+    from . import table_prior
     for d in ([prior_dir] if prior_dir else _prior_candidates()):
         if table_prior.is_table(d):
             return d
         if not d or not os.path.isdir(d):
             continue
+        from . import prior_check                    # a v14 build's tables
         version = prior_check.version_of(d)
         _, st = prior_check._modules(version)
         try:
@@ -111,9 +112,10 @@ def prematch_model(prior_tables):
     v21-report's raw inputs), or None without a prior."""
     if prior_tables is None:
         return None
-    from . import prior_check, table_prior
+    from . import table_prior
     if table_prior.is_table(prior_tables):        # a walkthrough variant's expected points, as they are
         return table_prior.TablePrior(prior_tables)
+    from . import prior_check                     # a v14 build's pre-match model
     version = prior_check.version_of(os.path.dirname(prior_tables))
     m, _ = prior_check._modules(version)
     pre = m.prematch_model(prior_tables)
@@ -123,8 +125,7 @@ def prematch_model(prior_tables):
 
 
 def _base(pre):
-    from . import prior_check
-    return prior_check.base_prior(pre)
+    return books.base_prior(pre)
 
 
 _DRIVES = re.compile(r"^drives(\d+(?:\.\d+)?)?$")
@@ -203,13 +204,13 @@ def state_starts(model, rows, pair=("", ""), teams=("", "")):
         return []
     out = {}
     for i, s in v21.match_starts(model, rows, pair, teams):
-        out[s14._i(rows[i]["message"])] = s
+        out[feed._i(rows[i]["message"])] = s
     a_home = rows[0]["team_a_side"] != "away"
     starts = sorted(r["start"] for r in v21.match_snaps(rows))
     opening = rows[0].get("opening_offense")
     first = v21._side_of(opening, a_home) if opening in ("TEAM_A", "TEAM_B") else 0
     for r in rows:
-        m = s14._i(r.get("message"))
+        m = feed._i(r.get("message"))
         if m is None or m in out:
             continue
         st, _ = playover.state_for(r)
@@ -219,7 +220,7 @@ def state_starts(model, rows, pair=("", ""), teams=("", "")):
         period, clock = st.period, st.clock_seconds
         if period is None or clock is None or clock <= 0 or period > 4 + v21.MAX_OT:
             continue
-        used = (s14._i(r.get("timeouts_used_a")), s14._i(r.get("timeouts_used_b")))
+        used = (feed._i(r.get("timeouts_used_a")), feed._i(r.get("timeouts_used_b")))
         have = v21.TIMEOUTS if period <= 4 else v21.OT_TIMEOUTS
         tos_a = [max(0, have - u) if u is not None else have for u in used]
         tos = tos_a if a_home else tos_a[::-1]
@@ -327,7 +328,7 @@ def _kickoff(model, pair, teams, target, n_paths, code, share, drives=None):
     else:
         (h, a), alpha = v21.simulate(model, start, n_paths, seed=_seed(code)), None
     h, a = h.ravel(), a.ravel()
-    return v14._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()), tempo=tempo)
+    return markets._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()), tempo=tempo)
 
 
 def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, reads=None,
@@ -364,7 +365,7 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
             S["tempo"] = np.full(len(S["period"]), float(kick["tempo"]))
         sh, sa = v21.simulate(model, S, n_paths, seed=_seed(code) + 1)
         for k, (m, _) in enumerate(sel):
-            books[m] = (m,) + tuple(v14._distributions(sh[k], sa[k]))
+            books[m] = (m,) + tuple(markets._distributions(sh[k], sa[k]))
     return [books[m] for m in keys], windows
 
 
@@ -541,7 +542,7 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
             # worker's every workers-th match, one after another
             jobs = [(item, model_file, n_paths, lines, prematch_only, share, react) for item in items]
             per = [None] * len(jobs)
-            with v14.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
+            with markets.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
                 for k, got in pool.imap_unordered(_one_at, enumerate(jobs), chunksize=1):
                     per[k] = got
                     bar.update()

@@ -10,6 +10,9 @@ QUARTER = 240.0
 KICKOFF, SCRIMMAGE, CONVERSION, FINAL = "kickoff", "scrimmage", "conversion", "final"
 PHASES = (KICKOFF, SCRIMMAGE, CONVERSION, FINAL)
 HOME, AWAY = "home", "away"
+# the play before a snap, as v2.1's time draw reads it: a fresh possession or quarter, a gain of nothing (an
+# incompletion), short of the line, a first down, a loss, a timeout
+LAST = ("fresh", "nothing", "short", "first", "loss", "timeout")
 TOUCHBACK = 25                  # a kick-off's touchback
 PUNT_TOUCHBACK = 20
 MISSED_FG_MIN = 20              # a missed field goal comes back to the spot of the kick, or the 20
@@ -42,6 +45,8 @@ class Game:
     opening_receiver: str = HOME
     fresh: bool = True              # the first snap of a possession
     ot_had_ball: list = _default(default_factory=list)
+    snaps: int = 0                  # scrimmage snaps so far (v2.1's "elapsed")
+    last: str = "fresh"             # the play before the next snap, as v2.1's clock reads it (LAST)
 
     @classmethod
     def start(cls, opening_receiver=HOME):
@@ -149,11 +154,11 @@ def _ball(g, side, at):
     g.phase, g.side = SCRIMMAGE, side
     g.field = min(99, max(1, int(round(at))))
     g.down, g.distance = 1, min(10, 100 - g.field)
-    g.fresh = True
+    g.fresh, g.last = True, "fresh"
 
 
 def _kick_to(g, receiver):
-    g.phase, g.side, g.fresh = KICKOFF, receiver, True
+    g.phase, g.side, g.fresh, g.last = KICKOFF, receiver, True, "fresh"
     g.down, g.distance, g.field = 1, 10, TOUCHBACK
 
 
@@ -166,6 +171,7 @@ def _advance(g, yards):
     """A scrimmage play gaining `yards`: a first down, the next down, a turnover on downs, a
     touchdown or a safety."""
     at = g.field + int(round(yards))
+    g.last = "nothing" if yards == 0 else "loss" if yards < 0 else "first" if yards >= g.distance else "short"
     if at >= 100:
         _touchdown(g, g.side)
         return "touchdown"
@@ -188,7 +194,7 @@ def _advance(g, yards):
 def _end_period(g):
     """The clock has run out: the next quarter, half time, overtime or the end."""
     if g.period in (1, 3):
-        g.period, g.clock = g.period + 1, QUARTER
+        g.period, g.clock, g.last = g.period + 1, QUARTER, "fresh"
         return f"end of Q{g.period - 1}"
     if g.period == 2:
         g.period, g.clock = 3, QUARTER
@@ -254,6 +260,7 @@ def apply(game, play):
         if side not in (HOME, AWAY) or getattr(g, attr) <= 0:
             raise ValueError(f"{side} has no timeouts left")
         setattr(g, attr, getattr(g, attr) - 1)
+        g.last = "timeout"
         return g, f"timeout {side}"
     if g.phase == FINAL:
         raise ValueError("the game is over")
@@ -286,6 +293,7 @@ def apply(game, play):
     if kind not in SCRIMMAGE_PLAYS:
         raise ValueError(f"{kind!r} is not a scrimmage play")
     side = g.side
+    g.snaps += 1
     if g.period >= 5 and side not in g.ot_had_ball:
         g.ot_had_ball = g.ot_had_ball + [side]
     if kind in ("play", "kneel"):
@@ -297,7 +305,7 @@ def apply(game, play):
         result = _advance(g, 0) if g.down == 4 else None
         if result is None:
             g.down += 1
-            g.fresh = False
+            g.fresh, g.last = False, "nothing"
         what = f"{side} {kind}" + (f", {result}" if result else "")
     elif kind == "touchdown":
         _touchdown(g, side)

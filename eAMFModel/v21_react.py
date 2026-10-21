@@ -37,7 +37,7 @@ import re
 
 import numpy as np
 
-from . import v21
+from . import feed, v21
 
 _NAME = re.compile(r"^(g?(?:snap|pts|wpa))(\d+(?:\.\d+)?)$")
 VARIANTS = ("snap2", "snap4", "snap8", "pts4", "pts8", "wpa10", "wpa20")    # a spread to set against each other
@@ -261,7 +261,7 @@ def snap_wpa(rows, coef, pair=("", ""), teams=("", "")):
     """(side, known message, the win chance the snap added its side) for every real snap: the side's
     chance at the PLAY_OVER after the snap less at the one it started from (wp_of)."""
     prior = prior_logit(rows)
-    by_msg = {v21.s14._i(r.get("message")): r for r in rows}
+    by_msg = {feed._i(r.get("message")): r for r in rows}
     out = []
     for rec in _snaps(rows, pair, teams):
         a, b = by_msg.get(rec["start"]), by_msg.get(rec["message"])

@@ -30,7 +30,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from . import v21, v21_react as vr
+from . import feed, markets, v21, v21_react as vr
 from .remaining import day
 
 SNAP_TAUS = (1, 2, 3, 4, 6, 8)
@@ -69,7 +69,7 @@ def match_states(rows, final):
         on = s[0]
         margin = (final[0] - final[1]) * (1 if on == 0 else -1)
         if margin:
-            out.append((v21.s14._i(r.get("message")), s, float(margin > 0)))
+            out.append((feed._i(r.get("message")), s, float(margin > 0)))
     return out
 
 
@@ -157,7 +157,7 @@ def match_evidence(model, rows, pair, teams, coef, mu):
     """{side: (snap score, snap information, points over the prior's, win chance added)} over a whole
     match: what each side's play showed, for a later match of its gamer's session to carry."""
     out = {0: [0.0, 0.0, 0.0, 0.0], 1: [0.0, 0.0, 0.0, 0.0]}
-    last = [max(v21.s14._i(r.get("message")) or 0 for r in rows)]
+    last = [max(feed._i(r.get("message")) or 0 for r in rows)]
     if model is not None and getattr(model, "nudge_dir", None) is not None:
         got = vr.snap_sums(model, rows, last, None, pair, teams)
         if got is not None:
@@ -256,8 +256,7 @@ def score_variants(model_file, test, coef, hist, league, n_paths=500, workers=1,
         jobs.append((code, rows, v21.match_final(hist[code]), pair, teams,
                      tuple(float(x) for x in expected_points(rows, league)), model_file, n_paths, tuple(coef), carry))
     if workers > 1:
-        from . import v14
-        with v14.pool_context().Pool(workers) as pool:
+        with markets.pool_context().Pool(workers) as pool:
             got = pool.map(score_match, jobs, chunksize=1)
     else:
         got = [score_match(j) for j in jobs]
@@ -356,7 +355,7 @@ def run(data, history, model_file=None, since=None, until=None, test_share=0.4, 
         codes = codes[-max_matches:]
     per = []
     for c in codes:
-        rows = sorted(data[c], key=lambda r: v21.s14._i(r.get("message")) or 0)
+        rows = sorted(data[c], key=lambda r: feed._i(r.get("message")) or 0)
         states = match_states(rows, v21.match_final(hist[c]))
         if states:
             per.append((c, rows, states))

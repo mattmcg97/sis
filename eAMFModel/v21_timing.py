@@ -18,7 +18,7 @@ import time
 
 import numpy as np
 
-from . import v14, v21, v21_stream as vs
+from . import markets, v21, v21_stream as vs
 
 DEFAULT_MATCHES = 6
 COUNT_PATHS = 20              # games a state for the snaps count (a run apart, untimed)
@@ -52,7 +52,7 @@ def price_match(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE)
     else:
         h, a = v21.simulate(model, start, n_paths, seed=seed)
         alpha = None
-    v14._distributions(h.ravel(), a.ravel())
+    markets._distributions(h.ravel(), a.ravel())
     out["kickoff"] = time.perf_counter() - t
     out["alpha"] = alpha
     runs = v21.NUDGE_ITERS + 1 if nudged else 1
@@ -74,7 +74,7 @@ def price_match(model, rows, pair, teams, n_paths, seed=0, share=vs.NUDGE_SHARE)
     out["in_play"] = time.perf_counter() - t
     t = time.perf_counter()
     for k in range(len(starts)):
-        v14._distributions(sh[k], sa[k])
+        markets._distributions(sh[k], sa[k])
     out["books"] = time.perf_counter() - t
     out["play_games"] = len(starts) * n_paths
     out["play_snaps"] = _snaps_a_game(model, S, seed=seed + 2) * out["play_games"]
@@ -108,7 +108,7 @@ def live_lines(model, rows, pair, teams, n_paths, alpha=None, at=LIVE_AT, repeat
             for rep in range(repeats):
                 t = time.perf_counter()
                 sh, sa = v21.simulate(model, s, n, seed=rep)
-                v14._distributions(sh[0], sa[0])
+                markets._distributions(sh[0], sa[0])
                 best = min(best, time.perf_counter() - t)
             cells.append(best)
         c = int(float(s["clock"][0]))

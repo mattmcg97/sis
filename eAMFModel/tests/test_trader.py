@@ -5,6 +5,8 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 
+import numpy as np
+
 from eAMFModel import game as gm, trader, v14
 from eAMFModel.tests.fakes import _matches, _with_handles
 
@@ -106,6 +108,118 @@ class TestTrader(unittest.TestCase):
     def test_odds_carry_the_margin(self):
         self.assertEqual(trader.odds(0.5, 0.0), 2.0)
         self.assertEqual(trader.odds(0.5, 0.05), round(1 / (0.5 * 1.05), 2))
+
+
+class TestV21Trader(unittest.TestCase):
+    """v2.1 in the trader: a match off the prior table brings its points and drives; the kick-off's points
+    nudge and tempo are solved once and carried into every state; a conversion is priced as the sim plays one."""
+
+    @classmethod
+    def setUpClass(cls):
+        import csv
+        import os
+        from eAMFModel import v21
+        from eAMFModel.tests.test_v21 import HISTORY, built
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.model = built("tilt")
+        cls.model.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.table = os.path.join(cls.tmp.name, "avg_form4_w05.csv")
+        h = HISTORY[:3]
+        with open(cls.table, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["MATCH_CODE", "start", "home", "home_team", "away", "away_team", "home_pts", "away_pts",
+                        "exp_drives", "league_drives"])
+            for k, (r, pts, drives) in enumerate(zip(h, ((26.0, 13.0), (17.0, 17.0), (14.0, 21.0)), (11.5, 10.0, 8.5))):
+                w.writerow([r["MATCH_CODE"], f"2026-10-1{k} 12:00:00", r["PLAYER_1_HANDLE"], r["PLAYER_1_TEAM"],
+                            r["PLAYER_2_HANDLE"], r["PLAYER_2_TEAM"], *pts, drives, 10.0])
+        cls.codes = [r["MATCH_CODE"] for r in h]
+        cls.t = trader.V21Trader(cls.tmp.name, paths=300, prior=cls.table)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def call(self, path, **body):
+        status, reply = trader.respond(self.t, path, body)
+        self.assertEqual(status, 200, reply)
+        return reply
+
+    def setup_of(self, code):
+        r = self.call("/api/prematch", setup={"match": code})
+        return dict(r, match=code, opening_receiver="home", margin=0.05)
+
+    def test_meta_and_a_match_off_the_table(self):
+        m = self.call("/api/meta")
+        self.assertEqual(m["version"], "v21-drives")
+        self.assertTrue(m["pace"])
+        self.assertEqual([x["code"] for x in m["matches"]], self.codes[::-1])        # the latest first
+        self.assertEqual(m["streams"], [])
+        r = self.call("/api/prematch", setup={"match": self.codes[0]})
+        self.assertEqual((r["means"], r["exp_drives"], r["league_drives"]), ([26.0, 13.0], 11.5, 10.0))
+        self.assertTrue(r["home_player"])
+        swapped = self.call("/api/prematch", setup={"home_player": r["away_player"], "away_player": r["home_player"]})
+        self.assertEqual(swapped["means"], [13.0, 26.0])                              # their meeting, ends swapped
+        self.assertIn("ends swapped", swapped["note"])
+        self.assertIn("league", self.call("/api/prematch", setup={"home_player": "NOBODY"})["note"])
+
+    def test_the_pace_is_the_betting_sims(self):
+        from eAMFModel import v21_stream
+        drives = v21_stream.drives_table(self.table)
+        level = sum(drives.values()) / len(drives)
+        for code in self.codes:
+            self.assertAlmostEqual(self.t._pace(self.setup_of(code)), drives[code] / level, places=9)
+        typed = dict(self.setup_of(self.codes[0]), match="", exp_drives=12.0)          # typed: against its league
+        self.assertAlmostEqual(self.t._pace(typed), 12.0 / 10.0 * self.t.adj, places=9)
+        self.assertIsNone(self.t._pace(dict(typed, exp_drives="")))                    # blank: no pace nudge
+
+    def test_the_kick_off_nudged_and_carried_into_the_game(self):
+        fast, slow = self.setup_of(self.codes[0]), self.setup_of(self.codes[2])
+        r = self.call("/api/start", setup=fast)
+        v = r["prematch"]["v21"]
+        self.assertEqual(len(v["nudge"]), 2)
+        self.assertGreater(v["goal_drives"], v["own_drives"])                           # 11.5 against a 10 league
+        self.assertGreater(r["prematch"]["moneyline"]["home"]["p"], 0.6)               # 26 against 13
+        self.assertGreater(r["prematch"]["expected"]["margin"], 5)
+        self.assertGreater(self.call("/api/start", setup=slow)["prematch"]["v21"]["tempo"], v["tempo"])  # below 0: quicker
+        k = self.t._kickoff(fast)
+        self.assertIs(self.t._kickoff(fast), k)                                         # solved once a setup
+        g = self.call("/api/play", setup=fast, game=r["game"], play={"type": "kickoff"}, kept=r["price"]["kept"])
+        self.assertEqual(g["game"]["phase"], gm.SCRIMMAGE)
+        S = self.t.start_of(gm.Game.from_dict(g["game"]), k["pair"], k["teams"])
+        self.assertEqual((int(S["phase"][0]), int(S["team"][0]), int(S["y"][0])), (1, 0, 25))
+        played = self.call("/api/play", setup=fast, game=g["game"], play={"type": "play", "yards": 4})
+        self.assertEqual(played["game"]["snaps"], 1)
+        self.assertEqual(played["game"]["last"], "short")
+        self.assertEqual(int(self.t.start_of(gm.Game.from_dict(played["game"]), k["pair"], k["teams"])["prev"][0]),
+                         __import__("eAMFModel.v21", fromlist=["v21"]).SHORT)
+        nudged = dict(fast, means=[13.0, 26.0])
+        self.assertLess(self.call("/api/price", setup=nudged, game=played["game"])["price"]["moneyline"]["home"]["p"],
+                        played["price"]["moneyline"]["home"]["p"])
+
+    def test_a_conversion_is_the_scorers_try(self):
+        from eAMFModel import v21
+        setup = self.setup_of(self.codes[1])
+        r = self.call("/api/start", setup=setup)
+        g = self.call("/api/play", setup=setup, game=r["game"], play={"type": "kickoff"})
+        td = self.call("/api/play", setup=setup, game=g["game"], play={"type": "touchdown", "seconds": 8})
+        self.assertEqual((td["game"]["phase"], td["game"]["home"]), (gm.CONVERSION, 6))
+        k = self.t._kickoff(setup)
+        S = self.t.start_of(gm.Game.from_dict(td["game"]), k["pair"], k["teams"])
+        self.assertEqual((int(S["convert"][0]), int(S["team"][0]), int(S["phase"][0])), (0, 1, v21.KICK))
+        last = dict(S, period=np.array([4]), clock=np.array([1.0]))                     # the try with a second left
+        h, a = v21.simulate(self.model, last, 400, seed=1)
+        self.assertTrue(np.all(h >= 6))
+        self.assertGreater(np.mean(np.isin(h, (7, 8))), 0.8)                             # the try, then time
+        gained = td["price"]["expected"]["home"] - g["price"]["expected"]["home"]     # the six and the try, less the
+        self.assertTrue(3 < gained < 8, gained)                                          # drive's own expected points
+
+    def test_v21_is_read_off_the_build_and_named(self):
+        self.assertTrue(trader.is_v21(self.tmp.name))
+        self.assertTrue(trader.is_v21(None, "v21-drives"))
+        self.assertFalse(trader.is_v21(None, "v14"))
+        plain = trader.V21Trader(self.tmp.name, paths=200, prior=self.table, pace=False)
+        self.assertEqual(plain.version, "v21")
+        self.assertIsNone(plain.price(self.setup_of(self.codes[0]))["v21"]["tempo"])
 
 
 class TestEveryVersion(unittest.TestCase):

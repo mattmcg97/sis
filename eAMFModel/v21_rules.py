@@ -24,7 +24,7 @@ import math
 
 import numpy as np
 
-from . import sim14 as s14, v21
+from . import feed, v21
 
 SWEEP_FEATURES = {
     "fourth": ("period", "left", "lead", "togo", "dist", "own_to", "opp_to", "prev"),
@@ -314,25 +314,25 @@ def auto_end_check(matches):
         rows = v21._with_side(rows)
         recs = {r["start"]: r for r in v21.match_snaps(rows)}
         for i, a in enumerate(rows):
-            if a["play_kind"] not in s14.SNAP_KINDS or a.get("period") != "4" or a.get("offense") not in v21.TEAMS \
+            if a["play_kind"] not in feed.SNAP_KINDS or a.get("period") != "4" or a.get("offense") not in v21.TEAMS \
                     or not a.get("down") or not a.get("clock_seconds"):
                 continue
-            m = s14._margin(a, a["offense"])
+            m = feed._margin(a, a["offense"])
             _, opp = v21._tos_left(a, a["offense"], 4)
-            c = s14._f(a["clock_seconds"])
-            if m is None or opp != 0 or c <= 0 or not v21.auto_end(4, c, m, s14._i(a["down"]), 0):
+            c = feed._f(a["clock_seconds"])
+            if m is None or opp != 0 or c <= 0 or not v21.auto_end(4, c, m, feed._i(a["down"]), 0):
                 continue
             later = [r for r in rows[i + 1:] if r.get("period") == "4"]
             last = rows[-1]
-            scored = (s14._i(last.get("score_p1")), s14._i(last.get("score_p2"))) != \
-                (s14._i(a.get("score_p1")), s14._i(a.get("score_p2")))
-            snaps, msg, mine = [], s14._i(a["message"]), True
+            scored = (feed._i(last.get("score_p1")), feed._i(last.get("score_p2"))) != \
+                (feed._i(a.get("score_p1")), feed._i(a.get("score_p2")))
+            snaps, msg, mine = [], feed._i(a["message"]), True
             while msg in recs:
                 r = recs[msg]
                 snaps.append(r)
                 mine &= r["offense"] == a["offense"]
                 msg = r["message"]
-            other = any(r.get("offense") not in (a["offense"], None, "") and r["play_kind"] in s14.SNAP_KINDS
+            other = any(r.get("offense") not in (a["offense"], None, "") and r["play_kind"] in feed.SNAP_KINDS
                         for r in later)
             if scored:
                 kind = 4

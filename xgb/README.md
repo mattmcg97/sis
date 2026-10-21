@@ -390,6 +390,89 @@ Slope is real drives on foreseen: 1 is calibrated, below 1 means the forecast sp
 So the walkthrough's pace (`exp_drives`, `eAMFCalibrator/pace_prior.py`) is the ridge, refitted daily.
 It counts drives off the scouting export the sim's way, not off `drive_stats.csv`.
 
+### How much of a match's drives is its turnovers? (`turnovers.py`)
+
+```bash
+python -m xgb.turnovers --scouting eAMFCalibrator/out_scouting_xgb/scouting_playover.csv \
+    --history eAMFCalibrator/out/match_history.csv --since 2026-09-01
+```
+
+A match's drives vary a lot (sd 2.4 on the sim's count), and a first look at `drive_stats.csv` put most
+of it on turnovers. On that table's counts, a match's drives correlate 0.75 with its turnovers, and the
+pace model's miss 0.73. That table's turnover counts are off where the feed filed a touchdown late, so
+this script counts again, off the export, the way v21 reads its snaps (`feed.snap_records`, the
+records its turnover draws are fitted on).
+
+It reports four things:
+
+1. **Drives against turnovers.** The correlation, the drives a turnover adds, and how much of the
+   drive count's variance is the snaps a game holds against the snaps a drive lasts.
+2. **A gamer's turnovers as a trait.** Odd against even weeks: the turnovers a drive each gamer gives
+   up and forces.
+3. **Before the match.** Expected drives and expected turnovers, each refitted daily with the pace
+   prior's ridge. How well each foresees its own, how much of the pace's miss is the match's
+   turnovers, and whether expected turnovers add anything to the pace.
+4. **The margin.** How much of the points margin the turnover margin explains.
+
+It also counts `suspect` turnovers: ones whose next row carries a touchdown message for the side that
+lost the ball. Few of them means the sim's turnover count is clean.
+
+**Results** (21 Oct, the export of 20 Oct, 3,444 matches, 1 Sep – 18 Oct). There are no suspect
+turnovers, so the sim's count is clean. `drive_stats.csv` had overstated turnovers (2.66 a match
+against 1.96), and with them how much they explain.
+
+A match has 9.87 drives (sd 2.40). Most end in a touchdown (3.99 a match) or a turnover (1.96); there
+are few punts (0.73) or turnovers on downs (0.44).
+
+1. **Turnovers explain under a third of the drive count's variance.** r 0.54, R² 0.30, a turnover
+   +0.92 drives. With punts and turnovers on downs added, R² is 0.41. Of the drive count's
+   variance (in logs), the snaps a drive lasts are 64%, the snaps a game holds 27%, the two together
+   +9%.
+2. **A gamer's turnover rate is a steady trait, but a small one.** Odd against even weeks, the
+   turnovers a drive given up correlate 0.73 and those forced 0.71. Gamers' rates spread only 0.033
+   about 0.201 a drive: one sd is 0.16 turnovers a match.
+3. **Before the match they barely help.** Expected turnovers (the pace ridge, refitted daily)
+   correlate 0.21 with the real ones. Half the pace's miss is the match's own turnovers (r 0.52), but
+   adding expected turnovers to the pace moves nothing (R² 0.0896 → 0.0902, t +1.5). Turnovers are
+   in-match luck, and no turnover prior is needed for pace.
+4. **They decide the margin.** The turnover margin explains 55% of the points margin (r 0.74), +4.7
+   points a turnover. Some of that runs backwards, with a trailing side taking risks, so not all of
+   it is the turnovers' doing. v21 already gives each gamer and team, on offense and on defense, its
+   own turnover rate (the `turnover` component of the tilts, `PHI_DIST`).
+
+### Does a turnover prior add to the margin? (`turnover_margin.py`)
+
+```bash
+python -m xgb.turnover_margin --counts xgb/out/turnovers/turnovers_matches.csv \
+    --prior eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv
+```
+
+A side's expected turnovers come from a home term, the offense gamer's turnovers given up, the defense
+gamer's forced and both teams'. It's a ridge refitted every midnight, its shrinkage chosen on August
+walk-forward (gamer 5, team 640). Their difference, the expected turnover margin, is then set against
+the form table's expected margin and moneyline, 1 Sep – 18 Oct (3,444 matches).
+
+- **It foresees the turnover margin only weakly** (r 0.15; spread sd 0.26 against the real 1.55),
+  and it shares a quarter of its variance with the prior's margin (r 0.49).
+- **Against the form table alone it looks useful.** The margin's coefficient is +2.1 (t +2.9); out
+  of sample (fitted to 23 Sep, scored after), squared error −0.27 a match (t −1.6) and moneyline log
+  loss −0.0010 (t −1.6).
+- **That is strength the form table lost, not turnovers.** With the walkthrough's `avg` margin (the
+  table form-prior moves) in the regression, the turnover margin drops to t +0.8; with `glmer` and
+  `nb2` too, t +0.4. The gamers' turnover traits are already in the points models, so no turnover
+  prior is needed.
+
+On the way: **the form table's own pre-match price is over-confident against results.** Real margins
+move 0.70 points a point of its margin, its moneyline's logit slope is 0.72 (`avg`'s 1.11), and its
+margin is spread wider (sd 2.64 against 1.94). Against `avg` on the same 3,461 matches, its log loss
+is +0.0051 a match (t +2.6) and its margin's squared error +1.59 (t +3.6), in both months.
+
+That fits form-prior's own finding ("its Brier score was no better than prod's"): it was chosen for
+the betting sim's returns re-pricing prod's bets, not for accuracy against results. v21 nudges only
+75% of the way toward it and makes its own spread, so the price the sim makes needn't be as
+over-confident. The test that settles it is v21 nudged toward `avg` against v21 nudged toward the
+form table, on the same bets (`--prior-for`).
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -407,4 +490,8 @@ It counts drives off the scouting export the sim's way, not off `drive_stats.csv
 - `v21_pace.py`: v21's kick-off spread by pace against the real one (`python -m xgb.v21_pace`).
 - `pace_models.py`: the drive forecasters compared walk-forward (`python -m xgb.pace_models`), writing
   `pace_models.txt` and `pace_models.csv` (every match, every model).
-- `tests/`: `python -m unittest xgb.tests.test_drives xgb.tests.test_pace_models`.
+- `turnovers.py`: turnovers and drives counted the sim's way, and how they relate
+  (`python -m xgb.turnovers`), writing `turnovers.txt` and `turnovers_matches.csv`.
+- `turnover_margin.py`: a walk-forward turnover prior against a prior table's margin and moneyline
+  (`python -m xgb.turnover_margin`).
+- `tests/`: `python -m unittest xgb.tests.test_drives xgb.tests.test_pace_models xgb.tests.test_turnovers`.

@@ -83,7 +83,7 @@ from collections import defaultdict
 
 import numpy as np
 
-from . import sim14 as s14
+from . import feed
 
 QUARTER = 240.0
 LATE = 120.0
@@ -97,7 +97,7 @@ MAX_STEPS = 900
 KICK, SNAP, DONE = 0, 1, 2
 SIX, PAT, TWO, KICK3, SAFETY = range(5)    # the census's scores (v21_endgame): a six, the kick after it, two, a field goal, a safety
 SCORE_KINDS = ("a six", "the kick after a six", "two after a six", "a field goal", "a safety")
-GAIN, TURNOVER, DEF_TD = s14.GAIN, s14.TURNOVER, s14.DEF_TD
+GAIN, TURNOVER, DEF_TD = feed.GAIN, feed.TURNOVER, feed.DEF_TD
 
 # the features, each a small integer
 NOTHING, SHORT, FIRST, LOSS, FRESH, TIMEOUT = range(6)
@@ -318,9 +318,9 @@ EFFECTS = ("gamer_off", "gamer_def", "team_off", "team_def")
 
 GO, FG, PUNT = 0, 1, 2
 FG_MAX = 65                   # longest kick tried (yards)
-CONV_CELLS, CONV_MARGIN, CONV_CLOCK = s14.CONV_CELLS, s14.CONV_MARGIN, s14.CONV_CLOCK
+CONV_CELLS, CONV_MARGIN, CONV_CLOCK = feed.CONV_CELLS, feed.CONV_MARGIN, feed.CONV_CLOCK
 RETURN, TOUCHBACK, NO_LANDING, KEPT = range(4)
-KICK_TOUCHBACK, KICK_NO_LANDING = s14.KICK_TOUCHBACK, s14.KICK_NO_LANDING
+KICK_TOUCHBACK, KICK_NO_LANDING = feed.KICK_TOUCHBACK, feed.KICK_NO_LANDING
 LEFT_EDGES = np.array([10.5, 30.5, 60.5, 120.5, 240.5])     # seconds left in the half
 EARLY_LEFT = 60.0                                            # early kicks: downs 1-3 in the half's last minute
 EARLY_EDGES = np.array([5.5, 10.5, 20.5, 30.5, 45.5])
@@ -642,7 +642,7 @@ def auto_end(period, clock, lead, down, def_timeouts):
     play clock each outlasting the clock, the defense out of timeouts."""
     period, clock, lead = np.asarray(period), np.asarray(clock, float), np.asarray(lead)
     return (period == 4) & (lead > 0) & (np.asarray(def_timeouts) == 0) \
-        & ((5 - np.asarray(down)) * s14.PLAY_CLOCK > clock)
+        & ((5 - np.asarray(down)) * feed.PLAY_CLOCK > clock)
 
 
 def combine(*masks):
@@ -1179,15 +1179,15 @@ def _with_side(rows):
 
 
 def snap_records(rows):
-    """Every scrimmage snap of a match, as sim14.snap_records reads them, with what the next row says
+    """Every scrimmage snap of a match, as feed.snap_records reads them, with what the next row says
     the down became: `converted` (a new set of downs, or a touchdown) and `replay` (the same down again,
     the gain short of the line: a penalty). Spots are whole yards, so a gain of 0 can move the chains (a
-    sneak for inches) and one of the yards to go can fall short; sim14 left out the 4th downs that kept
+    sneak for inches) and one of the yards to go can fall short; feed.snap_records leaves out the 4th downs that kept
     the ball short of the line, which these are kept."""
-    _i, _f = s14._i, s14._f
+    _i, _f = feed._i, feed._f
     out = []
     for a, b in zip(rows, rows[1:]):
-        if a["play_kind"] not in s14.SNAP_KINDS or not a["down"] or not a["field_position"]:
+        if a["play_kind"] not in feed.SNAP_KINDS or not a["down"] or not a["field_position"]:
             continue
         if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"] \
                 or not b["clock_seconds"] or not a["distance"]:
@@ -1197,14 +1197,14 @@ def snap_records(rows):
             continue
         down, t, y = _i(a["down"]), max(1, _i(a["distance"])), _i(a["field_position"])
         rec = dict(offense=a["offense"], period=_i(a["period"]), clock=_f(a["clock_seconds"]),
-                   margin=s14._margin(a, a["offense"]), down=down, distance=t, field=y, seconds=seconds,
+                   margin=feed._margin(a, a["offense"]), down=down, distance=t, field=y, seconds=seconds,
                    message=_i(b["message"]), kind=GAIN, gain=0, new_field=0, replay=False, converted=False,
-                   fresh=s14.is_fresh(a), start=_i(a["message"]))
+                   fresh=feed.is_fresh(a), start=_i(a["message"]))
         if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
             continue
         bk = b["play_kind"]
         if bk == "TOUCHDOWN":
-            scorer = s14._scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
+            scorer = feed._scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
             if scorer == a["offense"]:
                 rec["gain"], rec["converted"] = 100 - y, True
             else:
@@ -1235,7 +1235,7 @@ def snap_records(rows):
             else:
                 rec["kind"] = DEF_TD
             rec["read_off_score"] = True
-        s14._timeouts_at(rec, a)
+        feed._timeouts_at(rec, a)
         out.append(rec)
     return out
 
@@ -1251,13 +1251,13 @@ def _scored(a, b):
 
 def match_snaps(rows, pair=None, teams=None):
     """A match's scrimmage snaps with the features both draws read and who had the ball: a list of
-    dicts (sim14.snap_records plus side, prev_cls, elapsed, remain, cut, play_seconds, the gamers and
+    dicts (feed.snap_records plus side, prev_cls, elapsed, remain, cut, play_seconds, the gamers and
     teams)."""
     rows = _with_side(rows)
     if not rows:
         return []
     a_home = rows[0]["team_a_side"] != "away"
-    recs = s14.link_prev(snap_records(rows))
+    recs = feed.link_prev(snap_records(rows))
     for n, r in enumerate(recs):
         r["side"] = _side_of(r["offense"], a_home)
         r["elapsed"] = n
@@ -1285,7 +1285,7 @@ TEAMS = ("TEAM_A", "TEAM_B")
 def _tos_left(row, team, period):
     """(the side's timeouts left, the other side's) at a row, or (-1, -1) where the row doesn't carry
     them (playover.annotate_timeouts)."""
-    a, b = s14._i(row.get("timeouts_used_a")), s14._i(row.get("timeouts_used_b"))
+    a, b = feed._i(row.get("timeouts_used_a")), feed._i(row.get("timeouts_used_b"))
     if a is None or b is None or team not in TEAMS:
         return -1, -1
     have = TIMEOUTS if period <= 4 else OT_TIMEOUTS
@@ -1295,8 +1295,8 @@ def _tos_left(row, team, period):
 
 def _prev_at(row, by_end, period):
     """The play before a PLAY_OVER as the next snap's clock sees it (PREV), off the match's snaps."""
-    last = by_end.get(s14._i(row["message"]))
-    if s14.is_fresh(row) or last is None or last["offense"] != row.get("offense") or last["period"] != period \
+    last = by_end.get(feed._i(row["message"]))
+    if feed.is_fresh(row) or last is None or last["offense"] != row.get("offense") or last["period"] != period \
             or last["kind"] != GAIN or last["gain"] >= 100 - last["field"]:
         return FRESH
     return int(play_class(last["gain"], last["distance"]))
@@ -1308,12 +1308,12 @@ def end_points(row, after, final=None):
     neither is known. The feed can miss the half's last play -- a kick at the buzzer -- but not the score
     it left (the next half's rows, the history's final)."""
     if after is not None:
-        h1, w1 = s14._i(after.get("score_p1")), s14._i(after.get("score_p2"))
+        h1, w1 = feed._i(after.get("score_p1")), feed._i(after.get("score_p2"))
     elif final is not None:
         h1, w1 = int(final[0]), int(final[1])
     else:
         return None
-    h0, w0 = s14._i(row.get("score_p1")), s14._i(row.get("score_p2"))
+    h0, w0 = feed._i(row.get("score_p1")), feed._i(row.get("score_p2"))
     if None in (h0, w0, h1, w1) or row.get("offense") not in TEAMS:
         return None
     mine_home = (row["offense"] == "TEAM_A") == ((row.get("team_a_side") or "home") != "away")
@@ -1346,15 +1346,15 @@ def decision_points(rows, recs=None, final=None):
     recs = recs if recs is not None else match_snaps(rows)
     by_end = {r["message"]: r for r in recs}
     a_home = rows[0]["team_a_side"] != "away"
-    _i, _f = s14._i, s14._f
+    _i, _f = feed._i, feed._f
     regulation = final is not None and not any((_i(r.get("period")) or 0) >= 5 for r in rows)
     out["missed_kicks"] = 0
     for a, b in zip(rows, rows[1:] + [None]):
-        if a["play_kind"] not in s14.SNAP_KINDS or a.get("offense") not in TEAMS or not a.get("field_position") \
+        if a["play_kind"] not in feed.SNAP_KINDS or a.get("offense") not in TEAMS or not a.get("field_position") \
                 or not a.get("down") or not a.get("period") or not a.get("clock_seconds"):
             continue
         p, c, y, d = _i(a["period"]), _f(a["clock_seconds"]), _i(a["field_position"]), _i(a["down"])
-        m = s14._margin(a, a["offense"])
+        m = feed._margin(a, a["offense"])
         if c <= 0 or m is None:
             continue
         if b is None and not (regulation and p == 4):
@@ -1395,23 +1395,23 @@ def decision_points(rows, recs=None, final=None):
         if r.get("period") and r.get("clock_seconds"):
             if after and kind_r == "TOUCHDOWN":
                 kicker = prev["offense"]
-                scorer = s14._scorer(r, "TOUCHDOWN_TEAM") or r["offense"]
-                got = (kicker, _f(prev["clock_seconds"]), s14._margin(prev, kicker), 100,
+                scorer = feed._scorer(r, "TOUCHDOWN_TEAM") or r["offense"]
+                got = (kicker, _f(prev["clock_seconds"]), feed._margin(prev, kicker), 100,
                        KEPT if scorer == kicker else RETURN, prev)
             elif kind_r == "KICKOFF" and r.get("field_position") and r.get("offense") in TEAMS:
                 if after:
                     kicker, start, at = prev["offense"], _f(prev["clock_seconds"]), prev
-                    lead = s14._margin(prev, kicker)
+                    lead = feed._margin(prev, kicker)
                 elif prev is None or prev["period"] != r["period"]:
                     kicker, start, at = ("TEAM_B" if r["offense"] == "TEAM_A" else "TEAM_A"), QUARTER, r
-                    lead = s14._margin(r, kicker)
+                    lead = feed._margin(r, kicker)
                 else:
                     kicker = None
                 if kicker:
                     field, secs = _i(r["field_position"]), start - _f(r["clock_seconds"])
                     choice = KEPT if r["offense"] == kicker else TOUCHBACK if (field == KICK_TOUCHBACK and secs == 0) \
                         else NO_LANDING if (field == KICK_NO_LANDING and secs == 0) else RETURN
-                    if s14._scorer(r, "TOUCHDOWN_TEAM") is not None:
+                    if feed._scorer(r, "TOUCHDOWN_TEAM") is not None:
                         field = 100                       # run in from the kick
                     got = (kicker, start, lead, field, choice, at)
         if got is not None and got[2] is not None:
@@ -1437,15 +1437,15 @@ def decision_points(rows, recs=None, final=None):
         scorer = msgs[-1][-6:]
         two = any("TWO_POINT" in x for x in msgs)
         good = msgs[-1].startswith(("EXTRA_POINT_GOOD", "TWO_POINT_CONVERSION_SUCCESSFUL"))
-        m = s14._margin(a, scorer)
+        m = feed._margin(a, scorer)
         if m is None:
             continue
         p, c = _i(a["period"]), _f(a.get("clock_seconds")) or 0.0
         own, opp = _tos_left(a, scorer, p)
         out["two"].append(dict(side=_side_of(scorer, a_home), choice=int(two), period=p, clock=c,
                                left=float(half_left(p, c)), lead=m, own_to=own, opp_to=opp,
-                               cell=s14.conversion_cell(p, c), good=int(good), msg=_i(a["message"])))
-        out["conv"].append((two, good, int(conv_late(s14.conversion_cell(p, c)))))
+                               cell=feed.conversion_cell(p, c), good=int(good), msg=_i(a["message"])))
+        out["conv"].append((two, good, int(conv_late(feed.conversion_cell(p, c)))))
     # timeouts before a running-clock snap, with a timeout left to call: the defense's first, then
     # (the defense not calling) the offense's
     for r in recs:
@@ -1457,10 +1457,10 @@ def decision_points(rows, recs=None, final=None):
         role = r.get("timeout_role")
         off_left, def_left = r["timeouts_left"]
         if def_left > 0:
-            out["to_def"].append(dict(base, side=1 - r["side"], choice=int(role == s14.DEFENCE), lead=-r["margin"],
+            out["to_def"].append(dict(base, side=1 - r["side"], choice=int(role == feed.DEFENCE), lead=-r["margin"],
                                       own_to=def_left, opp_to=off_left))
-        if off_left > 0 and role != s14.DEFENCE:
-            out["to_off"].append(dict(base, side=r["side"], choice=int(role == s14.OFFENCE), lead=r["margin"],
+        if off_left > 0 and role != feed.DEFENCE:
+            out["to_off"].append(dict(base, side=r["side"], choice=int(role == feed.OFFENCE), lead=r["margin"],
                                       own_to=off_left, opp_to=def_left))
     return out
 
@@ -1522,8 +1522,8 @@ def _score_path(rows):
     """[(slice of regulation, home + away)] at every row with a score and a clock."""
     out = []
     for r in rows:
-        p, c, h, a = s14._i(r.get("period")), s14._f(r.get("clock_seconds")), s14._i(r.get("score_p1")), \
-            s14._i(r.get("score_p2"))
+        p, c, h, a = feed._i(r.get("period")), feed._f(r.get("clock_seconds")), feed._i(r.get("score_p1")), \
+            feed._i(r.get("score_p2"))
         if None not in (p, c, h, a):
             out.append((int(share_slice(p, c)), h + a))
     return out
@@ -1737,7 +1737,7 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     ot_games = {}
     for code, rows in matches.items():
         rows = _with_side(rows)
-        ot_games[code] = any((s14._i(r.get("period")) or 0) >= 5 for r in rows)
+        ot_games[code] = any((feed._i(r.get("period")) or 0) >= 5 for r in rows)
         pair, teams = match_people(code, rows, hist)
         fin = match_final(hist[code]) if code in hist else None
         if fin is not None:
@@ -1755,8 +1755,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
                           for q, k in zip(got[name], in_draw_window(name, got[name])) if k]
         for name in ("kick_pool", "fg_clock", "conv"):
             dec[name] += got[name]
-        kick_dec += s14.kick_decisions(rows)
-        safeties += s14.safety_kicks(rows)
+        kick_dec += feed.kick_decisions(rows)
+        safeties += feed.safety_kicks(rows)
     recs = [r for r in recs if r["period"] <= 4 + MAX_OT]
     if not recs:
         raise ValueError("no real snaps to build on")
@@ -2746,32 +2746,32 @@ def match_starts(model, rows, pair=("", ""), teams=("", ""), every=1):
     first = _side_of(opening, a_home) if opening in ("TEAM_A", "TEAM_B") else 0
     out, seen = [], 0
     for i, r in enumerate(rows):
-        if r["play_kind"] not in s14.SNAP_KINDS or not r.get("down") or not r.get("field_position") \
+        if r["play_kind"] not in feed.SNAP_KINDS or not r.get("down") or not r.get("field_position") \
                 or not r.get("period") or not r.get("clock_seconds") or not r.get("distance") \
                 or r.get("offense") not in ("TEAM_A", "TEAM_B"):
             continue
-        period, clock = s14._i(r["period"]), s14._f(r["clock_seconds"])
+        period, clock = feed._i(r["period"]), feed._f(r["clock_seconds"])
         if period is None or clock is None or clock <= 0 or period > 4 + MAX_OT:
             continue
         seen += 1
         if (seen - 1) % every:
             continue
-        msg = s14._i(r["message"])
+        msg = feed._i(r["message"])
         last = by_end.get(msg)
-        if s14.is_fresh(r) or last is None or last["offense"] != r["offense"] or last["period"] != period \
+        if feed.is_fresh(r) or last is None or last["offense"] != r["offense"] or last["period"] != period \
                 or last["kind"] != GAIN or last["gain"] >= 100 - last["field"]:
             prev = FRESH
         else:
             prev = int(play_class(last["gain"], last["distance"]))
-        used = (s14._i(r.get("timeouts_used_a")), s14._i(r.get("timeouts_used_b")))
+        used = (feed._i(r.get("timeouts_used_a")), feed._i(r.get("timeouts_used_b")))
         have = TIMEOUTS if period <= 4 else OT_TIMEOUTS
         tos_a = [max(0, have - u) if u is not None else have for u in used]
         tos = tos_a if a_home else tos_a[::-1]
-        home, away = s14._i(r["score_p1"]) or 0, s14._i(r["score_p2"]) or 0
+        home, away = feed._i(r["score_p1"]) or 0, feed._i(r["score_p2"]) or 0
         out.append((i, dict(period=np.array([period]), clock=np.array([clock]),
                             team=np.array([_side_of(r["offense"], a_home)]), phase=np.array([SNAP]),
-                            down=np.array([s14._i(r["down"])]), dist=np.array([max(1, s14._i(r["distance"]) or 10)]),
-                            y=np.array([s14._i(r["field_position"])]), home=np.array([home]),
+                            down=np.array([feed._i(r["down"])]), dist=np.array([max(1, feed._i(r["distance"]) or 10)]),
+                            y=np.array([feed._i(r["field_position"])]), home=np.array([home]),
                             away=np.array([away]), prev=np.array([prev]),
                             elapsed=np.array([bisect_left(starts, msg)]), tos=np.array([tos]),
                             kick2=np.array([1 - first]), **_start(model, 1, pair, teams))))
@@ -2822,7 +2822,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     `stats` (a dict) gathers the census: every snap (SNAP_LOG), counts and points by quarter.
     until_half: a start in the first half plays to the half's end (the scores then). `counts` (a dict):
     each game's drives (both sides', the start's own drive under way one of them) under "drives", shaped
-    as the scores. A start's "tempo" (one a start): added to both sides' time tilts (the pace nudge)."""
+    as the scores. A start's "tempo" (one a start): added to both sides' time tilts (the pace nudge). A start's
+    "convert" (the scoring side, -1 none): the game stands at the try after that side's touchdown, the six
+    on the board."""
     rng = np.random.default_rng(seed)
     S = len(start["period"])
     P = S * n_paths
@@ -2967,6 +2969,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         scored(ix, side, np.full(len(ix), 6), SIX)
         score[ix, side] += 6
         tally("touchdowns", len(ix))
+        convert(ix, side)
+
+    def convert(ix, side):
+        """The try after `side`'s touchdown on paths ix (the six on the board): over at once where it wins
+        overtime, else a kick or a go for two, and the kick-off to the other side."""
         lead = score[ix, side] - score[ix, 1 - side]
         ot = period[ix] >= 5
         walk = ot & ot_done[ix, 1 - side] & (lead > 0)            # the second side goes ahead: over
@@ -3366,6 +3373,12 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         clock[on] = QUARTER
         tos[on] = OT_TIMEOUTS
         prev[on] = FRESH
+
+    if "convert" in start:                    # a start at the try after a touchdown (the trader's): its scorer's
+        scorer = rep(start["convert"], np.int64)
+        cv = np.flatnonzero(scorer >= 0)
+        if len(cv):
+            convert(cv, scorer[cv])
 
     for _ in range(max_steps):
         live = np.flatnonzero(phase != DONE)

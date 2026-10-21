@@ -237,7 +237,8 @@ def cmd_remaining(args):
 def cmd_trader(args):
     from . import trader
     trader.serve(args.model, port=args.port, paths=args.paths, margin=args.margin,
-                 browser=not args.no_browser, version=args.version)
+                 browser=not args.no_browser, version=args.version, prior=args.prior,
+                 nudge_share=args.nudge_share, drives_share=args.drives_share, pace=not args.no_pace)
 
 
 def cmd_prior_vs_sim(args):
@@ -346,7 +347,7 @@ def cmd_v21_sweep(args):
 def cmd_v21_audit(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_audit
+    from . import loading as sc, v21_audit
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -375,7 +376,7 @@ def cmd_v21_audit(args):
 def cmd_v21_coverage(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_coverage
+    from . import loading as sc, v21_coverage
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -398,7 +399,7 @@ def cmd_v21_coverage(args):
 def cmd_v21_report(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_report
+    from . import loading as sc, v21_report
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -445,7 +446,7 @@ def cmd_v21_report(args):
 def cmd_v21_endgame(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_endgame, v21_report, v21_stream
+    from . import loading as sc, v21_endgame, v21_report, v21_stream
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -566,7 +567,7 @@ def cmd_playstyle(args):
 
 def cmd_v21_timing(args):
     import datetime as dt
-    from . import strength_check as sc, v21_timing
+    from . import loading as sc, v21_timing
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
     history = sc.history_rows(args.history)
@@ -1185,7 +1186,15 @@ def build_parser():
                                       "through it play by play, and see its prices after each play")
     p.add_argument("--model", help="the build directory; its version is read off it (default: the "
                                    "newest version's $EAMF_VN_MODEL, then ./vN_model)")
-    p.add_argument("--version", help="the version to price with, e.g. v14 (default: the build's own)")
+    p.add_argument("--version", help="the version to price with, e.g. v14, v21 or v21-drives (default: the build's "
+                                     "own; a v2.1 build is v21-drives, the pace nudge on where the build can pace)")
+    p.add_argument("--prior", help="v2.1: the prior it nudges toward, a walkthrough table or a build (default the "
+                                   "form table, as the betting sim's)")
+    p.add_argument("--nudge-share", type=float, default=1.0,
+                   help="v2.1: how far toward the prior's expected points (default 1, as the betting sim was run)")
+    p.add_argument("--drives-share", type=float, default=1.0,
+                   help="v2.1: how far toward the match's expected drives (default 1)")
+    p.add_argument("--no-pace", action="store_true", help="v2.1: no pace nudge (plain v21)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--paths", type=int, default=4000, help="simulated games for each price")
     p.add_argument("--margin", type=float, default=0.05, help="the book's margin on the odds shown")
