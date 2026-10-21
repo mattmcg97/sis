@@ -808,6 +808,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         opts["pace"] = True
     if getattr(stream, "late_of", lambda _n: False)(name):         # v21-late: the rolling late-Q4 correction
         opts["late"] = True
+    drives = getattr(stream, "drives_of", lambda _n: None)(name)  # v21-drives: the pace nudge
+    if drives is not None:
+        opts["drives"] = drives
+        if getattr(config, f"{key}_DRIVES_TABLE", None):
+            opts["drives_path"] = getattr(config, f"{key}_DRIVES_TABLE")
     # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
     moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
     read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
@@ -852,6 +857,10 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     if opts.get("late"):
         print(f"  {name}: the late Q4 correction, each match day's rolling shifts on the side with the ball's chance"
               f" ({stream.v21_late.LATE_FILE} beside the build)", flush=True)
+    if drives is not None:
+        print(f"  {name}: the pace nudge, one tempo on both sides' clocks so the kick-off games' drives go"
+              + ("" if drives == 1.0 else f" {100 * drives:.0f}% of the way")
+              + f" to the match's expected drives ({opts.get('drives_path') or 'the pace table'})", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")
@@ -875,6 +884,10 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         print(f"  {name}: {took['late_matches']:,} of {took['late_of']:,} matches have their day in the late table"
               + ("" if took["late_matches"] == took["late_of"] else " (the rest priced as v21: refit with --until"
                  " the window's last day)"), flush=True)
+    if opts.get("drives") is not None and took.get("drives_of"):
+        print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"
+              " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: rerun"
+                               " xgb.pace_eff with --score-from at or before the window's start)"), flush=True)
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"

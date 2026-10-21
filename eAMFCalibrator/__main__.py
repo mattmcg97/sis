@@ -1238,6 +1238,10 @@ def common_options():
                         help="--candidate v21: how far toward the prior's expected points each side's "
                              f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
                              "0: the sim's own means, no prior)")
+    tuning.add_argument("--v21-drives", metavar="CSV",
+                        help="--candidate v21-drives: each match's expected drives the pace nudge meets "
+                             "(xgb/pace_eff.py's pace_eff_prior.csv; default $EAMF_V21_DRIVES, then "
+                             "xgb/out/pace_eff/pace_eff_prior.csv)")
     tuning.add_argument("--prior-for", action="append", metavar="NAME=PRIOR",
                         help="a v21 candidate's own prior, as --v21-prior-model takes (a walkthrough table or "
                              "a build), so v21 candidates nudged toward different priors are priced in one run "
@@ -1292,7 +1296,8 @@ def apply_overrides(args):
                            ("v21_paths", "V21_PATHS"),
                            ("v21_lines", "V21_LINES"),
                            ("v21_prior_model", "V21_PRIOR_MODEL_DIR"),
-                           ("v21_nudge_share", "V21_NUDGE_SHARE")):
+                           ("v21_nudge_share", "V21_NUDGE_SHARE"),
+                           ("v21_drives", "V21_DRIVES_TABLE")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)

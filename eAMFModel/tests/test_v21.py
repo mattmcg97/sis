@@ -556,6 +556,19 @@ class TestSimulate(unittest.TestCase):
             h2, a2 = v21.simulate(m, v21.kickoff_start(m, ("G1", "G2"), ("T1", "T2")), 300, seed=4)
             np.testing.assert_array_equal(h, h2)
 
+    def test_each_possession_with_a_snap_is_a_drive(self):
+        m = built()
+        st, c = {}, {}
+        h, _ = v21.simulate(m, v21.kickoff_start(m), 300, seed=4, stats=st, counts=c)
+        self.assertEqual(c["drives"].shape, h.shape)
+        np.testing.assert_array_equal(c["drives"].ravel(), st["drives"])
+        # every drive ends in a score, a kick, a turnover or a failed 4th down, but the halves' last
+        ends = sum(st.get(k, 0) for k in ("touchdowns", "field_goal_tries", "punts", "turnovers", "turnovers_on_downs",
+                                          "safeties")) - st.get("kick_tds", 0)
+        extra = c["drives"].mean() - ends / st["games"]
+        self.assertGreaterEqual(extra, 0.0)
+        self.assertLessEqual(extra, 2.5)
+
     def test_a_running_clock_runs_the_quarter_out_before_the_snap(self):
         m = built()
         _fixed_time(m, 35.0)
@@ -1096,6 +1109,30 @@ class TestReport(unittest.TestCase):
         self.assertEqual(half["results"][0]["means"], (12.0, 8.0))            # set against the inputs as given
         self.assertIn("the inputs' margins x 0.5 (the gap shrink)", "\n".join(v21_report.report(half)))
 
+    def test_a_real_match_s_drives_as_the_sim_counts_them(self):
+        # each row the state for the next snap and the kind of play it closed: A scores; B punts; A is
+        # intercepted; B fails on 4th down; A takes over -- five drives
+        rows = [_row(1, 1, 235, "KICKOFF", "TEAM_A", 1, 10, 25), _row(2, 1, 228, "SCRIMMAGE", "TEAM_A", 2, 5, 30),
+                _row(3, 1, 220, "SCRIMMAGE", "TEAM_A", 1, 10, 45),
+                _row(4, 1, 212, "TOUCHDOWN", "TEAM_A", 1, 10, 45, a=6, messages="TOUCHDOWN_TEAM_A"),
+                _row(5, 1, 212, "CONVERSION", "TEAM_A", 1, 10, 45, a=7, messages="EXTRA_POINT_GOOD_TEAM_A"),
+                _row(6, 1, 208, "KICKOFF", "TEAM_B", 1, 10, 25, a=7),
+                _row(7, 1, 200, "SCRIMMAGE", "TEAM_B", 2, 10, 25, a=7),
+                _row(8, 1, 192, "SCRIMMAGE", "TEAM_B", 3, 10, 25, a=7),
+                _row(9, 1, 185, "SCRIMMAGE", "TEAM_B", 4, 10, 25, a=7),
+                _row(10, 1, 178, "PUNT", "TEAM_A", 1, 10, 30, a=7, messages="PUNT_TEAM_B"),
+                _row(11, 1, 170, "SCRIMMAGE", "TEAM_A", 2, 10, 30, a=7),
+                _row(12, 1, 162, "SCRIMMAGE", "TEAM_B", 1, 10, 60, a=7, messages="POSSESSION_TEAM_B"),
+                _row(13, 1, 155, "SCRIMMAGE", "TEAM_B", 2, 10, 60, a=7),
+                _row(14, 1, 148, "SCRIMMAGE", "TEAM_B", 3, 10, 60, a=7),
+                _row(15, 1, 141, "SCRIMMAGE", "TEAM_B", 4, 1, 69, a=7),
+                _row(16, 1, 134, "TURNOVER_ON_DOWNS", "TEAM_A", 1, 10, 31, a=7),
+                _row(17, 1, 127, "SCRIMMAGE", "TEAM_A", 2, 10, 31, a=7),
+                _row(18, 1, 120, "SCRIMMAGE", "TEAM_A", 3, 10, 31, a=7)]
+        self.assertEqual(v21_report.real_drives(rows), 5)
+        self.assertEqual(v21_report.real_drives(rows[::-1]), 5)              # read in message order
+        self.assertEqual(v21_report.real_drives(rows[:9]), 2)
+
     def test_report_sets_the_sim_against_the_inputs(self):
         out, states = self.run_report()
         self.assertEqual(len(out["results"]), 12)
@@ -1621,6 +1658,137 @@ class TestPace(unittest.TestCase):
             off, on = price(False), price(True)
         self.assertEqual(len(off), len(on))
         self.assertNotEqual([x[3] for x in off], [x[3] for x in on])
+
+
+class TestPaceNudge(unittest.TestCase):
+    """The pace nudge (v21-drives): one tempo on both sides' time tilts, solved with the points nudge so the
+    kick-off games' drives meet the match's expected drives at the sim's own level."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
+                          blend=40.0, field=0.2)
+        # the fakes' snaps take nearly the same time in a group: spread them, so a tempo has room to work
+        b = m.time
+        secs = np.random.default_rng(0).uniform(4.0, 40.0, len(b.payload["seconds"]))
+        b.payload["seconds"] = secs.astype(b.payload["seconds"].dtype)
+        b.payload["cut"] = np.zeros(len(secs), bool)
+        b.payload["phi"] = (secs / 10.0)[:, None].astype(b.payload["phi"].dtype)
+        for k in [k for k in b.__dict__ if k.startswith(("_tilt", "_by_"))]:
+            del b.__dict__[k]
+        m.pace_level, m.tempo_slope = v21.calibrate_tempo(m)
+        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.model = m
+        cls.codes = sorted(MATCHES)[:12]
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def drives(self, tempo, n=300):
+        start = v21.kickoff_start(self.model)
+        c = {}
+        h, a = v21.simulate(self.model, dict(start, tempo=np.full(2, float(tempo))), n, seed=3, counts=c)
+        return c["drives"].mean(), (h + a).mean()
+
+    def test_a_quicker_clock_is_more_drives(self):
+        quick, slow = self.drives(-1.0), self.drives(1.0)
+        self.assertGreater(quick[0], slow[0] + 0.5)
+        self.assertGreater(quick[1], slow[1])                               # and more points
+        level, slope = v21.drive_level(self.model)
+        self.assertLess(slope, -0.25)
+        self.assertAlmostEqual(level, self.drives(0.0, n=v21.NUDGE_PATHS // 2)[0], delta=0.6)
+        self.assertTrue(v21.can_pace(self.model))
+        self.assertFalse(v21.can_pace(built()))
+        with self.assertRaises(ValueError):
+            v21.drive_level(built())
+
+    def test_the_solve_meets_the_drives_and_the_points(self):
+        m, start = self.model, v21.kickoff_start(self.model)
+        h0, a0 = v21.simulate(m, start, 300, seed=3)
+        d0 = self.drives(0.0)[0]
+        target = (h0.mean() + 3.0, a0.mean() - 1.0)
+        for goal in (d0 - 1.0, d0 + 1.0):
+            (h, a), alpha, tempo, (own, d) = v21.drives_solve(m, start, target, goal, 300, seed=3)
+            self.assertAlmostEqual(own, d0, delta=0.3)                          # the sim's own, nudged in points alone
+            self.assertLess(abs(d - goal), 0.5)
+            self.assertLess(abs(h.mean() - target[0]), 2.0)
+            self.assertLess(abs(a.mean() - target[1]), 2.0)
+            self.assertEqual(tempo > 0, goal < d0)                          # fewer drives: a slower clock
+        (hh, _), _, _, (_, dh) = v21.drives_solve(m, start, target, d0 + 1.0, 300, seed=3, drives_share=0.5)
+        self.assertLess(abs(dh - (d0 + 0.5)), 0.5)
+        # no drives: the points nudge's own steps, the same draws
+        (h1, a1), al1 = v21.nudge_solve(m, start, target, 300, seed=3)
+        (h2, a2), al2, t2, (o2, d2) = v21.drives_solve(m, start, target, None, 300, seed=3)
+        self.assertTrue(np.array_equal(h1, h2) and np.array_equal(a1, a2) and np.array_equal(al1, al2))
+        self.assertEqual((t2, o2, d2), (0.0, None, None))
+        # no points target: the points as the sim has them
+        (_, _), al3, _, (_, d3) = v21.drives_solve(m, start, None, d0 + 1.0, 300, seed=3)
+        self.assertTrue(np.array_equal(al3, np.zeros(2)))
+        self.assertLess(abs(d3 - (d0 + 1.0)), 0.5)
+
+    def test_the_report_sets_the_drives_out(self):
+        exp = {c: 10.0 + (i % 3 - 1) * 1.5 for i, c in enumerate(self.codes)}      # slow, level, quick
+        means = {c: (12.0, 8.0) for c in self.codes}
+        run = lambda **kw: v21_report.run(self.tmp.name, {c: MATCHES[c] for c in self.codes}, HISTORY, means,
+                                          "2026-10-01", "2026-10-01", n_paths=100, state_paths=10, every=8, **kw)
+        on = run(nudge=True, drives=exp)
+        self.assertTrue(on["pacing"])
+        self.assertAlmostEqual(on["drives_level"], 10.0)
+        level = v21.drive_level(self.model)[0]
+        by = {}
+        for r in on["results"]:
+            self.assertAlmostEqual(r["goal_drives"], exp[r["code"]] / 10.0 * level, places=6)
+            self.assertIsNotNone(r["tempo"])
+            self.assertGreater(r["real_drives"], 0)
+            by.setdefault(exp[r["code"]], []).append(r["drives"])
+        self.assertGreater(np.mean(by[11.5]), np.mean(by[8.5]) + 1.0)        # the quick matches play more drives
+        text = "\n".join(v21_report.report(on))
+        for part in ("the pace nudge to the expected drives", "DRIVES a match", "the pace nudge: each match's expected",
+                     "by fifth of the expected drives", "goal"):
+            self.assertIn(part, text)
+        path = os.path.join(self.tmp.name, "m.csv")
+        v21_report.write_csv(path, on)
+        with open(path, newline="", encoding="utf-8") as fh:
+            rows = list(csv.DictReader(fh))
+        self.assertTrue(all(r["tempo"] != "" and r["goal_drives"] != "" and float(r["sim_drives"]) > 0 for r in rows))
+        off = run(nudge=True, drives=exp, drives_share=0.0)                  # none of the way: the sim's own drives
+        self.assertTrue(all(abs(r["drives"] - r["own_drives"]) < 0.6 for r in off["results"]))
+        plain = run(drives=exp)                                              # no nudge: the drives set out alone
+        self.assertFalse(plain["pacing"])
+        self.assertTrue(all(r["tempo"] is None for r in plain["results"]))
+        self.assertIn("DRIVES a match", "\n".join(v21_report.report(plain)))
+        self.assertNotIn("the pace nudge", "\n".join(v21_report.report(plain)))
+
+    def test_the_stream_prices_with_it(self):
+        from .. import v21_stream as vs
+        self.assertEqual(vs.drives_of("v21-drives"), 1.0)
+        self.assertEqual(vs.drives_of("V21-Drives0.5"), 0.5)
+        for name in ("v21", "v21-drives0", "v21-drivesx", "v21-pace", "v21-shape0.5"):
+            self.assertIsNone(vs.drives_of(name), name)
+        code = sorted(MATCHES)[0]
+        rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))
+        info = [h for h in HISTORY if h["MATCH_CODE"] == code]
+        lines = ((50, ""), (54, "Total points over 40.5"))
+        prod = [(code, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true") for r in rows for k, line in lines]
+        table = os.path.join(self.tmp.name, "pace_eff_prior.csv")
+        with open(table, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["MATCH_CODE", "exp_drives"])
+            w.writerows([[code, 12.5], ["OTHER", 7.5]])                     # the mean 10: this match 25% quicker
+        self.assertEqual(vs.drives_table(table), {code: 12.5, "OTHER": 7.5})
+        with self.assertRaises(SystemExit):
+            vs.drives_table(os.path.join(self.tmp.name, "missing.csv"))
+        price = lambda **kw: vs.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=60, workers=1,
+                                                   match_info=info, lines=vs.PROD_LINES, nudge_share=0.0, **kw)
+        off, on = price(), price(drives=1.0, drives_path=table)
+        self.assertEqual(len(off), len(on))
+        self.assertNotEqual([x[3] for x in off], [x[3] for x in on])
+        self.assertEqual(vs.LAST_TIMING["drives_matches"], 1)
+        with mock.patch.dict(os.environ, {"EAMF_V21_DRIVES": table}):
+            self.assertEqual([x[3] for x in price(drives=1.0)], [x[3] for x in on])
 
 
 class TestReact(unittest.TestCase):

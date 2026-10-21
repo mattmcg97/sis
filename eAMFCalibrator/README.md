@@ -80,7 +80,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept), `v21-pace` (each gamer's own pace when ahead, `eAMFModel v21-pace-fit`'s table beside the build) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept), `v21-pace` (each gamer's own pace when ahead, `eAMFModel v21-pace-fit`'s table beside the build), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
@@ -89,6 +89,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
 | `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v13/v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
+| `--v21-drives CSV` | `--candidate v21-drives`: each match's expected drives the pace nudge meets (`xgb/pace_eff.py`'s `pace_eff_prior.csv`; default `$EAMF_V21_DRIVES`, then `xgb/out/pace_eff/pace_eff_prior.csv`) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.

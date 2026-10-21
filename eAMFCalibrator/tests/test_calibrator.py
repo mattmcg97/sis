@@ -6113,6 +6113,43 @@ class TestV21React(unittest.TestCase):
             bets.check_models(["MODEL:v21"])
         self.assertEqual(table.call_count, 1)
 
+    def test_the_name_picks_the_pace_nudge(self):
+        """v21-drives (v21-drivesS): v21's build with each match's expected drives (--v21-drives' table), stopped
+        before any fetching where the table is missing."""
+        import importlib
+        from .. import bets, snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append((kw.get("drives"), kw.get("drives_path")))
+            stream.LAST_TIMING.update(drives_matches=1, drives_of=2) if kw.get("drives") else None
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None,
+                                 V21_DRIVES_TABLE="pace.csv"), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-drives", "v21-drives0.5"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [(None, None), (1.0, "pace.csv"), (0.5, "pace.csv")])
+        self.assertIn("v21-drives: the pace nudge", out.getvalue())
+        self.assertIn("50% of the way", out.getvalue())
+        self.assertIn("1 of 2 matches have their expected drives in the pace table", out.getvalue())
+        with mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "drives_table", side_effect=SystemExit("no table")) as table:
+            with self.assertRaises(SystemExit):
+                bets.check_models(["MODEL:v21-drives"])
+            bets.check_models(["MODEL:v21"])
+        self.assertEqual(table.call_count, 1)
+
 
     def test_a_betting_simulation_prices_the_bets_moments_alone(self):
         """config.BET_MOMENTS (bets.run's): v21 is handed the moments and caches them apart; --all-moments

@@ -316,9 +316,25 @@ games each; 21 Oct 2026):**
   with the pace × efficiency spread have 0.6769, and the form table that v21 nudges toward has
   0.6830.
 
-So v21's snap draws carry pace into the total but not into the margin. The next step is a pace
-nudge in v21: solve each side's time tilt so the kick-off games' drives meet the match's expected
-drives, the way the points nudge meets the expected points.
+So v21's snap draws carry pace into the total but not into the margin.
+
+### The pace nudge in v21 (`v21-report --drives`, `--candidate v21-drives`)
+
+v21 now takes the expected drives the way it takes the expected points. One tempo a match, on both
+sides' time tilts, is solved with the points nudge so the kick-off games' drives meet the match's
+goal. The goal is `exp_drives` over the table's mean, times the sim's own drives a match, so the
+nudge moves pace from match to match and leaves v21's league level alone (`eAMFModel/README.md`, "The
+pace nudge").
+
+```bash
+python -m eAMFModel v21-report --model v21_t10 --since 2026-09-01 --until 2026-10-18 --nudge --nudge-share 0.75 \
+    --drives xgb/out/pace_eff/pace_eff_prior.csv --state-paths 0 --out eAMFCalibrator/out_v21_drives
+python -m xgb.v21_pace --v21 eAMFCalibrator/out_v21_drives/v21_matches.csv --pace xgb/out/pace_eff/pace_eff_prior.csv
+```
+
+If the nudge works, v21's own margin sd should rise across the fifths of expected drives as the real
+one does (8.77 → 10.52), not sit at 9.81 → 10.09. The report's drives table shows, by fifth, the sim's
+own drives before the nudge, its goal, its drives after and the real drives.
 
 ## Files
 

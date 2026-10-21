@@ -440,13 +440,20 @@ def cmd_v21_report(args):
         raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
     print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
     means, books = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
+    drives = None
+    if args.drives:
+        drives = v21_stream.drives_table(args.drives)
+        have = sum(1 for r in rows if r["MATCH_CODE"] in drives)
+        print(f"  the expected drives: {args.drives}, {have:,} of {len(rows):,} matches"
+              + (", the pace nudge meeting them" if args.nudge else " (set against the sim's; --nudge: the pace nudge)"),
+              flush=True)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
           f" ({workers} processes)", flush=True)
     out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
                          state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books,
                          nudge=args.nudge, nudge_share=args.nudge_share, shape=args.shape,
-                         gap=None if args.gap in (None, 1.0) else args.gap)
+                         gap=None if args.gap in (None, 1.0) else args.gap, drives=drives, drives_share=args.drives_share)
     lines = v21_report.report(out)
     print("\n".join(lines))
     if args.out:
@@ -1109,6 +1116,13 @@ def build_parser():
                    help="with --nudge: the gap shrink -- the nudge meets the inputs' expected margin x L, their total "
                         "kept; the report still sets the sim against the inputs as given (default: off; the betting "
                         "sim's candidate v21-gapL)")
+    p.add_argument("--drives", metavar="CSV",
+                   help="each match's expected drives (xgb/pace_eff.py's pace_eff_prior.csv), set against the sim's "
+                        "and the real drives; with --nudge, the pace nudge: one tempo on both sides' time tilts so the "
+                        "kick-off games' drives meet them, carried into the states (the betting sim's v21-drives)")
+    p.add_argument("--drives-share", type=float, default=1.0,
+                   help="with --drives and --nudge: go this share of the way from the sim's own drives to the "
+                        "expected (default 1: all of it; the betting sim's v21-drivesS)")
     p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")

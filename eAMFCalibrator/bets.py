@@ -594,6 +594,8 @@ def check_models(streams):
                 stream_mod.pace_table(snowflake_io.build_dir(version))
             if getattr(stream_mod, "late_of", lambda _n: False)(version):     # v21-late: its table beside the build
                 stream_mod.late_table(snowflake_io.build_dir(version))
+            if getattr(stream_mod, "drives_of", lambda _n: None)(version) is not None:   # v21-drives: the pace table
+                stream_mod.drives_table(getattr(config, f"{base.upper()}_DRIVES_TABLE", None))
 
 
 def fetch_checks(cur, matches, prod_rows, keep=None):

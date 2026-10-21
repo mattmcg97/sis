@@ -2729,6 +2729,56 @@ On October's own late states, the rolling shifts take the sim's chance for the s
 Level overshoots: September's level gap had gone by October, and the correction lags drift in both
 directions. The betting sim is the judge.
 
+### The pace nudge (`--candidate v21-drives`, `v21-report --drives`)
+
+v21's kick-off margin spread hardly moves with a match's pace. In the slowest fifth of expected drives
+it's 9.81 against a real 8.77; in the fastest, 10.09 against 10.52 (`xgb/README.md`, 1 Sep – 18 Oct).
+Its gamers' time tilts are long-run profiles. The pre-match pace model (`xgb/pace_eff.py`) foresees
+each match's drives, and it's calibrated: real drives run 9.4 → 11.3 across its fifths.
+
+**What it adds.** One tempo a match, added to both sides' time tilts (`PHI_TIME`: seconds / 10; below
+0, quicker snaps and more drives). It's solved with the points nudge (`v21.drives_solve`), so the
+kick-off games' drives meet the match's goal and the points still meet theirs.
+- **The goal.** The match's expected drives over their table's mean, times the sim's own drives a
+  match at kick-off (`v21.drive_level`). The nudge moves pace from match to match, not the league's
+  level, so the table's drive count and the sim's needn't agree on what a drive is to the last snap.
+- **The steps.** Secant steps on the same random numbers, from the build's slope: the drives a unit
+  of tempo adds, measured at ±`TEMPO_PROBE`. A new build keeps it; an older one works it out once
+  per process. The points nudge steps on the points the sim would score at the drives the tempo is
+  moving to, so the two levers don't chase each other. With the pace nudge on, a secant step needs
+  a real move (`SECANT_MIN`) and a slope within 0.3–3× the build's, else it takes the build's slope.
+- **The limit.** The tempo stays within ±`TEMPO_MAX` (3). The report says how many matches hit it.
+- **In play.** The kick-off's tempo is carried into every state, as the nudge is.
+- **A drive.** A side's possession from its first snap. The sim counts one at each possession's
+  first snap. v21-report counts the real ones the same way, off the snap records: a new drive at a
+  fresh possession, a change of side or a new half.
+- Without it (`v21` itself), the draws are exactly as before.
+
+**v21-report.** `--drives TABLE` (`pace_eff_prior.csv`) adds each match's drives to the report:
+- the sim's and the real drives a match;
+- with `--nudge`, the pace nudge itself (`--drives-share S` goes that share of the way from the sim's
+  own drives);
+- by fifth of the expected drives: the expected, the sim's own, the goal, the sim's, the real, the
+  sim's margin sd and the real margins' sd about the sim's means.
+
+`v21_matches.csv` gains `exp_drives`, `sim_own_drives`, `goal_drives`, `sim_drives`, `real_drives` and
+`tempo`.
+
+```
+python -m eAMFModel v21-report --model v21_t10 --since 2026-09-01 --until 2026-10-18 --nudge --nudge-share 0.75 \
+    --drives xgb/out/pace_eff/pace_eff_prior.csv --state-paths 0 --out eAMFCalibrator/out_v21_drives
+python -m xgb.v21_pace --v21 eAMFCalibrator/out_v21_drives/v21_matches.csv --pace xgb/out/pace_eff/pace_eff_prior.csv
+```
+
+**Pricing.** The calibrator's candidate `v21-drives` (or `v21-drivesS`, S of the way) prices off the
+same build with the pace table: `--candidate v21,v21-drives --v21-drives <pace_eff_prior.csv>` (default
+`$EAMF_V21_DRIVES`, then `xgb/out/pace_eff/pace_eff_prior.csv`). It stops before any fetching if the
+table is missing. A match the table lacks is priced as v21, and the run says how many.
+
+On the tests' build (its snap times spread out), a tempo of −1 plays 11.6 drives a match, 0 plays
+8.0 and +1 plays 6.6. The solve meets a goal a drive either side within 0.15, with the points within
+half a point.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:
