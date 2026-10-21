@@ -57,9 +57,9 @@ def tearDownModule():
     SETUP["dir"].cleanup()
 
 
-def replay(model="model", prior=None, history=True, paths=200):
+def replay(model="model", prior=None, history=True, paths=200, **kw):
     src = ru.ExportSource(SETUP["export"], SETUP["history"] if history else None)
-    return ru.Replay(src, SETUP[model], prior, paths=paths, model_file="m.pkl")
+    return ru.Replay(src, SETUP[model], prior, paths=paths, model_file="m.pkl", **kw)
 
 
 class FixedPrior:
@@ -206,6 +206,63 @@ class TestReplay(unittest.TestCase):
         last = pts[-1]                                     # late on, the margin is near the scoreboard's
         row = next(t for t in view["timeline"] if t["message"] == last["message"])
         self.assertLess(abs(last["margin"] - (row["home"] - row["away"])), 10)
+
+
+class TestPace(unittest.TestCase):
+    """v21-drives in the replay: the match's expected drives off the pace table, read as the betting sim's stream
+    reads them, solved with the points nudge at the kick-off and carried into every state."""
+
+    def setUp(self):
+        self.codes = sorted(SETUP["matches"])[:2]
+        self.drives = {self.codes[0]: 11.5, self.codes[1]: 8.5}             # the mean 10: the first 15% quicker
+        self.rp = replay(paths=200, drives=self.drives, drives_share=1.0, drives_name="pace.csv")
+
+    def test_the_pace_off_the_table(self):
+        from eAMFModel import v21
+        self.assertTrue(v21.can_pace(SETUP["model"]))
+        meta = self.rp.meta()
+        self.assertTrue(meta["pace"])
+        self.assertEqual((meta["drives_share"], meta["drives_table"]), (1.0, "pace.csv"))
+        view = self.rp.load(self.codes[0])
+        self.assertEqual((view["pace"]["exp"], view["pace"]["pace"], view["pace"]["level"]), (11.5, 1.15, 10.0))
+        self.assertAlmostEqual(self.rp.pace_of(self.codes[0]), 1.15)
+        self.assertAlmostEqual(self.rp.pace_of(self.codes[0], 11.5), 1.15)         # the page's own, as the table's
+        self.assertAlmostEqual(self.rp.pace_of(self.codes[0], 12.0), 1.2)          # typed over
+        self.assertIsNone(self.rp.pace_of(self.codes[0], 0.0))                      # blank: no pace nudge
+        self.assertFalse(replay().meta()["pace"])                                    # no table: plain v21
+        self.assertFalse(replay("plain", drives=self.drives).pacing)                # a build that can't pace
+
+    def test_the_tempo_solved_at_the_kick_off_and_carried_into_the_states(self):
+        code = self.codes[0]
+        kick = self.rp.price(code, None, [20.0, 14.0], 1.0)
+        pace = kick["nudge"]["pace"]
+        self.assertEqual(set(pace), {"pace", "own", "goal", "got", "tempo", "share"})
+        self.assertGreater(pace["goal"], pace["own"])                                # 15% over the league's
+        self.assertLess(pace["tempo"], 0)                                            # below 0: quicker
+        slow = self.rp.price(self.codes[1], None, [20.0, 14.0], 1.0)["nudge"]["pace"]
+        self.assertGreater(slow["tempo"], pace["tempo"])
+        alpha, _, _, _, tempo, _ = self.rp.nudge(code, [20.0, 14.0], 1.0, 200)
+        m = self.rp._match(code)
+        msg = next(t["message"] for t in m["view"]["timeline"] if t["message"] in m["starts"])
+        st = self.rp._state(m, msg, alpha, tempo)
+        self.assertEqual(float(st["tempo"][0]), tempo)
+        with_pace = self.rp.price(code, msg, [20.0, 14.0], 1.0)
+        without = self.rp.price(code, msg, [20.0, 14.0], 1.0, exp=0.0)
+        self.assertIsNone(without["nudge"]["pace"])
+        self.assertNotEqual(with_pace["expected"], without["expected"])
+        half = self.rp.price(code, None, [20.0, 14.0], 1.0, drives_share=0.5)["nudge"]["pace"]
+        self.assertAlmostEqual(half["goal"], half["own"] + 0.5 * (pace["goal"] - pace["own"]) / 1.0, delta=0.6)
+        allp = self.rp.price_all(code, [20.0, 14.0], 1.0, 100)
+        self.assertGreater(len(allp["points"]), 1)
+
+    def test_the_api_takes_the_drives_and_the_share(self):
+        code = self.codes[0]
+        status, r = ru.respond(self.rp, "/api/price", {"code": code, "means": [20, 14], "share": 1.0,
+                                                       "exp_drives": 12.0, "drives_share": 1.0})
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(r["nudge"]["pace"]["pace"], 1.2)
+        status, r = ru.respond(self.rp, "/api/price", {"code": code, "means": [20, 14], "share": 1.0, "exp_drives": 0})
+        self.assertIsNone(r["nudge"]["pace"])
 
 
 class TestSources(unittest.TestCase):

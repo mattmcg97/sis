@@ -3200,6 +3200,8 @@ python -m eAMFCalibrator replay-ui --v21-model v21_model \
 # no Snowflake: the matches off a `scouting` export
 python -m eAMFCalibrator replay-ui --v21-model v21_model --export eAMFCalibrator/out/scouting_playover.csv \
     --history AMFELO_20261013.csv --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
+# v21-drives as the betting sim runs it: the form table's points and pace, both nudged the whole way
+python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0
 ```
 
 Opens a local page (`http://127.0.0.1:8766/`) to step through a historic match a PLAY_OVER at a
@@ -3222,11 +3224,11 @@ loaded: it has no PLAY_OVERs to replay.
 | controls | first / back / next / last, Play at 0.5×/1×/3×, and Skip unpriced |
 | Prices | moneyline (ML), spread and over: v21 against prod with the difference in percentage points, and fair odds beside each. Spread and over rows appear at prod's line and, if different, at v21's own line. SUSP marks a market prod had suspended. Below: v21's expected points for each side, margin and total |
 | Distribution | v21's final margin and total, with prod's line marked |
-| Nudge | the expected points and share, with Apply and Reset. The table shows prior, target, v21's own means, the nudged means and alpha. The badge reads Off when the build has no nudge, or notes a match missing from the prior |
+| Nudge | the expected points and share, and the expected drives and pace share, with Apply and Reset. The table shows prior, target, v21's own means, the nudged means and alpha, then the drives (v21's own → the goal, and what the nudged game plays) and the tempo. The badge reads Off when the build has no nudge, or notes a match missing from the prior |
 | Pre-match | prod's closing quote against v21's kick-off price |
 | Home win % | after Price all: v21 against prod through the match, with quarter lines. Hover for the numbers, click to jump |
 
-Header chips show the model, the prior and the source. "Sims" is the games played for each price.
+Header chips show the model, the prior, the pace (its share and table, or "No pace nudge") and the source. "Sims" is the games played for each price.
 Keys: ← / → step, Home / End jump to the ends, space plays and pauses.
 
 **The nudge:** v21 starts from its own kick-off means (the gamers' and teams' effects in the
@@ -3241,6 +3243,20 @@ again and every price follows; Reset goes back to the prior and the default shar
 Share 0, or no expected points, prices with v21's own means. A nudge needs a tilt build
 (`v21-build --mode tilt`). With any other build, v21 prices off its own means and the Nudge badge
 reads Off.
+
+**The pace nudge (v21-drives):** with a pace table, the kick-off solve also sets the game's tempo
+(`v21.drives_solve`, as `v21-report --drives` and the trader do): quicker or slower snaps until
+v21's drives sit the pace share of the way from its own to the goal. The goal is the match's
+expected drives over the table's average, times v21's own league drives. The tempo carries into
+every later state with the points nudge. The expected drives come off `--v21-drives` (a pace
+table: MATCH_CODE, exp_drives), then `$EAMF_V21_DRIVES`, then the prior table's own `exp_drives`
+(`pace-prior` writes them). A table with `league_drives` has each match put back at the table's
+average league, so the league's drift doesn't read as pace.
+
+The Drives box starts at the table's value and can be changed by hand: Apply solves both nudges
+again. A blank Drives box, or pace share 0, prices plain v21 (the points nudge alone).
+`--drives-share` sets the default share (1, as v21-drives runs), and `--no-pace` turns the pace
+nudge off. With no pace table, or a build that can't pace, the page says so and prices plain v21.
 
 **What v21 can't price:** a PLAY_OVER with a conversion still to come has no v21 state, as in the
 price stream. The page shows prod's quote there with the badge "No v21 state".

@@ -227,7 +227,8 @@ def cmd_replay_ui(args):
     if not args.export:
         config.FETCH_DISK_CACHE = os.path.join(args.out or DEFAULT_OUT, "replay_cache")
         cur = _LazyCursor()
-    replay = replay_ui.build(args.v21_model, args.prior_model, args.export, args.history, cur, args.paths, args.share)
+    replay = replay_ui.build(args.v21_model, args.prior_model, args.export, args.history, cur, args.paths, args.share,
+                             drives_path=args.v21_drives, drives_share=args.drives_share, pace=not args.no_pace)
     try:
         replay_ui.serve(replay, args.port, browser=not args.no_browser)
     finally:
@@ -1708,6 +1709,13 @@ def build_parser():
     ru_parser.add_argument("--paths", type=int, default=1000, help="games simulated a price (default 1000)")
     ru_parser.add_argument("--share", type=float, default=0.75,
                            help="how far the kick-off means move toward the expected points (default 0.75)")
+    ru_parser.add_argument("--v21-drives", metavar="CSV",
+                           help="the pace nudge's table of each match's expected drives (MATCH_CODE, exp_drives; "
+                                "default $EAMF_V21_DRIVES, then the prior table's own exp_drives)")
+    ru_parser.add_argument("--drives-share", type=float, default=1.0,
+                           help="how far the kick-off drives move toward the match's expected drives (default 1: "
+                                "v21-drives)")
+    ru_parser.add_argument("--no-pace", action="store_true", help="no pace nudge: plain v21")
     ru_parser.add_argument("--port", type=int, default=8766, help="the local port (default 8766)")
     ru_parser.add_argument("--no-browser", action="store_true", help="don't open the page")
     ru_parser.add_argument("--out", help=f"where the query cache goes (default: {DEFAULT_OUT}/replay_cache)")
