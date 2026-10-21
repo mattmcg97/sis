@@ -1927,7 +1927,7 @@ class TestCli(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(out, v21.MODEL_FILE)))
             codes = sorted(MATCHES)[:6]
             means = {c: (9.0, 8.0) for c in codes}
-            with mock.patch("eAMFModel.strength_check.history_rows", return_value=HISTORY[:6]), \
+            with mock.patch("eAMFModel.loading.history_rows", return_value=HISTORY[:6]), \
                     mock.patch("eAMFModel.v21_report.prior_inputs", return_value=(means, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main(["v21-report", "--model", out, "--prior-model", "v14_model", "--snapshots", snaps, "--since", "2026-10-01",

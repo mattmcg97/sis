@@ -114,7 +114,7 @@ class TestReport(unittest.TestCase):
                 w = csv.DictWriter(fh, fieldnames=list(rows[0]), extrasaction="ignore")
                 w.writeheader()
                 w.writerows(rows)
-            with mock.patch("eAMFModel.strength_check.history_rows", return_value=HISTORY[:4]), \
+            with mock.patch("eAMFModel.loading.history_rows", return_value=HISTORY[:4]), \
                     mock.patch("eAMFModel.v21_report.prior_inputs", return_value=(means, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
                 cli.main(["v21-endgame", "--model", d, "--prior-model", "v14_model", "--snapshots", snaps,
