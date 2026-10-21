@@ -103,8 +103,8 @@ V21_PATHS = 1000
 V21_LINES = "own"
 V21_PRIOR_MODEL_DIR = None
 V21_NUDGE_SHARE = 0.75
-# The pace nudge's table for a v21-drives candidate: each match's expected drives (xgb/pace_eff.py's
-# pace_eff_prior.csv; None: $EAMF_V21_DRIVES, then xgb/out/pace_eff/pace_eff_prior.csv).
+# The pace nudge's table for a v21-drives candidate: each match's expected drives (MATCH_CODE, exp_drives;
+# None: $EAMF_V21_DRIVES, then the candidate's prior table's own exp_drives, the walkthrough's pace).
 V21_DRIVES_TABLE = None
 # A candidate's own prior, by its name (--prior-for v21-avgf2=<table or build>), so several v21
 # candidates nudged toward different priors are priced in one run on the same bets.

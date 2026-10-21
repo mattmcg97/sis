@@ -19,8 +19,9 @@ state gets its own nudge, the kick-off's moved by what the match has shown of ea
 With the pace nudge (a candidate named v21-drives, or v21-drivesS for S of the way from the sim's own),
 one tempo on both sides' time tilts is solved with the points nudge so the kick-off games' drives meet the
 match's expected drives (v21.drives_solve), and carried into every in-play state as the nudge is: the
-expected drives from the pre-match pace table (DEFAULT_DRIVES_TABLE, xgb/pace_eff.py's exp_drives; a match
-it lacks priced as v21), relative to the table's mean, at the sim's own level (v21.drive_level)."""
+expected drives off the prior table's exp_drives (the walkthrough's pace, eAMFCalibrator/pace_prior.py), or a
+pace table named for it (drives_table; a match it lacks priced as v21), relative to the table's mean, at the
+sim's own level (v21.drive_level)."""
 
 import os
 import re
@@ -44,8 +45,6 @@ DEFAULT_PRIOR_DIR = "v14_model"
 DEFAULT_PRIOR_TABLE = os.path.join("eAMFCalibrator", "out", "form_prior", "priors", "avg_form4_w05.csv")
 DEFAULT_PATHS = 1000          # games a snapshot (the kick-off: each side receiving, so twice that)
 NUDGE_SHARE = 0.75            # how far toward the prior's expected points (v21-report's --nudge-share)
-# the pace nudge's expected drives a match: xgb/pace_eff.py's table (MATCH_CODE, exp_drives)
-DEFAULT_DRIVES_TABLE = os.path.join("xgb", "out", "pace_eff", "pace_eff_prior.csv")
 PREMATCH = True
 # Every match's sim is seeded by the match (_seed): its quotes are the same whichever matches it is
 # priced with, so the calibrator prices several of its chunks in one pool (snowflake_io._sim_quotes).
@@ -142,25 +141,40 @@ def drives_of(name):
     return share if share > 0 else None
 
 
-def drives_table(path=None):
-    """{match: expected drives} off the pace table (path, else $EAMF_V21_DRIVES, else DEFAULT_DRIVES_TABLE
-    here or beside the package); stops with how to write it."""
+def drives_table(path=None, prior=None):
+    """{match: expected drives} for the pace nudge, off the first of: `path` (a pace table: MATCH_CODE,
+    exp_drives), $EAMF_V21_DRIVES, the prior table v21 nudges toward (`prior`: the walkthrough's tables carry
+    the pace). A table with league_drives (the walkthrough's, eAMFCalibrator/pace_prior.py) has each match's
+    drives taken against its own day's league and put back at the table's average league, so the league's
+    drift over a span doesn't read as pace. Stops with how to write it."""
     import csv
-    here = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
-    tried = [path] if path else [os.environ.get("EAMF_V21_DRIVES"), DEFAULT_DRIVES_TABLE,
-                                 os.path.join(here, DEFAULT_DRIVES_TABLE)]
-    for p in tried:
-        if p and os.path.exists(p):
-            with open(p, newline="", encoding="utf-8") as fh:
-                rows = list(csv.DictReader(fh))
-            if rows and "exp_drives" not in rows[0]:
-                raise SystemExit(f"{p}: no exp_drives column (xgb/pace_eff.py's pace_eff_prior.csv has one)")
-            return {r["MATCH_CODE"]: float(r["exp_drives"]) for r in rows if r.get("exp_drives") not in ("", None)}
-    raise SystemExit("the pace nudge reads each match's expected drives, and no table was found in "
-                     f"{path or ', '.join(p for p in tried if p)}: write it --\n"
-                     "  python -m xgb.pace_eff --features xgb/out/features.csv --drives xgb/data/drive_stats.csv"
-                     " --since <six months before> --score-from <the window's start>\n"
-                     "then point --v21-drives (or EAMF_V21_DRIVES) at its pace_eff_prior.csv")
+    from . import table_prior
+    p = path or os.environ.get("EAMF_V21_DRIVES") or (prior if table_prior.is_table(prior) else None)
+    how = ("  python -m eAMFCalibrator pace-prior --scouting <scouting_playover.csv> --table <the prior table>\n"
+           "(or the walkthrough with --scouting, then form-prior), or name a pace table: --v21-drives (v21-report "
+           "--drives CSV) or $EAMF_V21_DRIVES")
+    if not p:
+        raise SystemExit(f"the pace nudge reads each match's expected drives off the prior table, and the prior "
+                         f"({prior}) isn't a table: name one --\n{how}")
+    if not os.path.exists(p):
+        raise SystemExit(f"the pace nudge's table {p}: no such file")
+    with open(p, newline="", encoding="utf-8") as fh:
+        got = {r["MATCH_CODE"]: (float(r["exp_drives"]), _num(r.get("league_drives")))
+               for r in csv.DictReader(fh) if r.get("exp_drives") not in ("", None)}
+    if not got:
+        raise SystemExit(f"{p} has no expected drives (exp_drives): write them into it --\n{how}")
+    if all(lg for _, lg in got.values()):
+        mean = float(np.mean([lg for _, lg in got.values()]))
+        return {c: e / lg * mean for c, (e, lg) in got.items()}
+    return {c: e for c, (e, _) in got.items()}
+
+
+def _num(v):
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return None
+    return x if x > 0 else None
 
 
 def react_of(name):
@@ -433,11 +447,11 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     `moments`: {match: (market, prod message) per bet}, only the in-play books those bets read simulated
     (None: every book prod's quotes read; a match without any: its pre-match prices alone); `drives`: the
     pace nudge, the share of the way from the sim's own drives to each match's expected drives (drives_of;
-    None: off), those off `drives_path` (drives_table's default where None); `label`: the candidate's name
-    on the simulation's progress bar."""
+    None: off), those off `drives_path` (else the prior table's own, drives_table); `label`: the candidate's
+    name on the simulation's progress bar."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
-    exp_drives = drives_table(drives_path) if drives else None
+    exp_drives = drives_table(drives_path, prior_tables) if drives else None
     level = float(np.mean(list(exp_drives.values()))) if exp_drives else None
     if react:                                        # the tables a variant reads, once with the build
         fit_it = ("fit them once on real games before the window --\n  python -m eAMFModel v21-react-fit --model"

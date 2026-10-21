@@ -10,6 +10,8 @@ terminal one line drawn over itself (eAMFModel/progress.py), sent to a file a li
   nb2 prices   every match priced by its own day's fit (nb2-history's nb2.csv)
   glmer fits   glmer refitted every day (glmer/cadence.R, trim:hl60_x0.5:daily: the trimmed model, each
                fit on the results in by its midnight); Rscript must be on the PATH or in $RSCRIPT
+  pace         with the scouting export (--scouting): each match's expected drives, a ridge on the gamers'
+               and teams' pace refitted every day (pace_prior.py), for v21's pace nudge
   layers       the rematch and inference layers fitted walk-forward on each model's own errors
   variants     each variant's expected points for every match, and its moneyline off them
   report       every variant graded against NB2 on the results (prior-offline's tables)
@@ -30,15 +32,17 @@ negative binomial with its gamers' dispersions, a shared gamma pace factor; the 
 with NB2's dispersions), NB2's construction fitted to glmer's errors for glmer; the layered
 variants read their model's book at the layer's shift, as prior-backtest does. Ties split half and
 half. Every price was made before its match as it would have been live: the fits on the days
-before, the layers on results in by kick-off (36 minutes after a match's kick-off).
+before, the layers on results in by kick-off (36 minutes after a match's kick-off). With the scouting
+export every table also has the match's expected drives (exp_drives) and its day's league drives
+(league_drives), the pace v21-drives meets (pace_prior.py); without it they're blank.
 
 Point a sim at a variant with its table:
     python -m eAMFCalibrator report --candidate v21 --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
     python -m eAMFModel v21-report ... --prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
 
-Writes (to --out, default out/walkthrough/): priors/<variant>.csv, nb2.csv, nb2_fits/, glmer/,
-walkthrough.txt (the grading) and walkthrough.json (the span, the inputs, the variants' files and
-each step's time).
+Writes (to --out, default out/walkthrough/): priors/<variant>.csv, nb2.csv, nb2_fits/, glmer/, pace/
+(the drives counted and each match's pace), walkthrough.txt (the grading) and walkthrough.json (the
+span, the inputs, the variants' files and each step's time).
 """
 
 import csv
@@ -73,6 +77,8 @@ EST_NB2_PRICE = 1.0              # a day's matches priced by its fit
 EST_GLMER_FIT = 6.0              # a day's glmer fit on one core
 EST_LAYERS = 0.002               # a match, each model
 EST_VARIANTS = 0.016             # a match, every variant
+EST_DRIVES = 0.004               # a match's drives counted off the scouting export
+EST_PACE = 0.03                  # a day's pace fit
 LINE_EVERY = 15.0                # seconds between progress lines sent to a file (a fit's line always prints)
 OVERLAY_EVERY = 0.5              # seconds between redraws of the line on a terminal
 
@@ -294,6 +300,24 @@ def run_streaming(args, on_line):
     return proc.wait()
 
 
+def pace_step(history, export, out_dir, first, last, prog):
+    """Each match's (expected drives, its day's league drives): pace_prior's daily ridge on the drives
+    counted off the export (kept in pace/ while the export is the same)."""
+    from . import pace_prior
+    days = (last - first).days + 1
+    prog.begin("pace", "the pace", days, "days", len(history) * EST_DRIVES + days * EST_PACE)
+
+    def counted(n):
+        if n % 500 == 0:
+            prog.tick(0, note=f"{n:,} matches' drives counted")
+
+    pace, drives = pace_prior.run(history, export, first, last, os.path.join(out_dir, "pace"), on_match=counted,
+                                  on_day=lambda day: prog.tick(note=str(day)),
+                                  log=lambda line: (prog._clear(), prog.out(line)))
+    prog.end()
+    return pace, drives
+
+
 def fit_layers(ctx, arms, prog):
     n = len(ctx["codes"])
     prog.begin("layers", "the layers", len(arms), "models", len(arms) * n * EST_LAYERS)
@@ -322,9 +346,9 @@ def _points(margin, total):
     return max(0.1, (total + margin) / 2), max(0.1, (total - margin) / 2)
 
 
-def variant_rows(ctx, fitted, prog, draws=DRAWS):
+def variant_rows(ctx, fitted, prog, draws=DRAWS, pace=None):
     """{variant: {match: row}}: every variant's expected points and moneyline for every match both
-    models priced."""
+    models priced, and with `pace` ({match: (expected drives, league drives)}) its pace."""
     by = {name: {r["match"]: r for r in rows} for name, (_, _, rows, _) in fitted.items()}
     fits = {name: pb.fitted_by_day(rows) if mode == "fitted" else {} for name, (mode, _, rows, _) in fitted.items()}
     codes = sorted(set.intersection(*(set(v) for v in by.values())), key=lambda c: by["nb2"][c]["start"])
@@ -366,7 +390,9 @@ def variant_rows(ctx, fitted, prog, draws=DRAWS):
                 exp_margin=round(margin, 4), exp_total=round(total, 4), p_home=round(p, 5), score_model=kind,
                 score_params=" ".join(f"{x:.4f}" for x in params if x is not None),
                 layer_margin=None if dm is None else round(dm, 4), layer_total=None if dt_ is None else round(dt_, 4),
-                burn_in=m["start"] < burn)
+                burn_in=m["start"] < burn,
+                exp_drives=round(pace[c][0], 3) if pace and c in pace else None,
+                league_drives=round(pace[c][1], 3) if pace and c in pace else None)
         if k % 250 == 0 or k == len(codes):
             prog.tick(250 if k % 250 == 0 else k % 250)
     prog.end()
@@ -375,7 +401,8 @@ def variant_rows(ctx, fitted, prog, draws=DRAWS):
 
 TABLE_COLUMNS = ["MATCH_CODE", "start", "home", "home_team", "away", "away_team", "meeting", "home_score",
                  "away_score", "home_pts", "away_pts", "Pred_P1_Points", "Pred_P2_Points", "exp_margin", "exp_total",
-                 "p_home", "score_model", "score_params", "layer_margin", "layer_total", "burn_in"]
+                 "p_home", "score_model", "score_params", "layer_margin", "layer_total", "burn_in", "exp_drives",
+                 "league_drives"]
 
 
 def file_name(variant):
@@ -411,8 +438,9 @@ def report(ctx, variants, burn_from, prog):
 
 
 def run(out_dir, history_path, since, until=None, workers=4, cores=None, draws=DRAWS, half_life=None,
-        cadence_runner=None):
-    """The whole walkthrough. Returns walkthrough.json's path."""
+        cadence_runner=None, scouting=None):
+    """The whole walkthrough (with `scouting`, the scouting export, each match's pace too). Returns
+    walkthrough.json's path."""
     from eAMFModel import nb2_prior
     os.makedirs(out_dir, exist_ok=True)
     history = nb2_prior.load_history(history_path)
@@ -437,6 +465,9 @@ def run(out_dir, history_path, since, until=None, workers=4, cores=None, draws=D
             "nb2_prices": days * EST_NB2_PRICE,
             "glmer": days * EST_GLMER_FIT / max(1, min(cores_, -(-days // 14))),
             "layers": 2 * n_matches * EST_LAYERS, "variants": n_matches * EST_VARIANTS, "report": 5.0}
+    if scouting:
+        plan = dict(list(plan.items())[:3] + [("pace", len(history) * EST_DRIVES + days * EST_PACE)]
+                    + list(plan.items())[3:])
     prog = Progress(plan)
     print(f"  first estimate: about {_fmt(sum(plan.values()))} in all (the fits already made are kept, so a rerun "
           f"is quicker); finishing about {prog.finish_text(sum(plan.values()))}", flush=True)
@@ -445,9 +476,12 @@ def run(out_dir, history_path, since, until=None, workers=4, cores=None, draws=D
     arms = [("nb2", nb2_csv),
             ("glmer", glmer_fits(os.path.abspath(history_path), history, os.path.abspath(out_dir), first, last, cores,
                                  prog, cadence_runner))]
+    pace = drives = None
+    if scouting:
+        pace, drives = pace_step(history, scouting, out_dir, first, last, prog)
     ctx = prior_offline.prepare(history_path, f"{first} 00:00:00", f"{last + dt.timedelta(days=1)} 00:00:00")
     fitted = fit_layers(ctx, arms, prog)
-    variants = variant_rows(ctx, fitted, prog, draws)
+    variants = variant_rows(ctx, fitted, prog, draws, pace)
     paths = write_tables(out_dir, variants)
     L = report(ctx, variants, ctx["burn_from"], prog)
     head = [f"  The walkthrough, {first} to {last}: each variant's expected points for every match, priced as live "
@@ -455,6 +489,12 @@ def run(out_dir, history_path, since, until=None, workers=4, cores=None, draws=D
     head += [f"  {name:12s} {len(variants[name]):7,d} matches  -> {paths[name]}" for name, _ in VARIANTS]
     head += ["", "  Point a sim at one: --v21-prior-model <the table> (eAMFCalibrator), --prior-model <the table> "
                  "(eAMFModel v21-report)", ""]
+    if pace is not None:
+        from . import pace_prior
+        head += pace_prior.lines(pace, drives) + [f"  (the pace off {scouting}: v21-drives reads exp_drives off "
+                                                  "the table it's given)", ""]
+    else:
+        head += ["  no pace: exp_drives blank (--scouting <scouting_playover.csv> for v21-drives)", ""]
     L = head + L + ["", "  How each model's moneyline is read:"]
     L += [f"  {name}: {pb.describe_model(mode, own, pb.fitted_by_day(rows) if mode == 'fitted' else {})}"
           for name, (mode, own, rows, _) in fitted.items()]
@@ -466,6 +506,8 @@ def run(out_dir, history_path, since, until=None, workers=4, cores=None, draws=D
     manifest = dict(first=first.isoformat(), last=last.isoformat(), history=os.path.abspath(history_path),
                     history_matches=len(history), burn_in_until=ctx["burn_from"].strftime("%Y-%m-%d"),
                     glmer_arm=GLMER_ARM, half_life=half_life, draws=draws,
+                    scouting=os.path.abspath(scouting) if scouting else None,
+                    pace_matches=len(pace) if pace is not None else 0,
                     variants={name: dict(file=paths[name], spec=list(spec)) for name, spec in VARIANTS},
                     seconds=timings, finished=dt.datetime.now().isoformat(timespec="seconds"))
     path = os.path.join(out_dir, "walkthrough.json")

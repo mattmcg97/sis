@@ -328,9 +328,12 @@ pace nudge").
 
 ```bash
 python -m eAMFModel v21-report --model v21_t10 --since 2026-09-01 --until 2026-10-18 --nudge --nudge-share 0.75 \
-    --drives xgb/out/pace_eff/pace_eff_prior.csv --state-paths 0 --out eAMFCalibrator/out_v21_drives
-python -m xgb.v21_pace --v21 eAMFCalibrator/out_v21_drives/v21_matches.csv --pace xgb/out/pace_eff/pace_eff_prior.csv
+    --drives --state-paths 0 --out eAMFCalibrator/out_v21_drives
 ```
+
+The pace now comes in the prior table (`exp_drives`, the walkthrough's `--scouting` step or
+`eAMFCalibrator pace-prior`). `--drives` alone reads it from there; `--drives
+xgb/out/pace_eff/pace_eff_prior.csv` still takes this pipeline's table.
 
 If the nudge works, v21's own margin sd should rise across the fifths of expected drives as the real
 one does (8.77 → 10.52), not sit at 9.81 → 10.09. The report's drives table shows, by fifth, the sim's
@@ -384,7 +387,8 @@ Slope is real drives on foreseen: 1 is calibrated, below 1 means the forecast sp
 - **A Poisson glmer would be the wrong family.** Drives are under-dispersed: variance 7.5 on a mean
   of 10.5.
 
-So the walkthrough's pace (`exp_drives`) is the ridge.
+So the walkthrough's pace (`exp_drives`, `eAMFCalibrator/pace_prior.py`) is the ridge, refitted daily.
+It counts drives off the scouting export the sim's way, not off `drive_stats.csv`.
 
 ## Files
 

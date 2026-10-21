@@ -417,10 +417,10 @@ def cmd_v21_report(args):
     print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
     means, books = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
     drives = None
-    if args.drives:
-        drives = v21_stream.drives_table(args.drives)
+    if args.drives is not None:
+        drives = v21_stream.drives_table(args.drives or None, prior)
         have = sum(1 for r in rows if r["MATCH_CODE"] in drives)
-        print(f"  the expected drives: {args.drives}, {have:,} of {len(rows):,} matches"
+        print(f"  the expected drives: {args.drives or prior}, {have:,} of {len(rows):,} matches"
               + (", the pace nudge meeting them" if args.nudge else " (set against the sim's; --nudge: the pace nudge)"),
               flush=True)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
@@ -1032,8 +1032,9 @@ def build_parser():
     p.add_argument("--nudge-share", type=float, default=1.0,
                    help="with --nudge: go this share of the way from the sim's own kick-off means to the inputs "
                         "(default 1: all of it)")
-    p.add_argument("--drives", metavar="CSV",
-                   help="each match's expected drives (xgb/pace_eff.py's pace_eff_prior.csv), set against the sim's "
+    p.add_argument("--drives", nargs="?", const="", metavar="CSV",
+                   help="each match's expected drives (alone: the prior table's exp_drives, the walkthrough's pace; "
+                        "or a table of them, MATCH_CODE and exp_drives), set against the sim's "
                         "and the real drives; with --nudge, the pace nudge: one tempo on both sides' time tilts so the "
                         "kick-off games' drives meet them, carried into the states (the betting sim's v21-drives)")
     p.add_argument("--drives-share", type=float, default=1.0,

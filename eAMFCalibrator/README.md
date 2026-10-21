@@ -88,7 +88,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
 | `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
-| `--v21-drives CSV` | `--candidate v21-drives`: each match's expected drives the pace nudge meets (`xgb/pace_eff.py`'s `pace_eff_prior.csv`; default `$EAMF_V21_DRIVES`, then `xgb/out/pace_eff/pace_eff_prior.csv`) |
+| `--v21-drives CSV` | `--candidate v21-drives`: a table of each match's expected drives the pace nudge meets (`MATCH_CODE`, `exp_drives`; default `$EAMF_V21_DRIVES`, then the prior table's own `exp_drives`, which `walkthrough --scouting` or `pace-prior` writes) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -3110,6 +3110,7 @@ fits.
 | NB2 fits | NB2 refitted every day, each on the results before its day (`nb2_fits/`). The days already fitted are kept |
 | NB2 prices | every match priced by its own day's fit (`nb2.csv`) |
 | glmer fits | glmer refitted every day (`glmer/cadence.R`, `trim:hl60_x0.5:daily`, `glmer/`). Needs `Rscript` |
+| pace | with the scouting export, each match's expected drives: a ridge on the gamers' and teams' pace, refitted every day off the drives counted the sim's way (`pace_prior.py`, `pace/`). The drives counted are kept while the export is the same |
 | layers | the rematch and inference layers fitted walk-forward on each model's own errors |
 | variants | each variant's expected points and moneyline for every match (`priors/`) |
 | report | every variant graded against NB2 on the results (`walkthrough.txt`) |
@@ -3137,9 +3138,28 @@ also has:
   the averages (the averages' points with NB2's dispersions), and NB2's construction fitted to
   glmer's errors for glmer;
 - the score model's parameters, the layer's move, and whether the match is in the layers' 7-day
-  burn-in (no move there).
+  burn-in (no move there);
+- the pace: the match's expected drives (`exp_drives`) and that day's league drives
+  (`league_drives`), what v2.1's pace nudge (`v21-drives`) meets. They're filled with the scouting
+  export: `--scouting CSV`, by default `out/scouting_playover.csv` when it's there; `--no-pace`
+  leaves them blank. Before the export starts, or with fewer than 200 matches' drives behind a
+  day, they're blank too, and v2.1 prices those matches without the pace nudge.
 
 Every value was priced before its match, as it would have been live.
+
+**Which pace model.** Walk-forward on 6,285 matches (1 Aug – 18 Oct), the ridge ranked matches'
+drives better than a REML mixed model (glmer's model, its shrinkage estimated) and XGBoost on rolling
+form, every month (`xgb/README.md`, "Which model foresees drives best?"). Its correlation with the
+real drives is 0.28; one match's drives vary a lot (sd 2.7).
+
+**Pace into a table already made:** `pace-prior` writes `exp_drives` and `league_drives` into prior
+tables in place (default the form table, `out/form_prior/priors/avg_form4_w05.csv`) over the span of
+their matches:
+
+```bash
+python -m eAMFCalibrator pace-prior --scouting eAMFCalibrator/out/scouting_playover.csv \
+    --table eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv
+```
 
 **Pointing a sim at a variant:** give its table where a prior build would go:
 
@@ -3769,7 +3789,8 @@ it gained +1.1 points on the in-play moneyline on Oct 1–12, and +3.7 on
 Oct 13–17, a window held out from choosing the drift.
 
 The table only has the matches its walkthrough priced. Rebuild it after
-each new history (`history`, then `walkthrough`, then `form-prior`). Every
+each new history (`history` and `scouting`, then `walkthrough`, then
+`form-prior`). It carries the walkthrough's pace (`exp_drives`) over. Every
 sim says which prior it read and how many of its matches the prior has. A
 match the table doesn't have is priced on the sim's own means.
 

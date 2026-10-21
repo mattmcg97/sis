@@ -1567,6 +1567,16 @@ class TestPaceNudge(unittest.TestCase):
         self.assertEqual(vs.LAST_TIMING["drives_matches"], 1)
         with mock.patch.dict(os.environ, {"EAMF_V21_DRIVES": table}):
             self.assertEqual([x[3] for x in price(drives=1.0)], [x[3] for x in on])
+        prior = os.path.join(self.tmp.name, "avg_form4_w05.csv")       # the walkthrough's: the pace in the prior
+        with open(prior, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["MATCH_CODE", "home_pts", "away_pts", "exp_drives", "league_drives"])
+            w.writerows([[code, 20, 17, 12.5, 10.0], ["OTHER", 18, 18, 7.5, 10.0]])
+        self.assertEqual([x[3] for x in price(drives=1.0, prior_dir=prior)], [x[3] for x in on])
+        with open(prior, "w", newline="", encoding="utf-8") as fh:
+            fh.write(f"MATCH_CODE,home_pts,away_pts\n{code},20,17\n")
+        with self.assertRaises(SystemExit):
+            price(drives=1.0, prior_dir=prior)
 
 
 class TestStreamProgress(unittest.TestCase):

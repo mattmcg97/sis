@@ -236,13 +236,63 @@ def cmd_replay_ui(args):
     return 0
 
 
+DEFAULT_SCOUTING = os.path.join(DEFAULT_OUT, "scouting_playover.csv")
+
+
+def scouting_of(args):
+    """The scouting export the pace is counted off: --scouting, else DEFAULT_SCOUTING where it's there; None
+    with --no-pace or none found."""
+    if getattr(args, "no_pace", False):
+        return None
+    path = args.scouting or (DEFAULT_SCOUTING if os.path.isfile(DEFAULT_SCOUTING) else None)
+    if path and not os.path.isfile(path):
+        raise SystemExit(f"--scouting {path}: no such file")
+    return path
+
+
 def cmd_walkthrough(args):
     """The best pre-match variants priced for every match, walk-forward, one table each for the sims."""
     from . import walkthrough
     out = args.out or os.path.join(DEFAULT_OUT, "walkthrough")
     path = walkthrough.run(out, args.history, args.since or "2026-01-01 00:00:00", args.until, workers=args.workers,
-                           cores=args.cores, draws=args.draws, half_life=args.half_life)
+                           cores=args.cores, draws=args.draws, half_life=args.half_life, scouting=scouting_of(args))
     print(f"\n  -> {path}; the tables in {os.path.join(out, 'priors')}")
+    return 0
+
+
+def cmd_pace_prior(args):
+    """Each match's expected drives (pace_prior.py) written into prior tables already made."""
+    import csv
+    from eAMFModel import nb2_prior
+    from . import pace_prior
+    from .bet_totals import _start
+    export = scouting_of(args)
+    if not export:
+        raise SystemExit(f"pace-prior: no scouting export at {DEFAULT_SCOUTING} (python -m eAMFCalibrator scouting, "
+                         "or --scouting)")
+    history_path = args.history or os.path.join(DEFAULT_OUT, "match_history.csv")
+    if not os.path.isfile(history_path):
+        raise SystemExit(f"pace-prior: no history at {history_path} (python -m eAMFCalibrator history, or --history)")
+    tables = args.table or [os.path.join(DEFAULT_OUT, "form_prior", "priors", "avg_form4_w05.csv")]
+    for t in tables:
+        if not os.path.isfile(t):
+            raise SystemExit(f"pace-prior: no table at {t} (--table)")
+    history = nb2_prior.load_history(history_path)
+    starts = {(r.get("MATCH_CODE") or "").strip(): _start(r.get("SCHEDULED_START_TIME_UTC")) for r in history}
+    days = set()
+    for t in tables:
+        with open(t, newline="", encoding="utf-8") as fh:
+            days |= {starts[c].date() for c in ((r.get("MATCH_CODE") or "").strip() for r in csv.DictReader(fh))
+                     if starts.get(c)}
+    if not days:
+        raise SystemExit("pace-prior: none of the tables' matches are in the history")
+    first, last = min(days), max(days)
+    print(f"  the pace, {first} to {last}, off {export} and {history_path}", flush=True)
+    pace, drives = pace_prior.run(history, export, first, last, args.out or os.path.join(DEFAULT_OUT, "pace_prior"))
+    print("\n".join(pace_prior.lines(pace, drives)))
+    for t in tables:
+        n = pace_prior.add_to_table(t, pace)
+        print(f"  {t}: exp_drives and league_drives on {n:,} matches")
     return 0
 
 
@@ -1185,9 +1235,9 @@ def common_options():
                              f"offense is nudged from the sim's own (default {config.V21_NUDGE_SHARE}; "
                              "0: the sim's own means, no prior)")
     tuning.add_argument("--v21-drives", metavar="CSV",
-                        help="--candidate v21-drives: each match's expected drives the pace nudge meets "
-                             "(xgb/pace_eff.py's pace_eff_prior.csv; default $EAMF_V21_DRIVES, then "
-                             "xgb/out/pace_eff/pace_eff_prior.csv)")
+                        help="--candidate v21-drives: a table of each match's expected drives the pace nudge "
+                             "meets (MATCH_CODE, exp_drives; default $EAMF_V21_DRIVES, then the prior table's own "
+                             "exp_drives: the walkthrough's --scouting, or pace-prior)")
     tuning.add_argument("--prior-for", action="append", metavar="NAME=PRIOR",
                         help="a v21 candidate's own prior, as --v21-prior-model takes (a walkthrough table or "
                              "a build), so v21 candidates nudged toward different priors are priced in one run "
@@ -1677,7 +1727,24 @@ def build_parser():
                            help="simulated scorelines per match for the moneylines (default 20000)")
     wt_parser.add_argument("--half-life", type=float, metavar="DAYS",
                            help="NB2's half-life (default its own, 60); a new value needs a new --out")
+    wt_parser.add_argument("--scouting", metavar="CSV",
+                           help="the scouting export the pace is counted off (each match's expected drives, "
+                                f"exp_drives, for v21-drives; default {DEFAULT_SCOUTING} where it's there)")
+    wt_parser.add_argument("--no-pace", action="store_true", help="leave exp_drives blank")
     wt_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/walkthrough)")
+
+    pp_parser = sub.add_parser(
+        "pace-prior",
+        help="each match's expected drives (a ridge on the gamers' and teams' pace, refitted daily off the drives "
+             "the scouting export shows) written into prior tables already made, as the walkthrough writes them "
+             "(exp_drives, league_drives: what v21-drives meets); default the form table v2.1 reads")
+    pp_parser.add_argument("--scouting", metavar="CSV", help=f"the scouting export (default {DEFAULT_SCOUTING})")
+    pp_parser.add_argument("--history", metavar="CSV",
+                           help=f"a match_history.csv (default {os.path.join(DEFAULT_OUT, 'match_history.csv')})")
+    pp_parser.add_argument("--table", action="append", metavar="CSV",
+                           help="a prior table to write the pace into, in place; repeat it (default "
+                                f"{os.path.join(DEFAULT_OUT, 'form_prior', 'priors', 'avg_form4_w05.csv')})")
+    pp_parser.add_argument("--out", help=f"where the drives counted and the pace go (default: {DEFAULT_OUT}/pace_prior)")
 
     po_parser = sub.add_parser(
         "prior-offline",
@@ -1898,6 +1965,8 @@ def main(argv=None):
         return cmd_prior_offline(args)
     if args.command == "walkthrough":
         return cmd_walkthrough(args)
+    if args.command == "pace-prior":
+        return cmd_pace_prior(args)
     if args.command == "replay-ui":
         return cmd_replay_ui(args)
     if args.command == "report":
