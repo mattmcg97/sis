@@ -5,7 +5,7 @@ import unittest
 import urllib.request
 from http.server import ThreadingHTTPServer
 
-from eAMFModel import game as gm, trader, v10
+from eAMFModel import game as gm, trader, v14
 from eAMFModel.tests.fakes import _matches, _with_handles
 
 
@@ -13,7 +13,7 @@ class TestTrader(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        v10.build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
+        v14.build(_with_handles(_matches(40)), cls.tmp.name, grid_paths=60, verbose=False)
         cls.t = trader.Trader(cls.tmp.name, paths=400)
         cls.setup = {"home_player": "ALPHA", "away_player": "BRAVO", "means": [24.0, 14.0],
                      "opening_receiver": "away", "margin": 0.05}
@@ -94,9 +94,9 @@ class TestTrader(unittest.TestCase):
             server.server_close()
 
     def test_the_version_is_read_off_the_build(self):
-        self.assertEqual(self.t.version, "v10")
-        self.assertEqual(trader.version_of(self.tmp.name), "v10")
-        self.assertEqual(self.call("/api/meta")["version"], "v10")
+        self.assertEqual(self.t.version, "v14")
+        self.assertEqual(trader.version_of(self.tmp.name), "v14")
+        self.assertEqual(self.call("/api/meta")["version"], "v14")
         with tempfile.TemporaryDirectory() as empty:
             with self.assertRaises(SystemExit):
                 trader.version_of(empty)
@@ -113,7 +113,7 @@ class TestEveryVersion(unittest.TestCase):
 
     def test_every_version_offers_what_the_trader_prices_with(self):
         names = trader.versions()
-        self.assertIn("v10", names)
+        self.assertIn("v14", names)
         self.assertEqual(names, sorted(names, key=lambda n: int(n[1:])))
         for v in names:
             with self.subTest(version=v):

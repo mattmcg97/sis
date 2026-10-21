@@ -1,13 +1,13 @@
 """A version's points still to come against what the rest of each game really made.
 
-At every PLAY_OVER snapshot a version (v8 to v14) simulates the rest of the game. Its distribution
+At every PLAY_OVER snapshot a version (v14) simulates the rest of the game. Its distribution
 of the final total, less the points on the board, is its distribution of the points still to come.
 The export's final score gives what really came. Set side by side, value by value (0, 3, 6, 7, 8,
 10, 14 ...) and by quarter and game state, this is the comparison against reality -- not against
 prod -- that says where the simulation puts too much or too little: a lone field goal late, a
 touchdown without its kick, a second score.
 
-  python -m eAMFModel remaining SNAPS.csv --version v9 --model v9_model --history AMFELO.csv \\
+  python -m eAMFModel remaining SNAPS.csv --version v14 --model v14_model --history AMFELO.csv \\
       --since 2026-09-10 --until 2026-09-22
 """
 

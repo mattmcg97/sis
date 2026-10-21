@@ -2,7 +2,7 @@
 its own score distribution) against the sim's kick-off price off the same prior, both graded on the
 real results.
 
-    python -m eAMFModel prior-vs-sim --model v13_glmer_1001 \
+    python -m eAMFModel prior-vs-sim --model v14_model \
         --history eAMFCalibrator/out/match_history.csv --since 2026-10-01 --until 2026-10-12
 
 For every settled match in the window, priced as of its kick-off (the prior's form reads every result
@@ -14,7 +14,7 @@ before it):
   raw+    the same score model off the means the build prices with: the prior shrink and any
           follow or form layer on top. Set against raw it shows what those do; set against sim,
           what the simulation alone does.
-  sim     the build's kick-off price (vN_stream.kickoff_book: v13 or v14, whichever the build is) off
+  sim     the build's kick-off price (v14_stream.kickoff_book) off
           those means, with each side's profile and big-play rates: what the stream quotes before the
           first play.
 
@@ -28,29 +28,19 @@ import math
 
 import numpy as np
 
-import importlib
-import os
-
-from . import nb2_prior, players, v13, v13_stream
+from . import nb2_prior, players, v14, v14_stream
 
 RAW_DRAWS = 20000
-VERSIONS = ("v13", "v14")
 
 
 def version_of(model_dir):
-    """The version a build directory holds (its <version>tables.npz), newest first; v13 when none."""
-    for v in reversed(VERSIONS):
-        if os.path.exists(os.path.join(str(model_dir), f"{v}tables.npz")):
-            return v
-    return "v13"
+    """The version a build directory holds: v14, the one left that builds its own tables."""
+    return "v14"
 
 
-def _modules(version):
+def _modules(version="v14"):
     """The version's model and stream modules."""
-    if version == "v13":
-        return v13, v13_stream
-    return (importlib.import_module(f"{__package__}.{version}"),
-            importlib.import_module(f"{__package__}.{version}_stream"))
+    return v14, v14_stream
 DEFAULT_PATHS = 4000
 
 
@@ -81,7 +71,7 @@ def sigmas(base, day):
 
 
 def raw_books(means, s_obs, s_match, n=RAW_DRAWS, seed=0):
-    """Margin and total distributions (v13's shapes) from expected points under glmer's score model:
+    """Margin and total distributions (v14's shapes) from expected points under glmer's score model:
     each side Poisson around exp(eta + noise), eta set so its mean is the expected points."""
     rng = np.random.default_rng(seed)
     shared = rng.normal(0.0, s_match, n) if s_match else np.zeros(n)
@@ -90,11 +80,11 @@ def raw_books(means, s_obs, s_match, n=RAW_DRAWS, seed=0):
         eta = math.log(max(mu, 0.1)) - (s_obs ** 2 + s_match ** 2) / 2
         noise = rng.normal(0.0, s_obs, n) if s_obs else np.zeros(n)
         sides.append(rng.poisson(np.exp(np.clip(eta + shared + noise, -15, 15))))
-    return v13._distributions(sides[0].astype(int), sides[1].astype(int))
+    return v14._distributions(sides[0].astype(int), sides[1].astype(int))
 
 
 def nb2_books(means, a1, a2, shared, n=RAW_DRAWS, seed=0):
-    """Margin and total distributions (v13's shapes) under NB2's own construction: each side negative
+    """Margin and total distributions (v14's shapes) under NB2's own construction: each side negative
     binomial (variance mu + alpha mu^2), the two sharing a gamma pace factor (eAMFCalibrator's
     score_model.nb2_draws)."""
     rng = np.random.default_rng(seed)
@@ -103,7 +93,7 @@ def nb2_books(means, a1, a2, shared, n=RAW_DRAWS, seed=0):
     u = rng.gamma(k, 1.0, n) if k > 1e-12 else np.zeros(n)
     v1, v2 = rng.gamma(max(r1 - k, 1e-12), 1.0, n), rng.gamma(max(r2 - k, 1e-12), 1.0, n)
     mu1, mu2 = means
-    return v13._distributions(rng.poisson((mu1 / r1) * (u + v1)).astype(int), rng.poisson((mu2 / r2) * (u + v2)).astype(int))
+    return v14._distributions(rng.poisson((mu1 / r1) * (u + v1)).astype(int), rng.poisson((mu2 / r2) * (u + v2)).astype(int))
 
 
 def table_books(means, score, n=RAW_DRAWS, seed=0):
@@ -119,11 +109,11 @@ def table_books(means, score, n=RAW_DRAWS, seed=0):
 
 def _sim_worker(job):
     model_dir, items, n_paths, seed = job[:4]
-    m, st = _modules(job[4] if len(job) > 4 else "v13")
+    m, st = _modules()
     tables_path, grid_path = st.model_paths(model_dir)
     tables = m.sim.Tables.load(tables_path)
     grid = m.PriorGrid.load(grid_path)
-    variant = m.Variant(job[4] if len(job) > 4 else "v13")
+    variant = m.Variant(job[4] if len(job) > 4 else "v14")
     rng = np.random.default_rng(seed)
     return {code: st.kickoff_book(tables, grid, variant, code, n_paths, rng, prof, means)
             for code, prof, means in items}
@@ -132,18 +122,18 @@ def _sim_worker(job):
 def profiles(model_dir, rows):
     """{match: (home profile, away profile)} with big-play rates (and v14's lost-yardage rates and
     loss sizes), as the build's stream prices them."""
-    v13_, st = _modules(version_of(model_dir))
+    m_, st = _modules()
     tables_path, _ = st.model_paths(model_dir)
-    book = v13_.players_book(tables_path)
-    ratings = v13_.big_ratings(tables_path)
-    teams = v13_.match_teams(rows)
+    book = m_.players_book(tables_path)
+    ratings = m_.big_ratings(tables_path)
+    teams = m_.match_teams(rows)
     out = {}
     for r in rows:
         pair = (r["PLAYER_1_HANDLE"].strip().upper(), r["PLAYER_2_HANDLE"].strip().upper())
         prof = (book.profile(pair[0]), book.profile(pair[1])) if book else \
             (players.Profile(), players.Profile())
         if ratings:
-            prof = v13_.with_big(prof, ratings, pair, *v13_.side_teams(pair, teams.get(r["MATCH_CODE"])))
+            prof = m_.with_big(prof, ratings, pair, *m_.side_teams(pair, teams.get(r["MATCH_CODE"])))
         out[r["MATCH_CODE"]] = prof
     return out
 
@@ -212,7 +202,7 @@ def grade(results, buckets=10, methods=None):
             mp_, tp = x["books"][m]
             s1, s2 = x["finals"]
             margin, total = s1 - s2, s1 + s2
-            mid = v13.MARGIN_MAX
+            mid = v14.MARGIN_MAX
             if margin != 0:
                 push = mp_[mid]
                 p.append(float(mp_[mid + 1:].sum() / max(1e-12, 1 - push)))
@@ -243,10 +233,10 @@ def paired(summary, a, b):
     return float(d.mean()), float(d.std(ddof=1) / math.sqrt(len(d))) if len(d) > 1 else float("nan")
 
 
-LABELS = {"raw": "glmer raw", "raw+": "glmer + layers", "sim": "v13 sim"}
+LABELS = {"raw": "glmer raw", "raw+": "glmer + layers", "sim": "v14 sim"}
 
 
-def report(results, since, until, version="v13"):
+def report(results, since, until, version="v14"):
     """Lines of text: the three side by side."""
     LABELS = dict(globals()["LABELS"], sim=f"{version} sim")
     summary, tables = grade(results)
@@ -288,7 +278,7 @@ def write_csv(path, results):
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(keys)
-        mid = v13.MARGIN_MAX
+        mid = v14.MARGIN_MAX
         for x in results:
             r = x["row"]
             row = [r["MATCH_CODE"], r["SCHEDULED_START_TIME_UTC"][:19], r["PLAYER_1_HANDLE"], r["PLAYER_2_HANDLE"],

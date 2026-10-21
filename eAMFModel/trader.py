@@ -2,10 +2,10 @@
 and stream, and the pre-match model's expected points, which can be overwritten), then click through
 the game a play at a time; after every play the version prices the state it leaves.
 
-    python -m eAMFModel trader --model v10_model
+    python -m eAMFModel trader --model v14_model
 
-The version is the build's own (v10tables.npz: v10), so a build of any later version copied from
-v10 runs as it is. A version must keep what INTERFACE lists; the tests check every version does.
+The version is the build's own (v14tables.npz: v14). A version must keep what INTERFACE lists; the
+tests check every version does.
 
 The server keeps nothing between requests: the page holds the game and its history, and sends
 the state with every request."""
@@ -42,7 +42,7 @@ NOT_TRADED = {"v21"}             # the v2.1 snap sim: priced by v21_stream, with
 
 
 def versions():
-    """Every model version with a stream the trader prices with, oldest first: v8, v9, v10, ..."""
+    """Every model version with a stream the trader prices with, oldest first (v14 now; v21 is priced apart)."""
     here = os.path.dirname(os.path.abspath(__file__))
     names = [f[:-len("_stream.py")] for f in os.listdir(here) if re.fullmatch(r"v\d+_stream\.py", f)]
     return sorted((n for n in names if n not in NOT_TRADED), key=lambda n: int(n[1:]))

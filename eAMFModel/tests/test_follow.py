@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from .. import follow, nb2_prior, v10, v11, v12
+from .. import follow, nb2_prior, v14
 
 CUT = dt.datetime(2026, 9, 1)
 
@@ -96,7 +96,7 @@ class TestFollowing(unittest.TestCase):
 class TestVersionsFollow(unittest.TestCase):
 
     def test_each_version_s_prior_follows_the_results_since_its_fit(self):
-        for version in (v10, v11, v12):
+        for version in (v14,):
             with tempfile.TemporaryDirectory() as d:
                 os.makedirs(os.path.join(d, "nb2"))
                 with open(os.path.join(d, version.PRIOR_FILE), "w") as fh:

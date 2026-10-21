@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 from unittest import mock
 
 from .. import __main__ as cli
-from .. import follow, form_layer, nb2_prior, v10, v11, v12
+from .. import follow, form_layer, nb2_prior, v14
 
 DAY = dt.datetime(2026, 9, 1)
 NOISE, TAU_D, TAU_S = (9.0, 12.0), (1.5, 2.0), (1.0, 1.3)
@@ -298,7 +298,7 @@ class TestSwitch(unittest.TestCase):
         self.assertIs(form_layer.wrap(no_cut, {"form_layer": True}), no_cut)
 
     def test_each_version_prices_with_it_when_the_build_says_so(self):
-        for version in (v10, v11, v12):
+        for version in (v14,):
             with tempfile.TemporaryDirectory() as d:
                 os.makedirs(os.path.join(d, "nb2"))
                 path = os.path.join(d, version.PRIOR_FILE)
@@ -334,7 +334,7 @@ class TestSwitch(unittest.TestCase):
 
     def test_a_build_can_keep_settings_of_its_own(self):
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "v12prior.json"), "w") as fh:
+            with open(os.path.join(d, "v14prior.json"), "w") as fh:
                 json.dump({"prior": "nb2"}, fh)
             meta = form_layer.switch(d, True, tau_day=(2.0, 1.0), rho=0.5)
             self.assertEqual(meta["form_layer"], {"tau_day": [2.0, 1.0], "rho": 0.5})
@@ -362,17 +362,17 @@ class TestSwitch(unittest.TestCase):
 
     def test_the_command_switches_builds(self):
         with tempfile.TemporaryDirectory() as d:
-            with open(os.path.join(d, "v12prior.json"), "w") as fh:
+            with open(os.path.join(d, "v14prior.json"), "w") as fh:
                 json.dump({"prior": "glmer"}, fh)
             out = io.StringIO()
             with redirect_stdout(out):
                 cli.main(["form-layer", d, "--on"])
             self.assertIn("post-game form layer on", out.getvalue())
-            with open(os.path.join(d, "v12prior.json")) as fh:
+            with open(os.path.join(d, "v14prior.json")) as fh:
                 self.assertEqual(json.load(fh), {"prior": "glmer", "form_layer": True})
             with redirect_stdout(io.StringIO()):
                 cli.main(["form-layer", d, "--default"])
-            with open(os.path.join(d, "v12prior.json")) as fh:
+            with open(os.path.join(d, "v14prior.json")) as fh:
                 self.assertEqual(json.load(fh), {"prior": "glmer"})
         with tempfile.TemporaryDirectory() as d, self.assertRaises(SystemExit):
             form_layer.switch(d, True)

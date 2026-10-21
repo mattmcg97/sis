@@ -80,14 +80,13 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept), `v21-pace` (each gamer's own pace when ahead, `eAMFModel v21-pace-fit`'s table beside the build), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way) |
-| `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
-| `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
-| `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
-| `--v9-lines own\|even\|prod` | `--candidate v9`: quote v9's own line, in the gap between the key numbers and moved as the game moves (`own`, the default), at the half-point line nearest 50% (`even`), or read v9's price at prod's line (`prod`) |
-| `--v8-model`, `--v8-paths`, `--v8-lines`; `--v10-model`, `--v10-paths`, `--v10-lines`; `--v11-model`, `--v11-paths`, `--v11-lines`; `--v12-model`, `--v12-paths`, `--v12-lines`; `--v13-model`, `--v13-paths`, `--v13-lines`; `--v14-model`, `--v14-paths`, `--v14-lines` | the same for `--candidate v8`, `--candidate v10`, `--candidate v11`, `--candidate v12`, `--candidate v13` and `--candidate v14` |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way). The shape lever, the gap shrink, pace when ahead and the late Q4 correction were tried and removed (eAMFModel's README) |
+| `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v21`) |
+| `--v14-model DIR` | `eAMFModel v14-build` output for `--candidate v14` (default `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v14-paths N` | games simulated per snapshot for `--candidate v14` (default 2000) |
+| `--v14-lines own\|even\|prod\|anchored\|hyst` | `--candidate v14`: quote its own line, in the gap between the key numbers and moved as the game moves (`own`, the default), the half-point line nearest 50% (`even`), its price at prod's line (`prod`), prod's line moved only as far as it must (`anchored`) or the even line held until far off (`hyst`) |
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
-| `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v13/v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
+| `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--v21-drives CSV` | `--candidate v21-drives`: each match's expected drives the pace nudge meets (`xgb/pace_eff.py`'s `pace_eff_prior.csv`; default `$EAMF_V21_DRIVES`, then `xgb/out/pace_eff/pace_eff_prior.csv`) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
@@ -1605,8 +1604,9 @@ What 15,612 calls over 2,977 matches (24 Aug – 22 Sep) showed:
 
 ## eAMFModel as the candidate: `--candidate v9`
 
-The simulation versions v8, v9 and v10 stand in for the candidate. (v3–v7 have been removed;
-use v8–v10 in their place in the commands that follow.)
+The simulation versions stand in for the candidate. v14 and v21 are the ones left: v3–v13 have been
+removed (v8–v13 in the October cleanup; the `archive/pre-cleanup` tag holds them). The commands and
+results below were run on v8–v13 as they were then; use v14 or v21 in their place.
 
 ```bash
 # once: export PLAY_OVER snapshots, the match history and every timeout, and build the model

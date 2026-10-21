@@ -81,50 +81,21 @@ FINALS_FROM_SCOUTING = True
 # and its snapshots carry the board score.
 SCORES_FROM_SCOUTING = True
 # What the HTML reports call the candidate (None: the model version when one
-# stands in, e.g. "v9"; otherwise "candidate"). --candidate-label sets it.
+# stands in, e.g. "v21"; otherwise "candidate"). --candidate-label sets it.
 CANDIDATE_LABEL = None
 MODEL_WORKERS = None
-# --candidate v8 (its model: `python -m eAMFModel v8-build`; None:
-# $EAMF_V8_MODEL, then ./v8_model). "own" lines: v8 quotes its own line, in
+# --candidate v14 (its model: `python -m eAMFModel v14-build`; None:
+# $EAMF_V14_MODEL, then ./v14_model). "own" lines: v14 quotes its own line, in
 # the gap between the key numbers, moved as the game moves; "even": the
 # half-point line nearest 50%; "prod": its book read at the line prod quoted,
-# so every pair answers one question.
-V8_MODEL_DIR = None
-V8_PATHS = 2000
-V8_LINES = "own"
-# The same for --candidate v9 (`python -m eAMFModel v9-build`; None:
-# $EAMF_V9_MODEL, then ./v9_model).
-V9_MODEL_DIR = None
-V9_PATHS = 2000
-V9_LINES = "own"
-# The same for --candidate v10 (`python -m eAMFModel v10-build`; None:
-# $EAMF_V10_MODEL, then ./v10_model).
-V10_MODEL_DIR = None
-V10_PATHS = 2000
-V10_LINES = "own"
-# The same for --candidate v11 (`python -m eAMFModel v11-build`; None:
-# $EAMF_V11_MODEL, then ./v11_model).
-V11_MODEL_DIR = None
-V11_PATHS = 2000
-V11_LINES = "own"
-# The same for --candidate v12 (`python -m eAMFModel v12-build`; None:
-# $EAMF_V12_MODEL, then ./v12_model).
-V12_MODEL_DIR = None
-V12_PATHS = 2000
-V12_LINES = "own"
-# The same for --candidate v13 (`python -m eAMFModel v13-build`; None:
-# $EAMF_V13_MODEL, then ./v13_model).
-V13_MODEL_DIR = None
-V13_PATHS = 2000
-V13_LINES = "own"
-# The same for --candidate v14 (`python -m eAMFModel v14-build`; None:
-# $EAMF_V14_MODEL, then ./v14_model).
+# so every pair answers one question; "anchored": prod's line moved only as far
+# as it must; "hyst": the even line held until it is far off.
 V14_MODEL_DIR = None
 V14_PATHS = 2000
 V14_LINES = "own"
 # The same for --candidate v21 (`python -m eAMFModel v21-build`; None: $EAMF_V21_MODEL, then
 # ./v21_model). It prices toward a prior's expected points, as v21-report's --nudge: the prior a
-# walkthrough table or a v13/v14 build with --history (None: $EAMF_V21_PRIOR, then the form table
+# walkthrough table or a v14 build with --history (None: $EAMF_V21_PRIOR, then the form table
 # `form-prior` writes, out/form_prior/priors/avg_form4_w05.csv, then $EAMF_V14_MODEL, then ./v14_model),
 # each side's offense nudged V21_NUDGE_SHARE of the way there from the sim's own means (0: no prior).
 V21_MODEL_DIR = None

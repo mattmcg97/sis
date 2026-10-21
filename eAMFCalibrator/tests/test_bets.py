@@ -321,8 +321,8 @@ class TestCandidates(unittest.TestCase):
         self.assertTrue(row["simulated"])
 
     def test_a_missing_model_stops_the_run_before_any_fetching(self):
-        with mock.patch.object(config, "V9_MODEL_DIR", "no_such_v9_model"), \
-                mock.patch.object(config, "CANDIDATES", ["GAMEPLAI_STREAM_CANDIDATE", "MODEL:v9"]), \
+        with mock.patch.object(config, "V14_MODEL_DIR", "no_such_v14_model"), \
+                mock.patch.object(config, "CANDIDATES", ["GAMEPLAI_STREAM_CANDIDATE", "MODEL:v14"]), \
                 mock.patch.object(bets, "fetch_all") as fetched:
             with self.assertRaises(SystemExit):
                 bets.run(None, "out")
