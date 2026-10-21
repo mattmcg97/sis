@@ -21,6 +21,9 @@ For every settled match in the window with snapshots:
   the draws  the kick-off sims' snaps against the real games': events a game, points by quarter, the
              time draw (time buckets by the play before) and the distance draw (snap classes by time
              bucket).
+  the drives each match's drives (both sides') in the kick-off games against the real ones; with --drives
+             (each match's expected drives, xgb/pace_eff.py's pace_eff_prior.csv) by fifth of the expected,
+             and with the pace nudge on, the sim's own before it, after it and the tempo it took.
 """
 
 import csv
@@ -29,7 +32,7 @@ import zlib
 
 import numpy as np
 
-from . import sim14 as s14, v13, v21
+from . import sim14 as s14, v13, v21, v21_stream
 
 DEFAULT_PATHS = 1000          # kick-off games per receiving side
 STATE_PATHS = 200
@@ -133,29 +136,58 @@ def real_census(matches, model=None, history=None):
     return out
 
 
+def real_drives(rows):
+    """A real match's drives (both sides'), as the sim counts them: its scrimmage snaps (sim14.snap_records),
+    a new drive at a fresh possession's (after a kick-off, a punt, a turnover on downs, a field goal or a
+    turnover), a change of side or a new half."""
+    rows = sorted(rows, key=lambda r: s14._i(r.get("message")) or 0)
+    n, last = 0, None
+    for r in s14.snap_records(rows):
+        h = 0 if r["period"] <= 2 else 1 if r["period"] <= 4 else r["period"]
+        if last is None or r["fresh"] or r["offense"] != last[0] or h != last[1]:
+            n += 1
+        last = (r["offense"], h)
+    return n
+
+
 def _worker(job):
     """Price a list of matches: kick-off and every --every-th real state."""
-    model_path, items, n_paths, state_paths, every, share = job
+    model_path, items, n_paths, state_paths, every, share, shape, drives_share = job
     model = v21.Model.load(model_path)
     out, census = {}, None
-    for code, rows, pair, teams, target in items:
+    for code, rows, pair, teams, target, pace in items:
         st = {}
         start = v21.kickoff_start(model, pair, teams)
-        alpha = None
-        if target is not None and getattr(model, "nudge_dir", None) is not None:
-            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st, share=share)
+        alpha = tempo = own = goal = None
+        nudging = target is not None and getattr(model, "nudge_dir", None) is not None
+        if pace is not None:                           # the expected drives over their mean, at the sim's level
+            goal = pace * v21.drive_level(model)[0]
+            (h, a), alpha, tempo, (own, _) = v21.drives_solve(model, start, target if nudging else None, goal, n_paths,
+                                                              seed=_seed(code), stats=st, share=share, shape=shape,
+                                                              drives_share=drives_share)
+            alpha = alpha if nudging else None
+        elif nudging:
+            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st, share=share,
+                                            shape=shape)
         else:
             h, a = v21.simulate(model, start, n_paths, seed=_seed(code), stats=st)
         h, a = h.ravel(), a.ravel()
+        drives = float(st["drives"].mean())
         census = _add(census, _census(st, len(model.gamers) + 1))
         got = dict(kick=(float(h.mean()), float(a.mean())), book=v13._distributions(h, a),
                    p_home=float(((h > a).sum() + 0.5 * (h == a).sum()) / len(h)), states=[],
-                   nudge=None if alpha is None else tuple(float(x) for x in alpha))
+                   nudge=None if alpha is None else tuple(float(x) for x in alpha), drives=drives,
+                   own_drives=drives if own is None else own, tempo=tempo, goal_drives=goal)
         starts = v21.match_starts(model, rows, pair, teams, every=every) if state_paths else []
         if starts:
             S = v21.concat_starts([s for _, s in starts])
             if alpha is not None:
                 S["nudge"] = np.tile(alpha, (len(S["period"]), 1))
+                if shape:                              # the second lever, its edge the kick-off's margin
+                    S["edge"] = np.full(len(S["period"]), float(h.mean() - a.mean()))
+                    S["shape"] = np.full(len(S["period"]), float(shape))
+            if tempo is not None:                      # the pace nudge, as the kick-off's
+                S["tempo"] = np.full(len(S["period"]), float(tempo))
             sh, sa = v21.simulate(model, S, state_paths, seed=_seed(code) + 1)
             for k, (i, s) in enumerate(starts):
                 got["states"].append(dict(row=i, period=int(s["period"][0]), clock=float(s["clock"][0]),
@@ -168,12 +200,19 @@ def _worker(job):
 
 
 def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFAULT_PATHS,
-        state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False, nudge_share=1.0):
+        state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False, nudge_share=1.0,
+        shape=0.0, gap=None, drives=None, drives_share=1.0):
     """Per match: its row, finals, the inputs, the sim's kick-off and its states; and the census of the
     sim's draws and the real games'. `means` {code: (home, away)} are the inputs; `prior_books`
     {code: (margin pmf, total pmf)} the prior's own price, for grading. nudge (a tilt build): each side's
     offense nudged along the strength direction to meet the inputs at kick-off (v21.nudge_solve), the
-    same nudge carried into its real states; nudge_share: that share of the way from the sim's own means."""
+    same nudge carried into its real states; nudge_share: that share of the way from the sim's own means;
+    shape: the second strength lever's kappa with the nudge (v21.SHAPE_TRAIL; 0: off); gap: the gap shrink,
+    the nudge meeting the inputs' margin x gap, their total kept (v21_stream.shrunk; None: off) -- the
+    report still sets the sim against the inputs as given. drives {code: expected drives}: set against the
+    sim's and the real drives, and with nudge on, the pace nudge -- one tempo on both sides' clocks so the
+    kick-off games' drives go drives_share of the way from the sim's own to them, relative to their mean at
+    the sim's own level (v21.drives_solve, v21.drive_level), carried into the real states as the nudge is."""
     import os
     model_path = os.path.join(model_dir, v21.MODEL_FILE) if os.path.isdir(model_dir) else model_dir
     model = v21.Model.load(model_path)
@@ -184,10 +223,17 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
         raise SystemExit("no settled matches with snapshots and inputs in that window")
     if nudge and getattr(model, "nudge_dir", None) is None:
         raise SystemExit("--nudge needs a tilt build (v21-build --mode tilt)")
+    pacing = bool(nudge and drives)
+    if pacing and not v21.can_pace(model):
+        raise SystemExit("the pace nudge moves the time tilts: it needs a tilt build (v21-build --mode tilt)")
+    level = float(np.mean(list(drives.values()))) if drives else None      # the table's: its league's drives
     items = [(c, [{k: r.get(k) for k in ROW_KEYS} for r in v21._with_side(matches[c])])
-             + v21.match_people(c, matches[c], hist) + (tuple(means[c]) if nudge else None,) for c in codes]
+             + v21.match_people(c, matches[c], hist) + (v21_stream.shrunk(means[c], gap) if nudge else None,
+                                                        drives[c] / level if pacing and c in drives else None)
+             for c in codes]
     workers = max(1, min(workers, len(items)))
-    jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share) for k in range(workers)]
+    jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share, float(shape or 0.0),
+             float(drives_share)) for k in range(workers)]
     if workers == 1:
         parts = [_worker(j) for j in jobs]
     else:
@@ -201,10 +247,13 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
     for c in codes:
         r = hist[c]
         results.append(dict(code=c, row=r, finals=_finals(r), means=tuple(means[c]), people=v21.match_people(c, matches[c], hist),
-                            prior_book=(prior_books or {}).get(c), **sims[c]))
+                            prior_book=(prior_books or {}).get(c), real_drives=real_drives(matches[c]),
+                            exp_drives=(drives or {}).get(c), **sims[c]))
     return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}, model, history),
                 gamer_names={i: g for g, i in model.gamers.items()}, share=model.share, mode=model.mode, since=since, until=until, every=every,
-                n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge), nudge_share=float(nudge_share))
+                n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge), nudge_share=float(nudge_share),
+                shape=float(shape or 0.0), gap=gap, pacing=pacing, drives_share=float(drives_share), drives_level=level,
+                sim_level=v21.drive_level(model)[0] if pacing else None)
 
 
 def _pool():
@@ -327,6 +376,18 @@ def _margin_pmf(book):
     from . import v13
     pmf = np.asarray(book[0], float)
     return np.arange(len(pmf)) - v13.MARGIN_MAX, pmf
+
+
+def _spreads(book):
+    """(margin sd, total sd) of a book, or blanks when there is none."""
+    if book is None:
+        return "", ""
+    mg, mp = _margin_pmf(book)
+    tp = np.asarray(book[1], float)
+    tk = np.arange(len(tp))
+    m_mu, t_mu = float((mg * mp).sum()), float((tk * tp).sum())
+    return (round(float(np.sqrt(((mg - m_mu) ** 2 * mp).sum())), 3),
+            round(float(np.sqrt(((tk - t_mu) ** 2 * tp).sum())), 3))
 
 
 def _pit(margins, pmf, y, u):
@@ -572,14 +633,64 @@ def nudge_lines(results):
             " at the limit; home {:+.2f}, away {:+.2f}".format(got[:, 0].mean(), got[:, 1].mean()), ""]
 
 
+def drives_lines(out):
+    """The kick-off games' drives a match against the real ones and, where the matches have them, the
+    expected drives: overall and by fifth of the expected, with the pace nudge the sim's own before it, its
+    goal and the tempo it took."""
+    results = out["results"]
+    sim = np.array([r["drives"] for r in results if r.get("drives") is not None], float)
+    if not len(sim):
+        return []
+    real = np.array([r["real_drives"] for r in results if r.get("drives") is not None], float)
+    lines = [f"  DRIVES a match (both sides'): the sim's {sim.mean():.2f} (sd across matches {sim.std():.2f}), the real"
+             f" {real.mean():.2f} (sd {real.std():.2f}); r {np.corrcoef(sim, real)[0, 1] if sim.std() > 0 else float('nan'):.3f}"]
+    got = [r for r in results if r.get("exp_drives") is not None and r.get("drives") is not None]
+    tempo = np.array([r["tempo"] for r in got if r.get("tempo") is not None], float)
+    if tempo.size:
+        lines.append(f"  the pace nudge: each match's expected drives x {out['sim_level']:.2f} / {out['drives_level']:.2f}"
+                     " (the sim's own level at kick-off over the table's mean) as its goal; one tempo on both sides'"
+                     f" time tilts (below 0 quicker), mean {tempo.mean():+.3f}, sd {tempo.std():.3f},"
+                     f" {100 * np.mean(np.abs(tempo) >= v21.TEMPO_MAX - 1e-9):.1f}% at the limit")
+    if len(got) >= 10:
+        exp = np.array([r["exp_drives"] for r in got], float)
+        cols = [("expected", exp), ("sim's own", np.array([r["own_drives"] for r in got], float)),
+                ("goal", np.array([r.get("goal_drives") or np.nan for r in got], float)),
+                ("sim", np.array([r["drives"] for r in got], float)), ("real", np.array([r["real_drives"] for r in got], float))]
+        if not tempo.size:
+            cols = [c for c in cols if c[0] not in ("sim's own", "goal")]
+        q = np.searchsorted(np.quantile(exp, [0.2, 0.4, 0.6, 0.8]), exp, side="right")
+        lines.append(f"  by fifth of the expected drives ({len(got):,} matches):")
+        lines.append("    " + f"{'fifth':>6s}{'matches':>9s}" + "".join(f"{c:>11s}" for c, _ in cols)
+                     + f"{'margin sd':>11s}{'miss sd':>9s}")
+        for k in range(5):
+            sel = q == k
+            if not sel.any():
+                continue
+            sd = np.mean([_spreads(r.get("book"))[0] or np.nan for r, s_ in zip(got, sel) if s_])
+            miss = np.array([(r["finals"][0] - r["finals"][1]) - (r["kick"][0] - r["kick"][1])
+                             for r, s_ in zip(got, sel) if s_])
+            lines.append("    " + f"{k + 1:>6d}{int(sel.sum()):>9d}" + "".join(f"{v[sel].mean():>11.2f}" for _, v in cols)
+                         + f"{sd:>11.2f}{miss.std():>9.2f}")
+        lines.append("    (margin sd: the sim's own kick-off margin's, the mean a match; miss sd: the real margins' about"
+                     " the sim's means)")
+    return lines + [""]
+
+
 def report(out):
     res = out["results"]
     nudged = (", nudged to the inputs" if out.get("nudge_share", 1.0) == 1.0
               else f", nudged {100 * out.get('nudge_share', 1.0):.0f}% of the way to the inputs") if out.get("nudge") else ""
+    nudged += f", the second strength lever at kappa {out['shape']:g}" if out.get("nudge") and out.get("shape") else ""
+    nudged += (f", the inputs' margins x {out['gap']:g} (the gap shrink)" if out.get("nudge") and out.get("gap") is not None
+               else "")
+    if out.get("pacing"):
+        nudged += (", the pace nudge to the expected drives" if out.get("drives_share", 1.0) == 1.0 else
+                   f", the pace nudge {100 * out['drives_share']:.0f}% of the way to the expected drives")
     lines = [f"  v2.1 ({out['mode']}{nudged}) on {len(res):,} settled"
              f" matches {out['since']} to {out['until']}: {2 * out['n_paths']:,} kick-off games each,"
              f" {out['state_paths']:,} from every {out['every']} real state", ""]
     lines += nudge_lines(res)
+    lines += drives_lines(out)
     lines += kickoff_lines(res)
     lines += grade_lines(res)
     lines += margin_lines(res)
@@ -597,12 +708,17 @@ def write_csv(path, out):
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
         w.writerow(["MATCH_CODE", "start", "home", "away", "home_team", "away_team", "input_home", "input_away",
-                    "sim_home", "sim_away", "real_home", "real_away", "sim_p_home"])
+                    "sim_home", "sim_away", "real_home", "real_away", "sim_p_home",
+                    "sim_margin_sd", "sim_total_sd", "prior_margin_sd", "prior_total_sd",
+                    "exp_drives", "sim_own_drives", "goal_drives", "sim_drives", "real_drives", "tempo"])
         for x in out["results"]:
             (g1, g2), (t1, t2) = x["people"]
             w.writerow([x["code"], x["row"].get("SCHEDULED_START_TIME_UTC", ""), g1, g2, t1, t2,
                         *(round(v, 3) for v in x["means"]), *(round(v, 3) for v in x["kick"]),
-                        *x["finals"], round(x["p_home"], 4)])
+                        *x["finals"], round(x["p_home"], 4),
+                        *_spreads(x.get("book")), *_spreads(x.get("prior_book")),
+                        *("" if x.get(k) is None else round(x[k], 3)
+                          for k in ("exp_drives", "own_drives", "goal_drives", "drives", "real_drives", "tempo"))])
 
 
 def write_states_csv(path, out):

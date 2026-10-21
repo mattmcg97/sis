@@ -70,3 +70,10 @@ connected. `.env` is gitignored so credentials never get committed.
     version's pre-match prior off it in place of NB2.
 
   See `glmer/README.md`.
+- `xgb/` — An XGBoost pre-match model built the way a trader's eBasketball
+  deck built one: about 90 as-of features from the results (rolling form,
+  spreads, streaks, teams, rest, sessions, head to head, the form rating),
+  side, margin and total models on a rolling 180 days, walk-forward against
+  glmer and the walkthrough tables. On the results alone it falls short of
+  glmer; stacked on glmer it is level on the moneyline and a little better
+  on totals. See `xgb/README.md`.

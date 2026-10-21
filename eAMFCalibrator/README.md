@@ -80,7 +80,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v8` to `v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-shape0.25` (the second strength lever: the favourite's strength gap played by the score, κ 0.25; it didn't beat v21), `v21-gap0.75` (the gap shrink: the prior's expected margin × 0.75, its total kept), `v21-pace` (each gamer's own pace when ahead, `eAMFModel v21-pace-fit`'s table beside the build), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v9`) |
 | `--v9-model DIR` | `eAMFModel v9-build` output for `--candidate v9` (default `$EAMF_V9_MODEL`, then `./v9_model`) |
 | `--v9-paths N` | games simulated per snapshot for `--candidate v9` (default 2000) |
@@ -89,6 +89,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v21-model`, `--v21-paths`, `--v21-lines` | the same for `--candidate v21` (default `$EAMF_V21_MODEL`, then `./v21_model`; 1000 games a snapshot, the kick-off twice that) |
 | `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v13/v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
+| `--v21-drives CSV` | `--candidate v21-drives`: each match's expected drives the pace nudge meets (`xgb/pace_eff.py`'s `pace_eff_prior.csv`; default `$EAMF_V21_DRIVES`, then `xgb/out/pace_eff/pace_eff_prior.csv`) |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -1860,6 +1861,34 @@ The report prints:
 - the margin both ways: overall, all but VIPs, and by pre-match or in play,
   operator, customer temperature, market and period.
 
+### Only the moments the bets read (the default), `--all-moments`
+
+Simulating v21 is nearly all of a `bets` run's time. A calibration run prices it at every PLAY_OVER prod's
+quotes read, roughly every play of every match. The bets read far fewer, so `bets` (and `report
+--bets`) prices v21 only where they do:
+- **What a bet reads.** After the lags are fitted, each bet's market and the prod message it reads
+  (one lag back in play) are known. That's the message the join finds the candidate's quote at.
+  The candidate's quote there comes from the book of the latest PLAY_OVER before it, while that
+  state lasts. If the message falls outside every state's window, it comes from the latest earlier
+  quote that falls in one. Only those books are simulated.
+- **What stays the same.**
+  - The kick-off and every pre-match quote are priced as before.
+  - A match with only pre-match bets gets no in-play simulation at all.
+- **What changes.**
+  - The states share one random stream a match, so a state's draws depend on which other states
+    are simulated with it. Each price moves within simulation noise, as with another seed. The
+    candidates of one run are still priced at the same moments, so they stay paired.
+  - Own lines (`own`, `hyst`) carry each market's last line from one quote to the next. That's now
+    the last quote priced, not the last tick, so an own-line spread or total can differ a little.
+    Even, prod and anchored lines don't depend on it.
+  - The margin uplift has a model's prices only at those moments. It bets prod's ticks there alone,
+    each at the model's own price there, never a price held over from an earlier moment, and says
+    so on the page.
+- **The run prints it,** e.g. `v21: 1,214 of 18,905 in-play states simulated, the ones the bets
+  read`.
+- **`--all-moments`** prices every moment, as before: slower, with the margin uplift on every tick.
+  A table candidate, and a model version before v21, are priced as ever.
+
 ### A chosen few matches: `bets --only-matches`
 
 ```bash
@@ -1913,83 +1942,107 @@ stood to a gamer's run this session when it was placed:
 If punters make money by piling onto trends that carry on, the "piles on" rows show a lower margin
 than "none". A model that moves on trends (`eAMFModel form-layer --trigger`) should then raise it.
 
-### Margin uplift, the partner's way: `margin_uplift.txt`
+### Margin uplift, two books: `margin_uplift.txt`
 
-Every `bets` run (and so `report --bets`) also runs the dummy-bet method from the partner's
-eBasketball notebook. It's applied to AF as they applied it, weaknesses and all, but as a direct
-comparison: prod against each candidate over the report window, on matched ticks only (below). It
-reuses the quotes the simulation has already fetched, so it costs nothing
-extra.
+Every `bets` run (and so `report --bets`) also scores each candidate against prod on dummy bets,
+one on every live in-play price tick. It reuses the quotes the simulation has already fetched, so
+it adds almost nothing to the run time.
 
 ```
 python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidate v13 --v13-model v13_model --bets --margin-chart FD_109_BALANCED.csv
 ```
 
-- **Dummy bets.** Every live in-play tick on the moneyline (50/51, home is their side A) and
-  totals (54/55) is a bet to win 100. It's priced at the margin chart's price for the probability
-  rounded to 3 places: their `FD_109_BALANCED.csv`, probability then `numerator`, `denominator`,
-  so the price is numerator / denominator + 1. The file can have a header naming those columns, or,
-  as theirs does, no header with the three in that order. The chart is read when the run starts, so
-  a chart it can't use stops the run at once. Without `--margin-chart`, a proportional 109% book
-  stands in.
-- **Per bet.**
-  - Stake = 100 / (price − 1).
-  - Expected margin = 1 − price × probability.
-  - GGR = stake − price × stake if it won, else the stake. A moneyline tie loses both sides, and
-    a totals push loses both.
+**Why not the partner's version.** Their notebook had each book take every dummy bet at its own
+price, staked to win 100, and compared the margins. That rewards an overconfident book:
+- A winner always costs the book 100, while a loser pays it the whole stake, and short prices
+  carry the big stakes.
+- So a book that prices its favourites too short keeps big stakes when they lose, and pays the
+  same 100 when they win.
+- On simulated ticks with the truth known, the margins were:
+
+  | Book | Margin |
+  | --- | --- |
+  | calibrated | 8.4% |
+  | overconfident (logit × 1.15) | 10.5% |
+  | overconfident (logit × 1.3) | 12.2% |
+  | underconfident (× 0.85) | 6.1% |
+
+- Flat stakes turn it round: the underconfident book scores 10.7%.
+- Every tick of a match also settles on the same result. A match with more ticks counted for more,
+  though it is one result.
+
+Two books leave no such reward. A book that is too sure, or not sure enough, offers the better price
+exactly where it is wrong, and is taken there. Against a calibrated prod, what each book makes on
+the bets it takes:
+
+| Book | Margin |
+| --- | --- |
+| calibrated | 8.2% |
+| overconfident (× 1.15) | 2.5% |
+| overconfident (× 1.3) | −3.0% |
+
+**How it works.**
+- **Dummy bets.** Every live in-play tick on the moneyline (50/51), the spread (52/53) and the
+  totals (54/55) is a bet to win 100.
+  - It's priced at the margin chart's price for the probability rounded to 3 places.
+  - The chart is their `FD_109_BALANCED.csv`: probability, then `numerator`, `denominator`, so
+    the price is numerator / denominator + 1.
+  - The file can have a header naming those columns or, as theirs does, no header with the three
+    in that order.
+  - The chart is read when the run starts, so a chart it can't use stops the run at once. Without
+    `--margin-chart`, a proportional 109% book stands in.
+- **Two books.** Each bet goes to whichever book's price is longer (prod on a tie).
+  - Stake = 100 / (price − 1). GGR = −100 if the selection won, else the stake.
+  - It's settled the way the calibrator settles every market, and a push is left out.
+  - The spread and the totals are compared only where the candidate's line is prod's, so it's the
+    same bet. The page shows how many matched ticks that leaves.
+- **Every match counts the same.** Each tick weighs 1 / its match's ticks in that market, and every
+  interval is a 95% bootstrap over matches (`--boot`).
 - **The clock.** Minutes run from the scheduled start, scaled so prod's matches end at 60 game
-  minutes on average (their 0.146 cut made basketball's 20). The same factor applies to every
-  feed (`--uplift-factor` sets it). The money leaves out the last 6 minutes (their last 2 of 20),
-  and anything with a fair price of 1.001 or less.
-- **Headline.** Margin % (GGR / handle) and expected margin % for each feed and market, and the
-  uplift: each candidate's margin less prod's.
-- **Calibration.** Their weighted MAE: |mean probability − win rate| for each game minute left,
-  selection and band, weighted by ticks.
-  - Moneyline bands are tenths of probability.
-  - Totals bands are AF's (≤35.5, 36–40.5, 41–45.5, 46–50.5, 51–55.5, 56+). Theirs were
-    basketball's.
-- **Checkpoints.** At 54, 45, 36, 30, 21 and 15 minutes left (their 18, 15, 12, 10, 7 and 5),
-  each band's calibration and margins are shown. A band's calibration needs 25 ticks in every
-  feed; its margin needs more than 50.
-- **Matched ticks only.** The feeds tick at different rates, so every table bets at prod's ticks
-  alone. At each one, each candidate's latest live price for the same match, market and selection
-  is taken (no more than `PAIR_MAX_AGE`, 2 minutes, old). A prod tick without one in every
-  candidate is dropped from every feed, and so is one where any feed's probability is outside
-  `PROB_RANGE` (0.05 to 0.95). The moments and bets are the same for all, only the probabilities
-  differ, so the uplift is the model's alone. Each feed's matched ticks are shown against all its
-  ticks. The clock factor is still fitted on all of prod's ticks. The matches are the ones
-  the simulation covers: those with at least one bet.
+  minutes on average (`--uplift-factor` sets the factor). The bets leave out the last 6 minutes
+  (their last 2 of 20), and anything with a fair price of 1.001 or less.
+- **Matched ticks only.** Every book is bet at prod's ticks.
+  - At each one, each candidate's latest live price for the same match, market and selection is
+    taken, no more than `PAIR_MAX_AGE` (2 minutes) old.
+  - A prod tick without such a price in every candidate is dropped, and so is one where any feed's
+    probability is outside `PROB_RANGE` (0.05 to 0.95).
+  - The clock factor is fitted on all of prod's ticks. The matches are the ones the simulation
+    covers: those with at least one bet.
+  - v21 is priced by default only at the moments the bets read (see "Only the moments the bets
+    read" above). Its dummy bets are then prod's ticks at those moments alone, each matched only to
+    v21's own price at that very tick. Run with `--all-moments` for every tick.
 
-The page's betting simulation has three panels:
+**What it shows, per candidate and market:**
+- **To candidate:** the share of the dummy handle the candidate's prices take.
+- **Candidate takes / prod keeps:** each book's margin on what it is left with.
+- **Candidate − prod:** the headline. Above zero, the candidate's prices hold up better where the
+  two differ.
+- **Both books − prod alone:** the two books together against prod taking every bet. A second book
+  only lowers it, as the bettor always gets the better price. The smaller the fall, the less the
+  candidate is picked off.
+- **Log loss, candidate − prod:** a proper score on the same ticks and weights, as a cross-check
+  (lower is better).
+- **Cuts:** by quarter, and on the moneyline by prod's chance of the selection (0.05–0.20,
+  0.20–0.35, … 0.80–0.95). They're folded under the headline on the page.
+
+**By match: `margin_uplift_matches.txt` and `.csv`.**
+- Every match, with its start, players, final score and, per candidate and market:
+  - its dummy bets;
+  - the share the candidate takes;
+  - each book's margin;
+  - its log loss less prod's.
+- **Part:** the match's part of candidate − prod. That's its GGR on what the candidate takes over
+  the candidate's whole taken handle, less its GGR on what prod keeps over prod's whole kept
+  handle. The parts add up to the headline exactly.
+- The matches that cost the candidate most come first, with a running sum.
+- `margin_uplift.txt` (and the page's "By match" fold) lists the 10 matches that cost it most and
+  the 10 that gain it most.
+
+`margin_uplift.csv` holds every number: one row per candidate, market and cut.
+
+The page's betting simulation has two sections:
 - **Re-pricing:** the real bets at each candidate's probability.
-- **Book comparison.**
-- **Margin uplift.**
-
-`margin_uplift.csv` holds the sums behind every table: one row per feed, market, minute,
-selection and band.
-
-- **Brier and log loss, same ticks.** The headline also scores every feed on exactly the matched
-  ticks with more than 6 game minutes left, every tick alike (lower is better). It's a proper
-  score: it's best when the probabilities are right. The dummy-bet margin isn't:
-  - A bet to win 100 at a short price carries a big stake. At a 0.92 favourite, the 1.01 floor of
-    the proportional book makes it a stake of 10,000.
-  - So a book keeps a lot when it was sure of a side that lost, and the margin rewards confidence.
-  - At a true 75% for one side, pricing it 80% scores about 12.9%, pricing it 75% scores 8.3%, and
-    pricing it 70% scores 4.6%.
-  - Read the uplift next to the Brier score: a candidate behind on the uplift but ahead on Brier
-    is the less confident book, not the worse one.
-- **By match: `margin_uplift_matches.txt` and `.csv`.**
-  - **Contents.** Every match with its start, players, final score and dummy bets (ticks) per
-    market. Each feed has its share of the handle (wt), GGR, margin, Brier and "sure": the highest
-    probability it gave a selection that lost.
-  - **Part.** Each candidate's part of the uplift: the match's GGR over the candidate's whole
-    handle, less prod's over prod's. The parts add up to the uplift exactly.
-  - **Order.** Matches are sorted so the ones that cost the candidate most come first, with a
-    running sum.
-  - **Summary.** `margin_uplift.txt` (and the page's "By match" fold) sums it up for each market:
-    - the 10 matches that cost the candidate most and the 10 that gain it most;
-    - the uplift without them;
-    - how many matches hold half of prod's handle.
+- **Book comparison:** the real bets between two books, then this margin uplift.
 
 ### The operators' margin
 
@@ -2077,8 +2130,7 @@ python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshot
 ```
 
 `--bets` runs the betting simulation for the same window and candidates, and
-adds a "Betting simulation" section at the bottom of the report's HTML. The
-section has:
+adds two sections at the bottom of the report's HTML. **Re-pricing** has:
 - each candidate on the bets it re-priced: prod's margin, the candidate's,
   the change, and the change split into odds and line;
 - every candidate side by side on the bets they all re-priced, by the same
@@ -2086,9 +2138,11 @@ section has:
 - why bets were not re-priced;
 - the lag by operator.
 
+**Book comparison** has the two-book table on the real bets, then the margin uplift.
+
 The CSVs (`bets_sim.csv`, `bets_latency.csv`) are written to the report's
-`--out` folder. Models are priced again for the bets' matches, so the run
-takes longer.
+`--out` folder. Models are priced again for the bets' matches, at the moments
+the bets read (`--all-moments`: every one), so the run takes longer.
 
 ### Book comparison: who would still bet, and which book they would take
 
@@ -2120,8 +2174,9 @@ does, so every reading is a like-for-like comparison with prod.
 - **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
   (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
   side of zero.
-- **On the page** (headed Acceptance and Two books): each margin is green where the book is ahead,
-  red behind; its interval sits underneath.
+- **On the page** (under Book comparison, Two books): each margin is green where the book is ahead,
+  red behind; its interval sits underneath. Acceptance is in `bets_book_comparison.txt` only. With
+  no sharp bets in the window, and the default elasticity of 0, it's just the re-pricing again.
 
 ```bash
 python -m eAMFCalibrator bets --since 2026-09-17 --until 2026-09-23 --candidate v9,v10 --v9-model v9_model --v10-model v10_model
@@ -2401,6 +2456,119 @@ Output:
   `candidate_line_v5`, `candidate_revenue_v5`, `simulated_v5`, ...);
 - `out/bets_latency.csv`, one row per operator, with the misfit at every
   lag tried.
+
+### Where the money is, as prices: `bets money`
+
+```bash
+python -m eAMFCalibrator bets money --since 2026-10-01 --until 2026-10-19 --sim-file eAMFCalibrator/out_bets_gap/bets_sim.zip
+```
+
+Every bet is money on a side: home or away on the moneyline and the spread, over or under on the total.
+
+**The money.** At any moment, the money toward the home (over) side is the stake on it less the stake
+on the other, over both, from −1 to +1.
+- In play it's over the last `--money-window` seconds (120); pre-match, over every pre-match bet
+  before then.
+- It's kept by customer temperature as well as in total.
+- Each bet sees only the money before it, on prod's clock (bet time less the operator's lag).
+
+**Layer 1, the money's price.** Prod's log-odds, moved by beta × the money.
+- beta is fitted on the results, by market, pre-match and in play apart. One model has a single tilt
+  for all the money, another one a temperature.
+- It's fitted on the window's earlier matches (before `--money-split`, by default the middle day) and
+  scored on the later ones:
+  - **Log loss.** At every PLAY_OVER prod priced the market, the money's price against prod's, each
+    match counting the same. Pre-match it's prod's last price before the kick-off against the money of
+    every pre-match bet: prod posts that price once, before most of the betting, and it stands till the
+    kick-off. ("Fitted on" shows how many of the points have some money.)
+  - **Re-pricing.** Every later bet re-priced at it, the operator's margin kept. This is the book's
+    margin change, with a 95% interval over matches.
+
+**Layer 2, what the money knows.** On the bets: the money's tilt alone, then beside each thing a
+punter could have seen at that moment, then beside all of them. The things are:
+- prod's own move over the last minute;
+- the game script: home's lead (or the points the total still needs) × the share of the game left;
+- a score in the last 30 seconds;
+- v2.1's price against prod's, from `--sim-file` (a bets run's `bets_sim.csv` or its zip;
+  `--sim-candidate` picks the candidate).
+
+Where the tilt falls when a thing comes in, the money was that thing. What's left, it knows and none
+of them say. The report also shows **what the money follows**: the money regressed on the same
+things.
+
+`bets_money.txt` has the report and `bets_money_points.csv` a row a bet: its money by temperature and
+the things beside it. There's no simulation: v2.1's price comes off the sim file.
+
+**Who starts a run, by customer id.** With a customer id on the bets (`--customer-column`, by default
+`config.BET_CUSTOMER_COLUMN` = `CUSTOMER_NAME_HASH`; if the bet table has no such column the report
+lists the ones that look like a customer's):
+- After each bet, the other customers' money toward its side on the same match and market over the
+  next `--run-window` seconds in play (120; 1800 pre-match). The customer's own bets are left out, so
+  one punter splitting a stake isn't a run.
+- The money comes in runs anyway (after a score, after a price move), so each bet's follow is set
+  against what the other customers' money before it and a score in the last 30 seconds say. What's
+  left is the bet's **lead**; a customer's lead is the mean over their matches, with its interval, and
+  shrunk toward 0 by how much the leads really differ.
+- **Is it a trait?** Each customer's matches split alternately in two, the halves' leads correlated
+  across customers. This is the test: near 0, whoever tops the table got there by luck.
+- **Runs started**: bets that were first on their side and had 3+ other customers follow.
+- **Do they know?** Each customer's own edge (won less prod's chance, in points) and the book's margin
+  on them, and the same on their followers' bets.
+- **Pairs**: one customer betting the side another just bet, within the window, on 3+ matches (a tip
+  shared, or one punter on two accounts), with the matches both bet and how often it went the other
+  way.
+
+It writes `bets_money_customers.csv` and `bets_money_pairs.csv` beside the report.
+
+The Oct 1–18 run:
+- **Pre-match (layer 1)** was broken: it read the money before prod's last pre-match price, which is
+  posted before the betting, so almost no point had any money and the fit ran off (betas near −8).
+  It now reads every pre-match bet's money; rerun for its numbers.
+- **In play, moneyline**: the money adds nothing to prod's price out of sample (beta +0.002
+  [−0.108, +0.106]). On the bets, its tilt is +0.075 [−0.015, +0.159] alone and +0.013 beside v2.1's
+  price, whose own gap is +0.82 [+0.53, +1.19]. What the money knows on the moneyline, v2.1 already
+  has. (An earlier scratch look said +0.38: it read bet times in microseconds as nanoseconds, so its
+  "last 120 s" was the whole match so far, and it left cash-outs out of the money.)
+- **In play, totals**: the money knows something nothing else here says: +0.135 [+0.063, +0.205]
+  alone, +0.087 [+0.015, +0.152] beside everything, Restricted money the most (+0.25 [+0.03, +0.51]
+  out of sample). v2.1 isn't in it: its total line rarely matches prod's.
+- **Spread**: nothing, pre-match or in play.
+- The re-pricing change flatters the money's price: the bets stay as they were, and shortening the
+  side the money is on pays every winner on it less whatever the money knows. Read the log loss.
+- `CUSTOMER_NAME_HASH` is empty on every Oct 1–18 bet.
+
+### Prod's moneyline either side of every bet: `bets ml-moves`
+
+```bash
+python -m eAMFCalibrator bets ml-moves --since 2026-10-01 --until 2026-10-19 --min-bets 30
+```
+
+Where the money comes on prod's moneyline, at what prices, and how prod's price moved either side of
+each bet. No candidate is priced and nothing is simulated: it reads the bets and prod's quotes alone.
+
+- **The price a bet read.** Prod's chance of the side backed at the bet time less the operator's lag,
+  pre-match at the bet time.
+- **Where the money came.** Bets, stake, its share and the book's margin. These are cut by prod's
+  chance of the side backed, the customer temperature, the stake, the operator and (in play) the
+  moment, pre-match and in play apart.
+- **The path.** Prod's chance of the side at −300, −120, −60, −30 and −10 s before the moment the bet
+  was priced, and +10, +30, +60, +120 and +300 s after, less the chance it was struck at.
+  - After the bet, above 0 means prod shortened the side: it moved the bettor's way, and the bet beat
+    the price.
+  - Before it, above 0 means the side had drifted into the bet (the bettor faded a move), and below 0
+    that it had shortened (they followed one).
+  - A move is a point of chance or more; less and the price held.
+  - Each offset is a mean a bet, with 2 standard errors clustered by match, and a mean by stake.
+- **The book's margin by what prod did** in the 60 s after the bet (moved their way, held, moved
+  against) and in the 60 s before (followed, still, faded).
+- **In play, with no score in the 60 s after.** Prod re-pricing the same state: the drift a bettor was
+  ahead of, the part a model could have had. A move across a score is the game.
+- **Pre-match, the closing-line value.** The side's chance at the kick-off less at the bet, and the
+  margin on the bets that beat the close, held, or were beaten by it.
+- **The customers with the most moneyline stake**, with their margin, their +60 s move and their
+  closing-line value.
+
+`bets_ml_moves.txt` has the report and `bets_ml_moves.csv` a row a bet, with every offset.
 
 ### Restricted accounts on totals: `bets totals-moves`
 

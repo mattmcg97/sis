@@ -1,46 +1,53 @@
-"""Margin uplift, the partner's way: their eBasketball before/after notebook's dummy bets, applied
-to AF as a direct comparison -- prod against each candidate over the report window, on prod's ticks
-that every candidate has a price for (see "Matched ticks only" below) -- weaknesses and all.
+"""Margin uplift, two books: prod against each candidate over the report window, every live in-play
+price tick a dummy bet -- staked to win 100 at the margin chart's price -- given to whichever book pays
+more, each book then scored on what it is left with. Every match counts the same.
 
-Every live in-play price tick is a dummy bet. Per tick:
+Why not the partner's single-book version (each book taking every dummy bet at its own price): with every
+bet staked to win 100, a winner always costs the book 100 and a loser pays it its whole stake, and short
+prices carry the big stakes, so a book that prices its favourites too short keeps big stakes when they
+lose and pays the same 100 when they win. Overconfidence scored as margin: on simulated ticks with the
+truth known, a calibrated book made 8.4%, an overconfident one (logit x 1.15) 10.5%, x 1.3 12.2%, an
+underconfident one (x 0.85) 6.1% -- and flat stakes turn it round (underconfident 10.7%). Two books
+leave no such reward: a book too sure, or not sure enough, offers the better price where it is wrong and
+is taken there (against a flat prod: calibrated 8.2% on what it takes, x 1.15 2.5%, x 1.3 -3.0%). Every
+tick of a match settles on the one result, so the matches, not the ticks, are the sample: each match
+weighs the same (each tick 1 / its match's ticks in the market) and every interval is over matches.
 
-  minutes     from the match's scheduled start (not the first play), in play once past half a
-              minute; scaled to a game clock (normalised = round(minutes x factor)), the factor set
-              so prod's matches end, on average, at GAME_MINUTES -- the partner scaled by
-              (1 - 0.146) so a 20-minute game ended at 20; AF's four quarters make 60
-  remaining   GAME_MINUTES - normalised; the quarter off it (> 45 Q1, > 30 Q2, > 15 Q3, else Q4)
-  price       the margin chart's price at the probability rounded to 3 places (their
+The ticks (unchanged): minutes from the match's scheduled start, in play once past half a minute, scaled
+to a 60-minute game clock (normalised = round(minutes x factor), the factor set so prod's matches end at
+GAME_MINUTES on average); the quarter off the minutes left. Matched ticks only: prod's ticks where every
+candidate has a live price for the same match, market and selection no older than PAIR_MAX_AGE minutes,
+and every feed's probability within PROB_RANGE; the same moments for every feed.
+
+The dummy bets, per matched tick and selection:
+
+  price       each book's margin chart price at its probability rounded to 3 places (their
               FD_109_BALANCED.csv: probability, numerator, denominator -> numerator/denominator + 1);
-              without a chart a proportional 109% book stands in
-  stake       100 / (price - 1): every bet wins 100, so shorter prices carry bigger stakes
-  expected    1 - price / fair, fair = 1 / probability; expected revenue = expected x stake
-  GGR         stake - price x stake if the selection won, else stake
+              without a chart a proportional 109% book
+  the bet     to the book whose price is longer (prod on a tie); a spread or total only where the
+              candidate's line is prod's (the same bet); stake 100 / (price - 1); GGR -100 if the selection
+              won, else the stake, settled as the calibrator settles every market (markets.resolve); a push
+              is left out
+  kept        more than CUT_LAST game minutes left, a fair price above FAIR_FLOOR for both books
 
-Kept for the money: a chart price, a fair price above 1.001, and more than CUT_LAST game minutes
-left (the partner's 2 of 20). Margin % = GGR / handle, expected % = expected revenue / handle;
-the uplift is a candidate's margin less prod's.
+Per candidate and market -- moneyline, spread and totals (each with its 95% interval over matches,
+SIM_BOOT resamples):
 
-Moneyline: home is their side A, away B; a selection wins when its side scores more (a tie loses
-both). Totals: over wins above the line, under below it (a push loses both). Spreads are left out,
-as the partner had none.
+  to candidate      the share of the dummy handle the candidate's prices take
+  candidate takes   the candidate's margin on the bets it takes; prod keeps: prod's on the rest
+  candidate - prod  the two against each other: above zero, the candidate's prices hold up better where
+                    the two differ -- the headline
+  both books        the two together against prod taking every bet alone, which a second book only
+                    lowers (the bettor always gets the better price); the less, the more the candidate
+                    is picked off
+  log loss          a proper score on the same ticks and weights, candidate less prod: a cross-check
+                    (lower is better)
 
-Calibration, their weighted MAE: per game minute left, selection and band (moneyline: the price's
-tenth of probability; totals: the line's band, TOTAL_BANDS here for AF's lines), |mean probability
-- win rate| weighted by the ticks. The checkpoints (54, 45, 36, 30, 21 and 15 minutes left: their
-18, 15, 12, 10, 7 and 5 of 20) show each band, calibration where every feed has 25 ticks and
-margins where a feed has more than 50.
-
-Matched ticks only: the feeds don't tick at the same moments (prod far more often than a candidate
-priced at the PLAY_OVER snapshots), so every table bets at prod's ticks alone. At each one, each
-candidate's latest live price for the same match, market and selection (no older than PAIR_MAX_AGE
-minutes); a prod tick without one in every candidate is dropped from every feed, as is one where any
-feed's probability is outside PROB_RANGE. The same moments and bets for all, only the probabilities
-differ.
+by quarter and by prod's price on the selection (moneyline), and every match's part of the headline.
 """
 
 import csv
 import datetime as dt
-import math
 from collections import defaultdict
 
 import numpy as np
@@ -50,28 +57,17 @@ from .pipeline import to_unit_probability
 
 GAME_MINUTES = 60                        # the clock the minutes are scaled to (four 15-minute quarters)
 QUARTER_CUTS = (45, 30, 15)              # remaining > 45 Q1, > 30 Q2, > 15 Q3, else Q4
-CUT_LAST = 6                             # the money leaves out the last minutes (their 2 of 20)
-CHECKPOINTS = ((54, 1), (45, 2), (36, 2), (30, 3), (21, 3), (15, 4))
+CUT_LAST = 6                             # the dummy bets leave out the last minutes (their 2 of 20)
 FAIR_FLOOR = 1.001
 STAKE_TO_WIN = 100.0
 FALLBACK_BOOK = 1.09
-MIN_CAL = 25                             # a checkpoint band's calibration: this many ticks in every feed
-MIN_MARGIN = 50                          # a checkpoint band's margin: more ticks than this in a feed
 PAIR_MAX_AGE = 2.0                       # matched ticks: the candidate's price at most this many minutes old
 PROB_RANGE = (0.05, 0.95)                # matched ticks: every feed's probability within this
-
-MONEYLINE, TOTALS = "Moneyline", "Totals"
-GROUPS = (MONEYLINE, TOTALS)
-SELECTIONS = {MONEYLINE: ("A", "B"), TOTALS: ("Over", "Under")}
-MARKET_OF = {50: (0, 0), 51: (0, 1), 54: (1, 0), 55: (1, 1)}      # market id -> (group, selection)
-ML_BANDS = [f"{i / 10:.1f} - {(i + 1) / 10:.1f}" for i in range(10)]
-# AF totals bands (the partner's were basketball's, <100 to 130.5+): a line falls in the first
-# band whose top it does not pass
-TOTAL_BANDS = [(35.5, "<=35.5"), (40.5, "36-40.5"), (45.5, "41-45.5"), (50.5, "46-50.5"),
-               (55.5, "51-55.5"), (math.inf, "56+")]
-BANDS = {MONEYLINE: ML_BANDS, TOTALS: [b[1] for b in TOTAL_BANDS]}
-NB = max(len(ML_BANDS), len(TOTAL_BANDS))
-FIELDS = ("n_cal", "sum_p", "sum_won", "n", "handle", "expected", "ggr")
+PRICE_BANDS = (0.2, 0.35, 0.5, 0.65, 0.8)   # moneyline cuts: prod's chance of the selection backed
+LINE_EPS = 1e-9
+MONEYLINE, SPREAD, TOTALS = "Moneyline", "Spread", "Totals"
+GROUPS = (MONEYLINE, SPREAD, TOTALS)
+MARKET_OF = {50: (0, 0), 51: (0, 1), 52: (1, 0), 53: (1, 1), 54: (2, 0), 55: (2, 1)}   # id -> (group, selection)
 
 
 # ---------------------------------------------------------------- the margin chart
@@ -151,31 +147,16 @@ def _when(v):
         return None
 
 
-def _won(group, sel, line, finals):
-    s1, s2 = finals
-    if group == 0:
-        return (s1 > s2) if sel == 0 else (s2 > s1)
-    total = s1 + s2
-    return (total > line) if sel == 0 else (total < line)
-
-
-def _band(group, prob, line):
-    if group == 0:
-        return max(0, min(9, math.ceil(prob * 10) - 1))
-    for i, (top, _) in enumerate(TOTAL_BANDS):
-        if line <= top:
-            return i
-    return None
-
-
 class Ticks:
-    """One feed's live in-play ticks on the moneyline and totals, as arrays."""
+    """One feed's live in-play ticks on the moneyline, spread and totals, as arrays."""
 
     def __init__(self, name):
         self.name = name
         self.parts = defaultdict(list)
         self.matches = {}
         self.finals = {}
+        self.at_bets = False             # a model priced only at the moments the bets read
+        self.max_age = None              # its own matching age (None: PAIR_MAX_AGE); 0: its own ticks alone
 
     def add(self, quote_rows, starts, finals):
         """Add snowflake_io.fetch_quotes rows; `starts` {match: scheduled start}, `finals` {match:
@@ -194,16 +175,16 @@ class Ticks:
             if minutes <= 0.5:                      # their round(minutes) > 0
                 continue
             p = to_unit_probability(prob)
-            line = markets.parse_line(desc) if m[0] == 1 else 0.0
+            line = markets.parse_line(desc) if m[0] else 0.0
             if p is None or line is None:
                 continue
-            band = _band(m[0], p, line)
-            if band is None:
+            won = markets.resolve(int(market), line if m[0] else None, *fin)
+            if won is None:                         # a push
                 continue
             idx = self.matches.setdefault(code, len(self.matches))
             self.finals[code] = tuple(fin)
             for key, v in (("match", idx), ("group", m[0]), ("sel", m[1]), ("minutes", minutes),
-                           ("prob", p), ("band", band), ("won", _won(m[0], m[1], line, fin))):
+                           ("prob", p), ("line", line), ("won", won)):
                 cols[key].append(v)
         for key, v in cols.items():
             self.parts[key].append(np.asarray(v))
@@ -218,6 +199,7 @@ class Ticks:
         keep = [i for code, i in self.matches.items() if code in codes]
         mask = np.isin(self.array("match"), keep)
         out = Ticks(self.name)
+        out.at_bets, out.max_age = self.at_bets, self.max_age
         for key in self.parts:
             out.parts[key] = [self.array(key)[mask]]
         out.matches = {code: i for code, i in self.matches.items() if code in codes}
@@ -245,7 +227,7 @@ def _latest(prod, cand, max_age=PAIR_MAX_AGE):
         to_prod[i] = prod.matches.get(c, -1)
     c_match = cand.array("match").astype(int)
     c_match = to_prod[c_match] if len(c_match) else c_match
-    key = lambda m, t: (m * 2 + t.array("group").astype(int)) * 2 + t.array("sel").astype(int)
+    key = lambda m, t: (m * len(GROUPS) + t.array("group").astype(int)) * 2 + t.array("sel").astype(int)
     pk, ck = key(prod.array("match").astype(int), prod), key(c_match, cand)
     pm, cm = prod.array("minutes"), cand.array("minutes")
     order = np.lexsort((cm, ck))
@@ -261,8 +243,9 @@ def _latest(prod, cand, max_age=PAIR_MAX_AGE):
 
 def matched(feeds, max_age=PAIR_MAX_AGE, prob_range=PROB_RANGE):
     """`feeds` [(label, Ticks)], prod first, cut to prod's ticks that every candidate has a price for
-    (its latest, no older than `max_age` minutes) and where every feed's probability is within
-    `prob_range`. A candidate's tick keeps its own probability, band and result, at prod's match and
+    (its latest, no older than `max_age` minutes, or the candidate's own max_age: 0 for a model priced
+    at the bets' moments alone, its price at prod's very tick) and where every feed's probability is
+    within `prob_range`. A candidate's tick keeps its own probability, line and result, at prod's match and
     minute; the matches are the ones with a tick left."""
     prod = feeds[0][1]
     lo, hi = prob_range
@@ -270,7 +253,7 @@ def matched(feeds, max_age=PAIR_MAX_AGE, prob_range=PROB_RANGE):
     ok = inside(prod.array("prob"))
     hits = []
     for _, t in feeds[1:]:
-        ok_c, hit = _latest(prod, t, max_age)
+        ok_c, hit = _latest(prod, t, max_age if t.max_age is None else t.max_age)
         ok &= ok_c & inside(t.array("prob")[hit] if len(t) else np.zeros(len(ok)))
         hits.append(hit)
     left = set(np.unique(prod.array("match")[ok]).astype(int).tolist())
@@ -295,124 +278,188 @@ def factor_for(ticks):
 
 # ---------------------------------------------------------------- the dummy bets
 
-def _bets(ticks, factor, chart):
-    """Every tick's dummy bet: {remaining, cal, money, stake, expected, ggr} as arrays."""
-    minutes, prob = ticks.array("minutes"), ticks.array("prob")
-    won = ticks.array("won").astype(float)
-    remaining = GAME_MINUTES - np.round(minutes * factor)
-    price = chart_array(chart)[np.clip(np.round(prob * 1000).astype(int), 0, 1000)]
-    fair = 1.0 / np.clip(prob, 1e-9, None)
-    money = (remaining > CUT_LAST) & np.isfinite(price) & (price > 1.0) & (fair > FAIR_FLOOR)
-    stake = np.where(money, STAKE_TO_WIN / np.where(money, price - 1.0, 1.0), 0.0)
-    return dict(remaining=remaining, cal=remaining > 0, money=money, stake=stake,
-                expected=np.where(money, (1.0 - price / fair) * stake, 0.0),
-                ggr=np.where(money, np.where(won > 0, stake - price * stake, stake), 0.0))
 
 
-def grade(ticks, factor, chart):
-    """{(group, remaining, selection, band): {FIELDS}} for one feed: the partner's sums."""
-    prob = ticks.array("prob")
-    if not len(prob):
-        return {}
-    group, sel = ticks.array("group").astype(int), ticks.array("sel").astype(int)
-    band, won = ticks.array("band").astype(int), ticks.array("won").astype(float)
-    b = _bets(ticks, factor, chart)
-    remaining, cal, money, stake, expected, ggr = (b[k] for k in ("remaining", "cal", "money", "stake",
-                                                                  "expected", "ggr"))
-    keep = cal | money
-    rem = np.clip(remaining, -1, GAME_MINUTES).astype(int) + 1     # 0 holds anything past the end
-    key = ((group * (GAME_MINUTES + 2) + rem) * 2 + sel) * NB + band
-    size = 2 * (GAME_MINUTES + 2) * 2 * NB
-    sums = {f: np.bincount(key[keep], weights=w[keep], minlength=size) for f, w in (
-        ("n_cal", cal.astype(float)), ("sum_p", prob * cal), ("sum_won", won * cal),
-        ("n", money.astype(float)), ("handle", stake), ("expected", expected), ("ggr", ggr))}
-    out = {}
-    for k in np.flatnonzero(sums["n_cal"] + sums["n"]):
-        b, rest = k % NB, k // NB
-        s, rest = rest % 2, rest // 2
-        r, g = rest % (GAME_MINUTES + 2) - 1, rest // (GAME_MINUTES + 2)
-        out[(GROUPS[g], int(r), SELECTIONS[GROUPS[g]][s], BANDS[GROUPS[g]][b])] = \
-            {f: float(sums[f][k]) for f in FIELDS}
+# ---------------------------------------------------------------- the two books
+
+def quarter(remaining):
+    for q, cut in enumerate(QUARTER_CUTS, 1):
+        if remaining > cut:
+            return q
+    return 4
+
+
+def price_band(prob):
+    """Prod's chance of the selection, cut at PRICE_BANDS (0 the longest)."""
+    return int(np.searchsorted(PRICE_BANDS, prob, side="right"))
+
+
+def band_name(i):
+    edges = (PROB_RANGE[0],) + PRICE_BANDS + (PROB_RANGE[1],)
+    return f"{edges[i]:.2f}-{edges[i + 1]:.2f}"
+
+
+def _books(prod, cand, factor, chart):
+    """Every matched tick's dummy bet between prod and one candidate: {keep, take, s_t, g_t, s_p, g_p,
+    ll_p, ll_c, w, key, group, quarter, band} as arrays. take: the candidate pays more; s_t/g_t the
+    stake and GGR at the price taken (by whichever book), s_p/g_p at prod's; w each tick's weight (1 over
+    its match's kept ticks in the market)."""
+    chart = chart_array(chart)
+    price = lambda p: chart[np.clip(np.round(p * 1000).astype(int), 0, 1000)]
+    group, match = prod.array("group").astype(int), prod.array("match").astype(int)
+    pp, pc = prod.array("prob"), cand.array("prob")
+    won = prod.array("won").astype(bool)
+    remaining = GAME_MINUTES - np.round(prod.array("minutes") * factor)
+    xp, xc = price(pp), price(pc)
+    ok = lambda x, p: np.isfinite(x) & (x > 1.0) & (1.0 / np.clip(p, 1e-9, None) > FAIR_FLOOR)
+    same = (group == 0) | (np.abs(prod.array("line") - cand.array("line")) < LINE_EPS)
+    keep = (remaining > CUT_LAST) & same & ok(xp, pp) & ok(xc, pc)
+    take = keep & (xc > xp)
+    xt = np.where(take, xc, xp)
+    stake = lambda x: np.where(keep, STAKE_TO_WIN / np.where(keep, x - 1.0, 1.0), 0.0)
+    s_t, s_p = stake(xt), stake(xp)
+    g_t = np.where(keep, np.where(won, -STAKE_TO_WIN, s_t), 0.0)
+    g_p = np.where(keep, np.where(won, -STAKE_TO_WIN, s_p), 0.0)
+    right = lambda p: np.clip(np.where(won, p, 1.0 - p), 1e-6, 1.0)
+    key = match * len(GROUPS) + group
+    n = np.bincount(key[keep], minlength=int(key.max(initial=0)) + 1) if len(key) else np.zeros(0)
+    w = np.where(keep, 1.0 / np.maximum(n[key] if len(key) else 0, 1), 0.0)
+    q = np.array([quarter(r) for r in remaining], int) if len(remaining) else np.zeros(0, int)
+    band = np.searchsorted(PRICE_BANDS, pp, side="right")
+    return dict(keep=keep, take=take, s_t=s_t, g_t=g_t, s_p=s_p, g_p=g_p, ll_p=-np.log(right(pp)),
+                ll_c=-np.log(right(pc)), w=w, match=match, group=group, quarter=q, band=band)
+
+
+def _per_match(b, mask, n_matches):
+    """Each match's weighted sums in the cut: the candidate's handle and GGR on what it takes, prod's on
+    what it keeps and on every bet alone, the two log losses and the weight they are over."""
+    m = b["match"][mask]
+    w = b["w"][mask]
+    t = b["take"][mask]
+    sums = lambda v: np.bincount(m, weights=v, minlength=n_matches)
+    return dict(h_t=sums(w * b["s_t"][mask] * t), g_t=sums(w * b["g_t"][mask] * t),
+                h_k=sums(w * b["s_p"][mask] * ~t), g_k=sums(w * b["g_p"][mask] * ~t),
+                h_a=sums(w * b["s_p"][mask]), g_a=sums(w * b["g_p"][mask]),
+                l_p=sums(w * b["ll_p"][mask]), l_c=sums(w * b["ll_c"][mask]), wt=sums(w), n=int(mask.sum()))
+
+
+def _ratio(num, den, W=None):
+    """100 x num / den over the matches, and over each resample (W: resamples x matches)."""
+    tot = 100 * num.sum() / den.sum() if den.sum() else None
+    if W is None:
+        return tot
+    d = W @ den
+    return tot, np.where(d > 0, 100 * (W @ num) / np.where(d > 0, d, 1.0), np.nan)
+
+
+def _ci(x):
+    x = x[np.isfinite(x)]
+    return (float(np.percentile(x, 2.5)), float(np.percentile(x, 97.5))) if len(x) else (None, None)
+
+
+def stats_of(pm, W):
+    """The cut's numbers, each difference with its 95% interval over matches."""
+    if not pm["n"]:
+        return None
+    t, td = _ratio(pm["g_t"], pm["h_t"], W)
+    k, kd = _ratio(pm["g_k"], pm["h_k"], W)
+    both, bd = _ratio(pm["g_t"] + pm["g_k"], pm["h_t"] + pm["h_k"], W)
+    alone, ad = _ratio(pm["g_a"], pm["h_a"], W)
+    hb = pm["h_t"].sum() + pm["h_k"].sum()
+    used = pm["wt"] > 0
+    lp = pm["l_p"][used] / pm["wt"][used]
+    lc = pm["l_c"][used] / pm["wt"][used]
+    Wu = W[:, used]
+    cnt = Wu.sum(1)
+    ll_d = (Wu @ (lc - lp)) / np.where(cnt > 0, cnt, 1.0)
+    return dict(bets=pm["n"], matches=int(used.sum()), to_cand=100 * pm["h_t"].sum() / hb if hb else None,
+                takes=t, keeps=k, head=(None if t is None or k is None else t - k, *_ci(td - kd)),
+                both=both, alone=alone, gain=(None if both is None or alone is None else both - alone, *_ci(bd - ad)),
+                ll_prod=float(lp.mean()) if len(lp) else None, ll_cand=float(lc.mean()) if len(lc) else None,
+                ll_diff=(float((lc - lp).mean()) if len(lp) else None, *_ci(ll_d)))
+
+
+def compute(feeds, chart=None, chart_name=None, factor=None, window=None, boot=None, seed=0):
+    """`feeds` [(label, Ticks)] over the report window, prod first: each cut to the matches every feed
+    has ticks for, then to the matched ticks (matched()). One factor, fitted on prod's ticks before the
+    matching unless given, scales every feed's minutes. Each candidate against prod, two books."""
+    common = set.intersection(*(set(t.matches) for _, t in feeds)) if feeds else set()
+    if not common or len(feeds) < 2:
+        return None
+    feeds = [(label, t.subset(common)) for label, t in feeds]
+    factor = factor or factor_for(feeds[0][1])
+    raw = feeds
+    feeds = matched(feeds)
+    prod = feeds[0][1]
+    if not len(prod):
+        return None
+    chart = chart or fallback_chart()
+    n_matches = max(prod.matches.values()) + 1
+    boot = config.SIM_BOOT if boot is None else boot
+    W = np.random.default_rng(seed).multinomial(n_matches, [1 / n_matches] * n_matches, size=boot).astype(float)
+    cands = []
+    for label, t in feeds[1:]:
+        b = _books(prod, t, factor, chart)
+        groups = {}
+        for gi, g in enumerate(GROUPS):
+            base = b["keep"] & (b["group"] == gi)
+            if not base.any():
+                continue
+            cut = lambda mask: stats_of(_per_match(b, base & mask, n_matches), W)
+            groups[g] = dict(all=cut(np.ones_like(base)),
+                             quarters={q: cut(b["quarter"] == q) for q in (1, 2, 3, 4)},
+                             bands={i: cut(b["band"] == i) for i in range(len(PRICE_BANDS) + 1)} if gi == 0 else {},
+                             priced=int(((b["group"] == gi)).sum()), same_line=int(base.sum()))
+        cands.append(dict(label=label, groups=groups, books=b))
+    out = dict(feeds=[dict(label=label, ticks=len(t), of=len(r), mean_end=r.mean_end(), at_bets=r.at_bets)
+                      for (label, t), (_, r) in zip(feeds, raw)],
+               matches=len(prod.matches), factor=factor, window=window, boot=boot, cands=cands,
+               chart=chart_name or f"proportional {100 * FALLBACK_BOOK:.0f}% (no chart given)")
+    out["by_match"] = by_match(out, prod)
+    for c in cands:
+        c.pop("books")
     return out
 
 
-MATCH_FIELDS = ("n", "handle", "expected", "ggr", "scored", "brier", "logloss")
-
-
-def by_match(feeds, factor, chart):
-    """[{code, final, feeds: [{group: sums}]}] in the matches' order: each feed's dummy bets per match
-    and market (ticks bet, handle, expected revenue, GGR), with a proper score on the same ticks
-    (Brier and log loss on every tick with more than CUT_LAST game minutes left, bet or not) and
-    `top_loser`, the highest probability the feed gave a selection that lost."""
-    t0 = feeds[0][1]
-    codes = sorted(t0.matches, key=t0.matches.get)
-    size = (max(t0.matches.values()) + 1) * 2 if t0.matches else 0
-    per_feed = []
-    for _, t in feeds:
-        match, group = t.array("match").astype(int), t.array("group").astype(int)
-        prob, won = t.array("prob"), t.array("won").astype(float)
-        b = _bets(t, factor, chart)
-        scored = b["remaining"] > CUT_LAST
-        right = np.clip(np.where(won > 0, prob, 1.0 - prob), 1e-6, 1.0)
-        key = match * 2 + group
-        sums = {f: np.bincount(key, weights=w, minlength=size) for f, w in (
-            ("n", b["money"].astype(float)), ("handle", b["stake"]), ("expected", b["expected"]),
-            ("ggr", b["ggr"]), ("scored", scored.astype(float)), ("brier", (prob - won) ** 2 * scored),
-            ("logloss", -np.log(right) * scored))}
-        top = np.full(size, np.nan)
-        lost = scored & (won == 0)
-        np.fmax.at(top, key[lost], prob[lost])
-        per_feed.append((sums, top))
+def by_match(data, prod):
+    """[{code, final, cands: [{group: {...}}]}]: each match's dummy bets against each candidate and its
+    part of the headline -- its GGR on what the candidate takes over the candidate's whole taken handle,
+    less its GGR on what prod keeps over prod's whole kept handle (the parts add up to the headline)."""
+    codes = sorted(prod.matches, key=prod.matches.get)
+    n_matches = max(prod.matches.values()) + 1
+    per = []
+    for c in data["cands"]:
+        b = c["books"]
+        got = {}
+        for gi, g in enumerate(GROUPS):
+            pm = _per_match(b, b["keep"] & (b["group"] == gi), n_matches)
+            ht, hk = pm["h_t"].sum(), pm["h_k"].sum()
+            n = np.bincount(b["match"][b["keep"] & (b["group"] == gi)], minlength=n_matches)
+            got[g] = (pm, ht, hk, n)
+        per.append(got)
     out = []
     for code in codes:
-        i = t0.matches[code]
-        row = {"code": code, "final": t0.finals.get(code), "feeds": []}
-        for sums, top in per_feed:
-            row["feeds"].append({g: dict({f: float(sums[f][i * 2 + gi]) for f in MATCH_FIELDS},
-                                         top_loser=None if np.isnan(top[i * 2 + gi]) else float(top[i * 2 + gi]))
-                                 for gi, g in enumerate(GROUPS)})
+        i = prod.matches[code]
+        row = {"code": code, "final": prod.finals.get(code), "cands": []}
+        for got in per:
+            cell = {}
+            for g, (pm, ht, hk, n) in got.items():
+                if not n[i]:
+                    continue
+                hb = pm["h_t"][i] + pm["h_k"][i]
+                cell[g] = dict(ticks=int(n[i]), to_cand=100 * pm["h_t"][i] / hb if hb else None,
+                               takes=100 * pm["g_t"][i] / pm["h_t"][i] if pm["h_t"][i] else None,
+                               keeps=100 * pm["g_k"][i] / pm["h_k"][i] if pm["h_k"][i] else None,
+                               part=100 * ((pm["g_t"][i] / ht if ht else 0.0) - (pm["g_k"][i] / hk if hk else 0.0)),
+                               ll_diff=(pm["l_c"][i] - pm["l_p"][i]) / pm["wt"][i] if pm["wt"][i] else None)
+            row["cands"].append(cell)
         out.append(row)
     return out
 
 
-def match_totals(rows, n_feeds, skip=()):
-    """[{group: summed MATCH_FIELDS}] per feed over the rows, leaving out the `skip` codes."""
-    out = [{g: dict.fromkeys(MATCH_FIELDS, 0.0) for g in GROUPS} for _ in range(n_feeds)]
-    for r in rows:
-        if r["code"] in skip:
-            continue
-        for f, feed in enumerate(r["feeds"]):
-            for g in GROUPS:
-                for k in MATCH_FIELDS:
-                    out[f][g][k] += feed[g][k]
-    return out
-
-
-def parts(rows, n_feeds):
-    """{(feed, group): {code: points}}: each match's share of a candidate's uplift on prod, its
-    GGR over the candidate's whole handle less prod's GGR there over prod's; they add up to the
-    uplift."""
-    tot = match_totals(rows, n_feeds)
-    out = {}
-    for f in range(1, n_feeds):
-        for g in GROUPS:
-            hc, hp = tot[f][g]["handle"], tot[0][g]["handle"]
-            if hc and hp:
-                out[(f, g)] = {r["code"]: 100 * (r["feeds"][f][g]["ggr"] / hc - r["feeds"][0][g]["ggr"] / hp)
-                               for r in rows}
-    return out
-
-
-def uplift_of(totals, f, g):
-    """A candidate's margin less prod's off match_totals, None where either staked nothing."""
-    m, base = margins(totals[f][g])[0], margins(totals[0][g])[0]
-    return None if m is None or base is None else m - base
-
-
-def scores(totals):
-    """[{group: (Brier, log loss)}] per feed off match_totals."""
-    return [{g: ((s[g]["brier"] / s[g]["scored"], s[g]["logloss"] / s[g]["scored"]) if s[g]["scored"]
-                 else (None, None)) for g in GROUPS} for s in totals]
+def starts_of(history):
+    """{match: scheduled start} off fetch_history rows."""
+    return {r["MATCH_CODE"]: _when(r.get("SCHEDULED_START_TIME_UTC")) for r in history}
 
 
 def names_of(history):
@@ -425,460 +472,282 @@ def names_of(history):
     return out
 
 
-def quarter(remaining):
-    for q, cut in enumerate(QUARTER_CUTS, 1):
-        if remaining > cut:
-            return q
-    return 4
+# ---------------------------------------------------------------- the reports
+
+def _num(v, places=2, signed=False):
+    if v is None:
+        return "-"
+    return f"{v:+.{places}f}" if signed else f"{v:.{places}f}"
 
 
-def overall(cells):
-    """{group: sums} over every minute, selection and band."""
-    out = defaultdict(lambda: dict.fromkeys(FIELDS, 0.0))
-    for (g, _, _, _), c in cells.items():
-        for f in FIELDS:
-            out[g][f] += c[f]
-    return dict(out)
-
-
-def margins(s):
-    """(margin %, expected %) of summed cells, None where nothing was staked."""
-    h = s.get("handle", 0.0)
-    return (100 * s["ggr"] / h, 100 * s["expected"] / h) if h else (None, None)
-
-
-def wmae(cells):
-    """{(group, selection): (ticks, weighted MAE %)} and per minute {(group, selection, remaining):
-    (ticks, WMAE %)}, their ip_minute_errors: per minute, selection and band, |mean probability -
-    win rate| weighted by the ticks."""
-    err, n = defaultdict(float), defaultdict(float)
-    for (g, r, s, b), c in cells.items():
-        if r <= 0 or not c["n_cal"]:
-            continue
-        e = abs(c["sum_p"] / c["n_cal"] - c["sum_won"] / c["n_cal"]) * c["n_cal"]
-        for key in ((g, s), (g, s, r)):
-            err[key] += e
-            n[key] += c["n_cal"]
-    return {k: (n[k], 100 * err[k] / n[k]) for k in n if n[k]}
-
-
-def checkpoint(cells_by_feed, remaining, group):
-    """The partner's checkpoint view for one game minute left and market: per selection and band,
-    each feed's (priced, won, ticks) and (expected %, actual %, ticks)."""
-    out = []
-    for s in SELECTIONS[group]:
-        for b in BANDS[group]:
-            row = {"selection": s, "band": b, "feeds": []}
-            for cells in cells_by_feed:
-                c = cells.get((group, remaining, s, b))
-                if not c:
-                    row["feeds"].append(None)
-                    continue
-                m, e = margins(c)
-                row["feeds"].append(dict(
-                    priced=c["sum_p"] / c["n_cal"] if c["n_cal"] else None,
-                    won=c["sum_won"] / c["n_cal"] if c["n_cal"] else None, n_cal=int(c["n_cal"]),
-                    margin=m, expected=e, n=int(c["n"])))
-            if any(row["feeds"]):
-                out.append(row)
-    return out
-
-
-def checkpoint_wmae(rows, i):
-    """Feed i's weighted MAE (%) over the bands every feed has MIN_CAL ticks in, per selection."""
-    out = {}
-    for s in sorted({r["selection"] for r in rows}):
-        err = n = 0.0
-        for r in rows:
-            if r["selection"] != s or not all(f and f["n_cal"] >= MIN_CAL for f in r["feeds"]):
-                continue
-            f = r["feeds"][i]
-            err += abs(f["priced"] - f["won"]) * f["n_cal"]
-            n += f["n_cal"]
-        out[s] = 100 * err / n if n else None
-    return out
-
-
-def starts_of(history):
-    """{match: scheduled start} off fetch_history rows."""
-    return {r["MATCH_CODE"]: _when(r.get("SCHEDULED_START_TIME_UTC")) for r in history}
-
-
-# ---------------------------------------------------------------- the whole thing
-
-def compute(feeds, chart=None, chart_name=None, factor=None, window=None):
-    """`feeds` [(label, Ticks)] over the report window, prod first: each cut to the matches every
-    feed has ticks for, then to the matched ticks (matched()). One factor, fitted on prod's ticks
-    before the matching unless given, scales every feed's minutes, as the partner's one 0.146 did."""
-    common = set.intersection(*(set(t.matches) for _, t in feeds)) if feeds else set()
-    if not common:
-        return None
-    feeds = [(label, t.subset(common)) for label, t in feeds]
-    factor = factor or factor_for(feeds[0][1])
-    raw = feeds
-    feeds = matched(feeds)
-    if not len(feeds[0][1]):
-        return None
-    chart = chart or fallback_chart()
-    cells = [grade(t, factor, chart) for _, t in feeds]
-    out = dict(feeds=[dict(label=label, ticks=len(t), of=len(r), mean_end=r.mean_end())
-                      for (label, t), (_, r) in zip(feeds, raw)],
-               matches=len(feeds[0][1].matches), factor=factor, window=window, cells=cells,
-               chart=chart_name or f"proportional {100 * FALLBACK_BOOK:.0f}% (no chart given)")
-    out["overall"] = [overall(c) for c in cells]
-    out["by_match"] = by_match(feeds, factor, chart)
-    out["scores"] = scores(match_totals(out["by_match"], len(feeds)))
-    out["wmae"] = [wmae(c) for c in cells]
-    out["checkpoints"] = [(r, q, g, checkpoint(cells, r, g)) for r, q in CHECKPOINTS for g in GROUPS]
-    return out
-
-
-def headline(data):
-    """[(group, [(margin %, expected %, ticks) per feed])]."""
-    out = []
-    for g in GROUPS:
-        row = []
-        for o in data["overall"]:
-            s = o.get(g, {})
-            row.append(margins(s) + (int(s.get("n", 0)),))
-        out.append((g, row))
-    return out
-
-
-def _mins(v):
-    return "-" if v is None else f"{v:.1f}"
-
-
-def _pct(v, signed=False):
-    return "-" if v is None else (f"{v:+.2f}" if signed else f"{v:.2f}%")
-
-
-def text(data):
-    """Lines of text: the partner's prints, a column per feed."""
-    if not data:
-        return []
-    labels = [f["label"] for f in data["feeds"]]
-    w = max(14, max(len(x) for x in labels) + 2)
-    lines = ["", "  MARGIN UPLIFT -- the partner's dummy-bet method (every in-play tick a bet to win 100)",
-             f"  prod against each candidate, {data.get('window') or 'the report window'}, on"
-             f" {data['matches']:,} matches: prod's ticks with a price in every feed no more than"
-             f" {PAIR_MAX_AGE:g} minutes old, every probability {PROB_RANGE[0]:g}-{PROB_RANGE[1]:g}",
-             f"  margin chart: {data['chart']}; clock: minutes x {data['factor']:.3f} -> {GAME_MINUTES}"
-             f" game minutes; money leaves out the last {CUT_LAST}", ""]
-    lines.append(f"  {'':22s}" + "".join(f"{x:>{w}s}" for x in labels))
-    lines.append(f"  {'ticks matched':22s}" + "".join(f"{f['ticks']:>{w},d}" for f in data["feeds"]))
-    lines.append(f"  {'ticks in all':22s}" + "".join(f"{f['of']:>{w},d}" for f in data["feeds"]))
-    lines.append(f"  {'mean match (minutes)':22s}" + "".join(f"{_mins(f['mean_end']):>{w}s}" for f in data["feeds"]))
-    for g in GROUPS:
-        lines.append(f"  {g}")
-        sums = [o.get(g, {}) for o in data["overall"]]
-        for key, lab in (("expected", "expected revenue"), ("ggr", "revenue (GGR)"), ("handle", "handle")):
-            lines.append(f"    {lab:20s}" + "".join(f"{s.get(key, 0.0):>{w},.0f}" for s in sums))
-        ms = [margins(s) for s in sums]
-        lines.append(f"    {'margin %':20s}" + "".join(f"{_pct(m[0]):>{w}s}" for m in ms))
-        lines.append(f"    {'expected margin %':20s}" + "".join(f"{_pct(m[1]):>{w}s}" for m in ms))
-        base = ms[0][0]
-        lines.append(f"    {'uplift on prod':20s}" + "".join(
-            f"{_pct(None if m[0] is None or base is None else m[0] - base, True):>{w}s}" for m in ms))
-        sc = [x[g] for x in data.get("scores") or []]
-        if sc:
-            lines.append(f"    {'Brier, same ticks':20s}" + "".join(f"{_num(b, 4):>{w}s}" for b, _ in sc))
-            lines.append(f"    {'log loss, same ticks':20s}" + "".join(f"{_num(x, 4):>{w}s}" for _, x in sc))
-    if data.get("scores"):
-        lines += ["", "  margin % and uplift: the partner's dummy bets, every tick a bet to win 100, so a"
-                      " short price carries a big stake;",
-                  "  Brier and log loss: the same ticks scored on the result, every tick alike (lower is"
-                      " better)"]
-    lines += match_summary(data)
-    lines += ["", "  calibration, weighted MAE % (per game minute left, selection and band):"]
-    for g in GROUPS:
-        for s in SELECTIONS[g]:
-            vals = [x.get((g, s)) for x in data["wmae"]]
-            lines.append(f"    {g + ' ' + s:20s}" + "".join(
-                f"{'-' if v is None else f'{v[1]:.3f}':>{w}s}" for v in vals))
-    for r, q, g, rows in data["checkpoints"]:
-        if not rows:
-            continue
-        lines += ["", f"  Q{q}, {r} game minutes left -- {g}"]
-        cal = [checkpoint_wmae(rows, i) for i in range(len(labels))]
-        for s in SELECTIONS[g]:
-            lines.append(f"    WMAE {s:17s}" + "".join(
-                f"{'-' if c.get(s) is None else f'{c[s]:.3f}':>{max(w, 36)}s}" for c in cal))
-        cw = max(w, 36)
-        lines.append(f"    {'band':22s}" + "".join(f"{x[:cw - 2]:>{cw}s}" for x in labels)
-                     + "   (priced/won/ticks | expected/actual margin)")
-        for row in rows:
-            cells = []
-            for f in row["feeds"]:
-                if not f:
-                    cells.append(f"{'-':>{cw}s}")
-                    continue
-                cal_ = f"{f['priced']:.3f}/{f['won']:.3f}/{f['n_cal']}" if f["n_cal"] else "-"
-                mar = f"{_pct(f['expected'])}/{_pct(f['margin'])}" if f["n"] > MIN_MARGIN else "-"
-                cells.append(f"{cal_ + ' | ' + mar:>{cw}s}")
-            lines.append(f"    {row['selection'] + ' ' + row['band']:22s}" + "".join(cells))
-    return lines
-
-
-def _num(v, places=2):
-    return "-" if v is None else f"{v:.{places}f}"
+def _iv(x, places=2):
+    """'+1.23 [-0.45, +2.91]' off (value, lo, hi)."""
+    if not x or x[0] is None:
+        return "-"
+    lo, hi = x[1], x[2]
+    return f"{x[0]:+.{places}f} [{_num(lo, places, True)}, {_num(hi, places, True)}]"
 
 
 def _final(f):
     return "-" if not f else f"{f[0]:g}-{f[1]:g}"
 
 
+def _mins(v):
+    return "-" if v is None else f"{v:.1f}"
+
+
+ROWS = (("bets", "dummy bets"), ("matches", "matches"), ("to_cand", "to the candidate %"),
+        ("takes", "candidate takes %"), ("keeps", "prod keeps %"), ("head", "candidate - prod"),
+        ("both", "both books %"), ("alone", "prod alone %"), ("gain", "both - prod alone"),
+        ("ll_diff", "log loss, cand - prod"))
+
+
+def _value(st, key):
+    v = st.get(key) if st else None
+    if key in ("head", "gain"):
+        return _iv(v)
+    if key == "ll_diff":
+        return _iv(v, 4)
+    if key in ("bets", "matches"):
+        return "-" if v is None else f"{v:,}"
+    return _num(v)
+
+
+def _cut_lines(label, cuts, names):
+    """A table of one cut set (quarters or price bands): the headline and its interval per cut."""
+    lines = [f"    {label:22s} {'bets':>7s} {'to cand':>8s} {'takes':>7s} {'keeps':>7s} {'candidate - prod':>24s}"
+             f" {'both - prod alone':>24s}"]
+    for key, st in cuts.items():
+        if not st:
+            continue
+        lines.append(f"    {names(key):22s} {st['bets']:>7,d} {_num(st['to_cand']):>8s} {_num(st['takes']):>7s}"
+                     f" {_num(st['keeps']):>7s} {_iv(st['head']):>24s} {_iv(st['gain']):>24s}")
+    return lines
+
+
+def text(data):
+    """Lines of text: each candidate against prod, two books, with the cuts."""
+    if not data:
+        return []
+    lines = ["", "  MARGIN UPLIFT -- two books: every in-play tick a dummy bet to win 100, given to whichever book"
+                 " pays more; every match counts the same",
+             f"  prod against each candidate, {data.get('window') or 'the report window'}, on {data['matches']:,}"
+             f" matches: prod's ticks with a price in every feed no more than {PAIR_MAX_AGE:g} minutes old, every"
+             f" probability {PROB_RANGE[0]:g}-{PROB_RANGE[1]:g}",
+             f"  margin chart: {data['chart']}; clock: minutes x {data['factor']:.3f} -> {GAME_MINUTES} game minutes;"
+             f" the last {CUT_LAST} left out; 95% over matches ({data['boot']:,} resamples)",
+             "  " + "; ".join(f"{f['label']} {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])]
+    if _at_bets(data):
+        lines.append(f"  {_at_bets(data)} priced only at the moments the bets read: the dummy bets are prod's ticks"
+                     " there alone, each at its own price (bets --all-moments for every tick)")
+    for c in data["cands"]:
+        for g, gd in c["groups"].items():
+            st = gd["all"]
+            lines += ["", f"  {c['label']} against prod, {g}" + (
+                f" ({gd['same_line']:,} of {gd['priced']:,} matched ticks at prod's line)" if g != MONEYLINE else "")]
+            for key, name in ROWS:
+                lines.append(f"    {name:24s} {_value(st, key):>28s}")
+            lines += _cut_lines("by quarter", gd["quarters"], lambda q: f"Q{q}")
+            if gd["bands"]:
+                lines += _cut_lines("by prod's chance", gd["bands"], band_name)
+    lines += ["", "  candidate - prod: the candidate's margin on the bets its prices take less prod's on the ones it"
+                  " keeps -- above zero, the candidate's prices hold up better where they differ (the headline);",
+              "  both - prod alone: the two books together against prod taking every bet, which a second book"
+              " only lowers; log loss: the same ticks scored on the result (lower is better)"]
+    lines += match_summary(data)
+    return lines
+
+
 TOP = 10
 
 
+def _at_bets(data):
+    """The feeds priced only at the bets' moments, named, or ''."""
+    return ", ".join(f["label"] for f in data["feeds"] if f.get("at_bets"))
+
+
 def match_summary(data, top=TOP):
-    """Lines: per candidate and market, how the uplift splits over the matches."""
+    """Lines: per candidate and market, how the headline splits over the matches."""
     rows = data.get("by_match")
     if not rows:
         return []
-    labels = [f["label"] for f in data["feeds"]]
-    n = len(labels)
-    tot = match_totals(rows, n)
-    lines = ["", "  BY MATCH -- each match's part of the uplift: its GGR over the candidate's whole handle"
-                 " less prod's over prod's;",
-             "  the parts add up to the uplift (every match: margin_uplift_matches.txt)"]
-    for (f, g), part in parts(rows, n).items():
-        order = sorted(part, key=part.get)
-        worst, best = order[:top], order[::-1][:top]
-        hp = sorted((r["feeds"][0][g]["handle"] for r in rows), reverse=True)
-        half = next((k + 1 for k in range(len(hp)) if sum(hp[:k + 1]) >= sum(hp) / 2), 0)
-        lines += ["", f"  {g}, {labels[f]} on prod: {_pct(uplift_of(tot, f, g), True)} over {len(rows):,} matches",
-                  f"    the {top} matches that cost {labels[f]} most {sum(part[c] for c in worst):+.2f};"
-                  f" the {top} that gain it most {sum(part[c] for c in best):+.2f}",
-                  f"    without the {top} that cost most {_pct(uplift_of(match_totals(rows, n, set(worst)), f, g), True)};"
-                  f" without those {2 * top} {_pct(uplift_of(match_totals(rows, n, set(worst) | set(best)), f, g), True)}",
-                  f"    half of prod's handle is in its {half} biggest matches"]
-        by = {r["code"]: r for r in rows}
-        lines.append(f"    {'match':13s} {'final':>7s} {'ticks':>6s} {'prod margin':>12s} {labels[f] + ' margin':>12s}"
-                     f" {'part':>7s}   {'prod most sure of a loser':>25s} {labels[f] + ' most sure':>14s}")
-        for c in worst:
-            r = by[c]
-            pf, cf = r["feeds"][0][g], r["feeds"][f][g]
-            lines.append(f"    {c:13s} {_final(r['final']):>7s} {int(pf['n']):>6,d}"
-                         f" {_pct(margins(pf)[0]):>12s} {_pct(margins(cf)[0]):>12s} {part[c]:>+7.2f}"
-                         f"   {_num(pf['top_loser'], 3):>25s} {_num(cf['top_loser'], 3):>14s}")
+    lines = ["", "  BY MATCH -- each match's part of candidate - prod (the parts add up to it; every match in"
+                 " margin_uplift_matches.txt)"]
+    for f, c in enumerate(data["cands"]):
+        for g in c["groups"]:
+            part = {r["code"]: r["cands"][f][g]["part"] for r in rows if g in r["cands"][f]}
+            if not part:
+                continue
+            order = sorted(part, key=part.get)
+            worst, best = order[:top], order[::-1][:top]
+            lines += ["", f"  {g}, {c['label']}: the {top} matches that cost it most {sum(part[x] for x in worst):+.2f};"
+                          f" the {top} that gain it most {sum(part[x] for x in best):+.2f}; over {len(part):,} matches"]
+            by = {r["code"]: r for r in rows}
+            lines.append(f"    {'match':13s} {'final':>7s} {'ticks':>6s} {'to cand':>8s} {'takes':>8s} {'keeps':>8s}"
+                         f" {'part':>7s}")
+            for x in worst:
+                cell = by[x]["cands"][f][g]
+                lines.append(f"    {x:13s} {_final(by[x]['final']):>7s} {cell['ticks']:>6,d} {_num(cell['to_cand']):>8s}"
+                             f" {_num(cell['takes']):>8s} {_num(cell['keeps']):>8s} {cell['part']:>+7.2f}")
     return lines
 
 
 def match_text(data, names=None):
-    """Lines of text: every match, each market, sorted by the first candidate's part of the uplift."""
+    """Lines of text: every match, each candidate and market, the matches that cost the first candidate
+    most first."""
     rows = data.get("by_match") or []
-    if not rows:
+    if not rows or not data["cands"]:
         return []
     names = names or {}
-    labels = [f["label"] for f in data["feeds"]]
-    n = len(labels)
-    tot = match_totals(rows, n)
-    pt = parts(rows, n)
-    lines = ["", "  MARGIN UPLIFT BY MATCH -- the partner's dummy bets (every in-play tick a bet to win 100)",
-             f"  {data.get('window') or 'the report window'}, {len(rows):,} matches, prod's ticks every feed"
-             f" priced (matched; probabilities {PROB_RANGE[0]:g}-{PROB_RANGE[1]:g}); margin chart: {data['chart']}",
-             "  ticks: dummy bets (both selections count); wt: the match's share of the feed's handle; GGR: the"
-             " book's revenue on it;",
-             "  Brier: the feed's ticks scored on the result (lower is better); sure: the highest probability"
-             " the feed gave a selection that lost;",
-             f"  part: the match's GGR over the candidate's whole handle less prod's over prod's, in margin"
-             " points -- the parts add up to the uplift;",
-             "  sorted by the first candidate's part, the matches that cost it most first; cum: the running sum"]
-    for g in GROUPS:
-        if (1, g) not in pt:
-            continue
-        order = sorted(rows, key=lambda r: pt[(1, g)][r["code"]])
-        lines += ["", f"  {g}: " + "; ".join(
-            f"{labels[f]} {_pct(margins(tot[f][g])[0])}" for f in range(n)) + "; uplift " + ", ".join(
-            f"{labels[f]} {_pct(uplift_of(tot, f, g), True)}" for f in range(1, n))]
-        head = f"    {'match':13s} {'start':11s} {'players':24s} {'final':>7s} {'ticks':>6s}"
-        for lab in labels:
-            head += f" | {lab[:10]:>10s} {'wt':>7s} {'GGR':>9s} {'margin':>8s} {'Brier':>6s} {'sure':>5s}"
-        for f in range(1, n):
-            head += f" | {labels[f][:8] + ' part':>13s} {'cum':>7s}"
-        lines.append(head)
-        cum = [0.0] * n
-        for r in order:
-            when, who = names.get(r["code"], ("", ""))
-            line = (f"    {r['code']:13s} {when:11s} {who[:24]:24s} {_final(r['final']):>7s}"
-                    f" {int(r['feeds'][0][g]['n']):>6,d}")
-            for f in range(n):
-                x = r["feeds"][f][g]
-                h = tot[f][g]["handle"]
-                br = x["brier"] / x["scored"] if x["scored"] else None
-                line += (f" | {'':10s} {_num(100 * x['handle'] / h if h else None, 2):>6s}%"
-                         f" {x['ggr']:>9,.0f} {_pct(margins(x)[0]):>8s} {_num(br, 3):>6s}"
-                         f" {_num(x['top_loser'], 2):>5s}")
-            for f in range(1, n):
-                v = pt[(f, g)][r["code"]] if (f, g) in pt else 0.0
-                cum[f] += v
-                line += f" | {v:>+13.3f} {cum[f]:>+7.2f}"
-            lines.append(line)
+    lines = ["", "  MARGIN UPLIFT BY MATCH -- two books, every match counting the same",
+             f"  {data.get('window') or 'the report window'}, {len(rows):,} matches; ticks: the match's dummy bets;"
+             " to cand: the share of its handle the candidate takes;",
+             "  takes / keeps: the candidate's margin on what it takes, prod's on what it keeps; part: the match's"
+             " share of candidate - prod (the parts add up to it); cum: the running sum"]
+    for f, c in enumerate(data["cands"]):
+        for g in c["groups"]:
+            have = [r for r in rows if g in r["cands"][f]]
+            order = sorted(have, key=lambda r: r["cands"][f][g]["part"])
+            lines += ["", f"  {c['label']}, {g}: candidate - prod {_iv(c['groups'][g]['all']['head'])}"]
+            lines.append(f"    {'match':13s} {'start':11s} {'players':24s} {'final':>7s} {'ticks':>6s} {'to cand':>8s}"
+                         f" {'takes':>8s} {'keeps':>8s} {'part':>8s} {'cum':>7s} {'log loss less prod':>18s}")
+            cum = 0.0
+            for r in order:
+                cell = r["cands"][f][g]
+                cum += cell["part"]
+                when, who = names.get(r["code"], ("", ""))
+                lines.append(f"    {r['code']:13s} {when:11s} {who[:24]:24s} {_final(r['final']):>7s} {cell['ticks']:>6,d}"
+                             f" {_num(cell['to_cand']):>8s} {_num(cell['takes']):>8s} {_num(cell['keeps']):>8s}"
+                             f" {cell['part']:>+8.3f} {cum:>+7.2f} {_num(cell['ll_diff'], 4, True):>18s}")
     return lines
 
 
 def write_match_csv(path, data, names=None):
-    """One row per match: each feed's dummy bets and scores per market, and each candidate's part."""
-    rows = data.get("by_match") or []
+    """One row per match, candidate and market."""
     names = names or {}
-    labels = [f["label"] for f in data["feeds"]]
-    n = len(labels)
-    pt = parts(rows, n)
-    fields = ("n", "handle", "expected", "ggr", "margin", "brier", "logloss", "top_loser")
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["match_code", "start", "players", "final_home", "final_away"]
-                   + [f"{lab}_{g.lower()}_{k}" for lab in labels for g in GROUPS for k in fields]
-                   + [f"{labels[f]}_{g.lower()}_part" for f in range(1, n) for g in GROUPS])
-        for r in rows:
+        w.writerow(["match_code", "start", "players", "final_home", "final_away", "candidate", "market", "ticks",
+                    "to_candidate_pct", "candidate_takes_pct", "prod_keeps_pct", "part", "log_loss_less_prod"])
+        for r in data.get("by_match") or []:
             when, who = names.get(r["code"], ("", ""))
             fin = r["final"] or ("", "")
-            out = [r["code"], when, who, fin[0], fin[1]]
-            for f in range(n):
-                for g in GROUPS:
-                    x = r["feeds"][f][g]
-                    m = margins(x)[0]
-                    out += [int(x["n"]), round(x["handle"], 2), round(x["expected"], 2), round(x["ggr"], 2),
-                            "" if m is None else round(m, 3),
-                            round(x["brier"] / x["scored"], 5) if x["scored"] else "",
-                            round(x["logloss"] / x["scored"], 5) if x["scored"] else "",
-                            "" if x["top_loser"] is None else round(x["top_loser"], 4)]
-            out += [round(pt[(f, g)][r["code"]], 5) if (f, g) in pt else "" for f in range(1, n) for g in GROUPS]
-            w.writerow(out)
+            for f, c in enumerate(data["cands"]):
+                for g, cell in r["cands"][f].items():
+                    rnd = lambda v, k=4: "" if v is None else round(v, k)
+                    w.writerow([r["code"], when, who, fin[0], fin[1], c["label"], g, cell["ticks"], rnd(cell["to_cand"]),
+                                rnd(cell["takes"]), rnd(cell["keeps"]), rnd(cell["part"], 5), rnd(cell["ll_diff"], 5)])
 
 
 def write_csv(path, data):
-    """One row per feed, market, minute left, selection and band: the sums every table is off."""
+    """One row per candidate, market and cut (all, each quarter, each price band): every number."""
+    keys = ("bets", "matches", "to_cand", "takes", "keeps", "head", "head_lo", "head_hi", "both", "alone",
+            "gain", "gain_lo", "gain_hi", "ll_prod", "ll_cand", "ll_diff", "ll_diff_lo", "ll_diff_hi")
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow(["feed", "market", "remaining", "quarter", "selection", "band"] + list(FIELDS))
-        for f, cells in zip(data["feeds"], data["cells"]):
-            for (g, r, s, b), c in sorted(cells.items(), key=lambda kv: (kv[0][0], -kv[0][1], kv[0][2],
-                                                                         BANDS[kv[0][0]].index(kv[0][3]))):
-                w.writerow([f["label"], g, r, quarter(r) if r > 0 else "", s, b]
-                           + [round(c[k], 4) for k in FIELDS])
+        w.writerow(["candidate", "market", "cut"] + list(keys))
+        for c in data["cands"]:
+            for g, gd in c["groups"].items():
+                cuts = [("all", gd["all"])] + [(f"Q{q}", s) for q, s in gd["quarters"].items()] + \
+                       [(band_name(i), s) for i, s in gd["bands"].items()]
+                for name, st in cuts:
+                    if not st:
+                        continue
+                    flat = dict(st)
+                    for k in ("head", "gain", "ll_diff"):
+                        flat[k], flat[k + "_lo"], flat[k + "_hi"] = st[k]
+                    w.writerow([c["label"], g, name] + ["" if flat.get(k) is None else
+                                                        (round(flat[k], 5) if isinstance(flat[k], float) else flat[k])
+                                                        for k in keys])
+
+
+def _cell_iv(x, places=2):
+    if not x or x[0] is None:
+        return "<td>&mdash;</td>"
+    sure = x[1] is not None and x[2] is not None and (x[1] > 0 or x[2] < 0)
+    cls = ("good" if x[0] > 0 else "bad") if sure else ""
+    return (f'<td class="{cls}">{x[0]:+.{places}f} <span class="dim">[{_num(x[1], places, True)},'
+            f' {_num(x[2], places, True)}]</span></td>')
+
+
+def _cell_ll(x):
+    """Log loss less prod: lower is better, so the colour the other way."""
+    if not x or x[0] is None:
+        return "<td>&mdash;</td>"
+    sure = x[1] is not None and x[2] is not None and (x[1] > 0 or x[2] < 0)
+    cls = ("bad" if x[0] > 0 else "good") if sure else ""
+    return f'<td class="{cls}">{x[0]:+.4f} <span class="dim">[{_num(x[1], 4, True)}, {_num(x[2], 4, True)}]</span></td>'
 
 
 def html(data, esc):
-    """The panel body: the headline, the calibration, then each checkpoint folded away."""
-    if not data:
+    """The panel body: each candidate's headline per market, the cuts folded away, then the matches."""
+    if not data or not data.get("cands"):
         return '<p class="dim">No margin uplift: no matched in-play ticks in every feed.</p>'
-    labels = [f["label"] for f in data["feeds"]]
-    head = "".join(f"<th>{esc(x)}</th>" for x in labels)
-    rows = []
-    sc = data.get("scores") or []
-    for g, cells in headline(data):
-        base = cells[0][0]
-        rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"{len(labels) + 1}\">{esc(g)}</th></tr>")
-        rows.append("<tr><th>Margin</th>" + "".join(f"<td>{_pct(m)}</td>" for m, _, _ in cells) + "</tr>")
-        rows.append("<tr><th>Expected margin</th>" + "".join(f"<td>{_pct(e)}</td>" for _, e, _ in cells) + "</tr>")
-        rows.append("<tr><th>Actual less expected</th>" + "".join(
-            _cell(None if m is None else m - e) for m, e, _ in cells) + "</tr>")
-        rows.append("<tr><th>Uplift on prod</th>" + "".join(
-            _cell(None if m is None or base is None else m - base) if i else "<td>&mdash;</td>"
-            for i, (m, _, _) in enumerate(cells)) + "</tr>")
-        rows.append("<tr><th>Bets (ticks)</th>" + "".join(f"<td>{n:,}</td>" for _, _, n in cells) + "</tr>")
-        if sc:
-            rows.append("<tr><th>Brier, same ticks</th>" + "".join(f"<td>{_num(x[g][0], 4)}</td>" for x in sc) + "</tr>")
-            rows.append("<tr><th>Log loss, same ticks</th>" + "".join(f"<td>{_num(x[g][1], 4)}</td>" for x in sc) + "</tr>")
-    cal = []
-    for g in GROUPS:
-        for s in SELECTIONS[g]:
-            vals = [x.get((g, s)) for x in data["wmae"]]
-            cal.append(f"<tr><th>{esc(g)} {esc(s)}</th>"
-                       + "".join(f"<td>{'&mdash;' if v is None else f'{v[1]:.2f}%'}</td>" for v in vals) + "</tr>")
-    minute_rows = []
-    for g in GROUPS:
-        for s in SELECTIONS[g]:
-            minute_rows.append(f"<tr class=\"split\"><th class=\"state\" colspan=\"{len(labels) + 1}\">"
-                               f"{esc(g)} {esc(s)}</th></tr>")
-            for r in range(GAME_MINUTES, 0, -1):
-                vals = [x.get((g, s, r)) for x in data["wmae"]]
-                if any(vals):
-                    minute_rows.append(f"<tr><th>{r} (Q{quarter(r)})</th>" + "".join(
-                        f"<td>{'&mdash;' if v is None else f'{v[1]:.2f}% <span class=dim>{int(v[0]):,}</span>'}</td>"
-                        for v in vals) + "</tr>")
-    checks = []
-    for r, q, g, crow in data["checkpoints"]:
-        if not crow:
-            continue
-        wm = [checkpoint_wmae(crow, i) for i in range(len(labels))]
-        body = [f"<tr><th>WMAE {esc(s)}</th>" + "".join(
-            f"<td colspan=\"2\">{'&mdash;' if c.get(s) is None else f'{c[s]:.2f}%'}</td>" for c in wm) + "</tr>"
-            for s in SELECTIONS[g]]
-        for row in crow:
-            tds = []
-            for f in row["feeds"]:
-                if not f:
-                    tds.append("<td>&mdash;</td><td>&mdash;</td>")
-                    continue
-                cal_ = (f"{100 * f['priced']:.1f} / {100 * f['won']:.1f} <span class=dim>{f['n_cal']:,}</span>"
-                        if f["n_cal"] >= MIN_CAL else "&mdash;")
-                mar = (f"{_pct(f['expected'])} / {_pct(f['margin'])} <span class=dim>{f['n']:,}</span>"
-                       if f["n"] > MIN_MARGIN else "&mdash;")
-                tds.append(f"<td>{cal_}</td><td>{mar}</td>")
-            body.append(f"<tr><th>{esc(row['selection'])} {esc(row['band'])}</th>{''.join(tds)}</tr>")
-        sub = "".join(f"<th>Priced / won %</th><th>Expected / actual margin</th>" for _ in labels)
-        checks.append(f"""
-      <h4>Q{q}, {r} game minutes left &middot; {esc(g)}</h4>
-      <table class="reach">
-        <thead><tr><th></th>{''.join(f'<th colspan="2">{esc(x)}</th>' for x in labels)}</tr>
-          <tr><th>Band</th>{sub}</tr></thead>
-        <tbody>{''.join(body)}</tbody>
-      </table>""")
-    by = []
-    if data.get("by_match"):
-        lines = match_summary(data)
-        by.append(f"""
+    head = ("<tr><th>Candidate</th><th>Market</th><th>Dummy bets</th><th>Matches</th><th>To candidate</th>"
+            "<th>Candidate takes</th><th>Prod keeps</th><th>Candidate &minus; prod</th><th>Both books</th>"
+            "<th>Prod alone</th><th>Both &minus; prod alone</th><th>Log loss, candidate &minus; prod</th></tr>")
+    rows, folds = [], []
+    for c in data["cands"]:
+        for g, gd in c["groups"].items():
+            st = gd["all"]
+            if not st:
+                continue
+            rows.append(f"<tr><th>{esc(c['label'])}</th><th>{esc(g)}</th><td>{st['bets']:,}</td><td>{st['matches']:,}</td>"
+                        f"<td>{_num(st['to_cand'])}%</td><td>{_num(st['takes'])}%</td><td>{_num(st['keeps'])}%</td>"
+                        f"{_cell_iv(st['head'])}<td>{_num(st['both'])}%</td><td>{_num(st['alone'])}%</td>"
+                        f"{_cell_iv(st['gain'])}{_cell_ll(st['ll_diff'])}</tr>")
+            cut_rows = []
+            for title, cuts, name in (("By quarter", gd["quarters"], lambda q: f"Q{q}"),
+                                      ("By prod's chance of the selection", gd["bands"], band_name)):
+                for key, s in cuts.items():
+                    if s:
+                        cut_rows.append(f"<tr><th>{esc(title)}</th><th>{esc(name(key))}</th><td>{s['bets']:,}</td>"
+                                        f"<td>{_num(s['to_cand'])}%</td><td>{_num(s['takes'])}%</td><td>{_num(s['keeps'])}%</td>"
+                                        f"{_cell_iv(s['head'])}{_cell_iv(s['gain'])}{_cell_ll(s['ll_diff'])}</tr>")
+            line_note = (f" &middot; {gd['same_line']:,} of {gd['priced']:,} matched ticks at prod's line"
+                         if g != MONEYLINE else "")
+            folds.append(f"""
     <details>
-      <summary>By match: the matches that move the uplift most (every match in
-        margin_uplift_matches.txt and .csv)</summary>
-      <pre class="dim" style="overflow-x:auto">{esc(chr(10).join(lines))}</pre>
+      <summary>{esc(c['label'])}, {esc(g)}: by quarter and by prod's price{line_note}</summary>
+      <table class="reach">
+        <thead><tr><th>Cut</th><th></th><th>Dummy bets</th><th>To candidate</th><th>Candidate takes</th>
+          <th>Prod keeps</th><th>Candidate &minus; prod</th><th>Both &minus; prod alone</th><th>Log loss less prod</th></tr></thead>
+        <tbody>{''.join(cut_rows)}</tbody>
+      </table>
     </details>""")
-    feeds = " &middot; ".join(f"{esc(f['label'])}: {f['ticks']:,} of {f['of']:,} ticks matched, the last {_mins(f['mean_end'])}"
-                              " minutes after the scheduled start on average" for f in data["feeds"])
+    by = ""
+    if data.get("by_match"):
+        by = f"""
+    <details>
+      <summary>By match: the matches that move candidate &minus; prod most (every match in
+        margin_uplift_matches.txt and .csv)</summary>
+      <pre class="dim" style="overflow-x:auto">{esc(chr(10).join(match_summary(data)))}</pre>
+    </details>"""
+    feeds = " &middot; ".join(f"{esc(f['label'])}: {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])
+    at_bets = (f'\n    <p class="dim">{esc(_at_bets(data))} priced only at the moments the bets read: the dummy bets'
+               " are prod's ticks there alone, each at its own price (bets --all-moments for every tick).</p>"
+               if _at_bets(data) else "")
     return f"""
-    <p class="dim">The partner's method: every live in-play price tick is a dummy bet to win
-      {STAKE_TO_WIN:.0f} at the margin chart's price ({esc(data['chart'])}), settled on the result.
-      Prod against each candidate, {esc(data.get('window') or 'the report window')}, on matched ticks
-      only: prod's ticks where every candidate has a live price for the same match, market and
-      selection no more than {PAIR_MAX_AGE:g} minutes old, and every feed's probability is
-      {PROB_RANGE[0]:g}&ndash;{PROB_RANGE[1]:g} ({data['matches']:,} matches). The same moments and bets for
-      all; only the probabilities differ. Minutes from the scheduled start &times;
-      {data['factor']:.3f} make a {GAME_MINUTES}-minute game; the last {CUT_LAST} are left out.</p>
-    <p class="dim">{feeds}</p>
+    <p class="dim">Two books, {esc(data.get('window') or 'the report window')}, {data['matches']:,} matches: every
+      live in-play price tick is a dummy bet to win {STAKE_TO_WIN:.0f} at the margin chart's price
+      ({esc(data['chart'])}), given to whichever book pays more, settled on the result. Each book is scored on
+      what it is left with, so a book too sure (or not sure enough) is taken where it is wrong. Every match
+      counts the same (each tick one over its match's ticks in the market) and every interval is 95% over
+      matches. Matched ticks only: prod's ticks where every candidate has a live price for the same match,
+      market and selection no more than {PAIR_MAX_AGE:g} minutes old, every probability
+      {PROB_RANGE[0]:g}&ndash;{PROB_RANGE[1]:g}; the spread and totals only where the candidate's line is
+      prod's. Minutes from the scheduled start &times; {data['factor']:.3f} make a {GAME_MINUTES}-minute game;
+      the last {CUT_LAST} are left out.</p>
+    <p class="dim">{feeds}</p>{at_bets}
     <table class="reach">
-      <thead><tr><th></th>{head}</tr></thead>
+      <thead>{head}</thead>
       <tbody>{''.join(rows)}</tbody>
     </table>
-    <p class="dim">Margin and uplift weight every tick by its stake to win {STAKE_TO_WIN:.0f}, so short
-      prices dominate; Brier and log loss score the same ticks on the result, every tick alike (lower is
-      better).</p>{''.join(by)}
-    <h3>Calibration <span class="dim">weighted MAE, per game minute left, selection and band</span></h3>
-    <table class="reach">
-      <thead><tr><th></th>{head}</tr></thead>
-      <tbody>{''.join(cal)}</tbody>
-    </table>
-    <details>
-      <summary>By game minute left</summary>
-      <table class="reach">
-        <thead><tr><th>Minutes left</th>{head}</tr></thead>
-        <tbody>{''.join(minute_rows)}</tbody>
-      </table>
-    </details>
-    <details>
-      <summary>Checkpoints: each band's calibration (every feed &ge; {MIN_CAL} ticks) and margin
-        (&gt; {MIN_MARGIN} ticks)</summary>
-      {''.join(checks)}
-    </details>"""
-
-
-def _cell(v):
-    if v is None:
-        return "<td>&mdash;</td>"
-    cls = "good" if v > 0.05 else "bad" if v < -0.05 else ""
-    return f'<td class="{cls}">{v:+.2f}</td>'
+    <p class="dim">Candidate &minus; prod: the candidate's margin on the bets its prices take less prod's on the
+      ones it keeps &mdash; above zero, the candidate's prices hold up better where the two differ. Both &minus;
+      prod alone: the two books together against prod taking every bet, which a second book only lowers (the
+      bettor always gets the better price). Log loss: a proper score on the same ticks, lower is better.</p>
+    {''.join(folds)}{by}"""
 
 
 def run(out_dir, feeds, chart_path=None, factor=None, names=None):

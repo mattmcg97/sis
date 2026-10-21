@@ -440,12 +440,20 @@ def cmd_v21_report(args):
         raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
     print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
     means, books = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
+    drives = None
+    if args.drives:
+        drives = v21_stream.drives_table(args.drives)
+        have = sum(1 for r in rows if r["MATCH_CODE"] in drives)
+        print(f"  the expected drives: {args.drives}, {have:,} of {len(rows):,} matches"
+              + (", the pace nudge meeting them" if args.nudge else " (set against the sim's; --nudge: the pace nudge)"),
+              flush=True)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"  simulating {len(rows):,} matches from kick-off and from every {args.every} real state"
           f" ({workers} processes)", flush=True)
     out = v21_report.run(args.model, snaps, history, means, since, until, n_paths=args.paths,
                          state_paths=args.state_paths, every=args.every, workers=workers, prior_books=books,
-                         nudge=args.nudge, nudge_share=args.nudge_share)
+                         nudge=args.nudge, nudge_share=args.nudge_share, shape=args.shape,
+                         gap=None if args.gap in (None, 1.0) else args.gap, drives=drives, drives_share=args.drives_share)
     lines = v21_report.report(out)
     print("\n".join(lines))
     if args.out:
@@ -455,6 +463,42 @@ def cmd_v21_report(args):
         v21_report.write_csv(os.path.join(args.out, "v21_matches.csv"), out)
         v21_report.write_states_csv(os.path.join(args.out, "v21_states.csv"), out)
         print(f"\n  -> {args.out}/v21_report.txt, v21_matches.csv and v21_states.csv")
+    print(f"  ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_endgame(args):
+    import datetime as dt
+    import time
+    from . import strength_check as sc, v21_endgame, v21_report, v21_stream
+    t0 = time.time()
+    since = dt.date.fromisoformat(args.since)
+    until = dt.date.fromisoformat(args.until) if args.until else since
+    history = sc.history_rows(args.history)
+    codes = sc.window_codes(history, since, until)
+    print(f"  reading the snapshots of {len(codes):,} matches", flush=True)
+    snaps = sc.load_snapshots(args.snapshots, codes)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(snaps, timeouts)
+    rows = [r for r in history if r["MATCH_CODE"] in snaps]
+    prior = args.prior_model or v21_stream.default_prior()
+    if prior is None:
+        raise SystemExit("no prior: build the form table (python -m eAMFCalibrator form-prior) or give --prior-model")
+    print(f"  the inputs: {prior}'s pre-match expected points ({args.inputs})", flush=True)
+    means, _ = v21_report.prior_inputs(prior, rows, history, which=args.inputs)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 1)
+    print(f"  simulating {len(rows):,} matches from kick-off and from their late states ({workers} processes)", flush=True)
+    out = v21_endgame.run(args.model, snaps, history, means, since, until, kick_paths=args.paths,
+                          state_paths=args.state_paths, workers=workers, nudge=args.nudge, nudge_share=args.nudge_share)
+    lines = v21_endgame.report(out)
+    print("\n".join(lines))
+    if args.out:
+        os.makedirs(args.out, exist_ok=True)
+        with open(os.path.join(args.out, "v21_endgame.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
+        v21_endgame.write_states_csv(os.path.join(args.out, "v21_endgame_states.csv"), out)
+        print(f"\n  -> {args.out}/v21_endgame.txt and v21_endgame_states.csv")
     print(f"  ({time.time() - t0:.0f}s)")
     return 0
 
@@ -511,6 +555,76 @@ def cmd_v21_react_fit(args):
     if got.get("gamers"):
         print(f"  -> {v21_react_fit.write(os.path.join(os.path.dirname(out) or '.', v21_react.GAMERS_FILE), got['gamers'])}"
               "  (each gamer's own scale, for v21-gsnapT, v21-gptsT, v21-gwpaC)")
+    return 0
+
+
+def cmd_v21_pace_fit(args):
+    import datetime as dt
+    from . import nb2_prior, v21_pace, v21_stream
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        found = playover.annotate_timeouts(data, timeouts)
+        print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts}), as the build read them")
+    history = nb2_prior.load_history(args.history)
+    model_file = v21_stream._model_file(args.model)
+    until = dt.date.fromisoformat(args.until)
+    test_until = dt.date.fromisoformat(args.test_until) if args.test_until else None
+    lines, table = v21_pace.run(model_file, data, history, until, test_until, prior=args.prior)
+    print("\n".join(lines))
+    out = args.out or os.path.join(os.path.dirname(model_file), v21_pace.PACE_FILE)
+    print(f"\n  -> {v21_pace.write(out, table)}  (each gamer's pace ahead, for the candidate v21-pace)")
+    return 0
+
+
+def cmd_v21_late_fit(args):
+    import datetime as dt
+    from . import v21_late, v21_stream
+    states = v21_late.read_states(args.states)
+    if not states:
+        raise SystemExit("no late states in " + ", ".join(args.states) + " (v21-endgame's v21_endgame_states.csv)")
+    have = sorted({x["day"] for x in states})
+    first = dt.date.fromisoformat(args.since) if args.since else have[0] + dt.timedelta(days=args.window)
+    last = dt.date.fromisoformat(args.until) if args.until else have[-1] + dt.timedelta(days=1)
+    days = [first + dt.timedelta(days=k) for k in range((last - first).days + 1)]
+    table = v21_late.fit(states, days, window=args.window, shrink=args.shrink)
+    print("\n".join(v21_late.report(states, table, args.window, args.shrink)))
+    model_file = v21_stream._model_file(args.model)
+    out = args.out or os.path.join(os.path.dirname(model_file), v21_late.LATE_FILE)
+    v21_late.write(out, table, window=args.window, shrink=args.shrink, states=list(args.states))
+    print(f"\n  -> {out}  (each day's late-Q4 shifts, for the candidate v21-late)")
+    return 0
+
+
+def cmd_ats(args):
+    import datetime as dt
+    from . import ats, nb2_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = ats.run(data, history, since, until, args.min_matches, args.min_half)
+    lines = ats.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'ats.txt')} and ats_gamers.csv")
+    return 0
+
+
+def cmd_playstyle(args):
+    import datetime as dt
+    from . import nb2_prior, playstyle, table_prior
+    print(f"  reading {args.snapshots}", flush=True)
+    data = playover.load(args.snapshots)
+    history = nb2_prior.load_history(args.history)
+    prior = table_prior.TablePrior(args.prior).points if args.prior else None
+    since = dt.date.fromisoformat(args.since) if args.since else None
+    until = dt.date.fromisoformat(args.until) if args.until else None
+    out = playstyle.run(data, history, prior, since, until, args.min_matches, args.min_half, args.boot)
+    lines = playstyle.write(args.out, out)
+    print("\n".join(lines))
+    print(f"\n  -> {os.path.join(args.out, 'playstyle.txt')} and playstyle_gamers.csv")
     return 0
 
 
@@ -994,10 +1108,46 @@ def build_parser():
     p.add_argument("--nudge-share", type=float, default=1.0,
                    help="with --nudge: go this share of the way from the sim's own kick-off means to the inputs "
                         "(default 1: all of it)")
+    p.add_argument("--shape", type=float, default=0.0, metavar="KAPPA",
+                   help="with --nudge: the second strength lever -- the favourite's strength gap played KAPPA x half "
+                        "its expected margin wider a side when behind, narrower when two scores up, the nudge still "
+                        "meeting the expected points (default 0: off; the betting sim's candidate v21-shapeKAPPA)")
+    p.add_argument("--gap", type=float, metavar="L",
+                   help="with --nudge: the gap shrink -- the nudge meets the inputs' expected margin x L, their total "
+                        "kept; the report still sets the sim against the inputs as given (default: off; the betting "
+                        "sim's candidate v21-gapL)")
+    p.add_argument("--drives", metavar="CSV",
+                   help="each match's expected drives (xgb/pace_eff.py's pace_eff_prior.csv), set against the sim's "
+                        "and the real drives; with --nudge, the pace nudge: one tempo on both sides' time tilts so the "
+                        "kick-off games' drives meet them, carried into the states (the betting sim's v21-drives)")
+    p.add_argument("--drives-share", type=float, default=1.0,
+                   help="with --drives and --nudge: go this share of the way from the sim's own drives to the "
+                        "expected (default 1: all of it; the betting sim's v21-drivesS)")
     p.add_argument("--every", type=int, default=4, help="every Nth real state of a match (default 4)")
     p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
     p.add_argument("--out", help="also write v21_report.txt, v21_matches.csv and v21_states.csv here")
     p.set_defaults(func=cmd_v21_report)
+
+    p = sub.add_parser("v21-endgame", help="v2.1's endgame against the real games: overtime and how a level game "
+                                           "was made level, from kick-off and from the same late states, and the "
+                                           "choices between a tie and a win")
+    p.add_argument("--model", default="v21_model", help="a v21-build directory (default v21_model)")
+    p.add_argument("--prior-model", help="the expected points, as v21-report's --prior-model")
+    p.add_argument("--inputs", choices=["raw", "priced"], default="raw", help="as v21-report's --inputs")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--since", required=True, help="first match day, YYYY-MM-DD")
+    p.add_argument("--until", help="last match day, YYYY-MM-DD (default: --since)")
+    p.add_argument("--paths", type=int, default=250, help="kick-off games per receiving side (default 250)")
+    p.add_argument("--state-paths", type=int, default=200,
+                   help="games from each real snap of Q4 within 8 points (default 200; 0: none)")
+    p.add_argument("--nudge", action="store_true", help="a tilt build: nudged to the expected points, as the stream prices")
+    p.add_argument("--nudge-share", type=float, default=1.0,
+                   help="with --nudge: this share of the way to the inputs (default 1; the stream's 0.75)")
+    p.add_argument("--workers", type=int, help="processes (default: all cores but one)")
+    p.add_argument("--out", help="also write v21_endgame.txt and v21_endgame_states.csv here")
+    p.set_defaults(func=cmd_v21_endgame)
 
     p = sub.add_parser("gamer-dig",
                        help="what the money backing particular gamers sees in their play: the targeted gamers' "
@@ -1042,6 +1192,64 @@ def build_parser():
     p.add_argument("--workers", type=int, help="matches scored at once (default: all cores but one)")
     p.add_argument("--out", help="where the table goes (default: react_wp.json in --model, else here)")
     p.set_defaults(func=cmd_v21_react_fit)
+
+    p = sub.add_parser("v21-late-fit",
+                       help="v2.1's late Q4 moneyline, a rolling correction: each day's shift on the log-odds of the side "
+                            "with the ball winning, by its lead and the time left, fitted on v21-endgame's late states of "
+                            "the days before; writes late_q4.json beside the build for the candidate v21-late")
+    p.add_argument("--model", required=True, help="the v21 build the endgame runs priced (the table goes beside it)")
+    p.add_argument("--states", nargs="+", required=True, help="v21-endgame's v21_endgame_states.csv, one or more")
+    p.add_argument("--since", help="the first day to fit a shift for, YYYY-MM-DD (default: the states' first + --window)")
+    p.add_argument("--until", help="the last day, YYYY-MM-DD (default: the day after the states' last)")
+    p.add_argument("--window", type=int, default=14, help="days of late states before each day it is fitted on (default 14)")
+    p.add_argument("--shrink", type=float, default=30.0, help="matches the shift is shrunk toward none by (default 30)")
+    p.add_argument("--out", help="where the table goes (default: late_q4.json beside the build)")
+    p.set_defaults(func=cmd_v21_late_fit)
+
+    p = sub.add_parser("v21-pace-fit",
+                       help="v2.1's pace when ahead: each gamer's own time tilt while its side is ahead, fitted on a "
+                            "build's frame on the matches before --until and scored on the ones after; writes "
+                            "pace_ahead.json beside the build for the candidate v21-pace")
+    p.add_argument("--model", required=True, help="a v21 tilt build directory")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts CSV, as the build read it (default {DATA['timeouts']}"
+                                      " where it exists)")
+    p.add_argument("--until", required=True, help="fit on the matches before this day, YYYY-MM-DD (the priced window's start)")
+    p.add_argument("--test-until", help="score on the matches from --until to this day (default: the export's last)")
+    p.add_argument("--prior", type=float, help="the tilts' shrinkage in snaps (default: the build's own)")
+    p.add_argument("--out", help="where the table goes (default: pace_ahead.json beside the build)")
+    p.set_defaults(func=cmd_v21_pace_fit)
+
+    p = sub.add_parser("ats", help="the spread against the moneyline: prod's pre-match and in-play lines and moneyline "
+                                   "against the real finals, the league and each gamer (against the spread, wins over "
+                                   "the moneyline), each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches to be shown (default 40)")
+    p.add_argument("--min-half", type=int, default=15, help="and in each half of its matches for the trait test (default 15)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "ats"),
+                   help="where ats.txt and ats_gamers.csv go (default eAMFCalibrator/out/ats)")
+    p.set_defaults(func=cmd_ats)
+
+    p = sub.add_parser("playstyle", help="how each gamer plays by the score, on real games: the league's points still to "
+                                         "come by the lead, each gamer's slope beyond it (front-runner or closes up) "
+                                         "and pace ahead against behind, each tested for a trait on alternate days")
+    p.add_argument("--snapshots", default=DATA["snapshots"], help=f"the snapshot export (default {DATA['snapshots']})")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV (default {DATA['history']})")
+    p.add_argument("--prior", help="a prior table (form-prior's or the walkthrough's CSV) for the expected points "
+                                   "(default: prod's pre-match spread and total in the export)")
+    p.add_argument("--since", help="first match day, YYYY-MM-DD (default: the export's first)")
+    p.add_argument("--until", help="the day after the last, YYYY-MM-DD (default: the export's last)")
+    p.add_argument("--min-matches", type=int, default=40, help="a gamer's matches for a slope (default 40)")
+    p.add_argument("--min-half", type=int, default=15,
+                   help="and in each half of its matches (alternate days) for the trait test (default 15)")
+    p.add_argument("--boot", type=int, default=400, help="bootstrap resamples over matches (default 400)")
+    p.add_argument("--out", default=os.path.join("eAMFCalibrator", "out", "playstyle"),
+                   help="where playstyle.txt and playstyle_gamers.csv go (default eAMFCalibrator/out/playstyle)")
+    p.set_defaults(func=cmd_playstyle)
 
     p = sub.add_parser("v21-timing", help="v2.1's pricing time as the calibrator's v21 stream spends it: a sample of "
                                           "matches timed part by part, the sim profiled, the window's run projected")

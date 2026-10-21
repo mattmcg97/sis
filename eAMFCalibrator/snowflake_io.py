@@ -752,6 +752,23 @@ def _as_chunk_called(rows_by_code, codes, workers):
     return [r for i in range(w) for c in codes[i::w] for r in rows_by_code.get(c, ())]
 
 
+def at_bet_moments(stream_table):
+    """Whether this candidate is priced only at the moments the bets read: config.BET_MOMENTS is set
+    (a betting simulation without --all-moments) and it is a model whose stream can (PRICES_MOMENTS)."""
+    if getattr(config, "BET_MOMENTS", None) is None or not is_model(stream_table):
+        return False
+    base = model_base(model_version(stream_table)[0])
+    if base not in LINE_MODELS:
+        return False
+    import importlib
+    return bool(getattr(importlib.import_module(f"eAMFModel.{base}_stream"), "PRICES_MOMENTS", False))
+
+
+def _lead_of(stream):
+    """The lead at which the second lever's favourite eases off (v21.SHAPE_LEAD)."""
+    return getattr(getattr(stream, "v21", None), "SHAPE_LEAD", 9)
+
+
 def _sim_quotes(cur, match_codes, name, lines=None):
     """An eAMFModel simulation version (v8 to v14, v21), GAMEPLAI-shaped: PLAY_OVER
     snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
@@ -781,8 +798,26 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
     if react:
         opts["react"] = react
+    shape = getattr(stream, "shape_of", lambda _n: None)(name)    # v21-shape0.25: the second strength lever
+    if shape:
+        opts["shape"] = shape
+    gap = getattr(stream, "gap_of", lambda _n: None)(name)        # v21-gap0.75: the prior's margins shrunk
+    if gap is not None:
+        opts["gap"] = gap
+    if getattr(stream, "pace_of", lambda _n: False)(name):         # v21-pace: each gamer's own pace when ahead
+        opts["pace"] = True
+    if getattr(stream, "late_of", lambda _n: False)(name):         # v21-late: the rolling late-Q4 correction
+        opts["late"] = True
+    drives = getattr(stream, "drives_of", lambda _n: None)(name)  # v21-drives: the pace nudge
+    if drives is not None:
+        opts["drives"] = drives
+        if getattr(config, f"{key}_DRIVES_TABLE", None):
+            opts["drives_path"] = getattr(config, f"{key}_DRIVES_TABLE")
+    # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
+    moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
+    read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
     key_of = lambda codes: (name, tuple(codes), model_dir, paths, config.CUTOFF_START, config.CUTOFF_END,
-                            prematch_only, tuple(sorted(opts.items())))
+                            prematch_only, tuple(sorted(opts.items())), read)
     cache_key = key_of(match_codes)
     caching = getattr(config, "FETCH_CACHE", False)
     if cache_key in _MODEL_QUOTES:              # kept, or priced with an earlier chunk of its group
@@ -810,6 +845,22 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         history = fetch_history(cur, until=config.CUTOFF_END)
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
+    if shape:
+        print(f"  {name}: the second strength lever, kappa {shape:g}: the favourite's strength gap played {shape:g} x"
+              f" half its expected margin wider a side when behind, narrower when {_lead_of(stream)}+ ahead", flush=True)
+    if gap is not None:
+        print(f"  {name}: the gap shrink, the prior's expected margin x {gap:g}, its total kept, before the nudge"
+              " meets it", flush=True)
+    if opts.get("pace"):
+        print(f"  {name}: pace when ahead, each side's clock while it is ahead drawn on its gamer's own time tilt"
+              f" there ({stream.v21_pace.PACE_FILE} beside the build)", flush=True)
+    if opts.get("late"):
+        print(f"  {name}: the late Q4 correction, each match day's rolling shifts on the side with the ball's chance"
+              f" ({stream.v21_late.LATE_FILE} beside the build)", flush=True)
+    if drives is not None:
+        print(f"  {name}: the pace nudge, one tempo on both sides' clocks so the kick-off games' drives go"
+              + ("" if drives == 1.0 else f" {100 * drives:.0f}% of the way")
+              + f" to the match's expected drives ({opts.get('drives_path') or 'the pace table'})", flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")
@@ -826,13 +877,25 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
                                      history=history, prematch_only=prematch_only, **opts,
-                                     **({"batches": [list(b) for b in group]} if seeded else {}))
+                                     **({"batches": [list(b) for b in group]} if seeded else {}),
+                                     **({"moments": moments} if moments is not None else {}))
     took = getattr(stream, "LAST_TIMING", {})
+    if opts.get("late") and took.get("late_of"):
+        print(f"  {name}: {took['late_matches']:,} of {took['late_of']:,} matches have their day in the late table"
+              + ("" if took["late_matches"] == took["late_of"] else " (the rest priced as v21: refit with --until"
+                 " the window's last day)"), flush=True)
+    if opts.get("drives") is not None and took.get("drives_of"):
+        print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"
+              " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: rerun"
+                               " xgb.pace_eff with --score-from at or before the window's start)"), flush=True)
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"
               + (f"; {miss:,} priced on the sim's own means (rebuild it to cover the window: walkthrough, then"
                  " form-prior)" if miss else ""), flush=True)
+    if took.get("moments") and not prematch_only:
+        print(f"  {name}: {took.get('states', 0):,} of {took.get('states_of', 0):,} in-play states simulated, the"
+              " ones the bets read (--all-moments: every one)", flush=True)
     if took.get("simulate") is not None:
         fetch = time.time() - t0 - took["simulate"] - took.get("prematch", 0.0)
         print(f"  {name}: {_mins(time.time() - t0)} -- reading Snowflake {_mins(fetch)}, pre-match "

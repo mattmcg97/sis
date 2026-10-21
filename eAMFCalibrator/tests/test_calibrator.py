@@ -5992,6 +5992,205 @@ class TestV21React(unittest.TestCase):
         self.assertEqual(seen, [None, ("snap", 4.0), ("wpa", 10.0)])     # the second v21-snap4 read the first's
         self.assertEqual(len(keys), 3)
 
+    def test_the_name_picks_the_second_lever(self):
+        """v21-shape0.25: v21's build with the second strength lever at kappa 0.25, its quotes apart."""
+        import importlib
+        from .. import snowflake_io as sio
+        self.assertEqual(sio.stream_name("v21-shape0.25"), "MODEL:v21-shape0.25")
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append((kw.get("shape"), kw.get("react")))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-shape0.25", "v21-shape0.5"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [(None, None), (0.25, None), (0.5, None)])
+        self.assertIn("the second strength lever, kappa 0.25", out.getvalue())
+
+    def test_the_name_picks_the_gap_shrink(self):
+        """v21-gap0.75: v21 with the prior's expected margins x 0.75, its quotes apart."""
+        import importlib
+        from .. import snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("gap"))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-gap0.75", "v21-gap0.6"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, 0.75, 0.6])
+        self.assertIn("the gap shrink, the prior's expected margin x 0.75", out.getvalue())
+
+    def test_the_name_picks_pace_when_ahead(self):
+        """v21-pace: v21's build with each gamer's pace ahead (pace_ahead.json beside it), stopped before any
+        fetching where the table is missing."""
+        import importlib
+        from .. import bets, snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("pace"))
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-pace"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, True])
+        self.assertIn("v21-pace: pace when ahead", out.getvalue())
+        with mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "pace_table", side_effect=SystemExit("no table")) as table:
+            with self.assertRaises(SystemExit):
+                bets.check_models(["MODEL:v21-pace"])
+            bets.check_models(["MODEL:v21"])
+        self.assertEqual(table.call_count, 1)
+
+    def test_the_name_picks_the_late_correction(self):
+        """v21-late: v21's build with each day's late-Q4 shifts (late_q4.json beside it), stopped before any
+        fetching where the table is missing."""
+        import importlib
+        from .. import bets, snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("late"))
+            stream.LAST_TIMING.update(late_matches=1, late_of=1) if kw.get("late") else None
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-late"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, True])
+        self.assertIn("v21-late: the late Q4 correction", out.getvalue())
+        self.assertIn("1 of 1 matches have their day in the late table", out.getvalue())
+        with mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "late_table", side_effect=SystemExit("no table")) as table:
+            with self.assertRaises(SystemExit):
+                bets.check_models(["MODEL:v21-late"])
+            bets.check_models(["MODEL:v21"])
+        self.assertEqual(table.call_count, 1)
+
+    def test_the_name_picks_the_pace_nudge(self):
+        """v21-drives (v21-drivesS): v21's build with each match's expected drives (--v21-drives' table), stopped
+        before any fetching where the table is missing."""
+        import importlib
+        from .. import bets, snowflake_io as sio
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append((kw.get("drives"), kw.get("drives_path")))
+            stream.LAST_TIMING.update(drives_matches=1, drives_of=2) if kw.get("drives") else None
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None,
+                                 V21_DRIVES_TABLE="pace.csv"), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            for name in ("v21", "v21-drives", "v21-drives0.5"):
+                sio._sim_quotes(None, ["AF001"], name, "own")
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [(None, None), (1.0, "pace.csv"), (0.5, "pace.csv")])
+        self.assertIn("v21-drives: the pace nudge", out.getvalue())
+        self.assertIn("50% of the way", out.getvalue())
+        self.assertIn("1 of 2 matches have their expected drives in the pace table", out.getvalue())
+        with mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "drives_table", side_effect=SystemExit("no table")) as table:
+            with self.assertRaises(SystemExit):
+                bets.check_models(["MODEL:v21-drives"])
+            bets.check_models(["MODEL:v21"])
+        self.assertEqual(table.call_count, 1)
+
+
+    def test_a_betting_simulation_prices_the_bets_moments_alone(self):
+        """config.BET_MOMENTS (bets.run's): v21 is handed the moments and caches them apart; --all-moments
+        clears them; a model that cannot (v14) and a table are priced as ever."""
+        import importlib
+        from .. import snowflake_io as sio, __main__ as cli
+        stream = importlib.import_module("eAMFModel.v21_stream")
+        seen = []
+
+        def fake(snaps, prod, model_dir, **kw):
+            seen.append(kw.get("moments"))
+            stream.LAST_TIMING.update(moments=kw.get("moments") is not None, states=3, states_of=40)
+            return {mode: [] for mode in kw["lines"]}
+
+        snaps_for = lambda cur, codes, **k: ({c: [{"message": "1"}] for c in codes}, [])
+        reads = {"AF001": {(50, 12)}}
+        with mock.patch.multiple(config, V21_PATHS=10, MODEL_WORKERS=1, V21_LINES="own", V21_NUDGE_SHARE=0.0,
+                                 V21_PRIOR_MODEL_DIR=None, FETCH_CACHE=True, PREMATCH_ONLY=False, BET_MOMENTS=None), \
+                mock.patch.object(stream, "model_paths", lambda *a: (None, "model.pkl")), \
+                mock.patch.object(stream, "quotes_for_matches", fake), \
+                mock.patch.object(sio, "_play_over_snapshots", snaps_for), \
+                mock.patch.object(sio, "fetch_match_info", lambda cur, codes: []), \
+                contextlib.redirect_stdout(io.StringIO()) as out:
+            sio.clear_fetch_cache()
+            sio._sim_quotes(None, ["AF001"], "v21", "own")
+            self.assertFalse(sio.at_bet_moments("MODEL:v21"))
+            config.BET_MOMENTS = reads
+            sio._sim_quotes(None, ["AF001"], "v21", "own")                  # not the full run's cached quotes
+            sio._sim_quotes(None, ["AF001"], "v21", "prod")                 # the same moments: read back
+            self.assertTrue(sio.at_bet_moments("MODEL:v21"))
+            self.assertFalse(sio.at_bet_moments("MODEL:v14"))
+            self.assertFalse(sio.at_bet_moments("GAMEPLAI_STREAM_CANDIDATE"))
+            sio.clear_fetch_cache()
+        self.assertEqual(seen, [None, reads])
+        self.assertIn("v21: 3 of 40 in-play states simulated, the ones the bets read", out.getvalue())
+        with mock.patch.multiple(config, ALL_MOMENTS=False, UPLIFT_CHART=None, UPLIFT_FACTOR=None):
+            cli.apply_uplift(cli.build_parser().parse_args(["bets", "--all-moments"]))
+            self.assertTrue(config.ALL_MOMENTS)
+            cli.apply_uplift(cli.build_parser().parse_args(["report", "--bets"]))
+            self.assertFalse(config.ALL_MOMENTS)
+
 
 class TestV21Grouped(unittest.TestCase):
     """A match-seeded model (v21) prices several of the pairing's chunks in one pool: every chunk's
