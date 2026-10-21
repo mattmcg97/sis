@@ -336,6 +336,56 @@ If the nudge works, v21's own margin sd should rise across the fifths of expecte
 one does (8.77 → 10.52), not sit at 9.81 → 10.09. The report's drives table shows, by fifth, the sim's
 own drives before the nudge, its goal, its drives after and the real drives.
 
+### Which model foresees drives best? (`pace_models.py`)
+
+```bash
+python -m xgb.pace_models --history eAMFCalibrator/out/match_history.csv --drives xgb/data/drive_stats.csv \
+    --score-from 2026-08-01 --until 2026-10-19
+```
+
+Every model is refitted every midnight on the results in by then (180 days, rows halving every 60
+days) and prices that day's matches. Contenders:
+
+- **league**: the weighted mean.
+- **gamers**: the two gamers' own recent drives a match (an EWMA).
+- **ridge**: pace_eff's (above), its shrinkage set by hand.
+- **ridge+stream**: the same with the stream.
+- **mixed**: the model glmer would fit, gamer and team pace as random effects, every variance found by
+  REML at each refit. lme4 can't put a match's two gamers on one effect, so it's fitted in Python.
+  On a model lmer can fit (one gamer and one team a match) it matches lmer to four figures: shrinkage
+  15.01 v 15.01 and 299.3 v 299.2, the fixed effects the same. `tests/test_pace_models.py` holds
+  that check.
+- **xgb**: XGBoost on each gamer's and team's drives over their last 15 and 50 matches, an EWMA,
+  matches played and the stream.
+
+Results, 6,285 matches, 1 Aug – 18 Oct, real drives 10.51 a match (sd 2.73):
+
+| model | RMSE | r | slope | sd | sq. error v ridge |
+|---|---|---|---|---|---|
+| league | 2.762 | 0.01 | – | 0.12 | +0.629 (t +12.5) |
+| gamers | 2.643 | 0.260 | 1.16 | 0.61 | −0.011 (t −0.4) |
+| ridge | 2.645 | **0.279** | **1.02** | 0.75 | |
+| ridge+stream | 2.645 | 0.279 | 1.01 | 0.75 | −0.004 (t −0.9) |
+| mixed | 2.648 | 0.277 | 0.83 | 0.92 | +0.014 (t +1.1) |
+| xgb | 2.650 | 0.248 | 0.98 | 0.69 | +0.023 (t +0.6) |
+
+Slope is real drives on foreseen: 1 is calibrated, below 1 means the forecast spreads too wide.
+
+- **No model beats the ridge.** It ranks matches best in every month (r 0.31, 0.28, 0.21 for Aug,
+  Sep, Oct, against xgb's 0.29, 0.23, 0.15), and its spread is calibrated.
+- **What v21 uses.** v21 takes `exp_drives` over its table's mean, so the level doesn't matter. The
+  ridge's −0.3 bias (the league's drives rising through the autumn) drops out. The ranking (r) and
+  the spread (slope) are what count.
+- **REML shrinks the gamers far less than the hand-set ridge.** It asks for λ 15 against 90 (team
+  650 against 360). The mixed model's forecasts then spread too wide (slope 0.83). REML measures
+  how far gamers' pace differs within the 180 days. Part of that difference doesn't last into the
+  next week, so the heavier shrinkage foresees better.
+- **XGBoost on rolling form ranks worse** than the ridge's effects.
+- **A Poisson glmer would be the wrong family.** Drives are under-dispersed: variance 7.5 on a mean
+  of 10.5.
+
+So the walkthrough's pace (`exp_drives`) is the ridge.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -351,4 +401,6 @@ own drives before the nudge, its goal, its drives after and the real drives.
 - `pace_eff.py`: the pace-and-efficiency pre-match model and its comparison
   (`python -m xgb.pace_eff`), writing `pace_eff_prior.csv`.
 - `v21_pace.py`: v21's kick-off spread by pace against the real one (`python -m xgb.v21_pace`).
-- `tests/`: `python -m unittest xgb.tests.test_drives`.
+- `pace_models.py`: the drive forecasters compared walk-forward (`python -m xgb.pace_models`), writing
+  `pace_models.txt` and `pace_models.csv` (every match, every model).
+- `tests/`: `python -m unittest xgb.tests.test_drives xgb.tests.test_pace_models`.
