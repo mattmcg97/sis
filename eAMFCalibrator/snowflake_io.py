@@ -81,13 +81,8 @@ def stream_name(value):
     return value
 
 
-LINE_MODELS = ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v21")     # versions that quote their own lines
-LINE_RULES = {"v8": ("prod", "even"), "v9": ("prod", "even"),        # their '@' suffixes
-              "v10": ("prod", "even", "anchored", "hyst"),
-              "v11": ("prod", "even", "anchored", "hyst"),
-              "v12": ("prod", "even", "anchored", "hyst"),
-              "v13": ("prod", "even", "anchored", "hyst"),
-              "v14": ("prod", "even", "anchored", "hyst"),
+LINE_MODELS = ("v14", "v21")                                         # versions that quote their own lines
+LINE_RULES = {"v14": ("prod", "even", "anchored", "hyst"),            # their '@' suffixes
               "v21": ("prod", "even", "anchored", "hyst")}
 
 
@@ -764,18 +759,13 @@ def at_bet_moments(stream_table):
     return bool(getattr(importlib.import_module(f"eAMFModel.{base}_stream"), "PRICES_MOMENTS", False))
 
 
-def _lead_of(stream):
-    """The lead at which the second lever's favourite eases off (v21.SHAPE_LEAD)."""
-    return getattr(getattr(stream, "v21", None), "SHAPE_LEAD", 9)
-
-
 def _sim_quotes(cur, match_codes, name, lines=None):
-    """An eAMFModel simulation version (v8 to v14, v21), GAMEPLAI-shaped: PLAY_OVER
+    """An eAMFModel simulation version (v14, v21), GAMEPLAI-shaped: PLAY_OVER
     snapshots off SCOUTING_FULL (built exactly as `scouting` exports them),
     with the players' handles attached for the player profiles.
 
     Each match is simulated once for every line mode the version has -- its
-    own key-number lines, its even lines, prod's, and v10's anchored and held lines -- and the rest
+    own key-number lines, its even lines, prod's, and its anchored and held lines -- and the rest
     are kept, so a report that reads the model several ways simulates it once."""
     import importlib
     _need_numpy(name)
@@ -798,16 +788,6 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     react = getattr(stream, "react_of", lambda _n: None)(name)    # v21-snap4: an in-play strength update
     if react:
         opts["react"] = react
-    shape = getattr(stream, "shape_of", lambda _n: None)(name)    # v21-shape0.25: the second strength lever
-    if shape:
-        opts["shape"] = shape
-    gap = getattr(stream, "gap_of", lambda _n: None)(name)        # v21-gap0.75: the prior's margins shrunk
-    if gap is not None:
-        opts["gap"] = gap
-    if getattr(stream, "pace_of", lambda _n: False)(name):         # v21-pace: each gamer's own pace when ahead
-        opts["pace"] = True
-    if getattr(stream, "late_of", lambda _n: False)(name):         # v21-late: the rolling late-Q4 correction
-        opts["late"] = True
     drives = getattr(stream, "drives_of", lambda _n: None)(name)  # v21-drives: the pace nudge
     if drives is not None:
         opts["drives"] = drives
@@ -845,18 +825,6 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         history = fetch_history(cur, until=config.CUTOFF_END)
         print(f"  {name}: its pre-match form follows {len(history):,} settled matches, each"
               " pre-match quote only the results in when it was published", flush=True)
-    if shape:
-        print(f"  {name}: the second strength lever, kappa {shape:g}: the favourite's strength gap played {shape:g} x"
-              f" half its expected margin wider a side when behind, narrower when {_lead_of(stream)}+ ahead", flush=True)
-    if gap is not None:
-        print(f"  {name}: the gap shrink, the prior's expected margin x {gap:g}, its total kept, before the nudge"
-              " meets it", flush=True)
-    if opts.get("pace"):
-        print(f"  {name}: pace when ahead, each side's clock while it is ahead drawn on its gamer's own time tilt"
-              f" there ({stream.v21_pace.PACE_FILE} beside the build)", flush=True)
-    if opts.get("late"):
-        print(f"  {name}: the late Q4 correction, each match day's rolling shifts on the side with the ball's chance"
-              f" ({stream.v21_late.LATE_FILE} beside the build)", flush=True)
     if drives is not None:
         print(f"  {name}: the pace nudge, one tempo on both sides' clocks so the kick-off games' drives go"
               + ("" if drives == 1.0 else f" {100 * drives:.0f}% of the way")
@@ -880,10 +848,6 @@ def _sim_quotes(cur, match_codes, name, lines=None):
                                      **({"batches": [list(b) for b in group]} if seeded else {}),
                                      **({"moments": moments} if moments is not None else {}))
     took = getattr(stream, "LAST_TIMING", {})
-    if opts.get("late") and took.get("late_of"):
-        print(f"  {name}: {took['late_matches']:,} of {took['late_of']:,} matches have their day in the late table"
-              + ("" if took["late_matches"] == took["late_of"] else " (the rest priced as v21: refit with --until"
-                 " the window's last day)"), flush=True)
     if opts.get("drives") is not None and took.get("drives_of"):
         print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"
               " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: rerun"

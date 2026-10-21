@@ -11,7 +11,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import glmer_prior, stream, v8_stream, v9_stream, v10_stream
+from .. import glmer_prior, stream, v14_stream
 
 T0 = dt.datetime(2026, 9, 1, 12, 0)
 
@@ -111,7 +111,7 @@ class TestKickoffPerQuote(unittest.TestCase):
                 ("M", 54, at(-5), 50.0, 2.0, "Total points over 30.5", None, "OPEN", "true"),
                 ("M", 54, at(-2), 50.0, 2.0, "Total points over 30.5", 3, "OPEN", "true")]
         kickoff = lambda row: early if row[2] < at(-10) else late
-        for module in (v8_stream, v9_stream, v10_stream):
+        for module in (v14_stream,):
             rows = module.quote_rows("M", [], prod, first_play_message=5,
                                      lines=module.PROD_LINES, kickoff=kickoff)
             by = {(r[2], r[6]): r[3] for r in rows}

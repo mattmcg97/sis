@@ -1099,15 +1099,6 @@ class TestReport(unittest.TestCase):
         self.assertIn("NUDGE:", lines)
         kick = np.array([r["kick"] for r in out["results"]])
         self.assertLess(abs(kick[:, 0].mean() - 12.0), 2.0)
-        with tempfile.TemporaryDirectory() as tmp:                 # the gap shrink: the margin met is half the inputs'
-            m.save(os.path.join(tmp, v21.MODEL_FILE))
-            half = v21_report.run(tmp, {c: MATCHES[c] for c in codes}, HISTORY, means, "2026-10-01", "2026-10-01",
-                                  n_paths=100, state_paths=0, nudge=True, gap=0.5)
-        k2 = np.array([r["kick"] for r in half["results"]])
-        self.assertLess((k2[:, 0] - k2[:, 1]).mean(), (kick[:, 0] - kick[:, 1]).mean() - 1.5)
-        self.assertLess(abs((k2[:, 0] + k2[:, 1]).mean() - (kick[:, 0] + kick[:, 1]).mean()), 1.5)   # the total kept
-        self.assertEqual(half["results"][0]["means"], (12.0, 8.0))            # set against the inputs as given
-        self.assertIn("the inputs' margins x 0.5 (the gap shrink)", "\n".join(v21_report.report(half)))
 
     def test_a_real_match_s_drives_as_the_sim_counts_them(self):
         # each row the state for the next snap and the kind of play it closed: A scores; B punts; A is
@@ -1150,9 +1141,9 @@ class TestReport(unittest.TestCase):
     def test_the_final_margin(self):
         """A sim sure of a 3-point home win, a prior spread over 1-14: the bands, the key margins, the spread and
         how the favourite wins, against finals of +3 and -10."""
-        from .. import v13
-        sure = v13._distributions(np.full(100, 24), np.full(100, 21))
-        wide = v13._distributions(np.repeat([21, 21, 30, 35], 25), np.repeat([20, 14, 20, 21], 25))
+        from .. import v14
+        sure = v14._distributions(np.full(100, 24), np.full(100, 21))
+        wide = v14._distributions(np.repeat([21, 21, 30, 35], 25), np.repeat([20, 14, 20, 21], 25))
         results = [dict(code=f"M{i}", finals=f, book=sure, prior_book=wide) for i, f in enumerate([(24, 21)] * 6 + [(14, 24)] * 2)]
         lines = v21_report.margin_lines(results)
         text = "\n".join(lines)
@@ -1357,36 +1348,6 @@ class TestStream(unittest.TestCase):
         self.assertEqual({at(m) for _, m in live}, {at(read)})
         self.assertEqual(sorted(x for x in fast if (x[1], x[6]) in kick), sorted(none))   # the kick-off as before
 
-    def test_the_gap_shrink(self):
-        """v21-gapL: the prior's expected margin x L, its total kept, met by the nudge -- the prices exactly those of a
-        prior with that margin."""
-        from .. import v21_stream as vs
-        self.assertEqual((vs.gap_of("v21-gap0.75"), vs.gap_of("v21-gap1"), vs.gap_of("v21"), vs.gap_of("v21-shape0.5")),
-                         (0.75, None, None, None))
-        self.assertEqual(vs.shrunk((30.0, 10.0), 0.5), (25.0, 15.0))
-        self.assertEqual(vs.shrunk((30.0, 10.0), None), (30.0, 10.0))
-
-        class Prior:
-            league = (15.0, 15.0)
-
-            def __init__(self, means):
-                self._means = means
-
-            def means(self, rows, results=None):
-                return {r["MATCH_CODE"]: self._means for r in rows}
-
-        prod = [p for p in self._prod() if p[6] is None]
-        price = lambda means, gap: {x[1]: x[3] for x in self._priced(vs, prod, Prior, means, gap)}
-        wide, half, level = price((14.0, 6.0), None), price((14.0, 6.0), 0.5), price((12.0, 8.0), None)
-        self.assertEqual(half, level)
-        self.assertNotEqual(half, wide)
-
-    def _priced(self, vs, prod, prior, means, gap):
-        with mock.patch.object(vs, "prematch_model", lambda _t: prior(means)), \
-                mock.patch.object(vs, "_prior_tables", lambda _d=None: "prior"):
-            return vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=60, workers=1,
-                                         match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0, gap=gap)
-
     def test_the_nudge_moves_the_kick_off_toward_the_prior(self):
         from .. import v21_stream as vs
 
@@ -1457,207 +1418,6 @@ class TestStream(unittest.TestCase):
             pre = vs.prematch_model(os.path.join("v14_model", "v14tables.npz"))
         self.assertIsInstance(pre, Fit)        # the calibrator reads no history for it
         self.assertIsNone(vs.prematch_model(None))
-
-
-class TestShape(unittest.TestCase):
-    """The second strength lever (v21.SHAPE_TRAIL): the favourite's strength gap played by the score, so it
-    wins more often without winning by more; off, the draws exactly as before."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        with contextlib.redirect_stdout(io.StringIO()):
-            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt",
-                          key="lean", blend=40.0, field=0.2)
-        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
-        cls.model = m
-        cls.code = sorted(MATCHES)[0]
-        cls.rows = sorted(MATCHES[cls.code], key=lambda r: int(r["message"]))
-        cls.info = [h for h in HISTORY if h["MATCH_CODE"] == cls.code]
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
-    def test_the_name_picks_the_lever(self):
-        from .. import v21_react as vr, v21_stream as vs
-        self.assertEqual(vs.shape_of("v21-shape0.25"), 0.25)
-        self.assertEqual(vs.shape_of("V21-SHAPE1"), 1.0)
-        for name in ("v21", "v21-shape0", "v21-shape", "v21-shapex", "v21-snap4", "v21-avgf4"):
-            self.assertIsNone(vs.shape_of(name), name)
-        self.assertIsNone(vr.variant_of("v21-shape0.5"))              # no in-play update by that name
-
-    def test_off_the_draws_are_as_before(self):
-        start = v21.kickoff_start(self.model)
-        n = len(start["period"])
-        plain = v21.simulate(self.model, dict(start, nudge=np.full((n, 2), 0.5)), 200, seed=5)
-        off = v21.simulate(self.model, dict(start, nudge=np.full((n, 2), 0.5), edge=np.full(n, 6.0), shape=np.zeros(n)),
-                           200, seed=5)
-        self.assertTrue(np.array_equal(plain[0], off[0]) and np.array_equal(plain[1], off[1]))
-        a = v21.nudge_solve(self.model, start, (12.0, 9.0), 200, seed=5)
-        b = v21.nudge_solve(self.model, start, (12.0, 9.0), 200, seed=5, shape=0.0)
-        self.assertTrue(np.array_equal(a[0][0], b[0][0]) and np.array_equal(a[1], b[1]))
-
-    def test_the_favourite_wins_more_often_by_no_more(self):
-        start = v21.kickoff_start(self.model)
-        h0, a0 = v21.simulate(self.model, start, 2000, seed=3)
-        target = (h0.mean() + 3.0, a0.mean() - 3.0)
-        got = {}
-        for k in (0.0, 1.0):
-            (h, a), _ = v21.nudge_solve(self.model, start, target, 3000, seed=3, shape=k)
-            mg = (h - a).ravel()
-            got[k] = (mg.mean(), mg.std(), np.mean(mg > 0), np.mean((mg >= 1) & (mg <= 7)))
-        self.assertLess(abs(got[1.0][0] - got[0.0][0]), 1.0)           # the nudge still meets the expected points
-        self.assertGreater(got[1.0][2], got[0.0][2] + 0.04)            # the favourite wins more often
-        self.assertLess(got[1.0][1], got[0.0][1] - 1.0)                # by less: the margin tighter
-        self.assertGreater(got[1.0][3], got[0.0][3] + 0.05)            # more close wins
-
-    def test_the_stream_carries_it_in_play(self):
-        from .. import v21_stream as vs
-
-        class Prior:
-            league = (15.0, 15.0)
-
-            def means(self, rows, results=None):
-                return {r["MATCH_CODE"]: (16.0, 10.0) for r in rows}
-
-        prod = [(self.code, k, None, 50.0, 2.0, "", int(r["message"]), "OPEN", "true")
-                for r in self.rows for k in (50, 51)]
-        prod.append((self.code, 50, "2026-10-01 00:00:00", 50.0, 2.0, "", None, "OPEN", "true"))
-        seen, real = [], v21.simulate
-
-        def spy(model, start, n_paths, **kw):
-            seen.append((len(start["period"]), "shape" in start, float(np.max(start.get("shape", [0.0])))))
-            return real(model, start, n_paths, **kw)
-        got = {}
-        for shape in (None, 1.0):
-            seen.clear()
-            with mock.patch.object(vs, "prematch_model", lambda _t: Prior()), \
-                    mock.patch.object(vs, "_prior_tables", lambda _d=None: "prior"), \
-                    mock.patch.object(v21, "simulate", spy):
-                got[shape] = vs.quotes_for_matches({self.code: self.rows}, prod, self.tmp.name, n_paths=60, workers=1,
-                                                   match_info=self.info, lines=vs.PROD_LINES, nudge_share=1.0, shape=shape)
-            calls = list(seen)
-            if shape:
-                self.assertTrue(all(on and k == 1.0 for _, on, k in calls))   # the kick-off solve and the states
-                self.assertTrue(any(n > 1 for n, _, _ in calls))
-            else:
-                self.assertFalse(any(on for _, on, _ in calls))
-        live = lambda q: {(x[1], x[6]): x[3] for x in q if x[6] is not None}
-        self.assertNotEqual(live(got[None]), live(got[1.0]))
-
-
-class TestPace(unittest.TestCase):
-    """Pace when ahead (v21_pace): each gamer's own time tilt while its side is ahead."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        cls.hist = copy.deepcopy(HISTORY)
-        for i, h in enumerate(cls.hist):                                 # the matches over ten days
-            h["SCHEDULED_START_TIME_UTC"] = f"2026-10-{1 + i % 10:02d} 12:00:00"
-        with contextlib.redirect_stdout(io.StringIO()):
-            m = v21.build(MATCHES, cls.hist, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
-                          blend=40.0, field=0.2, decision_blend=25.0, clock=0.2)
-        m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
-        cls.model = m
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
-    def _seconds(self, pace, n=2000):
-        start = v21.kickoff_start(self.model, ("G0", "G1"), ("T0", "T1"))
-        st = dict(start, pace=np.tile(np.asarray(pace, float), (len(start["period"]), 1)))
-        stats = {}
-        got = v21.simulate(self.model, st, n, seed=5, stats=stats)
-        S = stats["_snaps"]
-        cat = lambda k: np.concatenate([x[k] for x in S])
-        return got, cat(4), cat(10), cat(12)
-
-    def test_off_the_draws_are_as_before(self):
-        start = v21.kickoff_start(self.model, ("G0", "G1"), ("T0", "T1"))
-        a = v21.simulate(self.model, start, 300, seed=4)
-        b = v21.simulate(self.model, dict(start, pace=np.zeros((len(start["period"]), 2))), 300, seed=4)
-        for x, y in zip(a, b):
-            self.assertTrue(np.array_equal(x, y))
-
-    def test_a_side_takes_its_own_time_only_while_ahead(self):
-        _, sec0, side0, lead0 = self._seconds((0.0, 0.0))
-        _, sec1, side1, lead1 = self._seconds((3.0, 0.0))
-        mean = lambda sec, side, lead, sd, up: sec[(side == sd) & ((lead >= 1) if up else (lead <= 0))].mean()
-        self.assertGreater(mean(sec1, side1, lead1, 0, True), mean(sec0, side0, lead0, 0, True) + 1.0)
-        self.assertLess(abs(mean(sec1, side1, lead1, 0, False) - mean(sec0, side0, lead0, 0, False)), 0.5)
-        self.assertLess(abs(mean(sec1, side1, lead1, 1, True) - mean(sec0, side0, lead0, 1, True)), 0.5)
-
-    def test_the_fit_finds_a_planted_pace(self):
-        from .. import v21_pace as vp
-        rng = np.random.default_rng(2)
-        B, n, G = 12, 12000, 6
-        phi = np.linspace(0.3, 4.0, B)[:, None]
-        planted = np.array([-0.4, -0.2, 0.0, 0.0, 0.2, 0.4])
-        gamer = rng.integers(0, G, n)
-        lead = rng.integers(-10, 11, n).astype(float)
-        H = np.full((n, B), 1.0 / B)
-        d = np.where(lead >= vp.PACE_LEAD, 0.3 + planted[gamer], 0.0)[:, None]
-        p = vp._probs(H, phi, d)
-        obs = np.array([rng.choice(B, p=row) for row in p])
-        frame = dict(H=H, obs=obs, phi=phi, gamer=gamer, lead=lead, code=np.arange(n) // 20, weights=np.ones(n))
-        stub = type("Build", (), {"gamers": {f"G{i}": i for i in range(G)}, "tilt_prior": 200.0})()
-        delta, gain, n_up, league = vp.fit(stub, frame)
-        self.assertAlmostEqual(league, 0.3, delta=0.1)
-        self.assertGreater(np.corrcoef(delta[:G, 0], planted)[0, 1], 0.95)
-        self.assertEqual(delta[G, 0], league)                            # a gamer it has not met: the league's
-        self.assertGreater(gain, 0)
-        got = vp.scored(frame, delta)
-        self.assertEqual(len(got["ll"]), int((lead >= vp.PACE_LEAD).sum()))
-
-    def test_the_fit_command_writes_the_table_the_stream_reads(self):
-        from .. import __main__ as cli, v21_pace as vp, v21_stream as vs
-        d = self.tmp.name
-        snaps, history = os.path.join(d, "snaps.csv"), os.path.join(d, "history.csv")
-        rows = [r for c in sorted(MATCHES) for r in MATCHES[c]]
-        with open(snaps, "w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, sorted({k for r in rows for k in r}))
-            w.writeheader()
-            w.writerows(rows)
-        hist = [dict(h, SPORT_CODE="AF", STREAM_NUMBER="1") for h in self.hist]
-        with open(history, "w", newline="", encoding="utf-8") as fh:
-            w = csv.DictWriter(fh, sorted(hist[0]))
-            w.writeheader()
-            w.writerows(hist)
-        with contextlib.redirect_stdout(io.StringIO()) as out:
-            cli.main(["v21-pace-fit", "--model", d, "--snapshots", snaps, "--history", history, "--until", "2026-10-07"])
-        text = out.getvalue()
-        for part in ("pace when ahead", "fitted on", "on the 32 matches after", "log-likelihood gained", "pace_ahead.json"):
-            self.assertIn(part, text)
-        table = vp.load(d)
-        self.assertIn("G0", table)
-        self.assertEqual(vp.side_pace(table, ("G0", "NOBODY"))[1], table[""])      # the league's part
-        self.assertTrue(vs.pace_of("v21-pace"))
-        self.assertFalse(vs.pace_of("v21") or vs.pace_of("v21-shape0.5"))
-        self.assertEqual(vs.pace_table(d), table)
-        with tempfile.TemporaryDirectory() as bare:
-            self.model.save(os.path.join(bare, v21.MODEL_FILE))
-            with self.assertRaises(SystemExit):
-                vs.pace_table(bare)
-
-    def test_the_stream_prices_with_it(self):
-        from .. import v21_pace as vp, v21_stream as vs
-        code = sorted(MATCHES)[0]
-        rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))
-        info = [h for h in self.hist if h["MATCH_CODE"] == code]
-        lines = ((50, ""), (54, "Total points over 40.5"))
-        prod = [(code, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true") for r in rows for k, line in lines]
-        with tempfile.TemporaryDirectory() as d:
-            self.model.save(os.path.join(d, v21.MODEL_FILE))
-            pair = v21.match_people(code, rows, {h["MATCH_CODE"]: h for h in self.hist})[0]
-            vp.write(os.path.join(d, vp.PACE_FILE), dict(gamers={pair[0]: 3.0, pair[1]: -3.0}, league=0.0))
-            price = lambda pace: vs.quotes_for_matches({code: rows}, prod, d, n_paths=60, workers=1, match_info=info,
-                                                       lines=vs.PROD_LINES, nudge_share=0.0, pace=pace)
-            off, on = price(False), price(True)
-        self.assertEqual(len(off), len(on))
-        self.assertNotEqual([x[3] for x in off], [x[3] for x in on])
 
 
 class TestPaceNudge(unittest.TestCase):
@@ -1784,7 +1544,7 @@ class TestPaceNudge(unittest.TestCase):
         from .. import v21_stream as vs
         self.assertEqual(vs.drives_of("v21-drives"), 1.0)
         self.assertEqual(vs.drives_of("V21-Drives0.5"), 0.5)
-        for name in ("v21", "v21-drives0", "v21-drivesx", "v21-pace", "v21-shape0.5"):
+        for name in ("v21", "v21-drives0", "v21-drivesx", "v21-snap4"):
             self.assertIsNone(vs.drives_of(name), name)
         code = sorted(MATCHES)[0]
         rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))

@@ -72,7 +72,7 @@ class Game:
             raise ValueError("scores and timeouts cannot go below 0")
 
     def model_state(self):
-        """The state as v10.start_from reads it (None when the game is over)."""
+        """The state as v14.start_from reads it (None when the game is over)."""
         if self.phase == FINAL:
             return None
         base = dict(period=self.period, clock_seconds=float(self.clock), home_score=self.home,

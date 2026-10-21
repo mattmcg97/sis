@@ -46,10 +46,10 @@ The code that runs:
 | v14 | v13 played closer to the real game -- strength as boom or bust, the clock as played, long plays, losses and kick-offs by side, the go curve's field shape -- and built in one joint fit with a calibration report (first downs 37.6% → 41.5% of snaps, real 41.0%; field goals 1.51 → 1.22 a game, real 1.15; held out RPS level) |
 | v2.1 | apart from v8–v14: each snap's time drawn from real snaps, then its distance given that time, with no strength -- the pre-match expected points are only what its report measures it against (`v21-build`, `v21-report`) |
 
-The analytic pricer that came before (v1/v2) and the simulation versions v3 to v7 have been
-removed. The v3–v7 sections below are kept as the record of how the simulation was built: v8
-onward still carries everything they introduced. Their own commands no longer run, so use v8–v14
-in their place.
+The analytic pricer that came before (v1/v2) and the simulation versions v3 to v13 have been
+removed (v8–v13 in the October cleanup; the `archive/pre-cleanup` tag holds their code). The v3–v13
+sections below are kept as the record of how the simulation was built: v14 still carries everything
+they introduced. Their own commands no longer run, so use v14 in their place.
 
 ## v3: a play-by-play simulation
 
@@ -2403,80 +2403,28 @@ matches it is priced with. Two things follow from that:
 - **One match at a time:** within a pool, a match goes to whichever worker is free; a fixed share of
   matches per worker left the rest waiting on its longest ones.
 
-### The second strength lever (`--candidate v21-shape0.25`, `v21-report --shape`)
+### Tried and left off: four v2.1 levers
 
-A big gap between gamers makes the favourite win more often without winning by much more. Over Dec
-10 – Sep 10 the favourite by 250–300 Elo won 74.4% by 4.8 points on average. A model that prices the
-win off the margin, with the league's spread, gives 68.6% at that margin. The margin's spread narrows
-as the gap grows (9.85 at under 50 Elo, 9.46 at 250+), and close wins rise from 31% of games to about
-40%. Measured by the pre-match points expectancy instead of Elo, the favourite wins 0.3–2.1 points
-more often than its real margin implies (Feb–Oct, 22,370 matches). The nudge alone can't do this:
-v2.1 turns its margin into a win chance with a fixed spread (chance = Φ(margin / 9.87) on Oct 1–17).
+Each was built, run through the betting sim on Oct 1–18 against plain v21, and removed when it gave
+nothing. The code is in the `archive/pre-cleanup` tag.
 
-The lever plays the strength gap by the score. Each side's distance tilt is kept three ways: as it is,
-with the favourite behind by `SHAPE_TRAIL` (1) or more, and with it `SHAPE_LEAD` (9) or more ahead. A
-behind favourite plays the gap κ × |edge| / 2 nudge units a side wider (it raises its game); a
-favourite two scores up plays it that much narrower (it eases off). The edge is the kick-off's
-expected home margin, and the favourite is the side it favours. The nudge is still solved so the
-kick-off means meet the expected points. The result is more comebacks and fewer blowouts: the
-favourite wins more often, by the same mean margin.
-
-On the tests' build, a favourite at +5.8 points expected:
-
-| κ | mean margin | margin sd | wins | wins by 1–7 | by 8+ |
-|---|---|---|---|---|---|
-| 0 (off) | +5.84 | 8.74 | 76.3% | 37.6% | 38.7% |
-| 0.5 | +5.80 | 7.14 | 80.7% | 45.6% | 35.0% |
-| 1 | +6.04 | 5.88 | 86.0% | 52.0% | 34.0% |
-
-The real games show about +2 points of win chance with the spread barely moving, so κ is small,
-fitted on the real build: `v21-report --nudge --nudge-share 0.75 --shape K` (the final-margin
-section shows how the favourite wins, the sim's against the real), then the betting sim's
-`--candidate v21,v21-shape0.1,v21-shape0.25` on the same bets. Off (κ 0, any name without
-`-shapeK`), the draws are exactly as before. The three tilts a side share the sim's tilt cache (six a
-match, under `TILT_CACHE_MAX`), so the lever costs little time.
-
-**Result: it doesn't beat v21.** The betting sim ran Oct 1–18 on 129,849 bets over 1,230 matches.
-Against plain v21:
-- On one book it's level at every κ (κ 0.5: +0.20 [−0.18, +0.59]).
-- On two books, with each bet going to the better of prod and the candidate, κ 0.5 is worse:
-  −0.40 [−0.68, −0.15], and on the moneyline −0.45 [−0.75, −0.17].
-- In practice it raised the favourite's chance by 0.7–1.1 points pre-match, level and behind, and
-  barely moved it ahead (the ease-off at 9+ seldom fires).
-- The longer underdog prices that follow got taken, and the underdogs won too often for them:
-  pre-match −2.12, favourite behind 3–8 −1.46, level −1.17 (two books, κ 0.5, each interval below
-  zero).
-- The kick-off check at κ 0.25 agrees: favourites by 2–4 lost 41.6% of real games, against 38.5%
-  expected.
-
-So the favourite isn't stronger than v21 already says. The lever stays off.
-
-### The gap shrink (`--candidate v21-gap0.75`, `v21-report --gap`)
-
-The prior's big gaps come out smaller in the real finals. Taking the form table's expected margin
-(`avg_form4_w05.csv`) against the real margin, burn-in left out:
-
-| Months | Matches | Real margin per point of the prior's | Prior 3+ points: prior, real |
-|---|---|---|---|
-| September | 1,611 | 0.45 (se 0.10) | +4.15, +2.11 |
-| October 1–18 | 1,220 | 0.77 (se 0.11) | +4.48, +1.85 |
-
-v2.1's sim already turns a point of the prior's margin into about 0.86 of a point (the kick-off
-check). That leaves about 0.9 (October) to 0.55 (September) still to take off.
-
-The lever takes the prior's expected margin L times over and keeps its total, before the nudge
-meets it (`v21_stream.shrunk`). That holds at kick-off and in every earlier pre-match state. The
-in-play states carry the nudge as ever.
-- A candidate named `v21-gapL` asks for it. `v21-gap1`, or no `-gapL`, is the prior as it is.
-- `v21-report --nudge --gap L` runs the same kick-off check. The report still sets the sim against
-  the inputs as given, so its "by the expected home margin" table shows what the shrink does
-  against the real finals.
-
-L = 0.9, 0.75 and 0.6 bracket the two months. They were chosen off September's fit and the sim's
-own slope, before looking at the October bets:
-
-    python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --until "2026-10-19 00:00:00" \
-        --candidate v21,v21-gap0.9,v21-gap0.75,v21-gap0.6 --v21-model v21_t10 --v21-paths 2000
+- **The second strength lever** (`v21-shapeK`): the favourite's strength gap played wider when it's
+  behind and narrower when it's two scores up. On one book it's level at every κ (κ 0.5: +0.20
+  [−0.18, +0.59]); on two books κ 0.5 is worse, −0.40 [−0.68, −0.15], and −0.45 [−0.75, −0.17] on
+  the moneyline. The favourite isn't stronger than v21 already says.
+- **The gap shrink** (`v21-gapL`): the prior's expected margin taken L times over, its total kept.
+  The margin gained against prod fell at every L: +3.44 for v21, +3.12 at 0.9, +2.99 at 0.75, +2.75
+  at 0.6 (143,950 bets).
+- **Pace when ahead** (`v21-pace`): each gamer's own time tilt while its side is ahead. It is a
+  trait (the halves of a gamer's matches agree, r +0.58), but the betting sim gave no gain: −0.12
+  [−0.44, +0.18] on one book, −1.90 [−6.41, +2.37] head to head on two. The trait stays in the
+  `playstyle` report.
+- **The late Q4 correction** (`v21-late`): each match day's rolling shift on the chance of the side
+  with the ball in Q4's last four minutes, 8 or fewer apart. It moved the chances toward what
+  happened, but no gain overall: +0.02 [−0.39, +0.38] on one book's moneyline, −0.51 [−4.94,
+  +3.52] head to head on two, margin uplift +2.99 against v21's +3.11. A more accurate price on a
+  side the punters back without an edge lengthens odds on bets that were losing at v21's; accuracy
+  pays only where the money is informed. The `v21-endgame` report it read stays.
 
 ### Playstyle by the score (`playstyle`)
 
@@ -2570,51 +2518,6 @@ It reads the export alone: no Snowflake, no simulation.
 - v2.1's kick-off moneyline comes off its own simulated scores, wins by 1 included: its favourite
   won 57.1% against the 57.2% it said.
 
-### Pace when ahead (`v21-pace-fit`, `--candidate v21-pace`)
-
-The playstyle report found one trait: how much a gamer slows the clock when ahead. Beyond the league,
-this repeats from one half of a gamer's matches to the other: r = +0.58 [+0.40, +0.73], Aug 23 –
-Oct 17, 65 gamers. OFFICER takes about 5 s a snap longer than the league when ahead. STRIDER is about
-6 s quicker, and in fact quicker ahead than behind.
-
-**What the build has.** A tilt build's time draws are the league's real snaps for the state, the
-lead among it, so the league's slowing down when ahead is in them. They're reweighted by one time
-tilt a gamer (and team), the same whether the gamer is ahead or not.
-
-**What this adds.** A second time tilt a gamer, used on its side's snaps while the side is
-`PACE_LEAD` (1) or more points ahead.
-- It's fitted as the build fits its own: Newton steps on the penalized log-likelihood of the gamer's
-  real snaps ahead, against the league's draws for those states with the build's tilts on them.
-- A league part is fitted with it, for whatever the build's draws miss of every side's clock ahead.
-  Each gamer's own part sits beyond that, shrunk by the build's `TILT_PRIOR`.
-- A gamer the table hasn't met takes the league part alone.
-
-```
-python -m eAMFModel v21-pace-fit --model v21_t10 --until 2026-10-01
-```
-
-**The fit command.**
-- It fits on the matches before `--until`.
-- It scores on the matches after (to `--test-until`): each ahead snap's log-likelihood with the
-  tilts against without, with a 95% interval over matches. It also checks whether the seconds a
-  gamer's tilt says it gains ahead are the ones it gained on those later matches (r across gamers,
-  and the slope: 1 right).
-- It writes `pace_ahead.json` beside the build and reads the export alone: no Snowflake, no
-  simulation.
-
-**Pricing with it.**
-- The calibrator's candidate `v21-pace` prices the same build with the table: `--candidate
-  v21,v21-pace --v21-model v21_t10`. It stops before any fetching if the table is missing.
-- In the sim, each side's time tilt is kept two ways, as it is and with its gamer's extra. Each
-  snap's time is drawn on its score's: the second lever's pattern, with the tilt cache covering both.
-- Without the table (`v21` itself), the draws are exactly as before.
-- On the tests' build, +3 on the home side's tilt takes its snaps ahead from 20.7 s to 23.0 s, and
-  leaves its snaps behind and the other side's as they were.
-
-**The betting sim (Oct 1–18, 144,043 bets).** No gain. On one book v21-pace was −0.12 [−0.44,
-+0.18] against v21 (moneyline +0.08 [−0.19, +0.34], Q4 moneyline −0.16 [−0.53, +0.20]), and on two
-books its head-to-head was −1.90 [−6.41, +2.37] against v21's. It stays off.
-
 ### The endgame (`v21-endgame`)
 
 ```
@@ -2692,64 +2595,6 @@ went the other way: 89–94% a week in September, 81–85% in October. Level sid
 6–9 points short of them in September and about right in October. The overtime excess held in both
 months (+2.3 to +2.5 points from the late states). The late game changed from the last week of
 September, so a correction fitted on September alone would miss it.
-
-### The late Q4 correction (`v21-late-fit`, `--candidate v21-late`)
-
-```
-python -m eAMFModel v21-late-fit --model v21_t10 --states eAMFCalibrator/out_v21_endgame_sep/v21_endgame_states.csv eAMFCalibrator/out_v21_endgame/v21_endgame_states.csv
-```
-
-A rolling correction for the drift above, while the sim itself plays the endgame as it always has.
-- **The cells.** The lead of the side with the ball (4–8 behind, 3 behind, 1–2 behind, level, 1–3
-  ahead, 4–8 ahead) times Q4's time left (4:00–2:01, 2:00–1:01, 1:00–0:00).
-- **The fit.** For each match day, a shift on the log-odds of the side with the ball winning in each
-  cell. It's fitted on v21-endgame's late states of the 14 days before (`--window`): the sim's chance
-  against what really followed, each match counting the same. It's shrunk toward none by 30 matches
-  (`--shrink`). A day's own games never fit its own shift.
-- **The days.** By default the fit covers every day from the states' first plus the window, to the
-  day after their last; `--since` and `--until` set them. It writes `late_q4.json` beside the build.
-- **Pricing.** The calibrator's candidate `v21-late` prices off the same build with the table:
-  `--candidate v21,v21-late --v21-model v21_t10`. It stops before any fetching if the table is
-  missing.
-  - Each in-play book of Q4 with the sides 8 or fewer apart has its margin's mass either side of a
-    level game scaled, so the side with the ball wins at its shifted chance. The spreads move with it.
-  - The kick-off, the earlier quarters, overtime and the totals are as v21 prices them.
-  - A match whose day isn't in the table is priced as v21; the run says how many.
-
-On October's own late states, the rolling shifts take the sim's chance for the side with the ball:
-
-| Lead | Real | Sim | Corrected |
-|---|---|---|---|
-| 1–2 behind | 54.2% | 43.4% | 48.7% |
-| 3 behind | 49.6% | 40.3% | 46.3% |
-| 4–8 behind | 20.5% | 25.6% | 21.9% |
-| Level | 73.4% | 71.1% | 77.2% |
-| 1–3 ahead | 84.0% | 88.7% | 87.5% |
-
-Level overshoots: September's level gap had gone by October, and the correction lags drift in both
-directions. The betting sim is the judge.
-
-**The betting sim (Oct 1–18, 144,051 bets) gives no gain overall.**
-- One book, moneyline: +0.02 [−0.39, +0.38] against v21.
-- Two books, moneyline: v21-late's head-to-head is −0.51 [−4.94, +3.52] against v21's.
-- Margin uplift, moneyline: +2.99 against v21's +3.11.
-
-It worked where it was aimed and gave it back elsewhere. Q4 moneyline bets, by the backed side's lead,
-the book's margin re-priced at each candidate:
-
-| Backed side | Stake | v21's chance | v21-late's | Won | v21 margin | v21-late margin | Late − v21 [95%] |
-|---|---|---|---|---|---|---|---|
-| 3 behind | 88,752 | 0.393 | 0.446 | 0.569 | −24.6% | −9.8% | +14.8 [+11.4, +18.1] |
-| 1–2 behind | 60,300 | 0.458 | 0.506 | 0.662 | −24.2% | −14.5% | +9.7 [+6.6, +13.7] |
-| 4–8 behind | 89,191 | 0.272 | 0.229 | 0.239 | +5.6% | −15.3% | −20.9 [−32.0, −10.9] |
-| 1–2 ahead | 19,116 | 0.594 | 0.544 | 0.525 | +6.8% | −3.7% | −10.6 [−20.4, −3.3] |
-| 3 ahead | 62,928 | 0.649 | 0.603 | 0.510 | +2.2% | −3.1% | −5.2 [−8.7, −2.9] |
-| All Q4 | 567,679 | 0.450 | 0.453 | 0.496 | −3.75% | −3.92% | −0.17 [−2.68, +2.21] |
-
-The 4–8-behind and leaders' moves were right too: closer to how often those sides won. But on the
-same bets, a price made more accurate on a side the punters back without an edge lengthens the odds on
-bets that were losing at v21's. The book was earning on that lean. In the bets, accuracy pays only
-where the money is informed, and late in Q4 that's the side 1–3 behind. v21-late stays off.
 
 ### The pace nudge (`--candidate v21-drives`, `v21-report --drives`)
 
@@ -3125,7 +2970,7 @@ python -m eAMFCalibrator bets --since 2026-10-01 --until 2026-10-12 --only-match
 python -m eAMFModel v14-priors --matches eAMFCalibrator/match_lists/v14_worst15_oct.txt --bets eAMFCalibrator/out_worst15/bets_sim.csv --out eAMFCalibrator/out_worst15
 ```
 
-## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v13 and v14)
+## The prior against the sim: how much calibration the sim keeps (`prior-vs-sim`, v14)
 
 For every settled match in a window, priced as of its kick-off, this grades three prices of it on the
 real results:
@@ -3209,7 +3054,7 @@ python -m eAMFModel strength-check --model v14_model --since 2026-10-01 --until 
   touchdown run-on and backed-up rules that can change a play afterwards are not applied, so the
   shares are what each side draws. Kneels and overtime are left out of both.
 
-## Refitting the prior every day (`prior-daily`, v10–v13)
+## Refitting the prior every day (`prior-daily`, v14)
 
 A build fits its pre-match model (NB2 or glmer) once, at its cut-off. Over a test window of weeks
 its ratings go stale where a live model's would not: glmer's form features follow the results as
@@ -3264,7 +3109,7 @@ Each NB2 fit now keeps only its training rows' codes and kick-offs once fitted, 
 NB2_schedule_predict.py's market tables after each prediction. A day of fits (the day's and its
 level scale's) was about 19 MB, and is now about 2 MB: a year of daily fits about 0.6 GB, not 5.
 
-## Following the results since the fit (`follow.py`, v10–v13)
+## Following the results since the fit (`follow.py`, v14)
 
 A build's pre-match model (NB2 or glmer) is fitted once. Between fits its ratings stay put while
 gamers' real levels move. NB2 doesn't move at all. glmer's form features follow the results, but its
@@ -3319,8 +3164,7 @@ sample, 12 fortnights of 14-day refits on AMFELO.
 
 - **The prior.** 40 chased the noise in some fortnights; 160 was steadier but gained less.
 
-## Pricing only what the model is sure of (v8–v13 streams)
-## The post-game form layer (`form_layer.py`, v10–v13; off unless switched on)
+## The post-game form layer (`form_layer.py`, v14; off unless switched on)
 
 A second model on top of the daily glmer (`prior-daily`), for in-session hot and cold streaks.
 The daily glmer gives each side's expected points; the layer adds a ± from how the two gamers have
@@ -3459,7 +3303,7 @@ The bets say more than the prices here. Every `bets` run now shows the book's ma
 that pile onto a run, against those that fade it (`bets_trends.txt`, in eAMFCalibrator's README).
 If piling on beats the book, a trigger is worth turning on.
 
-## Pricing only what the model is sure of (v8–v12 streams)
+## Pricing only what the model is sure of (v14's stream)
 
 A version quotes a prod message only where its state is the game's at that
 message:
@@ -3630,8 +3474,6 @@ python -m eAMFCalibrator report --since 2026-10-01 --until 2026-10-12 --candidat
 - `v14-build --no-daily` prices from the build's single fit; `--prior nb2` builds on NB2 instead.
 - `v14-build --sim-workers 12` runs the build's simulations on 12 processes (default 4): the same
   model, sooner.
-- v8-v13 keep their own commands and defaults (`--prior nb2`, `--half train`; `prior-daily` to
-  attach daily fits).
 
 ```bash
 python -m unittest eAMFModel.tests.test_base eAMFModel.tests.test_remaining eAMFModel.tests.test_v14

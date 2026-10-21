@@ -1,4 +1,4 @@
-"""prior-vs-sim: the pre-match prior's own price against v13's kick-off off it, graded on the results."""
+"""prior-vs-sim: the pre-match prior's own price against v14's kick-off off it, graded on the results."""
 
 import datetime as dt
 import io
@@ -11,7 +11,7 @@ from unittest import mock
 import numpy as np
 
 from .. import __main__ as cli
-from .. import prior_check, v13
+from .. import prior_check, v14
 
 DAY = dt.datetime(2026, 10, 1, 12)
 
@@ -25,8 +25,8 @@ def row(code, minutes, s1, s2, p1="ANN", p2="BOB"):
 
 def point_books(margin, total):
     """A book certain of one margin and one total."""
-    mp_, tp = np.zeros(2 * v13.MARGIN_MAX + 1), np.zeros(v13.TOTAL_MAX + 1)
-    mp_[margin + v13.MARGIN_MAX] = 1.0
+    mp_, tp = np.zeros(2 * v14.MARGIN_MAX + 1), np.zeros(v14.TOTAL_MAX + 1)
+    mp_[margin + v14.MARGIN_MAX] = 1.0
     tp[total] = 1.0
     return mp_, tp
 
@@ -40,7 +40,7 @@ class TestRawBooks(unittest.TestCase):
 
     def test_the_score_model_keeps_the_expected_points(self):
         mp_, tp = prior_check.raw_books((24.0, 18.0), 0.38, 0.2, n=60000)
-        k = np.arange(len(mp_)) - v13.MARGIN_MAX
+        k = np.arange(len(mp_)) - v14.MARGIN_MAX
         self.assertAlmostEqual(float((k * mp_).sum()), 6.0, delta=0.25)
         self.assertAlmostEqual(float((np.arange(len(tp)) * tp).sum()), 42.0, delta=0.4)
         plain_m, plain_t = prior_check.raw_books((24.0, 18.0), 0.0, 0.0, n=60000)
@@ -54,7 +54,7 @@ class TestRawBooks(unittest.TestCase):
         covariance out of the margin; a table's rows carry it into the report."""
         mu1, mu2, a1, a2, shared = 20.0, 15.0, 0.09, 0.15, 0.4
         mp_, tp = prior_check.nb2_books((mu1, mu2), a1, a2, shared, n=200000, seed=3)
-        k, kt = np.arange(len(mp_)) - v13.MARGIN_MAX, np.arange(len(tp))
+        k, kt = np.arange(len(mp_)) - v14.MARGIN_MAX, np.arange(len(tp))
         var = lambda p, ks: float((p * (ks - (ks * p).sum()) ** 2).sum())
         self.assertAlmostEqual(float((k * mp_).sum()), 5.0, delta=0.1)
         r1, r2 = 1 / a1, 1 / a2
@@ -129,7 +129,7 @@ class TestGrade(unittest.TestCase):
         self.assertIn("2 settled matches", text)
         self.assertIn("moneyline log loss", text)
         self.assertIn("total RPS", text)
-        self.assertIn("v13 sim", text)
+        self.assertIn("v14 sim", text)
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "x.csv")
             prior_check.write_csv(path, self.results())
@@ -153,8 +153,8 @@ class TestRun(unittest.TestCase):
         def worker(job):
             seen.append(job)
             return {code: point_books(4, 38) for code, _, _ in job[1]}
-        with mock.patch.object(prior_check.v13_stream, "model_paths", return_value=("t.npz", "g.npz")), \
-                mock.patch.object(prior_check.v13, "prematch_model", return_value=pre), \
+        with mock.patch.object(prior_check.v14_stream, "model_paths", return_value=("t.npz", "g.npz")), \
+                mock.patch.object(prior_check.v14, "prematch_model", return_value=pre), \
                 mock.patch.object(prior_check, "profiles", side_effect=lambda d, rows: {r["MATCH_CODE"]: None for r in rows}), \
                 mock.patch.object(prior_check, "_sim_worker", side_effect=worker):
             out = prior_check.run("build", history, DAY.date(), DAY.date() + dt.timedelta(days=1))
@@ -213,4 +213,4 @@ class TestV14(unittest.TestCase):
         self.assertTrue(made.called)
         self.assertEqual(seen[0][4], "v14")
         self.assertIn("v14 sim", "\n".join(prior_check.report(out, DAY.date(), DAY.date(), "v14")))
-        self.assertEqual(prior_check.version_of("no_such_build"), "v13")
+        self.assertEqual(prior_check.version_of("no_such_build"), "v14")

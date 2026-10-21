@@ -4,7 +4,7 @@
      MARKET_DESCRIPTION, EVENT_MESSAGE_COUNT, STATUS, IS_ACTIVE)
 
 so anything that can read a GAMEPLAI stream can read a version -- the calibrator swaps one in
-for the candidate with `--candidate v9`. Here: the market descriptions, reading a line back, the
+for the candidate with `--candidate v21`. Here: the market descriptions, reading a line back, the
 prod messages each PLAY_OVER's state is sure for, and what a pre-match model whose form follows
 results knew when each pre-match quote was published.
 """

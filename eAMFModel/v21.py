@@ -3,7 +3,7 @@
     python -m eAMFModel v21-build --until 2026-10-01 --out v21_full --mode full
     python -m eAMFModel v21-report --model v21_full --prior-model v14_model --since 2026-10-01 --until 2026-10-12
 
-v2.1 stands apart from v8-v14. It reads the same snapshot export (PLAY_OVER rows) and nothing of their
+v2.1 stands apart from v14 (and the v8-v13 it grew from). It reads the same snapshot export (PLAY_OVER rows) and nothing of their
 fitted tables, and it has no strength: the pre-match expected points are not an input to the draws. The
 sim plays from the real data alone, and v21_report sets its output against the expected points, so
 where the two part shows where the draws are missing something. Nothing is ever fitted to make them
@@ -270,7 +270,6 @@ MODES = ("full", "adjusted", "tilt")
 # A draw resamples TILT_CANDIDATES real snaps of its group (or window) on their weights.
 PHI_DIST = ("yards", "touchdown", "turnover", "first down", "loss")
 PHI_TIME = ("seconds",)
-PACE_LEAD = 1                 # pace when ahead (v21_pace): the side with the ball this many points or more ahead
 TILT_PRIOR = 200.0
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
@@ -295,13 +294,6 @@ DECISION_TABLE_MAX = 4_000_000                            # cells (the 4th down'
 NUDGE_ITERS = 3
 NUDGE_MAX = 10.0              # points a side
 NUDGE_PATHS = 3000
-# The second strength lever (the shape: a start's "shape" kappa and "edge", its expected home margin at
-# kick-off): the strength gap played by the score. The favourite behind by SHAPE_TRAIL or more plays the
-# gap kappa * |edge| / 2 nudge units a side wider (it raises its game), SHAPE_LEAD or more ahead that much
-# narrower (it eases off), the nudge itself still solved to the expected points: more comebacks, fewer
-# blowouts -- the favourite wins more often without winning by more, as the real games show.
-SHAPE_TRAIL = 1
-SHAPE_LEAD = 9
 # The pace nudge (v21-drives, a switch for pricing: drives_solve): one tempo for the match (a start's "tempo")
 # added to both sides' time tilts (PHI_TIME's seconds / 10: below none, quicker snaps, more drives) until the
 # sim's kick-off drives meet the match's expected drives, by secant steps from the build's slope
@@ -2230,17 +2222,16 @@ def drive_level(m):
     return m.pace_level, m.tempo_slope
 
 
-def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0, shape=0.0):
+def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0):
     """((home, away) final scores, alpha): the sim from `start` with each side's offense nudged along
     the strength direction by alpha (2,) so its kick-off means meet `target` (home, away) -- or, share
     below 1, that share of the way there from the sim's own means: secant steps from the build's slope,
-    each on the same random numbers; the last run's scores (and its stats). shape (kappa): the second
-    lever on, its edge the target's margin (SHAPE_TRAIL)."""
-    scores, alpha, _, _ = drives_solve(model, start, target, None, n_paths, seed, iters, stats, share, shape)
+    each on the same random numbers; the last run's scores (and its stats)."""
+    scores, alpha, _, _ = drives_solve(model, start, target, None, n_paths, seed, iters, stats, share)
     return scores, alpha
 
 
-def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0, shape=0.0,
+def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0,
                  drives_share=1.0):
     """((home, away) final scores, alpha, tempo, (the sim's own drives a game, its drives at the last)):
     nudge_solve with the pace nudge alongside -- one tempo on both sides' time tilts, moved until the
@@ -2264,8 +2255,6 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
         st = dict(start)
         if nudging:
             st["nudge"] = np.tile(alpha, (n, 1))
-            if shape:
-                st.update(edge=np.full(n, float(target[0] - target[1])), shape=np.full(n, float(shape)))
         if pacing:
             st["tempo"] = np.full(n, tempo)
         last = it == iters
@@ -2852,31 +2841,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     # every real record's theta . phi for the run's tilts, once (TILT_CACHE; None: each draw works its own out)
     tz_time = model.time.tilt_z(th_time, P) if th_time is not None else None
     tz_dist = model.dist.tilt_z(th_dist, P) if th_dist is not None else None
-    # the second lever (SHAPE_TRAIL): each side's distance tilt three ways -- as it is, the favourite behind
-    # (the gap wider), the favourite well ahead (narrower) -- each snap drawn on its score's
-    shape_on = (th_dist is not None and getattr(model, "nudge_dir", None) is not None and "shape" in start
-                and "edge" in start and bool(np.any(np.asarray(start["shape"], float) != 0)))
-    fav = th_reg = tz_reg = None
-    if shape_on:
-        edge = rep(start["edge"], float)
-        fav = np.where(edge >= 0, 0, 1)
-        half = 0.5 * rep(start["shape"], float) * np.abs(edge)
-        home_up = np.where(fav == 0, half, -half)
-        push = np.stack([home_up, -home_up], axis=1)[:, :, None] * np.asarray(model.nudge_dir)[None, None, :]
-        th_reg = np.stack([th_dist, th_dist + push, th_dist - push])
-        tz_reg = model.dist.tilt_z(th_reg.reshape((3 * P,) + th_dist.shape[1:]), P)
-        if tz_reg is not None:
-            tz_reg = (tz_reg[0], tz_reg[1].reshape(3, P, 2))
     tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
-    # pace when ahead (v21_pace): each side's time tilt two ways -- as it is, and with its gamer's own extra
-    # while the side is PACE_LEAD or more ahead -- each snap's time drawn on its score's
-    pace_on = th_time is not None and "pace" in start and bool(np.any(np.asarray(start["pace"], float) != 0))
-    th_up = tz_up = None
-    if pace_on:
-        th_up = th_time + rep(start["pace"], float)[:, :, None]
-        tz_up = model.time.tilt_z(np.stack([th_time, th_up]).reshape((2 * P,) + th_time.shape[1:]), P)
-        if tz_up is not None:
-            tz_up = (tz_up[0], tz_up[1].reshape(2, P, 2))
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
@@ -3147,10 +3112,6 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
         th = th_time[ix, off] if th_time is not None else None
         tz = tz_of(tz_time, ix, off) if th is not None and not stopped else None
-        if pace_on:
-            up = (score[ix, off] - score[ix, 1 - off] >= PACE_LEAD).astype(np.int64)
-            th = np.where(up[:, None] == 1, th_up[ix, off], th)
-            tz = None if stopped or tz_up is None else (tz_up[0], tz_up[1][up, ix, off])
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
             else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th, tz=tz) if near is not None \
             else model.time.draw_tilted(b, u, th, rng, tz=tz) if th is not None \
@@ -3193,11 +3154,6 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             b = league_bins(model.dist, f)
         th = th_dist[ix, off] if th_dist is not None else None
         tz = tz_of(tz_dist, ix, off) if th is not None else None
-        if shape_on:                                  # the favourite's lead picks the tilt (SHAPE_TRAIL)
-            fl = score[ix, fav[ix]] - score[ix, 1 - fav[ix]]
-            reg = np.where(fl <= -SHAPE_TRAIL, 1, np.where(fl >= SHAPE_LEAD, 2, 0))
-            th = th_reg[reg, ix, off]
-            tz = None if tz_reg is None else (tz_reg[0], tz_reg[1][reg, ix, off])
         j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin, tz=tz) if field_share \
             else model.dist.draw_tilted(b, u, th, rng, tz=tz) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())

@@ -1143,73 +1143,18 @@ def common_options():
                         help=f"time axis for the cells (default {config.TIME_AXIS})")
     tuning.add_argument("--candidate", metavar="STREAM",
                         help="what stands in the candidate's place: a table name, "
-                             "or a model version (v8 to v14, v21 -- see eAMFModel) priced "
+                             "or a model version (v14, v21 -- see eAMFModel) priced "
                              "live off SCOUTING_FULL's PLAY_OVER snapshots and its build; "
-                             "several, comma-separated (v8,v9), set each against prod "
+                             "several, comma-separated (v14,v21), set each against prod "
                              "side by side in the report; a second build of a version is "
-                             "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917; v21 with an in-play "
+                             "NAME=DIR, e.g. v21,v21-t919=v21_t919; v21 with an in-play "
                              "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
-                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react); with the second strength "
-                             "lever (the favourite's gap played by the score) v21-shapeK, e.g. v21-shape0.25 "
+                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react); with the pace nudge "
+                             "v21-drives (--v21-drives) "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
-                             "model version when one stands in, e.g. v9; else 'candidate')")
-    tuning.add_argument("--v8-model", metavar="DIR",
-                        help="eAMFModel v8-build's output, for --candidate v8 "
-                             "(default $EAMF_V8_MODEL, then ./v8_model)")
-    tuning.add_argument("--v8-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v8 "
-                             f"(default {config.V8_PATHS})")
-    tuning.add_argument("--v8-lines", choices=["own", "even", "prod"],
-                        help=f"--candidate v8: its own lines (in the gap between the key numbers), the"
-                             f" even line or prod's (default {config.V8_LINES})")
-    tuning.add_argument("--v9-model", metavar="DIR",
-                        help="eAMFModel v9-build's output, for --candidate v9 "
-                             "(default $EAMF_V9_MODEL, then ./v9_model)")
-    tuning.add_argument("--v9-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v9 "
-                             f"(default {config.V9_PATHS})")
-    tuning.add_argument("--v9-lines", choices=["own", "even", "prod"],
-                        help=f"--candidate v9: its own lines (in the gap between the key numbers), the"
-                             f" even line or prod's (default {config.V9_LINES})")
-    tuning.add_argument("--v10-model", metavar="DIR",
-                        help="eAMFModel v10-build's output, for --candidate v10 "
-                             "(default $EAMF_V10_MODEL, then ./v10_model)")
-    tuning.add_argument("--v10-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v10 "
-                             f"(default {config.V10_PATHS})")
-    tuning.add_argument("--v10-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v10: its own lines (in the gap between the key numbers), the"
-                             " even line, the even line held until far off (hyst), prod's, or prod's"
-                             f" moved only as far as it must (anchored) (default {config.V10_LINES})")
-    tuning.add_argument("--v11-model", metavar="DIR",
-                        help="eAMFModel v11-build's output, for --candidate v11 "
-                             "(default $EAMF_V11_MODEL, then ./v11_model)")
-    tuning.add_argument("--v11-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v11 "
-                             f"(default {config.V11_PATHS})")
-    tuning.add_argument("--v11-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v11: as --v10-lines "
-                             f"(default {config.V11_LINES})")
-    tuning.add_argument("--v12-model", metavar="DIR",
-                        help="eAMFModel v12-build's output, for --candidate v12 "
-                             "(default $EAMF_V12_MODEL, then ./v12_model)")
-    tuning.add_argument("--v12-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v12 "
-                             f"(default {config.V12_PATHS})")
-    tuning.add_argument("--v12-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v12: as --v10-lines "
-                             f"(default {config.V12_LINES})")
-    tuning.add_argument("--v13-model", metavar="DIR",
-                        help="eAMFModel v13-build's output, for --candidate v13 "
-                             "(default $EAMF_V13_MODEL, then ./v13_model)")
-    tuning.add_argument("--v13-paths", type=int, metavar="N",
-                        help=f"games simulated per snapshot for --candidate v13 "
-                             f"(default {config.V13_PATHS})")
-    tuning.add_argument("--v13-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v13: as --v10-lines "
-                             f"(default {config.V13_LINES})")
+                             "model version when one stands in, e.g. v21; else 'candidate')")
     tuning.add_argument("--v14-model", metavar="DIR",
                         help="eAMFModel v14-build's output, for --candidate v14 "
                              "(default $EAMF_V14_MODEL, then ./v14_model)")
@@ -1217,8 +1162,9 @@ def common_options():
                         help=f"games simulated per snapshot for --candidate v14 "
                              f"(default {config.V14_PATHS})")
     tuning.add_argument("--v14-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v14: as --v10-lines "
-                             f"(default {config.V14_LINES})")
+                        help="--candidate v14: its own lines (in the gap between the key numbers), the"
+                             " even line, prod's, prod's line moved only as far as it must (anchored) or the"
+                             f" even line held until far off (hyst) (default {config.V14_LINES})")
     tuning.add_argument("--v21-model", metavar="DIR",
                         help="eAMFModel v21-build's output, for --candidate v21 "
                              "(default $EAMF_V21_MODEL, then ./v21_model)")
@@ -1226,11 +1172,11 @@ def common_options():
                         help=f"games simulated per snapshot for --candidate v21 "
                              f"(default {config.V21_PATHS}; the kick-off twice that, each side receiving)")
     tuning.add_argument("--v21-lines", choices=["own", "even", "prod", "anchored", "hyst"],
-                        help="--candidate v21: as --v10-lines "
+                        help="--candidate v21: as --v14-lines "
                              f"(default {config.V21_LINES})")
     tuning.add_argument("--v21-prior-model", metavar="DIR|CSV",
                         help="--candidate v21: a walkthrough variant's table (walkthrough's priors/VARIANT.csv), "
-                             "or the v13/v14 build (made with --history) whose pre-match "
+                             "or the v14 build (made with --history) whose pre-match "
                              "expected points v21 nudges toward (default $EAMF_V21_PRIOR, then the form table "
                              "form-prior writes, out/form_prior/priors/avg_form4_w05.csv, then $EAMF_V14_MODEL, "
                              "then ./v14_model)")
@@ -1271,24 +1217,6 @@ def apply_overrides(args):
                            ("snapshots", "SNAPSHOTS"),
                            ("chunk", "MATCH_CHUNK_SIZE"),
                            ("candidate_label", "CANDIDATE_LABEL"),
-                           ("v8_model", "V8_MODEL_DIR"),
-                           ("v8_paths", "V8_PATHS"),
-                           ("v8_lines", "V8_LINES"),
-                           ("v9_model", "V9_MODEL_DIR"),
-                           ("v9_paths", "V9_PATHS"),
-                           ("v9_lines", "V9_LINES"),
-                           ("v10_model", "V10_MODEL_DIR"),
-                           ("v10_paths", "V10_PATHS"),
-                           ("v10_lines", "V10_LINES"),
-                           ("v11_model", "V11_MODEL_DIR"),
-                           ("v11_paths", "V11_PATHS"),
-                           ("v11_lines", "V11_LINES"),
-                           ("v12_model", "V12_MODEL_DIR"),
-                           ("v12_paths", "V12_PATHS"),
-                           ("v12_lines", "V12_LINES"),
-                           ("v13_model", "V13_MODEL_DIR"),
-                           ("v13_paths", "V13_PATHS"),
-                           ("v13_lines", "V13_LINES"),
                            ("v14_model", "V14_MODEL_DIR"),
                            ("v14_paths", "V14_PATHS"),
                            ("v14_lines", "V14_LINES"),

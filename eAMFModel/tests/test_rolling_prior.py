@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from .. import nb2_prior, rolling_prior, v12
+from .. import nb2_prior, rolling_prior, v14
 
 
 class FakeFit:
@@ -116,20 +116,20 @@ class TestRollingPrior(unittest.TestCase):
 
     def test_attach_points_a_build_at_the_fits_and_checks_the_kind(self):
         rolling_prior.fit([], "glmer", self.dir, dt.date(2026, 9, 10), dt.date(2026, 9, 10), verbose=False)
-        build = os.path.join(self.tmp.name, "v12_model")
+        build = os.path.join(self.tmp.name, "v14_model")
         os.makedirs(build)
-        with open(os.path.join(build, v12.PRIOR_FILE), "w") as fh:
+        with open(os.path.join(build, v14.PRIOR_FILE), "w") as fh:
             json.dump({"prior": "nb2"}, fh)
         with self.assertRaises(SystemExit):
             rolling_prior.attach(build, self.dir)                 # an NB2 build's shrink is NB2's
-        with open(os.path.join(build, v12.PRIOR_FILE), "w") as fh:
+        with open(os.path.join(build, v14.PRIOR_FILE), "w") as fh:
             json.dump({"prior": "glmer"}, fh)
         rolling_prior.attach(build, self.dir)
-        pre = v12.prematch_model(build)
+        pre = v14.prematch_model(build)
         self.assertIsInstance(pre, rolling_prior.Rolling)         # no shrink file: unwrapped
         self.assertEqual(pre.means([_row("a", "2026-09-10 08:00:00")])["a"][0], 10)
         rolling_prior.detach(build)
-        with open(os.path.join(build, v12.PRIOR_FILE)) as fh:
+        with open(os.path.join(build, v14.PRIOR_FILE)) as fh:
             self.assertNotIn("rolling", json.load(fh))
 
 

@@ -15,7 +15,7 @@ from unittest import mock
 
 import numpy as np
 
-from .. import follow, glmer_prior, nb2_prior, players, rolling_prior, sim9, sim14, v14, v14_stream
+from .. import follow, glmer_prior, nb2_prior, players, rolling_prior, sim14, v14, v14_stream
 from ..state import HOME, GameState
 from .fakes import _matches, _with_handles
 
@@ -42,25 +42,6 @@ class v12_off:
     def __exit__(self, *exc):
         for k, v in self.saved.items():
             setattr(sim14, k, v)
-
-
-class TestV12IsV9(unittest.TestCase):
-    """With its own changes off, v12's simulation plays as v9's (v10 changed only the pricing
-    around it): the same tables and the same games."""
-
-    def test_v12_plays_as_v9(self):
-        matches = _matches()
-        with v12_off():
-            t10 = sim14.Tables.build(matches, min_records=20)
-        t9 = sim9.Tables.build(matches, min_records=20)
-        st = sim14.Start(4)
-        st.period[:], st.clock[:], st.phase[:] = [2, 3, 4, 4], [30.0, 150.0, 50.0, 25.0], sim14.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
-        st.down[:] = [1, 2, 1, 4]
-        with v12_off():
-            a = sim14.simulate(t10, st, 300, np.random.default_rng(1), seed=9)
-        b = sim9.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
 
 class TestCommonRandomNumbers(unittest.TestCase):
@@ -716,24 +697,6 @@ class TestV9Changes(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.matches = _matches()
-
-    def test_with_its_own_switches_off_v12_plays_as_v8(self):
-        from .. import sim8
-        saved = (sim14.NATURAL_SHIFT, sim14.TO_PLAY_SECONDS)
-        sim14.NATURAL_SHIFT = sim14.TO_PLAY_SECONDS = False
-        try:
-            with v12_off():
-                t9 = sim14.Tables.build(self.matches, min_records=20)
-                t8 = sim8.Tables.build(self.matches, min_records=20)
-                st = sim14.Start(4)
-                st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 150.0, 50.0, 25.0], sim14.SCRIM
-                st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 50, 80, 75], [3, 17, 10, 10], [10, 10, 16, 13]
-                st.down[:] = [1, 2, 1, 4]
-                a = sim14.simulate(t9, st, 300, np.random.default_rng(1), seed=9)
-                b = sim8.simulate(t8, st, 300, np.random.default_rng(1), seed=9)
-        finally:
-            sim14.NATURAL_SHIFT, sim14.TO_PLAY_SECONDS = saved
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
     def test_matches_weigh_less_with_age(self):
         recs = [dict(match="AF001100926"), dict(match="AF001030926"), dict(match="X")]
@@ -2081,26 +2044,6 @@ def _row(kind, period, clock, offense, field, p1, p2, down="1", messages=""):
                 score_p2=str(p2), play_messages=messages, team_a_side="home")
 
 
-class TestV12IsV11(unittest.TestCase):
-    """With v12's own changes off, sim14 builds v11's tables and plays v11's games."""
-
-    def test_v12_plays_as_v11(self):
-        from .. import sim11
-        matches = _matches()
-        with v12_off(own=True):
-            t12 = sim14.Tables.build(matches, min_records=20)
-        t11 = sim11.Tables.build(matches, min_records=20)
-        np.testing.assert_array_equal(t12.close_fourth, t11.close_fourth)
-        st = sim14.Start(4)
-        st.period[:], st.clock[:], st.phase[:] = [2, 4, 4, 4], [30.0, 110.0, 50.0, 25.0], sim14.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, [50, 70, 80, 75], [3, 10, 10, 10], [10, 10, 10, 13]
-        st.down[:] = [1, 2, 1, 4]
-        with v12_off(own=True):
-            a = sim14.simulate(t12, st, 300, np.random.default_rng(1), seed=9)
-        b = sim11.simulate(t11, st, 300, np.random.default_rng(1), seed=9)
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
-
-
 class TestV12LevelEndings(unittest.TestCase):
     """v12: close 4th downs kick by the clock slice; close late kicks take the clock as real ones do."""
 
@@ -2289,42 +2232,10 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class v13_off(v12_off):
-    """sim14 with v13's own change (the big-play rate) switched off: v12."""
-
-    def __init__(self):
-        self.keys = V13_OWN + V14_OWN
-
-
 def _big_tables(matches=None):
     """Tables with big plays in them: the fake matches gain 25+ yards now and then, never 40."""
     with mock.patch.object(sim14, "BIG_GAIN", 20):
         return sim14.Tables.build(matches or _matches(), min_records=20)
-
-
-class TestV13IsV12(unittest.TestCase):
-    """With its big-play rate off, sim14 builds v12's tables and plays v12's games; on, at a rate
-    of 1 for both sides, it plays them too, its bins only reordered."""
-
-    def test_v13_plays_as_v12(self):
-        from .. import sim12
-        matches = _matches()
-        with v13_off():
-            t13 = sim14.Tables.build(matches, min_records=20)
-        t12 = sim12.Tables.build(matches, min_records=20)
-        np.testing.assert_array_equal(t13.gain, t12.gain)
-        st = sim14.Start(4)
-        st.period[:], st.clock[:], st.phase[:] = [1, 2, 3, 4], [200.0, 30.0, 150.0, 50.0], sim14.SCRIM
-        st.team[:], st.y[:], st.home[:], st.away[:] = 0, [25, 50, 60, 80], [0, 3, 17, 10], [0, 10, 10, 16]
-        with v13_off():
-            a = sim14.simulate(t13, st, 300, np.random.default_rng(1), seed=9)
-        b = sim12.simulate(t12, st, 300, np.random.default_rng(1), seed=9)
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
-
-    def test_rate_one_leaves_the_draw_alone(self):
-        u = np.linspace(0.001, 0.999, 50)
-        np.testing.assert_array_equal(sim14.big_warp(u, 1.3, 0.1, 0.4, 1.0), u)
-        np.testing.assert_array_equal(sim14.big_warp(u, 1.3, 0.0, 0.4, 2.0), u)     # no big play in the bin
 
 
 class TestBigWarp(unittest.TestCase):
@@ -2355,6 +2266,11 @@ class TestBigWarp(unittest.TestCase):
     def test_the_middle_never_runs_out(self):
         top, bot, _ = self._shares(1.0, 0.3, 0.6, 3.0)
         self.assertGreaterEqual(1 - top - bot, sim14.BIG_MIDDLE - 0.003)
+
+    def test_rate_one_leaves_the_draw_alone(self):
+        u = np.linspace(0.001, 0.999, 50)
+        np.testing.assert_array_equal(sim14.big_warp(u, 1.3, 0.1, 0.4, 1.0), u)
+        np.testing.assert_array_equal(sim14.big_warp(u, 1.3, 0.0, 0.4, 2.0), u)     # no big play in the bin
 
 
 class TestBigPlays(unittest.TestCase):
@@ -2437,32 +2353,6 @@ class TestBigPlays(unittest.TestCase):
         loaded = os.path.join(tempfile.mkdtemp(), "g.npz")
         grid.save(loaded)
         self.assertEqual(v14.PriorGrid.load(loaded).big_response(1.0, 1.0), grid.big_response(1.0, 1.0))
-
-
-class v14_off(v12_off):
-    """sim14 with v14's own changes (kick-offs by the clock and the kicker, the lost-yardage plays) off: v13."""
-
-    def __init__(self):
-        self.keys = V14_OWN
-
-
-class TestV14IsV13(unittest.TestCase):
-    """With its kick styles off, sim14 builds v13's tables and plays v13's games."""
-
-    def test_v14_plays_as_v13(self):
-        from .. import sim13
-        matches = _matches()
-        with v14_off():
-            t14 = sim14.Tables.build(matches, min_records=20)
-        t13 = sim13.Tables.build(matches, min_records=20)
-        np.testing.assert_array_equal(t14.gain, t13.gain)
-        st = sim14.Start(3)
-        st.period[:], st.clock[:] = [1, 2, 4], [240.0, 100.0, 90.0]
-        st.team[:], st.home[:], st.away[:] = [0, 1, 0], [0, 7, 10], [0, 7, 13]
-        with v14_off():
-            a = sim14.simulate(t14, st, 300, np.random.default_rng(1), seed=9)
-        b = sim13.simulate(t13, st, 300, np.random.default_rng(1), seed=9)
-        self.assertTrue(np.array_equal(a[0], b[0]) and np.array_equal(a[1], b[1]))
 
 
 def _kick_rows(period, clock, field, after_clock, kicker="TEAM_A"):
@@ -2732,14 +2622,12 @@ class TestOptimumBuild(unittest.TestCase):
         self.assertIsNone(cli._daily(self.model, self.history[:2], "glmer", dt.date(2026, 9, 10)))
         self.assertEqual(self.Fake.built, [])
 
-    def test_v14_builds_glmer_on_every_snapshot_and_the_others_as_before(self):
+    def test_v14_builds_glmer_on_every_snapshot(self):
         from .. import __main__ as cli
         parser = cli.build_parser()
         a = parser.parse_args(["v14-build"])
         self.assertEqual((a.snapshots, a.prior, a.half, a.no_daily),
                          (cli.DATA["snapshots"], "glmer", "all", False))
-        b = parser.parse_args(["v13-build", "snaps.csv"])
-        self.assertEqual((b.prior, b.half), ("nb2", "train"))
 
 
 class TestKeptFits(unittest.TestCase):

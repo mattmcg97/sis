@@ -32,7 +32,7 @@ import zlib
 
 import numpy as np
 
-from . import sim14 as s14, v13, v21, v21_stream
+from . import sim14 as s14, v14, v21
 
 DEFAULT_PATHS = 1000          # kick-off games per receiving side
 STATE_PATHS = 200
@@ -152,7 +152,7 @@ def real_drives(rows):
 
 def _worker(job):
     """Price a list of matches: kick-off and every --every-th real state."""
-    model_path, items, n_paths, state_paths, every, share, shape, drives_share = job
+    model_path, items, n_paths, state_paths, every, share, drives_share = job
     model = v21.Model.load(model_path)
     out, census = {}, None
     for code, rows, pair, teams, target, pace in items:
@@ -163,18 +163,17 @@ def _worker(job):
         if pace is not None:                           # the expected drives over their mean, at the sim's level
             goal = pace * v21.drive_level(model)[0]
             (h, a), alpha, tempo, (own, _) = v21.drives_solve(model, start, target if nudging else None, goal, n_paths,
-                                                              seed=_seed(code), stats=st, share=share, shape=shape,
+                                                              seed=_seed(code), stats=st, share=share,
                                                               drives_share=drives_share)
             alpha = alpha if nudging else None
         elif nudging:
-            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st, share=share,
-                                            shape=shape)
+            (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), stats=st, share=share)
         else:
             h, a = v21.simulate(model, start, n_paths, seed=_seed(code), stats=st)
         h, a = h.ravel(), a.ravel()
         drives = float(st["drives"].mean())
         census = _add(census, _census(st, len(model.gamers) + 1))
-        got = dict(kick=(float(h.mean()), float(a.mean())), book=v13._distributions(h, a),
+        got = dict(kick=(float(h.mean()), float(a.mean())), book=v14._distributions(h, a),
                    p_home=float(((h > a).sum() + 0.5 * (h == a).sum()) / len(h)), states=[],
                    nudge=None if alpha is None else tuple(float(x) for x in alpha), drives=drives,
                    own_drives=drives if own is None else own, tempo=tempo, goal_drives=goal)
@@ -183,9 +182,6 @@ def _worker(job):
             S = v21.concat_starts([s for _, s in starts])
             if alpha is not None:
                 S["nudge"] = np.tile(alpha, (len(S["period"]), 1))
-                if shape:                              # the second lever, its edge the kick-off's margin
-                    S["edge"] = np.full(len(S["period"]), float(h.mean() - a.mean()))
-                    S["shape"] = np.full(len(S["period"]), float(shape))
             if tempo is not None:                      # the pace nudge, as the kick-off's
                 S["tempo"] = np.full(len(S["period"]), float(tempo))
             sh, sa = v21.simulate(model, S, state_paths, seed=_seed(code) + 1)
@@ -201,15 +197,13 @@ def _worker(job):
 
 def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFAULT_PATHS,
         state_paths=STATE_PATHS, every=EVERY, workers=1, prior_books=None, pool=None, nudge=False, nudge_share=1.0,
-        shape=0.0, gap=None, drives=None, drives_share=1.0):
+        drives=None, drives_share=1.0):
     """Per match: its row, finals, the inputs, the sim's kick-off and its states; and the census of the
     sim's draws and the real games'. `means` {code: (home, away)} are the inputs; `prior_books`
     {code: (margin pmf, total pmf)} the prior's own price, for grading. nudge (a tilt build): each side's
     offense nudged along the strength direction to meet the inputs at kick-off (v21.nudge_solve), the
-    same nudge carried into its real states; nudge_share: that share of the way from the sim's own means;
-    shape: the second strength lever's kappa with the nudge (v21.SHAPE_TRAIL; 0: off); gap: the gap shrink,
-    the nudge meeting the inputs' margin x gap, their total kept (v21_stream.shrunk; None: off) -- the
-    report still sets the sim against the inputs as given. drives {code: expected drives}: set against the
+    same nudge carried into its real states; nudge_share: that share of the way from the sim's own means.
+    drives {code: expected drives}: set against the
     sim's and the real drives, and with nudge on, the pace nudge -- one tempo on both sides' clocks so the
     kick-off games' drives go drives_share of the way from the sim's own to them, relative to their mean at
     the sim's own level (v21.drives_solve, v21.drive_level), carried into the real states as the nudge is."""
@@ -228,12 +222,12 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
         raise SystemExit("the pace nudge moves the time tilts: it needs a tilt build (v21-build --mode tilt)")
     level = float(np.mean(list(drives.values()))) if drives else None      # the table's: its league's drives
     items = [(c, [{k: r.get(k) for k in ROW_KEYS} for r in v21._with_side(matches[c])])
-             + v21.match_people(c, matches[c], hist) + (v21_stream.shrunk(means[c], gap) if nudge else None,
+             + v21.match_people(c, matches[c], hist) + (tuple(float(x) for x in means[c]) if nudge else None,
                                                         drives[c] / level if pacing and c in drives else None)
              for c in codes]
     workers = max(1, min(workers, len(items)))
-    jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share, float(shape or 0.0),
-             float(drives_share)) for k in range(workers)]
+    jobs = [(model_path, items[k::workers], n_paths, state_paths, every, nudge_share, float(drives_share))
+            for k in range(workers)]
     if workers == 1:
         parts = [_worker(j) for j in jobs]
     else:
@@ -252,12 +246,11 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
     return dict(results=results, census=census, real=real_census({c: matches[c] for c in codes}, model, history),
                 gamer_names={i: g for g, i in model.gamers.items()}, share=model.share, mode=model.mode, since=since, until=until, every=every,
                 n_paths=n_paths, state_paths=state_paths, nudge=bool(nudge), nudge_share=float(nudge_share),
-                shape=float(shape or 0.0), gap=gap, pacing=pacing, drives_share=float(drives_share), drives_level=level,
+                pacing=pacing, drives_share=float(drives_share), drives_level=level,
                 sim_level=v21.drive_level(model)[0] if pacing else None)
 
 
 def _pool():
-    from . import v14
     return v14.pool_context()
 
 
@@ -271,7 +264,7 @@ def _finals(r):
 # ---------------------------------------------------------------- the inputs
 
 def prior_inputs(model_dir, rows, history, which="raw"):
-    """({code: (home, away) expected points}, {code: (margin pmf, total pmf)}) off a v13/v14 build's
+    """({code: (home, away) expected points}, {code: (margin pmf, total pmf)}) off a v14 build's
     pre-match model -- its own means (raw) or the means the build prices with (priced) -- or a prior table
     (a walkthrough variant's CSV), and the prior's own score model on them (a table's, the one each of its
     rows carries)."""
@@ -373,9 +366,8 @@ FAV_NAMES = ("fav by <2", "fav by 2-4", "fav by 4-7", "fav by 7+")
 
 def _margin_pmf(book):
     """(margins, pmf) off a book's margin pmf (index MARGIN_MAX is a tie)."""
-    from . import v13
     pmf = np.asarray(book[0], float)
-    return np.arange(len(pmf)) - v13.MARGIN_MAX, pmf
+    return np.arange(len(pmf)) - v14.MARGIN_MAX, pmf
 
 
 def _spreads(book):
@@ -680,9 +672,6 @@ def report(out):
     res = out["results"]
     nudged = (", nudged to the inputs" if out.get("nudge_share", 1.0) == 1.0
               else f", nudged {100 * out.get('nudge_share', 1.0):.0f}% of the way to the inputs") if out.get("nudge") else ""
-    nudged += f", the second strength lever at kappa {out['shape']:g}" if out.get("nudge") and out.get("shape") else ""
-    nudged += (f", the inputs' margins x {out['gap']:g} (the gap shrink)" if out.get("nudge") and out.get("gap") is not None
-               else "")
     if out.get("pacing"):
         nudged += (", the pace nudge to the expected drives" if out.get("drives_share", 1.0) == 1.0 else
                    f", the pace nudge {100 * out['drives_share']:.0f}% of the way to the expected drives")
