@@ -1,0 +1,205 @@
+
+  MARGIN UPLIFT -- two books: every in-play tick a dummy bet to win 100, given to whichever book pays more; every match counts the same
+  prod against each candidate, 2026-10-12 to 2026-10-19, on 470 matches: prod's ticks with a price in every feed no more than 2 minutes old, every probability 0.05-0.95
+  margin chart: proportional 109% (no chart given); clock: minutes x 2.233 -> 60 game minutes; the last 6 left out; 95% over matches (1,000 resamples)
+  prod 81,218 of 275,392 ticks matched; v21 81,218 of 84,712 ticks matched; v21-avg 81,218 of 84,712 ticks matched
+  v21, v21-avg priced only at the moments the bets read: the dummy bets are prod's ticks there alone, each at its own price (bets --all-moments for every tick)
+
+  v21 against prod, Moneyline
+    dummy bets                                     24,993
+    matches                                           469
+    to the candidate %                              27.99
+    candidate takes %                                8.77
+    prod keeps %                                     1.26
+    candidate - prod                +7.51 [+0.93, +14.23]
+    both books %                                     3.36
+    prod alone %                                     6.26
+    both - prod alone                -2.90 [-3.95, -1.99]
+    log loss, cand - prod      -0.0080 [-0.0213, +0.0065]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                       9,744    33.10    9.39   -6.30   +15.69 [+3.23, +28.64]     -5.40 [-6.57, -4.30]
+    Q2                       8,190    26.81    8.83    2.53    +6.31 [-3.06, +16.65]     -2.20 [-3.57, -0.99]
+    Q3                       5,496    26.14    9.16    2.01    +7.15 [-0.15, +15.41]     -2.55 [-4.37, -1.17]
+    Q4                       1,563    30.01    5.90    7.10    -1.20 [-10.75, +8.65]     -1.46 [-4.15, +0.89]
+    by prod's chance          bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    0.05-0.20                2,424    48.55   13.81   -7.23  +21.03 [-23.09, +68.47]   -13.42 [-17.88, -9.63]
+    0.20-0.35                3,483    47.16   31.31   -0.24   +31.55 [+5.46, +57.39]    -9.79 [-11.97, -7.52]
+    0.35-0.50                6,631    45.76   13.00   -6.62   +19.62 [+0.20, +38.79]    -9.08 [-10.37, -7.71]
+    0.50-0.65                6,627    38.87   10.01   -7.25   +17.26 [+2.85, +30.47]     -5.77 [-6.82, -4.83]
+    0.65-0.80                3,439    36.76    5.85   -5.32   +11.17 [+1.23, +20.87]     -3.59 [-4.41, -2.77]
+    0.80-0.95                2,389    23.01    7.65    3.67    +3.99 [-2.23, +10.57]     -1.67 [-2.98, -0.53]
+
+  v21 against prod, Spread (3,440 of 28,006 matched ticks at prod's line)
+    dummy bets                                      3,440
+    matches                                           386
+    to the candidate %                              42.53
+    candidate takes %                                7.99
+    prod keeps %                                    -0.92
+    candidate - prod                +8.92 [-6.86, +24.80]
+    both books %                                     2.87
+    prod alone %                                     8.17
+    both - prod alone                -5.30 [-5.91, -4.73]
+    log loss, cand - prod      -0.0093 [-0.0205, +0.0013]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                         548    44.98    7.29   -0.18   +7.47 [-30.15, +42.88]     -5.45 [-6.88, -4.07]
+    Q2                       1,000    43.70   11.19   -4.31  +15.50 [-10.96, +40.19]     -5.49 [-6.42, -4.52]
+    Q3                       1,368    42.31    7.29    0.67   +6.62 [-15.69, +29.70]     -4.54 [-5.49, -3.67]
+    Q4                         524    38.51    4.08    0.37   +3.71 [-32.65, +41.01]     -6.72 [-8.44, -4.94]
+
+  v21 against prod, Totals (2,182 of 27,712 matched ticks at prod's line)
+    dummy bets                                      2,182
+    matches                                           344
+    to the candidate %                              43.58
+    candidate takes %                                2.60
+    prod keeps %                                     3.36
+    candidate - prod               -0.76 [-16.16, +14.33]
+    both books %                                     3.03
+    prod alone %                                     7.67
+    both - prod alone                -4.64 [-5.24, -4.07]
+    log loss, cand - prod      -0.0035 [-0.0134, +0.0065]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                         572    45.64    0.44    7.24   -6.81 [-36.95, +21.75]     -3.97 [-5.03, -2.92]
+    Q2                         610    45.69   -2.76   11.39  -14.15 [-43.83, +15.65]     -3.33 [-4.23, -2.49]
+    Q3                         766    41.35   11.46   -5.96   +17.42 [-9.82, +42.37]     -5.74 [-6.82, -4.65]
+    Q4                         234    39.23   -2.89    2.51   -5.40 [-55.15, +41.49]     -6.70 [-9.21, -4.49]
+
+  v21-avg against prod, Moneyline
+    dummy bets                                     24,993
+    matches                                           469
+    to the candidate %                              31.79
+    candidate takes %                                8.18
+    prod keeps %                                     2.02
+    candidate - prod                +6.16 [-0.11, +12.52]
+    both books %                                     3.98
+    prod alone %                                     6.26
+    both - prod alone                -2.28 [-3.17, -1.53]
+    log loss, cand - prod      -0.0134 [-0.0217, -0.0049]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                       9,744    45.03    7.07   -5.26   +12.34 [+1.23, +24.93]     -4.00 [-4.86, -3.17]
+    Q2                       8,190    29.11    7.18    3.99    +3.19 [-6.12, +11.75]     -1.50 [-2.86, -0.44]
+    Q3                       5,496    28.55   10.06    1.96    +8.10 [+1.32, +15.68]     -2.15 [-3.77, -0.89]
+    Q4                       1,563    30.53    7.07    5.81    +1.26 [-9.41, +11.60]     -2.00 [-4.25, -0.28]
+    by prod's chance          bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    0.05-0.20                2,424    46.09   18.07   -2.85  +20.91 [-21.99, +65.42]    -9.61 [-12.80, -6.87]
+    0.20-0.35                3,483    45.05   37.73    1.62  +36.11 [+11.24, +60.04]     -6.54 [-8.02, -5.18]
+    0.35-0.50                6,631    46.03   17.36   -4.32   +21.67 [+3.74, +39.69]     -5.78 [-6.66, -4.89]
+    0.50-0.65                6,627    43.44    9.39   -6.52   +15.91 [+2.83, +29.55]     -4.84 [-5.50, -4.18]
+    0.65-0.80                3,439    43.78    5.69   -5.89   +11.58 [+2.60, +20.66]     -3.20 [-3.75, -2.61]
+    0.80-0.95                2,389    26.58    6.25    4.41     +1.85 [-3.99, +7.37]     -1.35 [-2.47, -0.33]
+
+  v21-avg against prod, Spread (3,724 of 28,006 matched ticks at prod's line)
+    dummy bets                                      3,724
+    matches                                           402
+    to the candidate %                              43.13
+    candidate takes %                               11.42
+    prod keeps %                                    -2.94
+    candidate - prod               +14.36 [-0.97, +30.15]
+    both books %                                     3.25
+    prod alone %                                     7.78
+    both - prod alone                -4.53 [-5.09, -4.03]
+    log loss, cand - prod      -0.0094 [-0.0188, -0.0004]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                         626    45.12    4.85    3.07   +1.78 [-33.70, +38.53]     -4.12 [-5.35, -2.96]
+    Q2                       1,114    44.35   13.74   -5.35   +19.09 [-5.33, +44.29]     -4.28 [-5.05, -3.61]
+    Q3                       1,434    42.49    9.30    0.25   +9.05 [-11.72, +29.71]     -4.28 [-5.18, -3.58]
+    Q4                         550    39.75   20.82  -12.98   +33.80 [-2.76, +68.54]     -6.31 [-7.99, -4.74]
+
+  v21-avg against prod, Totals (2,212 of 27,712 matched ticks at prod's line)
+    dummy bets                                      2,212
+    matches                                           354
+    to the candidate %                              42.96
+    candidate takes %                                2.97
+    prod keeps %                                     3.45
+    candidate - prod               -0.48 [-16.63, +15.12]
+    both books %                                     3.24
+    prod alone %                                     7.71
+    both - prod alone                -4.47 [-5.10, -3.94]
+    log loss, cand - prod      -0.0009 [-0.0115, +0.0085]
+    by quarter                bets  to cand   takes   keeps         candidate - prod        both - prod alone
+    Q1                         578    45.57    7.36    2.18   +5.18 [-25.86, +34.94]     -3.58 [-4.49, -2.73]
+    Q2                         602    44.21    3.42    5.48   -2.06 [-33.30, +25.46]     -3.72 [-4.72, -2.76]
+    Q3                         774    41.13   -2.87    5.62   -8.49 [-35.48, +18.54]     -5.07 [-6.15, -4.07]
+    Q4                         258    38.40    7.12   -4.88  +12.00 [-34.42, +54.17]     -7.01 [-9.17, -5.07]
+
+  candidate - prod: the candidate's margin on the bets its prices take less prod's on the ones it keeps -- above zero, the candidate's prices hold up better where they differ (the headline);
+  both - prod alone: the two books together against prod taking every bet, which a second book only lowers; log loss: the same ticks scored on the result (lower is better)
+
+  BY MATCH -- each match's part of candidate - prod (the parts add up to it; every match in margin_uplift_matches.txt)
+
+  Moneyline, v21: the 10 matches that cost it most -4.26; the 10 that gain it most +5.70; over 469 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF066161026     31-32     72     2.15  -153.46   100.00   -1.24
+    AF080131026     18-17     58     4.36  -117.00    99.70   -0.57
+    AF041171026     21-28     58     5.09  -161.51   100.00   -0.55
+    AF011131026     21-14     62    14.36   -78.53   100.00   -0.39
+    AF051171026     15-10     36     4.58  -334.36   100.00   -0.34
+    AF003151026     28-31     50    12.52   -62.12    99.28   -0.30
+    AF032131026     10-14     54     8.57  -240.88   100.00   -0.27
+    AF001181026     42-38     62     9.61  -348.26   100.00   -0.20
+    AF038161026     17-21     80    20.48  -114.32    96.55   -0.20
+    AF051141026     21-14     88    28.85   -71.28    92.31   -0.20
+
+  Spread, v21: the 10 matches that cost it most -5.88; the 10 that gain it most +5.38; over 386 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF037181026     24-26      2    24.11  -171.43   100.00   -0.65
+    AF036181026     21-14      6    28.01  -150.25   100.00   -0.63
+    AF070121026     14-17      8    35.38  -117.46   100.00   -0.60
+    AF045121026     10-13      6    31.51  -140.02   100.00   -0.59
+    AF012121026      10-6     10    38.83  -108.83   100.00   -0.57
+    AF027171026     23-17      6    39.60  -105.61   100.00   -0.57
+    AF044141026     17-21     10    35.67  -125.53   100.00   -0.57
+    AF031131026      7-24     18    37.98  -115.05   100.00   -0.57
+    AF032131026     10-14     20    37.65  -118.26   100.00   -0.56
+    AF001181026     42-38      2    26.35  -199.81   100.00   -0.56
+
+  Totals, v21: the 10 matches that cost it most -6.44; the 10 that gain it most +5.98; over 344 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF026121026     17-14      2    34.29  -118.44   100.00   -0.68
+    AF019141026      10-7      4    31.80  -139.40   100.00   -0.66
+    AF075161026      17-7      2    34.16  -129.36   100.00   -0.65
+    AF051161026     10-13      2    29.17  -166.70   100.00   -0.65
+    AF053161026      0-10      2    29.75  -162.12   100.00   -0.65
+    AF057161026     17-13      4    33.47  -140.17   100.00   -0.64
+    AF078171026     21-17      4    35.59  -129.36   100.00   -0.63
+    AF022161026     24-21      8    31.46  -156.66   100.00   -0.63
+    AF004181026     24-31      2    37.34  -122.68   100.00   -0.62
+    AF044161026      17-0      4    38.38  -118.44   100.00   -0.62
+
+  Moneyline, v21-avg: the 10 matches that cost it most -4.56; the 10 that gain it most +4.30; over 469 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF066161026     31-32     72     1.88  -176.46   100.00   -1.25
+    AF068171026      14-7     42     4.49  -141.68    99.41   -0.57
+    AF080131026     18-17     58     4.68  -109.59    99.70   -0.56
+    AF041171026     21-28     58     5.27  -155.55   100.00   -0.54
+    AF057151026     17-18     66    10.04     3.12    97.78   -0.47
+    AF011131026     21-14     62    18.73   -53.56    99.06   -0.38
+    AF055121026     17-21     72    17.93   -22.84    96.24   -0.21
+    AF023121026     17-21     14    15.80  -167.62   100.00   -0.21
+    AF001181026     42-38     62    18.08  -167.69   100.00   -0.19
+    AF026171026     31-27     70    13.73    90.24    72.26   -0.18
+
+  Spread, v21-avg: the 10 matches that cost it most -5.48; the 10 that gain it most +5.24; over 402 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF084181026     28-21      2    32.17  -123.22   100.00   -0.59
+    AF045121026     10-13      2    27.69  -159.16   100.00   -0.58
+    AF037181026     24-26      4    33.46  -126.24   100.00   -0.57
+    AF025161026     14-28      4    37.89  -111.78   100.00   -0.55
+    AF053171026     14-24     10    37.46  -116.50   100.00   -0.54
+    AF040151026      7-24      4    36.58  -122.38   100.00   -0.54
+    AF031131026      7-24     14    38.39  -113.34   100.00   -0.54
+    AF064161026     15-17      2    40.98  -104.33   100.00   -0.53
+    AF027171026     23-17     10    42.05  -100.60   100.00   -0.53
+    AF044171026     10-24     12    36.98  -125.44   100.00   -0.52
+
+  Totals, v21-avg: the 10 matches that cost it most -6.29; the 10 that gain it most +5.68; over 354 matches
+    match           final  ticks  to cand    takes    keeps    part
+    AF029131026     31-37      4    30.22  -129.36   100.00   -0.70
+    AF046141026     10-24      4    32.91  -125.41   100.00   -0.67
+    AF019141026      10-7      4    30.39  -148.89   100.00   -0.65
+    AF075161026      17-7      2    33.56  -132.85   100.00   -0.64
+    AF009171026      21-7      2    40.22  -103.87   100.00   -0.62
+    AF022161026     24-21      6    31.70  -156.01   100.00   -0.61
+    AF062141026      0-21      4    40.47  -107.76   100.00   -0.61
+    AF044161026      17-0      4    38.58  -117.40   100.00   -0.61
+    AF074171026     27-23      6    41.19  -107.56   100.00   -0.60
+    AF054121026     20-16      4    37.51  -125.68   100.00   -0.60
