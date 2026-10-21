@@ -21,17 +21,25 @@ The code that runs:
 
 | file | what it is |
 |---|---|
-| `sim8.py` … `sim12.py` | each version's simulation: play tables and the snap-by-snap game |
-| `v8.py` … `v12.py` | each version's build (fits, pre-match grid, profiles) and pricing |
-| `v8_stream.py` … `v12_stream.py` | each version as a GAMEPLAI-shaped price stream for the calibrator |
-| `v21.py`, `v21_stream.py` | v2.1's snap sim (build, draws, simulate) and its price stream for the calibrator |
+| `sim14.py`, `v14.py`, `v14_stream.py` | v14: its simulation (play tables, the snap-by-snap game), its build and pricing, and its price stream for the calibrator |
+| `v21.py`, `v21_stream.py` | v2.1's snap sim (build, draws, simulate) and its price stream for the calibrator; `v21_*.py` its report, rules, react, audits |
+| `feed.py` | the scouting export's PLAY_OVER rows read into snaps, kicks and conversions, and the game's rules they are read by |
+| `markets.py` | final scores as margin and total distributions, the lines a book sets on them, each market's chance |
+| `books.py`, `loading.py` | a prior's own score books and their grading on the results; a window's matches off the files |
 | `playover.py`, `state.py` | reading a snapshot into a game state; market ids |
-| `stream.py`, `grading.py` | what every stream shares; Brier against prod |
+| `stream.py`, `grading.py` | what every stream shares (the line rules and quotes off a model's distributions); Brier against prod |
 | `players.py`, `drive.py` | player profiles; the league's 4th-down and field-goal curves |
 | `nb2_prior.py`, `glmer_prior.py` | the pre-match models |
 | `remaining.py` | points still to come against reality |
 | `playstyle.py` | how each gamer plays by the score on real games, and whether it is a trait |
 | `ats.py` | prod's lines and moneyline against the real finals, the league and gamer by gamer |
+
+The versions share the files that aren't theirs: `feed.py`, `markets.py`, `stream.py`, `books.py` and
+`loading.py` hold what both v14 and v2.1 use, and v14's files re-export them under their old names
+(`sim14.snap_records`, `v14.key_line`, `v14_stream._quote`, ...). v2.1 imports none of v14's files: with
+`sim14.py`, `v14.py`, `v14_stream.py`, `prior_check.py` and `strength_check.py` gone, v2.1 still builds,
+reports, streams and trades. The one exception is a prior given as a v14 build rather than a table, which
+reads that build's pre-match model through `prior_check`.
 
 ## Versions
 

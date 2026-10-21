@@ -263,12 +263,12 @@ class V21Trader(Trader):
     one tempo on both sides' time tilts so the kick-off games' drives meet the match's expected drives, solved
     once a setup at the kick-off and carried into every state. The expected points and drives come off the
     prior table (a match picked off it, else the pair's latest meeting in it), or a build prior's own model, or
-    typed in. The sim's final scores are read as v14's margin and total distributions, priced by its markets."""
+    typed in. The sim's final scores are read as markets.py's margin and total distributions and priced there."""
 
     def __init__(self, model_dir=None, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, prior=None, nudge_share=1.0,
                  drives_share=1.0, pace=True):
-        from . import table_prior, v14, v21, v21_stream
-        self.v21, self.m = v21, v14
+        from . import markets, table_prior, v21, v21_stream
+        self.v21, self.m = v21, markets
         model_file = v21_stream._model_file(model_dir)
         self.model = v21.Model.load(model_file)
         self.dir = os.path.dirname(model_file)

@@ -400,7 +400,7 @@ python -m xgb.turnovers --scouting eAMFCalibrator/out_scouting_xgb/scouting_play
 A match's drives vary a lot (sd 2.4 on the sim's count), and a first look at `drive_stats.csv` put most
 of it on turnovers. On that table's counts, a match's drives correlate 0.75 with its turnovers, and the
 pace model's miss 0.73. That table's turnover counts are off where the feed filed a touchdown late, so
-this script counts again, off the export, the way v21 reads its snaps (`sim14.snap_records`, the
+this script counts again, off the export, the way v21 reads its snaps (`feed.snap_records`, the
 records its turnover draws are fitted on).
 
 It reports four things:

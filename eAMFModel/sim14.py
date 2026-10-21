@@ -8,6 +8,12 @@ from dataclasses import replace
 import numpy as np
 
 from .drive import DriveParams
+from . import feed
+# the scouting feed's readers and the game's rules, shared by every version (feed.py), under sim14's names
+from .feed import (CONV_MARGIN, DEF_TD, DEFENCE, FRESH_KINDS, GAIN, KICK_NO_LANDING, KICK_TOUCHBACK, N_CLASSES,
+                   OFFENCE, OT_TIMEOUTS, PLAY_CLOCK, QUARTER, SNAP_CLASSES, SNAP_KINDS, TURNOVER, _f, _i, _margin,
+                   _scorer, _timeouts_at, conversion_phase, half_left, is_fresh, kick_decisions, link_prev,
+                   play_class, safety_kicks, snap_class)  # noqa: F401
 
 MODES = ("q1", "first", "late1", "lead", "lead_late", "even", "trail_late", "tied_late", "lead_big",
          "lead_late_big", "lead_q4", "lead_big_q4", "level_q4", "trail_q4", "trail_big_q4",
@@ -20,7 +26,6 @@ MANAGED_SECONDS = 3.0
 MIN_PUNTS = 30
 CONV_PRIOR = 4.0
 DECISION_PRIOR = 3.0
-QUARTER = 240.0
 LATE = 120.0
 MAX_OT = 3
 # v11: a game level at the end of the fourth quarter plays overtime from its first period. v10 sent
@@ -30,13 +35,7 @@ MAX_OT = 3
 OT_FIRST_PERIOD = True
 TD_TAIL = 12.0
 
-GAIN, TURNOVER, DEF_TD = 0, 1, 2
 SCRIM, KICK, CONV, DONE = 0, 1, 2, 3
-
-
-def half_left(period, clock):
-    """Seconds left in the half."""
-    return clock + (QUARTER if period in (1, 3) else 0.0)
 
 
 def mode_of(period, clock, margin, big_lead=BIG_LEAD, q4=False):
@@ -257,11 +256,8 @@ def _fit_stop_censored(tables, on, ends, offset=None):
 # A leader kneels the game out only when its downs left, less the trailing side's timeouts, each
 # worth a play clock, outlast the clock.
 TIMEOUTS = True
-PLAY_CLOCK = 40.0
 TIMEOUT_QUARTERS = (2, 4)
 TIMEOUT_PRIOR = 20.0
-OT_TIMEOUTS = 2            # each side's timeouts in each overtime period
-OFFENCE, DEFENCE = 0, 1
 N_CALL = (len(TIMEOUT_QUARTERS), 2, LEAD_CELLS, CLOCK_CELLS)
 
 
@@ -730,52 +726,9 @@ def fit_red_zone(tables, snaps):
         tables.rz_shift = fitted
 
 
-def _i(v):
-    """An int, or None for a blank."""
-    return int(float(v)) if v not in ("", None) else None
-
-
-def _f(v):
-    """A float, or None for a blank."""
-    return float(v) if v not in ("", None) else None
-
-
-def _scorer(row, prefix):
-    """The team named by the last scoring message with this prefix."""
-    for m in reversed((row.get("play_messages") or "").split("|")):
-        if m.startswith(prefix) and m[-6:] in ("TEAM_A", "TEAM_B"):
-            return m[-6:]
-    return None
-
-
-SNAP_KINDS = ("SCRIMMAGE", "KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
-FRESH_KINDS = ("KICKOFF", "PUNT", "TURNOVER_ON_DOWNS")
 FRESH_CLOCK = True
 FRESH_STOP = 0.955
 FRESH_PRIOR = 20.0
-
-
-def is_fresh(row):
-    """Whether the next snap after this PLAY_OVER starts a possession with the clock stopped: after
-    a kick-off, a punt, a turnover on downs, a missed field goal or a turnover on a scrimmage play
-    (the feed's POSSESSION message)."""
-    kind = row["play_kind"]
-    if kind in FRESH_KINDS or kind == "FIELD_GOAL":
-        return True
-    return kind == "SCRIMMAGE" and any(m.startswith("POSSESSION")
-                                       for m in (row.get("play_messages") or "").split("|"))
-
-
-def _margin(row, team):
-    """A team's lead on a row's scoreboard. The board is home's (score_p1) and away's; TEAM_A is
-    whichever side team_a_side says (home when it is not known). Until v14's strength refit the
-    lead was read as if TEAM_A were always home, so on a match where it is away every lead the
-    tables read -- modes, settle, kneels, 4th downs, kicks, conversions -- had the wrong sign."""
-    home, away = _i(row["score_p1"]), _i(row["score_p2"])
-    if home is None or away is None or team not in ("TEAM_A", "TEAM_B"):
-        return None
-    a_home = (row.get("team_a_side") or "home") != "away"
-    return (home - away) * (1 if (team == "TEAM_A") == a_home else -1)
 
 
 def _is_big(rec):
@@ -789,73 +742,15 @@ def _is_fail(rec):
     return not _is_big(rec) and (rec["kind"] != GAIN or rec["gain"] - rec["distance"] < 0)
 
 
+def _label(rec):
+    """v14's tables' fields of a snap record: its mode and key."""
+    rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD, Q4_MODES)
+    rec["key"] = key_index(rec["mode"], rec["down"], rec["distance"], rec["field"])
+
+
 def snap_records(rows):
-    """Every scrimmage snap of a match: its state, what came of it, the clock it used and whether
-    it started a possession with the clock stopped."""
-    out = []
-    for a, b in zip(rows, rows[1:]):
-        if a["play_kind"] not in SNAP_KINDS or not a["down"] or not a["field_position"]:
-            continue
-        if not a["period"] or a["period"] != b["period"] or not a["clock_seconds"] \
-                or not b["clock_seconds"] or not a["distance"]:
-            continue
-        seconds = _f(a["clock_seconds"]) - _f(b["clock_seconds"])
-        if not 0 <= seconds <= 60:
-            continue
-        down, t, y = _i(a["down"]), max(1, _i(a["distance"])), _i(a["field_position"])
-        rec = dict(offense=a["offense"], period=_i(a["period"]), clock=_f(a["clock_seconds"]),
-                   margin=_margin(a, a["offense"]),
-                   down=down, distance=t, field=y, seconds=seconds, message=_i(b["message"]),
-                   kind=GAIN, gain=0, new_field=0, replay=False,
-                   fresh=is_fresh(a), start=_i(a["message"]))
-        if rec["margin"] is None or rec["clock"] is None or y is None or down is None:
-            continue
-        bk = b["play_kind"]
-        if bk == "TOUCHDOWN":
-            scorer = _scorer(b, "TOUCHDOWN_TEAM") or b["offense"]
-            if scorer == a["offense"]:
-                rec["gain"] = 100 - y
-            else:
-                rec["kind"] = DEF_TD
-        elif bk in ("SCRIMMAGE", "TURNOVER_ON_DOWNS"):
-            if not b["field_position"]:
-                continue
-            by = _i(b["field_position"])
-            if b["offense"] == a["offense"]:
-                rec["gain"] = by - y
-                rec["replay"] = (_i(b["down"]) == down and by - y < t)
-            elif bk == "TURNOVER_ON_DOWNS" or (down == 4 and b["play_kind"] == "SCRIMMAGE"
-                                               and "TURNOVER_ON_DOWNS" in b["play_messages"]):
-                rec["gain"] = 100 - by - y
-            else:
-                rec["kind"] = TURNOVER
-                rec["new_field"] = by
-        else:
-            continue
-        if down == 4 and bk != "TOUCHDOWN" and rec["kind"] == GAIN and b["offense"] == a["offense"] \
-                and rec["gain"] < t and not rec["replay"]:
-            continue
-        rec["success"] = rec["kind"] == GAIN and (rec["gain"] >= t or rec["gain"] >= 100 - y)
-        rec["mode"] = mode_of(rec["period"], rec["clock"], rec["margin"], BIG_LEAD, Q4_MODES)
-        rec["key"] = key_index(rec["mode"], down, t, y)
-        _timeouts_at(rec, a)
-        out.append(rec)
-    return out
-
-
-def _timeouts_at(rec, row):
-    """v8: each side's timeouts left at the snap's PLAY_OVER (offense's, defense's) and who, if
-    anyone, stopped the running clock before it (timeout_role), where the row carries them
-    (playover.annotate_timeouts, or the scouting export's columns)."""
-    a, b = _i(row.get("timeouts_used_a")), _i(row.get("timeouts_used_b"))
-    if a is None or b is None or row.get("offense") not in ("TEAM_A", "TEAM_B"):
-        return
-    mine = (a, b) if row["offense"] == "TEAM_A" else (b, a)
-    have = 3 if rec["period"] <= 4 else OT_TIMEOUTS
-    rec["timeouts_left"] = (max(0, have - mine[0]), max(0, have - mine[1]))
-    caller = row.get("timeout_after")
-    if caller in ("TEAM_A", "TEAM_B") and row.get("timeout_prev") != "incomplete":
-        rec["timeout_role"] = OFFENCE if caller == row["offense"] else DEFENCE
+    """Every scrimmage snap of a match (feed.snap_records), with its mode and key in v14's tables."""
+    return feed.snap_records(rows, label=_label)
 
 
 # v11: a kick-off returned for a touchdown (90 since 24 Aug, about one game in 25) or recovered and
@@ -873,7 +768,6 @@ KICK_TDS = True
 # Start.kick_nlz, from the players' profiles), and otherwise a kick from that part's other kicks.
 KICK_STYLES = True
 KICK_LATE = 120.0
-KICK_TOUCHBACK, KICK_NO_LANDING = 20, 35
 KICK_STYLE_MAX = 0.9
 KICK_STYLE_MIN = 30          # kicks a part of the game needs before it gets its own pool
 
@@ -931,28 +825,6 @@ PACE_SLICE = 20.0
 PACE_SLICES = 12
 
 
-def play_class(gain, dist):
-    """A drive's play as the next snap's clock sees it: 0 nothing gained, 1 a gain short of the
-    line, 2 a first down, 3 a loss."""
-    gain = np.asarray(gain)
-    return np.where(gain == 0, 0, np.where(gain < 0, 3, np.where(gain >= np.asarray(dist), 2, 1))).astype(np.int8)
-
-
-# v14: a scrimmage snap's class, as the strength fit (v14.fit_strength) and strength_check read
-# them: a turnover, a loss, no gain, a gain short of the line, a first down under 20 yards, 20-39
-# yards, 40 or more. Gains are cut at the goal line.
-SNAP_CLASSES = ("turnover", "loss", "no gain", "short", "1st <20", "20-39", "40+")
-N_CLASSES = len(SNAP_CLASSES)
-
-
-def snap_class(kind, gain, dist, field):
-    """Each snap's class, an index into SNAP_CLASSES."""
-    kind, dist = np.asarray(kind), np.asarray(dist)
-    gain = np.minimum(np.asarray(gain), 100 - np.asarray(field))
-    return np.select([kind != GAIN, gain < 0, gain == 0, gain >= 40, gain >= 20, gain < dist],
-                     [0, 1, 2, 6, 5, 3], 4).astype(np.int64)
-
-
 def real_snap_counts(rows):
     """A match's real scrimmage snaps in regulation by side (0 home, 1 away, by team_a_side) and
     class, kneels left out: a (2, N_CLASSES) array."""
@@ -980,20 +852,6 @@ def sim_snap_counts(log, rows=None, n_paths=1):
     if rows is not None:
         key = key + (path[on].astype(np.int64) // n_paths) * 2 * N_CLASSES
     return np.bincount(key, minlength=int(np.prod(shape))).reshape(shape).astype(float)
-
-
-def link_prev(recs):
-    """Each snap's previous play in its drive (play_class), or -1: none before it in the drive, or
-    not in the records."""
-    by_end = {}
-    for r in recs:
-        by_end[r["message"]] = r
-    for r in recs:
-        p = by_end.get(r.get("start"))
-        ok = (p is not None and not r.get("fresh") and p["offense"] == r["offense"] and p["period"] == r["period"]
-              and p["kind"] == GAIN and p["gain"] < 100 - p["field"])
-        r["prev"] = int(play_class(p["gain"], p["distance"])) if ok else -1
-    return recs
 
 
 def pace_slice(clock):
@@ -1065,85 +923,9 @@ def fit_kick_styles(kinds):
 
 
 def kick_records(rows):
-    """Every kickoff: kept by the kicking side or not, where the side with the ball started (100: it
-    scored), and the clock used."""
-    out = []
-    prev = None
-    for r in rows:
-        if KICK_TDS and r["play_kind"] == "TOUCHDOWN" and prev is not None \
-                and prev["period"] == r["period"] and prev["play_kind"] in ("CONVERSION", "FIELD_GOAL") \
-                and prev["clock_seconds"] and r["clock_seconds"] and r["period"]:
-            kicker = prev["offense"]
-            scorer = _scorer(r, "TOUCHDOWN_TEAM") or r["offense"]
-            seconds = _f(prev["clock_seconds"]) - _f(r["clock_seconds"])
-            margin, p = _margin(prev, kicker), _i(prev["period"])
-            if margin is not None and p is not None and 0 <= seconds <= 60:
-                desperate = p >= 4 and margin < 0 and half_left(p, _f(prev["clock_seconds"])) <= 180
-                out.append((desperate, scorer == kicker, 100, seconds))
-            prev = r
-            continue
-        if r["play_kind"] == "KICKOFF" and r["field_position"] and r["clock_seconds"]:
-            if not r["period"]:
-                pass
-            elif prev is not None and prev["period"] == r["period"] and \
-                    prev["play_kind"] in ("CONVERSION", "FIELD_GOAL") and prev["clock_seconds"]:
-                kicker = prev["offense"]
-                seconds = _f(prev["clock_seconds"]) - _f(r["clock_seconds"])
-                margin = _margin(prev, kicker)
-                p = _i(prev["period"])
-                if margin is None or p is None:
-                    prev = r
-                    continue
-                desperate = p >= 4 and margin < 0 and half_left(p, _f(prev["clock_seconds"])) <= 180
-                field = _i(r["field_position"])
-                if KICK_TDS and _scorer(r, "TOUCHDOWN_TEAM") is not None:
-                    field = 100                     # recovered by the kicking side and run in
-                if 0 <= seconds <= 60:
-                    out.append((desperate, r["offense"] == kicker, field, seconds))
-            elif prev is None or prev["period"] != r["period"]:
-                seconds = QUARTER - _f(r["clock_seconds"])
-                if 0 <= seconds <= 60:
-                    out.append((False, False, _i(r["field_position"]), seconds))
-        prev = r
-    return out
-
-
-def kick_decisions(rows):
-    """Every punt and field goal: where from, the result and the clock used."""
-    out = []
-    for a, b in zip(rows, rows[1:]):
-        if a["play_kind"] not in SNAP_KINDS or not a["field_position"] or not a["period"] \
-                or a["period"] != b["period"]:
-            continue
-        if not a["clock_seconds"] or not b["clock_seconds"] or not b["field_position"]:
-            continue
-        seconds = _f(a["clock_seconds"]) - _f(b["clock_seconds"])
-        if not 0 <= seconds <= 60:
-            continue
-        y = _i(a["field_position"])
-        if b["play_kind"] == "PUNT" and b["offense"] != a["offense"] and a["down"] == "4" \
-                and "SAFETY" not in (b["play_messages"] or ""):
-            out.append(("punt", y, (100 - _i(b["field_position"])) - y, seconds))
-        elif b["play_kind"] == "FIELD_GOAL":
-            made = "FIELD_GOAL_GOOD" in b["play_messages"]
-            after = _i(b["field_position"]) if (not made and b["offense"] != a["offense"]) else None
-            out.append(("fg", y, made, seconds, after))
-    return out
-
-
-def safety_kicks(rows):
-    """Where the receiver started after each safety's free kick."""
-    out = []
-    for i, (a, b) in enumerate(zip(rows, rows[1:])):
-        if b["play_kind"] != "PUNT" or "SAFETY" not in (b["play_messages"] or "") \
-                or a["offense"] not in ("TEAM_A", "TEAM_B"):
-            continue
-        for c in rows[i + 2:i + 6]:
-            if c["play_kind"] == "SCRIMMAGE" and c["field_position"]:
-                if c["offense"] != a["offense"]:
-                    out.append(_i(c["field_position"]))
-                break
-    return out
+    """Every kickoff (feed.kick_records): a kick-off returned or run in for a touchdown kept at field 100
+    as KICK_TDS says."""
+    return feed.kick_records(rows, KICK_TDS)
 
 
 SAFETY_KICK_MIN = 20
@@ -1226,29 +1008,18 @@ def _logistic_in_y(ys, n, k, iterations=25, ridge=1.0):
     return 1.0 / (1.0 + np.exp(-(a + b * x)))
 
 
-CONV_MARGIN = 16
 # v11: the conversion after a fourth-quarter touchdown in the last three minutes, by the clock. Real
 # sides 7 behind who score go for two to win on 94% of tries in the last 30 seconds, 70% to 1:00, 37%
 # to 2:00 and 12% to 3:00 (2,320 matches); v10 had one rate, 66%, for the whole three minutes, so it
 # kicked to tie, and went to overtime, with seconds left. Cells: the three minutes split at
 # CONV_CLOCK, then overtime on its own; each shrinks toward v10's one cell for them all.
-CONV_CLOCK = (30.0, 60.0, 120.0)
+CONV_CLOCK = feed.CONV_CLOCK
 CONV_CELLS = 4 + len(CONV_CLOCK) + 1
 
 
 def conversion_cell(period, clock):
-    """The cell of the go-for-two table: the decision phase, or with CONV_CLOCK set, the last
-    three minutes' clock slice (4, 5, ...; 3 from 2:00 to 3:00) or overtime (the last cell)."""
-    phase = conversion_phase(period, clock)
-    if phase != 3 or not CONV_CLOCK:
-        return phase
-    if period >= 5:
-        return CONV_CELLS - 1
-    for i, edge in enumerate(CONV_CLOCK):
-        if clock <= edge:
-            return 4 + i
-    return 3
-
+    """The go-for-two table's cell (feed.conversion_cell), the clock cut as CONV_CLOCK says."""
+    return feed.conversion_cell(period, clock, CONV_CLOCK)
 
 
 def fit_go_for_two(conv):
@@ -1264,14 +1035,6 @@ def fit_go_for_two(conv):
     base = twos4.sum(1, keepdims=True) / np.maximum(1, tries4.sum(1, keepdims=True))
     pooled = (twos4 + CONV_PRIOR * base) / (tries4 + CONV_PRIOR)
     return np.vstack([pooled[:3], (twos[3:] + CONV_PRIOR * pooled[3]) / (tries[3:] + CONV_PRIOR)])
-
-def conversion_phase(period, clock):
-    """The part of the game for a conversion decision."""
-    if period <= 2:
-        return 0
-    if period == 3:
-        return 1
-    return 3 if (period >= 5 or clock <= 180) else 2
 
 
 def conversions(rows):

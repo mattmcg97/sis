@@ -347,7 +347,7 @@ def cmd_v21_sweep(args):
 def cmd_v21_audit(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_audit
+    from . import loading as sc, v21_audit
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -376,7 +376,7 @@ def cmd_v21_audit(args):
 def cmd_v21_coverage(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_coverage
+    from . import loading as sc, v21_coverage
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -399,7 +399,7 @@ def cmd_v21_coverage(args):
 def cmd_v21_report(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_report
+    from . import loading as sc, v21_report
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -446,7 +446,7 @@ def cmd_v21_report(args):
 def cmd_v21_endgame(args):
     import datetime as dt
     import time
-    from . import strength_check as sc, v21_endgame, v21_report, v21_stream
+    from . import loading as sc, v21_endgame, v21_report, v21_stream
     t0 = time.time()
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
@@ -567,7 +567,7 @@ def cmd_playstyle(args):
 
 def cmd_v21_timing(args):
     import datetime as dt
-    from . import strength_check as sc, v21_timing
+    from . import loading as sc, v21_timing
     since = dt.date.fromisoformat(args.since)
     until = dt.date.fromisoformat(args.until) if args.until else since
     history = sc.history_rows(args.history)

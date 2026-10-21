@@ -10,9 +10,11 @@ results knew when each pre-match quote was published.
 """
 
 import datetime as dt
+import math
 from bisect import bisect_left
 from collections import defaultdict
 
+from . import markets
 from .state import ML_AWAY, ML_HOME, SPREAD_AWAY, SPREAD_HOME, TOTAL_OVER, TOTAL_UNDER
 
 OPEN = "OPEN"
@@ -183,3 +185,76 @@ def known_states(schedule, publish_times, history, ends=None, minutes=RESULT_MIN
                                  PLAYER_1_FINAL_SCORE="", PLAYER_2_FINAL_SCORE=""))
             code_at[(code, p)] = cuts[cut]
     return rows, code_at
+
+
+# ---------------------------------------------------------------- quotes off a model's distributions
+# (shared by every version's stream)
+
+def _before_play(message, first_play_message):
+    """Whether a prod message is pre-match: no message, or one before the first play started."""
+    return message is None or (first_play_message is not None and message < first_play_message)
+
+
+def paired_prod_rows(prod_quote_rows):
+    """The prod row each quote is paired with, per market and message."""
+    chosen = {}
+    for r in prod_quote_rows:
+        if r[6] is None or r[3] is None:
+            continue
+        live = str(r[8]).strip().lower() == "true"
+        key = (r[1], r[6])
+        held = chosen.get(key)
+        if held is None or (live and not held[1]):
+            chosen[key] = (r, live)
+    return {key: row for key, (row, _) in chosen.items()}
+
+
+# How a stream sets a handicap or total line: its own, in the gap between the key numbers
+# (markets.key_line, held from quote to quote); the half-point line nearest 50% (even); that held
+# until it is far off (hyst); prod's; or prod's moved only as far as it must to bring P(over)
+# inside a band (anchored). markets.key_line, held_line and anchored_line say how.
+OWN, EVEN, PROD_LINES, ANCHORED, HELD = "own", "even", "prod", "anchored", "hyst"
+LINE_MODES = (OWN, EVEN, PROD_LINES, ANCHORED, HELD)
+
+
+def _line(market_id, prod_row, mpmf, tpmf, lines, held=None):
+    """A handicap or total market's line under a line rule; None where prod's line is needed and
+    cannot be read. `held` (own, hyst) carries each group's line from one quote to the next."""
+    spread = market_id in (SPREAD_HOME, SPREAD_AWAY)
+    pmf, offset = (mpmf, markets.MARGIN_MAX) if spread else (tpmf, 0)
+    sign = -1.0 if market_id == SPREAD_AWAY else 1.0           # the away line is home's, negated
+    if lines == EVEN:
+        x = markets.even_line(pmf, offset)
+    elif lines in (OWN, HELD):
+        key = "spread" if spread else "total"
+        rule = markets.key_line if lines == OWN else markets.held_line
+        x = rule(pmf, offset, None if held is None else held.get(key))
+        if held is not None:
+            held[key] = x
+    elif lines in (PROD_LINES, ANCHORED):
+        prod = _parse_line(prod_row[5])
+        if prod is None:
+            return None
+        if lines == PROD_LINES:
+            return prod
+        x = markets.anchored_line(pmf, offset, sign * prod)
+    else:
+        raise ValueError(f"no such line rule {lines!r} (there are {', '.join(LINE_MODES)})")
+    return sign * x
+
+
+def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=None):
+    """One prod-shaped quote row off a margin and total distribution, at the line `lines` sets;
+    None where it cannot be priced."""
+    if market_id in (ML_HOME, ML_AWAY):
+        line = None
+    else:
+        line = _line(market_id, prod_row, mpmf, tpmf, lines, held)
+        if line is None:
+            return None
+    p = float(markets.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
+    if not math.isfinite(p):
+        return None
+    p = min(0.9999, max(0.0001, p))
+    return (match_code, market_id, prod_row[2], round(100.0 * p, 2), round(1.0 / p, 4),
+            description(market_id, line), message, OPEN, "true")

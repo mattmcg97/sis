@@ -3,7 +3,7 @@
     python -m xgb.turnovers --scouting eAMFCalibrator/out_scouting_xgb/scouting_playover.csv \
         --history eAMFCalibrator/out/match_history.csv --since 2026-09-01
 
-Each match's snaps are read as v21 reads them (eAMFModel/sim14.snap_records: the records its turnover draws
+Each match's snaps are read as v21 reads them (eAMFModel/feed.snap_records: the records its turnover draws
 are fitted on) and its drives as v21 counts them (v21_report.drive_starts). Per side:
   drives, snaps
   turnovers   interceptions and fumbles: a snap after which the other side has the ball, not on downs
@@ -39,7 +39,7 @@ import numpy as np
 
 from eAMFCalibrator import pace_prior
 from eAMFCalibrator.bet_totals import _start
-from eAMFModel import nb2_prior, progress, sim14 as s14
+from eAMFModel import feed, nb2_prior, progress
 from eAMFModel.v21_report import drive_starts
 
 COUNTS = ("drives", "snaps", "turnovers", "downs", "punts", "tds")
@@ -49,13 +49,13 @@ MIN_HALF = 30
 
 def count(rows):
     """A match's counts per side (h_: home's, a_: away's offense) and its suspect turnovers."""
-    rows = sorted(rows, key=lambda r: s14._i(r.get("message")) or 0)
+    rows = sorted(rows, key=lambda r: feed._i(r.get("message")) or 0)
     side = next((r["team_a_side"] for r in rows if r.get("team_a_side") in ("home", "away")), "home")
     home, away = ("TEAM_A", "TEAM_B") if side == "home" else ("TEAM_B", "TEAM_A")
-    by_msg = {s14._i(r.get("message")): r for r in rows}
+    by_msg = {feed._i(r.get("message")): r for r in rows}
     n = {t: dict.fromkeys(COUNTS, 0) for t in (home, away)}
     suspect = 0
-    recs = s14.snap_records(rows)
+    recs = feed.snap_records(rows)
     for r in drive_starts(recs):
         if r["offense"] in n:
             n[r["offense"]]["drives"] += 1
@@ -65,9 +65,9 @@ def count(rows):
             continue
         b = by_msg.get(r["message"], {})
         n[o]["snaps"] += 1
-        if r["kind"] in (s14.TURNOVER, s14.DEF_TD):
+        if r["kind"] in (feed.TURNOVER, feed.DEF_TD):
             n[o]["turnovers"] += 1
-            suspect += r["kind"] == s14.TURNOVER and s14._scorer(b, "TOUCHDOWN_TEAM") == o
+            suspect += r["kind"] == feed.TURNOVER and feed._scorer(b, "TOUCHDOWN_TEAM") == o
         elif b.get("play_kind") == "TOUCHDOWN":
             n[o]["tds"] += 1
         elif b.get("offense") in n and b["offense"] != o:      # a gain record handing the ball over: on downs

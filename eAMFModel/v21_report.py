@@ -32,7 +32,7 @@ import zlib
 
 import numpy as np
 
-from . import sim14 as s14, v14, v21
+from . import books, feed, markets, v21
 
 DEFAULT_PATHS = 1000          # kick-off games per receiving side
 STATE_PATHS = 200
@@ -64,12 +64,12 @@ def _census(stats, n_who=1):
     out = {"games": stats.get("games", 0), "events": {k: stats.get(k, 0) for k in EVENTS},
            "dec": v21.decision_census(stats, n_who),
            "q_points": stats["q_points"].sum(0) if "q_points" in stats else np.zeros(5),
-           "time": np.zeros((6, 6)), "cls": np.zeros((6, s14.N_CLASSES)), "secs": np.zeros((6, 2))}
+           "time": np.zeros((6, 6)), "cls": np.zeros((6, feed.N_CLASSES)), "secs": np.zeros((6, 2))}
     if len(log["path"]):
         tb = v21.time_b(log["seconds"])
         prev = log["prev"].astype(np.int64)
         np.add.at(out["time"], (prev, tb), 1)
-        cls = s14.snap_class(log["kind"], log["gain"], log["dist"], log["field"])
+        cls = feed.snap_class(log["kind"], log["gain"], log["dist"], log["field"])
         np.add.at(out["cls"], (v21.time_b(log["drawn"]), cls), 1)
         np.add.at(out["secs"], (prev, 0), log["seconds"])
         np.add.at(out["secs"], (prev, 1), 1)
@@ -92,7 +92,7 @@ def real_census(matches, model=None, history=None):
     """The real games' snaps, events and (with the model, for its gamers) decisions, counted as
     _census counts the sim's."""
     out = {"games": 0, "events": {k: 0 for k in EVENTS}, "q_points": np.zeros(5), "time": np.zeros((6, 6)),
-           "cls": np.zeros((6, s14.N_CLASSES)), "secs": np.zeros((6, 2))}
+           "cls": np.zeros((6, feed.N_CLASSES)), "secs": np.zeros((6, 2))}
     for rows in matches.values():
         rows = v21._with_side(rows)
         recs = v21.match_snaps(rows)
@@ -111,12 +111,12 @@ def real_census(matches, model=None, history=None):
             ev["field_goal_tries"] += k == "FIELD_GOAL"
             ev["punts"] += k == "PUNT" and a.get("down") == "4" and "SAFETY" not in (b.get("play_messages") or "")
             ev["safeties"] += "SAFETY" in (b.get("play_messages") or "") and k == "PUNT"
-        ev["kick_tds"] += sum(1 for k in s14.kick_records(rows) if k[2] >= 100)
-        periods = [s14._i(r["period"]) for r in rows if s14._i(r.get("period"))]
+        ev["kick_tds"] += sum(1 for k in feed.kick_records(rows) if k[2] >= 100)
+        periods = [feed._i(r["period"]) for r in rows if feed._i(r.get("period"))]
         ev["overtime"] += bool(periods) and max(periods) >= 5
         last = {}
         for r in rows:
-            p, h, a = s14._i(r.get("period")), s14._i(r.get("score_p1")), s14._i(r.get("score_p2"))
+            p, h, a = feed._i(r.get("period")), feed._i(r.get("score_p1")), feed._i(r.get("score_p2"))
             if None not in (p, h, a):
                 last[min(p, 5)] = h + a
         before = 0
@@ -127,7 +127,7 @@ def real_census(matches, model=None, history=None):
         tb = v21.time_b([r["seconds"] for r in recs])
         prev = np.array([r["prev_cls"] for r in recs])
         np.add.at(out["time"], (prev, tb), 1)
-        cls = s14.snap_class(np.array([r["kind"] for r in recs]), np.array([r["gain"] for r in recs]),
+        cls = feed.snap_class(np.array([r["kind"] for r in recs]), np.array([r["gain"] for r in recs]),
                              np.array([r["distance"] for r in recs]), np.array([r["field"] for r in recs]))
         np.add.at(out["cls"], (v21.time_b([r["play_seconds"] for r in recs]), cls), 1)
         np.add.at(out["secs"], (prev, 0), [r["seconds"] for r in recs])
@@ -137,15 +137,15 @@ def real_census(matches, model=None, history=None):
 
 
 def real_drives(rows):
-    """A real match's drives (both sides'), as the sim counts them: its scrimmage snaps (sim14.snap_records),
+    """A real match's drives (both sides'), as the sim counts them: its scrimmage snaps (feed.snap_records),
     a new drive at a fresh possession's (after a kick-off, a punt, a turnover on downs, a field goal or a
     turnover), a change of side or a new half."""
-    rows = sorted(rows, key=lambda r: s14._i(r.get("message")) or 0)
-    return len(drive_starts(s14.snap_records(rows)))
+    rows = sorted(rows, key=lambda r: feed._i(r.get("message")) or 0)
+    return len(drive_starts(feed.snap_records(rows)))
 
 
 def drive_starts(records):
-    """The snap records (sim14.snap_records, in order) that start a drive, by real_drives's rule."""
+    """The snap records (feed.snap_records, in order) that start a drive, by real_drives's rule."""
     out, last = [], None
     for r in records:
         h = 0 if r["period"] <= 2 else 1 if r["period"] <= 4 else r["period"]
@@ -178,7 +178,7 @@ def _worker(job):
         h, a = h.ravel(), a.ravel()
         drives = float(st["drives"].mean())
         census = _add(census, _census(st, len(model.gamers) + 1))
-        got = dict(kick=(float(h.mean()), float(a.mean())), book=v14._distributions(h, a),
+        got = dict(kick=(float(h.mean()), float(a.mean())), book=markets._distributions(h, a),
                    p_home=float(((h > a).sum() + 0.5 * (h == a).sum()) / len(h)), states=[],
                    nudge=None if alpha is None else tuple(float(x) for x in alpha), drives=drives,
                    own_drives=drives if own is None else own, tempo=tempo, goal_drives=goal)
@@ -256,7 +256,7 @@ def run(model_dir, matches, history, means, since=None, until=None, n_paths=DEFA
 
 
 def _pool():
-    return v14.pool_context()
+    return markets.pool_context()
 
 
 def _finals(r):
@@ -273,27 +273,27 @@ def prior_inputs(model_dir, rows, history, which="raw"):
     pre-match model -- its own means (raw) or the means the build prices with (priced) -- or a prior table
     (a walkthrough variant's CSV), and the prior's own score model on them (a table's, the one each of its
     rows carries)."""
-    from . import prior_check, table_prior
+    from . import table_prior
     if table_prior.is_table(model_dir):              # a walkthrough variant's table
         pre = table_prior.TablePrior(model_dir)
-    else:
+    else:                                            # a v14 build's pre-match model
+        from . import prior_check
         version = prior_check.version_of(model_dir)
         m, st = prior_check._modules(version)
         pre = m.prematch_model(st.model_paths(model_dir)[0])
     if pre is None:
         raise SystemExit(f"{model_dir}: no pre-match model to read the expected points from")
-    base = prior_check.base_prior(pre)
+    base = books.base_prior(pre)
     means = (base if which == "raw" else pre).means(rows, results=history)
-    books = {}
+    out = {}
     own = getattr(pre, "score", {})                    # a table's own score model, match by match
     for r in rows:
         c = r["MATCH_CODE"]
         if c in means:
             score = own.get(str(c).strip())
-            books[c] = (prior_check.table_books(means[c], score, seed=_seed(c)) if score else
-                        prior_check.raw_books(means[c], *prior_check.sigmas(base, prior_check._start(r).date()),
-                                              seed=_seed(c)))
-    return means, books
+            out[c] = (books.table_books(means[c], score, seed=_seed(c)) if score else
+                      books.raw_books(means[c], *books.sigmas(base, books._start(r).date()), seed=_seed(c)))
+    return means, out
 
 
 # ---------------------------------------------------------------- the report
@@ -372,7 +372,7 @@ FAV_NAMES = ("fav by <2", "fav by 2-4", "fav by 4-7", "fav by 7+")
 def _margin_pmf(book):
     """(margins, pmf) off a book's margin pmf (index MARGIN_MAX is a tie)."""
     pmf = np.asarray(book[0], float)
-    return np.arange(len(pmf)) - v14.MARGIN_MAX, pmf
+    return np.arange(len(pmf)) - markets.MARGIN_MAX, pmf
 
 
 def _spreads(book):
@@ -529,12 +529,11 @@ def step_lines(results, share):
 
 
 def grade_lines(results):
-    from . import prior_check
     have = [x for x in results if x.get("prior_book") is not None]
     if not have:
         return []
     graded = [dict(finals=x["finals"], books={"prior": x["prior_book"], "v21": x["book"]}) for x in have]
-    summary, _ = prior_check.grade(graded, methods=("prior", "v21"))
+    summary, _ = books.grade(graded, methods=("prior", "v21"))
     lines = ["", "  GRADED from kick-off (the prior's own score model on the inputs against the sim)",
              f"  {'':28s}{'prior':>10s}{'v21 sim':>10s}"]
     lines.append(f"  {'moneyline log loss':28s}{summary['prior']['log_loss']:>10.4f}{summary['v21']['log_loss']:>10.4f}")
@@ -544,7 +543,7 @@ def grade_lines(results):
                                 ("in80", "inside central 80%", "{:.1%}")):
             lines.append(f"  {name + ' ' + label:28s}" + "".join(
                 f"{fmt.format(summary[m][name][key]):>10s}" for m in ("prior", "v21")))
-    d, se = prior_check.paired(summary, "v21", "prior")
+    d, se = books.paired(summary, "v21", "prior")
     lines.append(f"  log loss, sim less prior: {d:+.4f} +/- {se:.4f} (paired standard error)")
     return lines
 
@@ -570,13 +569,13 @@ def census_lines(census, real):
                      f"{ms(real):>6.1f}/{ms(census):<6.1f}"
                      + "".join(f"{100 * r[b] / max(1, r.sum()):>6.1f}/{100 * s[b] / max(1, s.sum()):<6.1f}" for b in range(6)))
     lines += ["", "  the distance draw: share of snaps by class, within each time bucket (real / sim)",
-              f"  {'':8s}" + "".join(f"{c:>13s}" for c in s14.SNAP_CLASSES)]
+              f"  {'':8s}" + "".join(f"{c:>13s}" for c in feed.SNAP_CLASSES)]
     for b, name in enumerate(v21.TIME_BUCKETS):
         r, s = real["cls"][b], census["cls"][b]
         if not r.sum() and not s.sum():
             continue
         lines.append(f"  {name:8s}" + "".join(f"{100 * r[c] / max(1, r.sum()):>6.1f}/{100 * s[c] / max(1, s.sum()):<6.1f}"
-                                            for c in range(s14.N_CLASSES)))
+                                            for c in range(feed.N_CLASSES)))
     return lines
 
 

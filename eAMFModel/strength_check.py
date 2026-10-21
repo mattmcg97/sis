@@ -35,7 +35,9 @@ import os
 
 import numpy as np
 
-from . import nb2_prior, playover, prior_check, sim14 as sim, v14, v14_stream
+from . import prior_check, sim14 as sim, v14, v14_stream
+# a window's matches off the files, shared by every version's checks (loading.py), under strength_check's names
+from .loading import history_rows, load_snapshots, window_codes  # noqa: F401
 
 SNAP_CLASSES = sim.SNAP_CLASSES
 N_CLASSES = sim.N_CLASSES
@@ -340,28 +342,3 @@ def write_csv(path, results):
                            + [round(sims[m]["theta"][s], 4) for m in METHODS]
                            + [int(v) for v in x["real"][s]]
                            + [round(v / sims[m]["games"], 3) for m in METHODS for v in sims[m]["counts"][s]])
-
-
-def window_codes(history, since, until):
-    """The settled matches' codes in the window."""
-    return {r["MATCH_CODE"] for r in history if prior_check._finals(r) is not None
-            and prior_check._start(r) is not None and since <= prior_check._start(r).date() <= until}
-
-
-def load_snapshots(path, codes=None):
-    """The export's rows by match in message order (playover.load), keeping only the `codes` given
-    as it reads."""
-    if codes is None:
-        return playover.load(path)
-    by_match = {}
-    with open(path, newline="", encoding="utf-8") as fh:
-        for r in csv.DictReader(fh):
-            if r["match_code"] in codes:
-                by_match.setdefault(r["match_code"], []).append(r)
-    for rows in by_match.values():
-        rows.sort(key=lambda r: playover._int(r["message"]))
-    return by_match
-
-
-def history_rows(path):
-    return nb2_prior.load_history(path)

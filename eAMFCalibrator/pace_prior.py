@@ -38,7 +38,7 @@ HALF_LIFE = 60.0
 SCALAR = 0.5                     # pace_eff's rows counted at half
 LAMBDA = {"gamer": 45.0, "team": 180.0, "fixed": 1e-4}      # pace_eff's
 MIN_TRAIN = 200
-# the scouting export's columns the sim's drive count reads (sim14.snap_records)
+# the scouting export's columns the sim's drive count reads (feed.snap_records)
 KEEP = ("match_code", "message", "period", "clock_seconds", "play_kind", "team_a_side", "offense", "down",
         "distance", "field_position", "play_messages", "score_p1", "score_p2")
 COLUMNS = ("exp_drives", "league_drives")

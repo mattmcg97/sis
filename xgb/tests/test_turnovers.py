@@ -52,7 +52,7 @@ class TestCount(unittest.TestCase):
         self.assertEqual({k: away[f"h_{k}"] for k in tv.COUNTS}, b)
 
     def test_the_drives_as_the_sim_counts_them(self):
-        from eAMFModel import sim14 as s14
+        from eAMFModel import feed as s14
         from eAMFModel.tests.fakes import _matches
         from eAMFModel.v21_report import real_drives
         for code, rows in _matches(n=10, seed=4).items():

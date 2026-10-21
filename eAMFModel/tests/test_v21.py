@@ -1141,9 +1141,9 @@ class TestReport(unittest.TestCase):
     def test_the_final_margin(self):
         """A sim sure of a 3-point home win, a prior spread over 1-14: the bands, the key margins, the spread and
         how the favourite wins, against finals of +3 and -10."""
-        from .. import v14
-        sure = v14._distributions(np.full(100, 24), np.full(100, 21))
-        wide = v14._distributions(np.repeat([21, 21, 30, 35], 25), np.repeat([20, 14, 20, 21], 25))
+        from .. import markets
+        sure = markets._distributions(np.full(100, 24), np.full(100, 21))
+        wide = markets._distributions(np.repeat([21, 21, 30, 35], 25), np.repeat([20, 14, 20, 21], 25))
         results = [dict(code=f"M{i}", finals=f, book=sure, prior_book=wide) for i, f in enumerate([(24, 21)] * 6 + [(14, 24)] * 2)]
         lines = v21_report.margin_lines(results)
         text = "\n".join(lines)

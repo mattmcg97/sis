@@ -31,7 +31,7 @@ from collections import Counter, defaultdict
 
 import numpy as np
 
-from . import sim14 as s14, v21, v21_report
+from . import feed, v21, v21_report
 
 KICK_PATHS = 250              # kick-off games per receiving side
 STATE_PATHS = 200
@@ -132,13 +132,13 @@ def _lumps(margin, ot):
 def real_ending(rows):
     """(went to overtime, the tie (TIES index, in Q4's last 3:00) if it did): the last score of regulation
     off the rows' scores, the scorer's lead before it and the row's kind."""
-    went = any((s14._i(r.get("period")) or 0) >= 5 for r in rows)
+    went = any((feed._i(r.get("period")) or 0) >= 5 for r in rows)
     if not went:
         return False, None
     prev, last = None, None
     for r in rows:
-        p = s14._i(r.get("period"))
-        h, a = s14._i(r.get("score_p1")), s14._i(r.get("score_p2"))
+        p = feed._i(r.get("period"))
+        h, a = feed._i(r.get("score_p1")), feed._i(r.get("score_p2"))
         if p is None or h is None or a is None:
             continue
         if p >= 5:
@@ -150,7 +150,7 @@ def real_ending(rows):
             k = r.get("play_kind")
             kind = (v21.SIX if k == "TOUCHDOWN" else (v21.PAT if pts == 1 else v21.TWO) if k == "CONVERSION"
                     else v21.KICK3 if k == "FIELD_GOAL" else v21.SAFETY if pts == 2 else -1)
-            last = (kind, lead, pts, s14._f(r.get("clock_seconds")) or 0.0, p, (h, a))
+            last = (kind, lead, pts, feed._f(r.get("clock_seconds")) or 0.0, p, (h, a))
         prev = (h, a)
     if last is None:
         return True, ((7 if prev in (None, (0, 0)) else 6), False)
