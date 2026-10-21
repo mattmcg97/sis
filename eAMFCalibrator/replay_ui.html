@@ -248,6 +248,8 @@ svg text { fill: var(--muted); font-size: 10px; font-family: inherit; }
         <label for="meanHome" id="meanHomeLabel">Home</label><input type="number" step="0.1" id="meanHome" class="num">
         <label for="meanAway" id="meanAwayLabel">Away</label><input type="number" step="0.1" id="meanAway" class="num">
         <label for="share">Share</label><div class="share"><input type="range" id="share" min="0" max="1" step="0.05"><span id="shareText" class="num"></span></div>
+        <label for="expDrives" class="pace-row" title="Both sides' drives a match: the pace nudge's goal (blank: no pace nudge)">Drives</label><input type="number" step="0.1" id="expDrives" class="num pace-row">
+        <label for="dshare" class="pace-row" title="How far the kick-off drives move from the sim's own to the expected">Pace share</label><div class="share pace-row"><input type="range" id="dshare" min="0" max="1" step="0.05"><span id="dshareText" class="num"></span></div>
       </div>
       <div class="btns">
         <button id="applyNudge" class="primary">Apply</button>
@@ -275,7 +277,7 @@ svg text { fill: var(--muted); font-size: 10px; font-family: inherit; }
 const $ = (id) => document.getElementById(id);
 const S = {
   meta: null, match: null, steps: [], pos: 0, prices: new Map(), chartV21: new Map(),
-  means: null, share: 0.75, paths: 1000, playing: null, nudgeKey: "",
+  means: null, share: 0.75, paths: 1000, playing: null, nudgeKey: "", exp: null, dshare: 1,
 };
 
 async function api(path, body) {
@@ -325,13 +327,17 @@ function shortPath(p) {
 
 async function init() {
   const m = await api("/api/meta");
-  S.meta = m; S.paths = m.paths; S.share = m.share;
+  S.meta = m; S.paths = m.paths; S.share = m.share; S.dshare = m.drives_share;
   const chips = $("metaChips");
   chips.textContent = "";
   const chip = (text, title, off) => chips.append(el("span", { class: "chip" + (off ? " off" : ""), title: title || "" }, text));
   chip(shortPath(m.model) + (m.mode ? ` · ${m.mode}` : ""), m.model);
   chip(m.prior ? `Prior ${shortPath(m.prior)}` : "No prior", m.prior || "", !m.prior);
   chip(m.source_kind || "Snowflake", m.source);
+  chip(m.pace ? `Pace ${Math.round(100 * m.drives_share)}% · ${shortPath(m.drives_table)}` : "No pace nudge",
+       m.pace ? `v21-drives: the pace off ${m.drives_table}` : "plain v21 (no expected drives, or --no-pace)", !m.pace);
+  document.querySelectorAll(".pace-row").forEach((x) => { x.style.display = m.pace ? "" : "none"; });
+  $("dshare").value = m.drives_share; $("dshareText").textContent = Math.round(100 * m.drives_share) + "%";
   $("paths").value = m.paths;
   $("share").value = m.share; $("shareText").textContent = Math.round(100 * m.share) + "%";
   $("nudgeBadge").textContent = m.nudge ? "" : "Off";
@@ -367,6 +373,8 @@ async function loadMatch() {
     S.match = m; S.prices.clear(); S.chartV21.clear();
     S.steps = [{ kick: true, message: null }].concat(m.timeline);
     S.means = m.prior ? m.prior.slice() : null;
+    S.exp = m.pace ? m.pace.exp : null;
+    $("expDrives").value = S.exp == null ? "" : S.exp;
     $("homeWho").textContent = m.home; $("homeTeam").textContent = m.home_team;
     $("awayWho").textContent = m.away; $("awayTeam").textContent = m.away_team;
     $("meanHomeLabel").textContent = m.home; $("meanAwayLabel").textContent = m.away;
@@ -429,9 +437,13 @@ function markCurrent() {
 
 // ---------------------------------------------------------------- stepping and pricing
 
-function nudgeBody() { return { means: S.means, share: S.share, paths: S.paths }; }
+function nudgeBody() {
+  const b = { means: S.means, share: S.share, paths: S.paths };
+  if (S.meta && S.meta.pace) { b.exp_drives = S.exp == null ? 0 : S.exp; b.drives_share = S.dshare; }   // 0: no pace nudge
+  return b;
+}
 function priceKey(key) { return `${key}|${S.nudgeKey}`; }
-function currentNudgeKey() { return JSON.stringify([S.means, S.share, S.paths]); }
+function currentNudgeKey() { return JSON.stringify([S.means, S.share, S.paths, S.exp, S.dshare]); }
 
 async function go(i) {
   if (!S.match) return;
@@ -569,6 +581,14 @@ function renderNudge(n) {
   line("Own", n.own, 2);
   line("Nudged", n.nudged, 2);
   line("Alpha", n.alpha, 3);
+  if (n.pace) {                       // the pace nudge: both sides' drives a game, so one cell across
+    const row = (label, text) => { const tr = el("tr"); tr.append(el("td", {}, label), el("td", { colspan: 2 }, text)); body.append(tr); };
+    row("Drives", `own ${n.pace.own.toFixed(2)} → goal ${n.pace.goal.toFixed(2)} (got ${n.pace.got.toFixed(2)})`);
+    row("Tempo", `${n.pace.tempo > 0 ? "+" : ""}${n.pace.tempo.toFixed(2)} (pace ${n.pace.pace.toFixed(3)}${Math.abs(n.pace.tempo) >= 2.99 ? ", at its limit" : ""})`);
+  } else if (S.meta.pace) {
+    const tr = el("tr"); tr.append(el("td", {}, "Pace"), el("td", { colspan: 2, class: "na" }, S.match.pace_note || "no pace nudge"));
+    body.append(tr);
+  }
   const b = $("nudgeBadge"), note = S.match.prior_note;
   b.textContent = !n.available ? "Off" : note ? (note.startsWith("Prior failed") ? "Prior failed" : note) : "";
   b.title = n.available && note ? note : "";
@@ -697,6 +717,9 @@ function applyNudge() {
   const h = parseFloat($("meanHome").value), a = parseFloat($("meanAway").value);
   S.means = isFinite(h) && isFinite(a) ? [h, a] : null;
   S.share = parseFloat($("share").value);
+  const d = parseFloat($("expDrives").value);
+  S.exp = isFinite(d) && d > 0 ? d : null;
+  S.dshare = parseFloat($("dshare").value);
   S.paths = parseInt($("paths").value, 10) || S.meta.paths;
   S.prices.clear(); S.chartV21.clear();
   go(S.pos);
@@ -706,6 +729,8 @@ function resetNudge() {
   const p = S.match.prior;
   $("meanHome").value = p ? p[0] : ""; $("meanAway").value = p ? p[1] : "";
   $("share").value = S.meta.share; $("shareText").textContent = Math.round(100 * S.meta.share) + "%";
+  $("expDrives").value = S.match.pace ? S.match.pace.exp : "";
+  $("dshare").value = S.meta.drives_share; $("dshareText").textContent = Math.round(100 * S.meta.drives_share) + "%";
   applyNudge();
 }
 
@@ -741,6 +766,7 @@ $("priceAll").addEventListener("click", priceAll);
 $("applyNudge").addEventListener("click", applyNudge);
 $("resetNudge").addEventListener("click", resetNudge);
 $("share").addEventListener("input", () => { $("shareText").textContent = Math.round(100 * parseFloat($("share").value)) + "%"; });
+$("dshare").addEventListener("input", () => { $("dshareText").textContent = Math.round(100 * parseFloat($("dshare").value)) + "%"; });
 document.addEventListener("keydown", (e) => {
   if (!S.match || ["INPUT", "SELECT"].includes(document.activeElement.tagName)) return;
   if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); go(nextIndex(S.pos, 1)); }
