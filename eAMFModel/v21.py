@@ -2247,7 +2247,8 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
     sim's kick-off drives (both sides' a game) meet `drives`, or drives_share of the way there from the
     sim's own, by secant steps from the build's slope (drive_level). The points nudge steps toward its
     target as the sim would score at the drives the tempo is moving to (its means x those drives / its
-    own), so the two levers do not chase each other.
+    own), so the two levers do not chase each other; share takes the target from the sim's own means as
+    they are, so the pace nudge leaves the expected points where the points nudge alone puts them.
     target None: the points as the sim has them (alpha stays 0); drives None: nudge_solve's steps alone
     (tempo 0, no drives)."""
     nudging, pacing = target is not None, drives is not None
@@ -2275,6 +2276,8 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
         if last:
             return (h, a), alpha, tempo, (own, d)
         x = np.array([h.mean(), a.mean()])
+        if nudging and it == 0 and share != 1.0:
+            target = x + share * (target - x)         # from the sim's own means as they are: pace moves no mean
         if pacing:
             if it == 0 and drives_share != 1.0:
                 drives = d + drives_share * (drives - d)
@@ -2287,8 +2290,6 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
             x = x * drives / max(d, 1e-9)
         if not nudging:
             continue
-        if it == 0 and share != 1.0:
-            target = x + share * (target - x)
         step = np.full(2, slope)
         if prev is not None:
             da, dx = alpha - prev[0], x - prev[1]

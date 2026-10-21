@@ -1719,6 +1719,24 @@ class TestPaceNudge(unittest.TestCase):
             self.assertEqual(tempo > 0, goal < d0)                          # fewer drives: a slower clock
         (hh, _), _, _, (_, dh) = v21.drives_solve(m, start, target, d0 + 1.0, 300, seed=3, drives_share=0.5)
         self.assertLess(abs(dh - (d0 + 0.5)), 0.5)
+        # part of the way to the points: from the sim's own means as they are, so the pace nudge moves no mean
+        # (a sim whose points are each side's strength x drives / 10: own (10, 8) at 10 drives; 0.75 of the way to
+        # (14, 8) is (13, 8) at any pace -- taken from its means at 12 drives, (13.5, 8.4))
+
+        def linear(model, st, n, seed=0, stats=None, counts=None, **kw):
+            d = 10.0 - 2.5 * float(st.get("tempo", [0.0])[0])
+            pts = (np.array([10.0, 8.0]) + st.get("nudge", np.zeros((2, 2)))[0]) * d / 10.0
+            if counts is not None:
+                counts["drives"] = np.full((2, n), d)
+            return np.full((2, n), pts[0]), np.full((2, n), pts[1])
+
+        flat = type("Build", (), dict(nudge_slope=1.0, pace_level=10.0, tempo_slope=-2.5))()
+        with mock.patch.object(v21, "simulate", linear):
+            (hl, al_), _, tl, (_, dl) = v21.drives_solve(flat, start, (14.0, 8.0), 12.0, 10, share=0.75)
+        self.assertAlmostEqual(dl, 12.0, places=6)
+        self.assertAlmostEqual(tl, -0.8, places=6)
+        self.assertAlmostEqual(hl.mean(), 13.0, places=2)
+        self.assertAlmostEqual(al_.mean(), 8.0, places=2)
         # no drives: the points nudge's own steps, the same draws
         (h1, a1), al1 = v21.nudge_solve(m, start, target, 300, seed=3)
         (h2, a2), al2, t2, (o2, d2) = v21.drives_solve(m, start, target, None, 300, seed=3)

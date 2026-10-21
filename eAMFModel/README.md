@@ -2747,6 +2747,9 @@ kick-off games' drives meet the match's goal and the points still meet theirs.
   per process. The points nudge steps on the points the sim would score at the drives the tempo is
   moving to, so the two levers don't chase each other. With the pace nudge on, a secant step needs
   a real move (`SECANT_MIN`) and a slope within 0.3–3× the build's, else it takes the build's slope.
+- **The points stay put.** With `--nudge-share` below 1, the points target is taken from the sim's
+  own means as they are, not as they'd be at the new pace, so the pace nudge moves no mean: pace
+  goes in the spread. At a share of 1 the target is the prior's points either way.
 - **The limit.** The tempo stays within ±`TEMPO_MAX` (3). The report says how many matches hit it.
 - **In play.** The kick-off's tempo is carried into every state, as the nudge is.
 - **A drive.** A side's possession from its first snap. The sim counts one at each possession's
