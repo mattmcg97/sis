@@ -390,6 +390,33 @@ Slope is real drives on foreseen: 1 is calibrated, below 1 means the forecast sp
 So the walkthrough's pace (`exp_drives`, `eAMFCalibrator/pace_prior.py`) is the ridge, refitted daily.
 It counts drives off the scouting export the sim's way, not off `drive_stats.csv`.
 
+### How much of a match's drives is its turnovers? (`turnovers.py`)
+
+```bash
+python -m xgb.turnovers --scouting eAMFCalibrator/out_scouting_xgb/scouting_playover.csv \
+    --history eAMFCalibrator/out/match_history.csv --since 2026-09-01
+```
+
+A match's drives vary a lot (sd 2.4 on the sim's count), and a first look at `drive_stats.csv` put most
+of it on turnovers. On that table's counts, a match's drives correlate 0.75 with its turnovers, and the
+pace model's miss 0.73. That table's turnover counts are off where the feed filed a touchdown late, so
+this script counts again, off the export, the way v21 reads its snaps (`sim14.snap_records`, the
+records its turnover draws are fitted on).
+
+It reports four things:
+
+1. **Drives against turnovers.** The correlation, the drives a turnover adds, and how much of the
+   drive count's variance is the snaps a game holds against the snaps a drive lasts.
+2. **A gamer's turnovers as a trait.** Odd against even weeks: the turnovers a drive each gamer gives
+   up and forces.
+3. **Before the match.** Expected drives and expected turnovers, each refitted daily with the pace
+   prior's ridge. How well each foresees its own, how much of the pace's miss is the match's
+   turnovers, and whether expected turnovers add anything to the pace.
+4. **The margin.** How much of the points margin the turnover margin explains.
+
+It also counts `suspect` turnovers: ones whose next row carries a touchdown message for the side that
+lost the ball. Few of them means the sim's turnover count is clean.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
@@ -407,4 +434,6 @@ It counts drives off the scouting export the sim's way, not off `drive_stats.csv
 - `v21_pace.py`: v21's kick-off spread by pace against the real one (`python -m xgb.v21_pace`).
 - `pace_models.py`: the drive forecasters compared walk-forward (`python -m xgb.pace_models`), writing
   `pace_models.txt` and `pace_models.csv` (every match, every model).
-- `tests/`: `python -m unittest xgb.tests.test_drives xgb.tests.test_pace_models`.
+- `turnovers.py`: turnovers and drives counted the sim's way, and how they relate
+  (`python -m xgb.turnovers`), writing `turnovers.txt` and `turnovers_matches.csv`.
+- `tests/`: `python -m unittest xgb.tests.test_drives xgb.tests.test_pace_models xgb.tests.test_turnovers`.

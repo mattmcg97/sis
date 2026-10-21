@@ -141,13 +141,18 @@ def real_drives(rows):
     a new drive at a fresh possession's (after a kick-off, a punt, a turnover on downs, a field goal or a
     turnover), a change of side or a new half."""
     rows = sorted(rows, key=lambda r: s14._i(r.get("message")) or 0)
-    n, last = 0, None
-    for r in s14.snap_records(rows):
+    return len(drive_starts(s14.snap_records(rows)))
+
+
+def drive_starts(records):
+    """The snap records (sim14.snap_records, in order) that start a drive, by real_drives's rule."""
+    out, last = [], None
+    for r in records:
         h = 0 if r["period"] <= 2 else 1 if r["period"] <= 4 else r["period"]
         if last is None or r["fresh"] or r["offense"] != last[0] or h != last[1]:
-            n += 1
+            out.append(r)
         last = (r["offense"], h)
-    return n
+    return out
 
 
 def _worker(job):

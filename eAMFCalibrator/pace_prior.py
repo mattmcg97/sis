@@ -51,17 +51,16 @@ def export_stamp(export):
     return {"export": os.path.abspath(export), "size": st.st_size, "mtime": int(st.st_mtime)}
 
 
-def count_drives(export, on_match=None, warn=None):
-    """{match: its drives as the sim counts them}, streamed off the export a match at a time (it is
-    written that way; a match's rows met again later are dropped, with a warning)."""
-    from eAMFModel.v21_report import real_drives
+def each_match(export, measure, on_match=None, warn=None):
+    """{match: measure(its rows)}, streamed off the export a match at a time (it is written that way; a
+    match's rows met again later are dropped, with a warning), each row cut to KEEP's columns."""
     out, split = {}, set()
 
     def flush(code, rows):
         if code in out:
             split.add(code)
             return
-        out[code] = real_drives(rows)
+        out[code] = measure(rows)
         if on_match:
             on_match(len(out))
 
@@ -78,6 +77,13 @@ def count_drives(export, on_match=None, warn=None):
             flush(cur_code, cur)
     if split and warn:
         warn(f"  {len(split):,} matches' rows not together in {export}: the later ones dropped")
+    return out
+
+
+def count_drives(export, on_match=None, warn=None):
+    """{match: its drives as the sim counts them} off the export (each_match)."""
+    from eAMFModel.v21_report import real_drives
+    out = each_match(export, real_drives, on_match, warn)
     return {c: n for c, n in out.items() if n > 0}
 
 
