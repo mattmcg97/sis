@@ -23,7 +23,6 @@ real) to --out.
 """
 
 import argparse
-import datetime as dt
 import math
 import os
 
