@@ -197,7 +197,7 @@ class Replay:
     def __init__(self, source, model, prior=None, paths=DEFAULT_PATHS, share=DEFAULT_SHARE, model_file=None,
                  prior_name=None):
         from eAMFModel import markets, v21, v21_stream
-        self.markets, self.v21, self.stream = markets, v21, v21_stream
+        self.mk, self.v21, self.stream = markets, v21, v21_stream
         self.source, self.model, self.prior = source, model, prior
         self.paths, self.share = paths, share
         self.model_file, self.prior_name = model_file, prior_name
@@ -304,7 +304,7 @@ class Replay:
                     alpha = np.asarray(alpha, float)
                 else:
                     h, a, alpha = h0, a0, None
-            books = self.markets._distributions(h.ravel(), a.ravel())
+            books = self.mk._distributions(h.ravel(), a.ravel())
             self.nudges[key] = (alpha, books, own, [float(h.mean()), float(a.mean())])
         return self.nudges[key]
 
@@ -340,13 +340,13 @@ class Replay:
             with self.lock:
                 h, a = self.v21.simulate(self.model, self._state(m, message, alpha), paths,
                                          seed=self.stream._seed(code) + 1 + message)
-            mpmf, tpmf = self.markets._distributions(h[0], a[0])
+            mpmf, tpmf = self.mk._distributions(h[0], a[0])
         out = self.markets(mpmf, tpmf, prod)
         out.update(priced=True, message=message, prod=prod, nudge=nudge, paths=paths)
         return out
 
     def markets(self, mpmf, tpmf, prod):
-        mk = self.markets
+        mk = self.mk
         M = mk.MARGIN_MAX
         prob = lambda market, line: float(mk.market_prob(market, line, mpmf, tpmf))
         x_m, x_t = np.arange(len(mpmf)) - M, np.arange(len(tpmf))
@@ -384,8 +384,8 @@ class Replay:
         t0 = time.time()
         out = []
         mp0, tp0 = kick
-        M = self.markets.MARGIN_MAX
-        out.append(dict(message=None, home=_round(float(self.markets.market_prob(50, 0.0, mp0, tp0))),
+        M = self.mk.MARGIN_MAX
+        out.append(dict(message=None, home=_round(float(self.mk.market_prob(50, 0.0, mp0, tp0))),
                         margin=round(float((mp0 * (np.arange(len(mp0)) - M)).sum()), 2),
                         total=round(float((tp0 * np.arange(len(tp0))).sum()), 2)))
         if msgs:
@@ -393,8 +393,8 @@ class Replay:
             with self.lock:
                 h, a = self.v21.simulate(self.model, S, paths, seed=self.stream._seed(code) + 1)
             for k, msg in enumerate(msgs):
-                mp_, tp = self.markets._distributions(h[k], a[k])
-                out.append(dict(message=msg, home=_round(float(self.markets.market_prob(50, 0.0, mp_, tp))),
+                mp_, tp = self.mk._distributions(h[k], a[k])
+                out.append(dict(message=msg, home=_round(float(self.mk.market_prob(50, 0.0, mp_, tp))),
                                 margin=round(float(h[k].mean() - a[k].mean()), 2),
                                 total=round(float(h[k].mean() + a[k].mean()), 2)))
         return dict(points=out, paths=paths, seconds=round(time.time() - t0, 1))
