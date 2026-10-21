@@ -2729,6 +2729,28 @@ On October's own late states, the rolling shifts take the sim's chance for the s
 Level overshoots: September's level gap had gone by October, and the correction lags drift in both
 directions. The betting sim is the judge.
 
+**The betting sim (Oct 1–18, 144,051 bets) gives no gain overall.**
+- One book, moneyline: +0.02 [−0.39, +0.38] against v21.
+- Two books, moneyline: v21-late's head-to-head is −0.51 [−4.94, +3.52] against v21's.
+- Margin uplift, moneyline: +2.99 against v21's +3.11.
+
+It worked where it was aimed and gave it back elsewhere. Q4 moneyline bets, by the backed side's lead,
+the book's margin re-priced at each candidate:
+
+| Backed side | Stake | v21's chance | v21-late's | Won | v21 margin | v21-late margin | Late − v21 [95%] |
+|---|---|---|---|---|---|---|---|
+| 3 behind | 88,752 | 0.393 | 0.446 | 0.569 | −24.6% | −9.8% | +14.8 [+11.4, +18.1] |
+| 1–2 behind | 60,300 | 0.458 | 0.506 | 0.662 | −24.2% | −14.5% | +9.7 [+6.6, +13.7] |
+| 4–8 behind | 89,191 | 0.272 | 0.229 | 0.239 | +5.6% | −15.3% | −20.9 [−32.0, −10.9] |
+| 1–2 ahead | 19,116 | 0.594 | 0.544 | 0.525 | +6.8% | −3.7% | −10.6 [−20.4, −3.3] |
+| 3 ahead | 62,928 | 0.649 | 0.603 | 0.510 | +2.2% | −3.1% | −5.2 [−8.7, −2.9] |
+| All Q4 | 567,679 | 0.450 | 0.453 | 0.496 | −3.75% | −3.92% | −0.17 [−2.68, +2.21] |
+
+The 4–8-behind and leaders' moves were right too: closer to how often those sides won. But on the
+same bets, a price made more accurate on a side the punters back without an edge lengthens the odds on
+bets that were losing at v21's. The book was earning on that lean. In the bets, accuracy pays only
+where the money is informed, and late in Q4 that's the side 1–3 behind. v21-late stays off.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:
