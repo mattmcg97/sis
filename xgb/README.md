@@ -295,6 +295,31 @@ python -m eAMFModel v21-report --since 2026-09-01 --until 2026-10-18 --nudge --n
 python -m xgb.v21_pace --v21 eAMFCalibrator/out_v21_pace/v21_matches.csv --pace xgb/out/pace_eff/pace_eff_prior.csv
 ```
 
+**v21 (`v21_t10`, nudged 75% to the form table) on 1 Sep – 18 Oct (3,444 matches, 2,000 kick-off
+games each; 21 Oct 2026):**
+
+| fifth of expected drives | drives | margin: real about v21 | v21's own sd | total: real about v21 | v21's own sd |
+|---|---|---|---|---|---|
+| 1 | 9.23 | 8.77 | 9.81 | 10.85 | 10.89 |
+| 2 | 9.90 | 9.38 | 9.90 | 12.44 | 11.33 |
+| 3 | 10.30 | 9.36 | 9.92 | 12.55 | 11.67 |
+| 4 | 10.71 | 9.83 | 9.95 | 12.49 | 12.01 |
+| 5 | 11.35 | 10.52 | 10.09 | 13.52 | 12.40 |
+
+- **v21's margin spread barely moves with pace.** It runs 9.81 → 10.09 while the real one runs
+  8.77 → 10.52. So v21 is 12% too wide in the slowest fifth and 4% too narrow in the fastest.
+  Each match's squared miss about v21's mean rises 10.3 a sd of expected drives (t +4.2) beyond
+  v21's own variance.
+- **Its total's spread already follows pace** (10.89 → 12.40). Its drives term isn't clear of
+  zero (t +0.9).
+- **The moneyline.** On the same matches, v21's own kick-off has log loss 0.6795. glmer's points
+  with the pace × efficiency spread have 0.6769, and the form table that v21 nudges toward has
+  0.6830.
+
+So v21's snap draws carry pace into the total but not into the margin. The next step is a pace
+nudge in v21: solve each side's time tilt so the kick-off games' drives meet the match's expected
+drives, the way the points nudge meets the expected points.
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
