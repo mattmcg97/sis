@@ -1,0 +1,20 @@
+
+  the bets by a gamer's run tonight when placed (moneyline and spread): 'piles on' backs a gamer who won the last 2+ or opposes one who lost them, 'fades' the other way; the book's margin (revenue / stake), as placed and re-priced, on the bets every candidate re-priced:
+  pre-match                   bets      stake     prod          v21 v21-shape0.1 v21-shape0.2 v21-shape0.5
+    piles on a run of 2      2,491    121,978   -11.0%        -6.4%        -6.8%        -5.8%        -5.4%
+    piles on a run of 3      1,476     75,277    -1.4%        +2.3%        +2.2%        +2.0%        +1.6%
+    piles on a run of 4+       997     43,799   +10.7%       +21.4%       +19.0%       +19.8%       +21.4%
+    fades a run of 2         1,872     92,543   -14.1%       -18.3%       -16.4%       -18.7%       -18.4%
+    fades a run of 3           814     37,294    +4.5%       -13.7%       -15.9%       -18.3%       -16.7%
+    fades a run of 4+          398     13,582    +3.9%        -5.9%        -5.0%        -4.4%        -5.7%
+    mixed                    1,014     45,578    -6.8%        -6.8%        -8.5%        -7.7%        -6.9%
+    none                     5,760    297,509    +9.4%       +11.9%       +12.3%       +12.0%       +11.8%
+  in play                     bets      stake     prod          v21 v21-shape0.1 v21-shape0.2 v21-shape0.5
+    piles on a run of 2     10,117    720,852    -9.9%        -5.1%        -4.3%        -3.5%        -4.4%
+    piles on a run of 3      5,987    434,500    -0.3%        +4.8%        +5.9%        +5.4%        +5.9%
+    piles on a run of 4+     4,306    301,040    -2.3%        +7.8%        +7.4%        +8.4%        +7.6%
+    fades a run of 2         8,720    582,279    -0.6%        +2.5%        +2.3%        +2.6%        +2.7%
+    fades a run of 3         4,168    229,353   +15.2%       +12.3%       +12.5%       +11.1%       +10.6%
+    fades a run of 4+        2,224    124,348   +22.3%       +21.1%       +21.3%       +20.4%       +19.9%
+    mixed                    6,033    408,177    +3.4%        +2.8%        +2.9%        +3.0%        +3.6%
+    none                    26,010  1,820,002    +3.9%        +5.3%        +5.0%        +5.0%        +5.5%

@@ -45,6 +45,15 @@ def odds_for(p):
     return 1.0 / (p * MARGIN)
 
 
+class TestReads(unittest.TestCase):
+
+    def test_each_bet_reads_prods_message_one_lag_back(self):
+        tl = bets.timeline(MONEYLINE)
+        got = bets.reads_of([bet("M1", 150), bet("M1", 50, in_play="No"), bet("M1", 160),
+                             bet("M2", 150)], {"FANDUEL": bets.Lag(60, 1)}, tl)
+        self.assertEqual(got, {"M1": {(50, 0), (50, 100)}})          # 150 - 60 and 160 - 60: 100's; 50: 0's
+
+
 class TestLag(unittest.TestCase):
 
     def test_the_lag_is_where_the_odds_follow_prod(self):

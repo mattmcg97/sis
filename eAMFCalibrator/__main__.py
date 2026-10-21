@@ -553,6 +553,19 @@ def cmd_bets(args):
                 from . import totals_signals
                 path = totals_signals.run(cur, out_dir, react=args.react)
                 print(f"\n  -> {path} and totals_signals.txt")
+            elif args.action == "money":
+                from . import bet_money
+                paths = bet_money.run(cur, out_dir, sim_file=args.sim_file, sim_candidate=args.sim_candidate,
+                                      window=args.money_window,
+                                      split=dt.date.fromisoformat(args.money_split) if args.money_split else None,
+                                      customer_column=args.customer_column, run_after=args.run_window)
+                if paths:
+                    print(f"\n  -> {paths[0]} and {paths[1]}")
+            elif args.action == "ml-moves":
+                from . import bet_ml_moves
+                paths = bet_ml_moves.run(cur, out_dir, min_bets=args.min_bets)
+                if paths:
+                    print(f"\n  -> {paths[0]} and {paths[1]}")
             elif args.action == "totals-moves":
                 from . import bet_totals
                 paths = bet_totals.run(cur, out_dir, min_bets=args.min_bets,
@@ -1136,7 +1149,8 @@ def common_options():
                              "side by side in the report; a second build of a version is "
                              "NAME=DIR, e.g. v9,v9-glmer=v9_glmer_917; v21 with an in-play "
                              "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
-                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react) "
+                             "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react); with the second strength "
+                             "lever (the favourite's gap played by the score) v21-shapeK, e.g. v21-shape0.25 "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
@@ -1314,8 +1328,8 @@ def apply_overrides(args):
 
 
 def uplift_options(parser):
-    """The margin uplift's options (margin_uplift.py: prod against each candidate, the partner's
-    dummy bets), for report --bets and bets."""
+    """The margin uplift's options (margin_uplift.py: prod against each candidate, every in-play
+    tick a dummy bet between the two books), for report --bets and bets."""
     group = parser.add_argument_group("margin uplift")
     group.add_argument("--margin-chart", metavar="CSV",
                        help="the margin chart the dummy bets are priced at (probability, numerator, "
@@ -1323,11 +1337,16 @@ def uplift_options(parser):
     group.add_argument("--uplift-factor", type=float, metavar="X",
                        help="minutes from the scheduled start x X = game minutes (default: fitted so "
                             "prod's matches end at 60)")
+    group.add_argument("--all-moments", action="store_true",
+                       help="price v21 at every moment prod's quotes read, not only the ones the bets read "
+                            "(the default, several times quicker): slower, and the margin uplift then bets "
+                            "every in-play tick rather than the bets' moments alone")
 
 
 def apply_uplift(args):
     config.UPLIFT_CHART = getattr(args, "margin_chart", None)
     config.UPLIFT_FACTOR = getattr(args, "uplift_factor", None)
+    config.ALL_MOMENTS = bool(getattr(args, "all_moments", False))
     if config.UPLIFT_CHART and not os.path.exists(config.UPLIFT_CHART):
         raise SystemExit(f"--margin-chart {config.UPLIFT_CHART}: no such file")
     if config.UPLIFT_CHART:                     # read it now: a bad chart stops the run before the long part
@@ -1485,7 +1504,7 @@ def build_parser():
              "--candidate v4,v5,v6 re-prices with each model at its own lines, side by side")
     bets_parser.add_argument("action", nargs="?",
                              choices=["run", "prematch", "probe", "lines", "check", "moments", "lag",
-                                      "totals-moves", "totals-signals", "sessions", "favourite", "ml-losers",
+                                      "totals-moves", "ml-moves", "money", "totals-signals", "sessions", "favourite", "ml-losers",
                                       "rematches", "inference"],
                              default="run",
                              help="prematch: the pre-match models' own test -- only the bets "
@@ -1521,6 +1540,14 @@ def build_parser():
                                   "half (pace, time between plays, clock per play, drives) against prod's "
                                   "total there and where the totals money went next, by temperature "
                                   "(out/totals_signals.csv); "
+                                  "money: where the money is, as prices -- every market's price moved by the money "
+                                  "toward a side (fitted on the window's earlier matches, scored on the later), and "
+                                  "what the money knows beside prod's move, the game script, a recent score and "
+                                  "v2.1's price (--sim-file) (out/bets_money.txt and bets_money_points.csv); "
+                                  "ml-moves: prod's moneyline price either side of every moneyline bet -- where "
+                                  "the money came, at what prices, and whether prod moved the bettors' way after, "
+                                  "a score in between or not, and pre-match the closing-line value "
+                                  "(out/bets_ml_moves.txt and .csv; no candidate priced); "
                                   "totals-moves: prod's totals line before and after every totals bet, "
                                   "restricted accounts against everyone else, and whether each "
                                   "candidate already leaned their way (out/bets_totals_moves.html); "
@@ -1539,6 +1566,20 @@ def build_parser():
                                   f"(default {config.SIM_ELASTICITY:g}: bets as placed)")
     bets_parser.add_argument("--max-scale", type=float, metavar="X",
                              help=f"book comparison: the most a sharp stake may grow (default {config.SIM_MAX_SCALE:g})")
+    bets_parser.add_argument("--sim-file", metavar="CSV",
+                             help="money: a bets run's bets_sim.csv (or .zip) for v2.1's price at each bet")
+    bets_parser.add_argument("--sim-candidate", metavar="NAME",
+                             help="money: the candidate in --sim-file (default: its first v21 one)")
+    bets_parser.add_argument("--money-window", type=float, default=120.0, metavar="SECONDS",
+                             help="money: in play, the money over the last this many seconds (default 120)")
+    bets_parser.add_argument("--customer-column", metavar="COLUMN",
+                             help=f"money: the bet table's customer id column (default {config.BET_CUSTOMER_COLUMN})")
+    bets_parser.add_argument("--run-window", type=float, default=120.0, metavar="SECONDS",
+                             help="money: in play, the seconds after a customer's bet the other customers' money is read"
+                                  " over (default 120; pre-match 1800)")
+    bets_parser.add_argument("--money-split", metavar="YYYY-MM-DD",
+                             help="money: fit on the matches before this day, score on the rest (default: the "
+                                  "window's middle day)")
     bets_parser.add_argument("--boot", type=int, metavar="N",
                              help=f"book comparison and `bets prematch`: bootstrap resamples over matches (default {config.SIM_BOOT})")
     bets_parser.add_argument("--gamer", action="append", metavar="HANDLE",

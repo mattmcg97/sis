@@ -95,6 +95,8 @@ TIMEOUTS, OT_TIMEOUTS = 3, 2
 MAX_STEPS = 900
 
 KICK, SNAP, DONE = 0, 1, 2
+SIX, PAT, TWO, KICK3, SAFETY = range(5)    # the census's scores (v21_endgame): a six, the kick after it, two, a field goal, a safety
+SCORE_KINDS = ("a six", "the kick after a six", "two after a six", "a field goal", "a safety")
 GAIN, TURNOVER, DEF_TD = s14.GAIN, s14.TURNOVER, s14.DEF_TD
 
 # the features, each a small integer
@@ -268,6 +270,7 @@ MODES = ("full", "adjusted", "tilt")
 # A draw resamples TILT_CANDIDATES real snaps of its group (or window) on their weights.
 PHI_DIST = ("yards", "touchdown", "turnover", "first down", "loss")
 PHI_TIME = ("seconds",)
+PACE_LEAD = 1                 # pace when ahead (v21_pace): the side with the ball this many points or more ahead
 TILT_PRIOR = 200.0
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
@@ -292,6 +295,13 @@ DECISION_TABLE_MAX = 4_000_000                            # cells (the 4th down'
 NUDGE_ITERS = 3
 NUDGE_MAX = 10.0              # points a side
 NUDGE_PATHS = 3000
+# The second strength lever (the shape: a start's "shape" kappa and "edge", its expected home margin at
+# kick-off): the strength gap played by the score. The favourite behind by SHAPE_TRAIL or more plays the
+# gap kappa * |edge| / 2 nudge units a side wider (it raises its game), SHAPE_LEAD or more ahead that much
+# narrower (it eases off), the nudge itself still solved to the expected points: more comebacks, fewer
+# blowouts -- the favourite wins more often without winning by more, as the real games show.
+SHAPE_TRAIL = 1
+SHAPE_LEAD = 9
 YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
 SECOND_BIN_EDGES = np.arange(2, 61, 2)
 ADJUST_GRID = np.round(np.linspace(-1.5, 1.5, 31), 3)     # log tilts tried
@@ -2174,16 +2184,20 @@ def calibrate_nudge(m, n_paths=NUDGE_PATHS, seed=0):
     return max(0.05, (got[1] - got[0]) / 2.0)
 
 
-def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0):
+def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0, shape=0.0):
     """((home, away) final scores, alpha): the sim from `start` with each side's offense nudged along
     the strength direction by alpha (2,) so its kick-off means meet `target` (home, away) -- or, share
     below 1, that share of the way there from the sim's own means: secant steps from the build's slope,
-    each on the same random numbers; the last run's scores (and its stats)."""
+    each on the same random numbers; the last run's scores (and its stats). shape (kappa): the second
+    lever on, its edge the target's margin (SHAPE_TRAIL)."""
     alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
     prev = None
     target = np.asarray(target, float)
+    n = len(start["period"])
     for it in range(iters + 1):
-        st = dict(start, nudge=np.tile(alpha, (len(start["period"]), 1)))
+        st = dict(start, nudge=np.tile(alpha, (n, 1)))
+        if shape:
+            st.update(edge=np.full(n, float(target[0] - target[1])), shape=np.full(n, float(shape)))
         last = it == iters
         h, a = simulate(model, st, n_paths, seed=seed, stats=stats if last else None)
         if last:
@@ -2741,7 +2755,31 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     # every real record's theta . phi for the run's tilts, once (TILT_CACHE; None: each draw works its own out)
     tz_time = model.time.tilt_z(th_time, P) if th_time is not None else None
     tz_dist = model.dist.tilt_z(th_dist, P) if th_dist is not None else None
+    # the second lever (SHAPE_TRAIL): each side's distance tilt three ways -- as it is, the favourite behind
+    # (the gap wider), the favourite well ahead (narrower) -- each snap drawn on its score's
+    shape_on = (th_dist is not None and getattr(model, "nudge_dir", None) is not None and "shape" in start
+                and "edge" in start and bool(np.any(np.asarray(start["shape"], float) != 0)))
+    fav = th_reg = tz_reg = None
+    if shape_on:
+        edge = rep(start["edge"], float)
+        fav = np.where(edge >= 0, 0, 1)
+        half = 0.5 * rep(start["shape"], float) * np.abs(edge)
+        home_up = np.where(fav == 0, half, -half)
+        push = np.stack([home_up, -home_up], axis=1)[:, :, None] * np.asarray(model.nudge_dir)[None, None, :]
+        th_reg = np.stack([th_dist, th_dist + push, th_dist - push])
+        tz_reg = model.dist.tilt_z(th_reg.reshape((3 * P,) + th_dist.shape[1:]), P)
+        if tz_reg is not None:
+            tz_reg = (tz_reg[0], tz_reg[1].reshape(3, P, 2))
     tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
+    # pace when ahead (v21_pace): each side's time tilt two ways -- as it is, and with its gamer's own extra
+    # while the side is PACE_LEAD or more ahead -- each snap's time drawn on its score's
+    pace_on = th_time is not None and "pace" in start and bool(np.any(np.asarray(start["pace"], float) != 0))
+    th_up = tz_up = None
+    if pace_on:
+        th_up = th_time + rep(start["pace"], float)[:, :, None]
+        tz_up = model.time.tilt_z(np.stack([th_time, th_up]).reshape((2 * P,) + th_time.shape[1:]), P)
+        if tz_up is not None:
+            tz_up = (tz_up[0], tz_up[1].reshape(2, P, 2))
     ot_cur = np.full(P, -1, np.int64)
     ot_done = np.zeros((P, 2), bool)
     ahead = (period >= 5) & (score[:, 0] != score[:, 1])
@@ -2754,6 +2792,20 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         q_points = np.zeros((P, 5), np.int64)
     q_score = score.copy()
     reg_score = score.copy()                  # the score when regulation ended (a start in overtime: its own)
+    # the census's last score of regulation on each path (SCORE_KINDS; -1 none yet): its kind, the clock,
+    # the scorer's lead before it and its points -- how a level game was made level (v21_endgame)
+    last_score = np.full((P, 4), -1.0) if st is not None else None
+
+    def scored(ix, side, pts, kind):
+        """The census: `side` scores `pts` of `kind` on paths ix (before the score goes up), in regulation."""
+        if last_score is None or not len(ix):
+            return
+        ix = np.asarray(ix, np.int64)
+        side, pts, kind = (np.broadcast_to(np.asarray(v), ix.shape) for v in (side, pts, kind))
+        reg = period[ix] <= 4
+        ix, side, pts, kind = ix[reg], side[reg], pts[reg], kind[reg]
+        last_score[ix] = np.stack([kind.astype(float), clock[ix], (score[ix, side] - score[ix, 1 - side]).astype(float),
+                                   pts.astype(float)], 1)
     # how the start's own drive ended (DRIVE_ENDS; -1 not yet): the audit's late drives
     drive_end = np.full(P, -1, np.int64)
     start_team = team.copy()
@@ -2787,6 +2839,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         k = model.choices[name].draw(cols, who, rng.random(len(who)), combine(learned, ot))
         if st is not None:
             st["_dec"].append((name, who.copy(), k.copy(), decision_slice(name, cols), None if ix is None else ix.copy()))
+            if "_dec_fine" in st and fine is not None and ix is not None:
+                st["_dec_fine"].append((name, ix.copy(), k.copy(), *(np.asarray(fine[f]).copy()
+                                                                      for f in ("period", "left", "lead", "togo"))))
             ch = model.choices[name]          # the league's shares in each decision's cell (no lean, no rule)
             st.setdefault("_dec_base", []).append(ch.base(cols))
             if name == "two":                 # the audit's conversions: the clock's cell, the lead after the six
@@ -2842,6 +2897,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         own = np.asarray(side) == start_team[ix]
         mark(ix[own], 0)
         mark(ix[~own], 4)                     # the other side's: a defensive touchdown
+        scored(ix, side, np.full(len(ix), 6), SIX)
         score[ix, side] += 6
         tally("touchdowns", len(ix))
         lead = score[ix, side] - score[ix, 1 - side]
@@ -2867,6 +2923,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         by = getattr(model, "two_good_by", None)
         two_good = by[conv_late(cell)] if by is not None else model.two_good
         good = rng.random(len(ix)) < np.where(two, two_good, model.kick_good)
+        scored(ix[good], side[good], np.where(two[good], 2, 1), np.where(two[good], TWO, PAT))
         score[ix, side] += np.where(good, np.where(two, 2, 1), 0)
         tally("two_point_tries", two.sum())
         kick_to(ix, 1 - side)
@@ -2894,6 +2951,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         mk, ms = ix[made], ix[~made]
         mark(mk, 1)
         mark(ms, 2)
+        scored(mk, team[mk], np.full(len(mk), 3), KICK3)
         score[mk, team[mk]] += 3
         kick_to(mk, 1 - team[mk])
         set_ball(ms, 1 - team[ms], np.maximum(20, 100 - y[ms]))
@@ -2987,6 +3045,10 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             near = (np.round(left).astype(np.int64), r_c.astype(np.int64), "left")
         th = th_time[ix, off] if th_time is not None else None
         tz = tz_of(tz_time, ix, off) if th is not None and not stopped else None
+        if pace_on:
+            up = (score[ix, off] - score[ix, 1 - off] >= PACE_LEAD).astype(np.int64)
+            th = np.where(up[:, None] == 1, th_up[ix, off], th)
+            tz = None if stopped or tz_up is None else (tz_up[0], tz_up[1][up, ix, off])
         j = model.time.draw_low(b, u, "seconds", STOPPED_MAX) if stopped \
             else model.time.draw_window(b, near[0], near[1], u, "left", k, rng, theta=th, tz=tz) if near is not None \
             else model.time.draw_tilted(b, u, th, rng, tz=tz) if th is not None \
@@ -3029,6 +3091,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
             b = league_bins(model.dist, f)
         th = th_dist[ix, off] if th_dist is not None else None
         tz = tz_of(tz_dist, ix, off) if th is not None else None
+        if shape_on:                                  # the favourite's lead picks the tilt (SHAPE_TRAIL)
+            fl = score[ix, fav[ix]] - score[ix, 1 - fav[ix]]
+            reg = np.where(fl <= -SHAPE_TRAIL, 1, np.where(fl >= SHAPE_LEAD, 2, 0))
+            th = th_reg[reg, ix, off]
+            tz = None if tz_reg is None else (tz_reg[0], tz_reg[1][reg, ix, off])
         j = model.dist.draw_near(b, y[ix], u, field_share, k, rng, theta=th, nmin=nmin, tz=tz) if field_share \
             else model.dist.draw_tilted(b, u, th, rng, tz=tz) if th is not None else model.dist.draw(b, u, k)
         names = ("kind", "gain", "shift", "td", "made", "rdist") + (("field",) if field_share else ())
@@ -3176,6 +3243,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         if sf.any():
             s = gx[sf]
             tally("safeties", len(s))
+            scored(s, 1 - team[s], np.full(len(s), 2), SAFETY)
             score[s, 1 - team[s]] += 2
             mark(s, 4)
             set_ball(s, 1 - team[s], model.safety_fields[rng.integers(0, len(model.safety_fields), len(s))])
@@ -3307,6 +3375,7 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         st["games"] = st.get("games", 0) + P
         st["final"] = score.copy()
         st["regulation"] = reg_score.copy()
+        st["last_score"] = last_score
         st["drive_end"] = drive_end.copy()
         st["drive_last"] = drive_last.copy()
         # a game decided in overtime (or ended) mid-period: the period's points never reached end_period

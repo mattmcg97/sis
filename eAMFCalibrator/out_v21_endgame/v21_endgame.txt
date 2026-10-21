@@ -1,0 +1,52 @@
+  v2.1's ENDGAME (tilt, nudged 75% of the way to the inputs) against the real games, 1,154 matches 2026-10-01 to 2026-10-18: 500 kick-off games a match, 200 from each late state
+
+  FROM KICK-OFF: 1,154 real games, 577,000 of the sim's (500 a match)
+    overtime: real   1.6% of games (19), sim   3.7%
+    level at the end of regulation, by the score that made it level, per 100 games: real / sim (of them in Q4's last 3:00)
+      the kick after a six, from 7 behind     0.35 /  1.53   (75.0% / 90.3%)
+      two after a six, from 8 behind          0.09 /  0.32   (100.0% / 98.3%)
+      a field goal, from 3 behind             1.13 /  1.84   (100.0% / 99.3%)
+      a six, from 6 behind                    0.00 /  0.02   (-% / 100.0%)
+      a score the feed missed                 0.09 /  0.00   (0.0% / -%)
+      no score                                0.00 /  0.01   (-% / 0.0%)
+    the final margin either way, % of games: real / sim (of them decided in overtime, % of games)
+      by 1     7.4 /   9.1   (0.3 / 1.2)
+      by 2     5.1 /   3.6   (0.0 / 0.0)
+      by 3    19.3 /  18.5   (0.7 / 0.5)
+      by 6     4.7 /   6.6   (0.3 / 1.0)
+      by 7    10.7 /  12.1   (0.3 / 0.8)
+      by 8     2.0 /   3.1   (0.0 / 0.0)
+
+  FROM THE SAME LATE STATES: every real snap of Q4 with the sides 8 or fewer apart, 9,240 of them on 868 matches, played out from the real state; each match counting the same in a cell
+                                 matches  overtime real/sim  the side with the ball wins real/sim
+    Q4 4:00-2:01     4-8 behind      308      2.3 / 6.2                   24.2 / 28.3   
+    Q4 4:00-2:01     3 behind        136      5.1 / 7.5                   55.1 / 43.6   
+    Q4 4:00-2:01     1-2 behind       39      2.6 / 2.0                   59.1 / 49.3   
+    Q4 4:00-2:01     level           190      4.7 / 10.4                  70.0 / 66.3   
+    Q4 4:00-2:01     1-3 ahead       166      3.6 / 2.8                   75.3 / 81.0   
+    Q4 4:00-2:01     4-8 ahead       294      0.3 / 1.9                   90.8 / 91.6   
+    Q4 4:00-2:01     all             816   overtime sim less real +2.8 points [+1.6, +3.7]
+    Q4 2:00-1:01     4-8 behind      250      2.0 / 5.6                   25.6 / 29.8   
+    Q4 2:00-1:01     3 behind        124      8.9 / 10.4                  64.9 / 47.5   
+    Q4 2:00-1:01     1-2 behind       46      0.0 / 0.6                   77.3 / 54.2   
+    Q4 2:00-1:01     level           146      4.8 / 13.1                  78.7 / 75.3   
+    Q4 2:00-1:01     1-3 ahead       142      2.1 / 2.1                   84.5 / 87.3   
+    Q4 2:00-1:01     4-8 ahead       219      0.5 / 1.2                   96.3 / 94.7   
+    Q4 2:00-1:01     all             734   overtime sim less real +3.0 points [+1.9, +4.1]
+    Q4 1:00-0:00     4-8 behind      294      1.0 / 2.9                   21.9 / 24.4   
+    Q4 1:00-0:00     3 behind        152      9.2 / 16.6                  50.9 / 40.0   
+    Q4 1:00-0:00     1-2 behind       86      0.0 / 0.1                   55.0 / 44.0   
+    Q4 1:00-0:00     level           113      9.7 / 18.0                  87.3 / 84.3   
+    Q4 1:00-0:00     1-3 ahead       158      0.0 / 0.6                   97.0 / 97.6   
+    Q4 1:00-0:00     4-8 ahead       223      0.4 / 0.3                   99.6 / 98.7   
+    Q4 1:00-0:00     all             675   overtime sim less real +2.5 points [+1.4, +3.6]
+
+  THE FORK: the choice between a tie and a win, % real / sim from kick-off / sim from the late states (n real; the sim's own counts in brackets)
+    conversion, 1 behind after the six, Q4's last 3:00         n   92 (69,648; 209,601): kick (ties) 30.4 / 41.6 / 29.7, two 69.6 / 58.4 / 70.3
+    conversion, 2 behind after the six, Q4's last 3:00         n   22 (7,794; 32,484): kick 4.5 / 15.5 / 15.5, two (ties) 95.5 / 84.5 / 84.5
+    conversion, 1 behind after the six, overtime               n    3 (7,001; 35,904): kick (ties) 0.0 / 0.5 / 0.7, two 100.0 / 99.5 / 99.3
+    conversion, 2 behind after the six, overtime               n    0 (175; 965): kick - / 1.1 / 0.2, two (ties) - / 98.9 / 99.8
+    4th down, 3 behind, Q4's last 2:00                         n   47 (26,035; 117,766): go 83.0 / 75.8 / 74.8, field goal (ties) 17.0 / 22.8 / 23.8, punt 0.0 / 1.4 / 1.4
+    4th down, 1-2 behind or level, Q4's last 2:00              n  115 (51,704; 208,470): go 34.8 / 45.0 / 43.3, field goal 60.9 / 44.8 / 46.8, punt 4.3 / 10.2 / 9.9
+    kick on downs 1-3, 3 behind, Q4's last minute              n  270 (110,000; 579,673): play on 96.3 / 92.3 / 91.5, kick (ties) 3.7 / 7.7 / 8.5
+    kick on downs 1-3, 1-2 behind or level, Q4's last minute   n  372 (181,740; 831,720): play on 76.9 / 75.0 / 73.1, kick 23.1 / 25.0 / 26.9
