@@ -4,7 +4,8 @@ table_prior.py) instead of pricing the pre-match every time it's tested.
 
     python -m eAMFCalibrator walkthrough --history eAMFCalibrator/out/match_history.csv --since 2026-01-01
 
-The steps, each with a progress line (done, the pace, the time left) and the run's estimated finish:
+The steps, each with a progress line (done, the pace, the time left) and the run's estimated finish -- on a
+terminal one line drawn over itself (eAMFModel/progress.py), sent to a file a line every LINE_EVERY seconds:
   nb2 fits     NB2 refitted every day (eAMFModel prior-daily: each fit on the results before its day)
   nb2 prices   every match priced by its own day's fit (nb2-history's nb2.csv)
   glmer fits   glmer refitted every day (glmer/cadence.R, trim:hl60_x0.5:daily: the trimmed model, each
@@ -72,7 +73,8 @@ EST_NB2_PRICE = 1.0              # a day's matches priced by its fit
 EST_GLMER_FIT = 6.0              # a day's glmer fit on one core
 EST_LAYERS = 0.002               # a match, each model
 EST_VARIANTS = 0.016             # a match, every variant
-LINE_EVERY = 15.0                # seconds between progress lines (a fit's line always prints)
+LINE_EVERY = 15.0                # seconds between progress lines sent to a file (a fit's line always prints)
+OVERLAY_EVERY = 0.5              # seconds between redraws of the line on a terminal
 
 
 def _fmt(seconds):
@@ -84,13 +86,19 @@ def _fmt(seconds):
 class Progress:
     """The run's plan -- each step's estimated seconds -- and each step's progress line: done of total,
     its pace, the time it and the whole run have left, and the run's finish. A finished step's own
-    pace against its estimate rescales the steps still to come."""
+    pace against its estimate rescales the steps still to come. Printed to a terminal, the progress
+    line is drawn over itself (`overlay`, progress.Line); elsewhere, or with `out` given, it's a line
+    every LINE_EVERY seconds."""
 
-    def __init__(self, plan, clock=time.time, now=dt.datetime.now, out=None):
+    def __init__(self, plan, clock=time.time, now=dt.datetime.now, out=None, overlay=None):
         self.plan = dict(plan)               # step -> estimated seconds
         self.actual, self.estimated = {}, dict(plan)
         self.clock, self.now = clock, now
         self.out = out or (lambda line: print(line, flush=True))
+        if overlay is None and out is None:
+            from eAMFModel import progress
+            overlay = progress.Line()
+        self.overlay = overlay if overlay is not None and overlay.live else None
         self.t0 = clock()
         self.lock = threading.Lock()
         self.step = None
@@ -121,6 +129,7 @@ class Progress:
             self.done, self.ts, self.last = 0, self.clock(), 0.0
             est = self.factor() * self.plan.get(step, 0.0)
             left = est + self.rest(step)
+            self._clear()
             self.out(f"\n== {label}: {total:,} {unit}, about {_fmt(est)}; the whole run about {_fmt(left)} more, "
                      f"finishing about {self.finish_text(left)}")
 
@@ -128,9 +137,17 @@ class Progress:
         with self.lock:
             self.done += n
             now = self.clock()
-            if force or self.done >= self.total or now - self.last >= LINE_EVERY:
+            if self.overlay is not None:             # a terminal: the same line, redrawn
+                if force or self.done >= self.total or now - self.last >= OVERLAY_EVERY:
+                    self.last = now
+                    self.overlay.draw(self.line(now, note))
+            elif force or self.done >= self.total or now - self.last >= LINE_EVERY:
                 self.last = now
                 self.out(self.line(now, note))
+
+    def _clear(self):
+        if self.overlay is not None:
+            self.overlay.clear()
 
     def line(self, now, note=""):
         elapsed = now - self.ts
@@ -153,6 +170,7 @@ class Progress:
             self.actual[self.step] = took
             if skipped:
                 self.estimated[self.step] = 0.0
+            self._clear()
             self.out(f"  {self.label}: {'kept from before' if skipped else 'done'} in {_fmt(took)}; "
                      f"{_fmt(self.clock() - self.t0)} since the start")
 

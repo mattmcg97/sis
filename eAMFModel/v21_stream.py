@@ -30,7 +30,7 @@ from bisect import bisect_left, bisect_right
 
 import numpy as np
 
-from . import playover, sim14 as s14, v14, v21, v21_react
+from . import playover, progress, sim14 as s14, v14, v21, v21_react
 from .state import HOME, AWAY, MARKET_IDS
 from .stream import (confident_windows, known_states, match_ends, prematch_publish_times, side_known)
 # the line rules, as v14's (the calibrator reads every one of LINE_MODES off one simulation)
@@ -378,8 +378,8 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None):
     return out
 
 
-def _worker(job):
-    """Price a list of matches, one after another (_price)."""
+def _worker(job, tick=None):
+    """Price a list of matches, one after another (_price); tick() after each."""
     items, model_file, n_paths, lines, prematch_only, share, react = job
     model = v21.Model.load(model_file)
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
@@ -389,6 +389,8 @@ def _worker(job):
         for mode in modes:
             out[mode].extend(got[mode])
         states = tuple(a + b for a, b in zip(states, got["_states"]))
+        if tick is not None:
+            tick()
     out["_states"] = states
     return out
 
@@ -409,13 +411,19 @@ def _one(job):
     return _price(_LOADED[model_file], item, n_paths, lines, prematch_only, share, react)
 
 
+def _one_at(indexed):
+    """_one for (k, job): (k, its rows), so the pool can hand them back as they finish."""
+    k, job = indexed
+    return k, _one(job)
+
+
 LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, simulate (and workers)
 
 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
                        prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, moments=None,
-                       drives=None, drives_path=None):
+                       drives=None, drives_path=None, label=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
@@ -424,9 +432,9 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     chunk alone reads them; `react`: the in-play strength update (v21_react.spec_of; None: none);
     `moments`: {match: (market, prod message) per bet}, only the in-play books those bets read simulated
     (None: every book prod's quotes read; a match without any: its pre-match prices alone); `drives`: the
-    pace nudge, the share of the way from
-    the sim's own drives to each match's expected drives (drives_of; None: off), those off `drives_path`
-    (drives_table's default where None)."""
+    pace nudge, the share of the way from the sim's own drives to each match's expected drives (drives_of;
+    None: off), those off `drives_path` (drives_table's default where None); `label`: the candidate's name
+    on the simulation's progress bar."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     exp_drives = drives_table(drives_path) if drives else None
@@ -508,19 +516,26 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         return [] if isinstance(lines, str) else {mode: [] for mode in modes}
     workers = max(1, min(workers or max(1, (os.cpu_count() or 2) - 1), len(items)))
     t0 = time.time()
-    if workers == 1:
-        out = _worker((items, model_file, n_paths, lines, prematch_only, share, react))
-        states = out.pop("_states")
-    else:
-        # a match at a time to whichever worker is free (a worker handed a fixed share kept the rest
-        # waiting on its longest matches), the rows put back in the order the shares gave them: each
-        # worker's every workers-th match, one after another
-        with v14.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
-            per = pool.map(_one, [(item, model_file, n_paths, lines, prematch_only, share, react) for item in items],
-                           chunksize=1)
-        order = [k for i in range(workers) for k in range(i, len(items), workers)]
-        out = {mode: [row for k in order for row in per[k][mode]] for mode in modes}
-        states = tuple(sum(p["_states"][j] for p in per) for j in (0, 1))
+    bar = progress.Bar(f"{label or 'v21'}: simulating", len(items), "matches")
+    try:
+        if workers == 1:
+            out = _worker((items, model_file, n_paths, lines, prematch_only, share, react), tick=bar.update)
+            states = out.pop("_states")
+        else:
+            # a match at a time to whichever worker is free (a worker handed a fixed share kept the rest
+            # waiting on its longest matches), the rows put back in the order the shares gave them: each
+            # worker's every workers-th match, one after another
+            jobs = [(item, model_file, n_paths, lines, prematch_only, share, react) for item in items]
+            per = [None] * len(jobs)
+            with v14.pool_context().Pool(workers, initializer=_load, initargs=(model_file,)) as pool:
+                for k, got in pool.imap_unordered(_one_at, enumerate(jobs), chunksize=1):
+                    per[k] = got
+                    bar.update()
+            order = [k for i in range(workers) for k in range(i, len(items), workers)]
+            out = {mode: [row for k in order for row in per[k][mode]] for mode in modes}
+            states = tuple(sum(p["_states"][j] for p in per) for j in (0, 1))
+    finally:
+        bar.close()
     LAST_TIMING.update(simulate=time.time() - t0, workers=workers, states=states[0], states_of=states[1],
                        moments=moments is not None)
     return out[lines] if isinstance(lines, str) else out

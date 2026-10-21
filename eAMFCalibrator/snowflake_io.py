@@ -12,6 +12,7 @@ timestamp, it is preferred over the reconstruction automatically.
 """
 
 import hashlib
+import inspect
 import os
 import pickle
 import sys
@@ -664,10 +665,12 @@ def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=Non
     prod_by_match (match -> prod's rows) saves fetching prod again; `keep`
     (a dict) collects the scouting and score rows read."""
     from collections import defaultdict
+    from eAMFModel import progress
     from . import directional, scouting
     table = scouting_table(cur)
     snapshots, prod_all = {}, []
     chunk = config.MATCH_CHUNK_SIZE
+    bar = progress.Bar("reading the play feed from Snowflake", len(match_codes), "matches")
     for start in range(0, len(match_codes), chunk):
         batch = list(match_codes[start:start + chunk])
         # every row of each match, including any before the window opened:
@@ -708,6 +711,8 @@ def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=Non
                     for snap in snaps:
                         snap["home_handle"], snap["away_handle"] = home, away
                 snapshots[match_code] = snaps
+        bar.update(len(batch))
+    bar.close()
     return snapshots, prod_all
 
 
@@ -840,13 +845,15 @@ def _sim_quotes(cur, match_codes, name, lines=None):
           + f"; simulating {paths:,} games each{' at kick-off only' if prematch_only else ''}", flush=True)
     from eAMFModel import glmer_prior
     r_before = dict(glmer_prior.PREDICTS)
+    # the simulation's progress bar names the candidate (kept out of opts: they key the cache)
+    named = {"label": name} if "label" in inspect.signature(stream.quotes_for_matches).parameters else {}
     both = stream.quotes_for_matches(snapshots, prod_all, model_dir, n_paths=paths,
                                      workers=config.MODEL_WORKERS, match_info=match_info,
                                      lines=getattr(stream, "LINE_MODES",
                                                    (stream.OWN, stream.PROD_LINES)),
                                      history=history, prematch_only=prematch_only, **opts,
                                      **({"batches": [list(b) for b in group]} if seeded else {}),
-                                     **({"moments": moments} if moments is not None else {}))
+                                     **({"moments": moments} if moments is not None else {}), **named)
     took = getattr(stream, "LAST_TIMING", {})
     if opts.get("drives") is not None and took.get("drives_of"):
         print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"

@@ -35,6 +35,8 @@ from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
+from eAMFModel import progress
+
 from . import config, markets, snowflake_io
 from .pipeline import to_unit_probability
 from .snowflake_io import fetch_all
@@ -650,10 +652,13 @@ def run(cur, out_dir, only_checks=False, summary=None, prematch_only=False):
         return None
     prod_rows, finals = [], {}
     chunk = config.MATCH_CHUNK_SIZE
+    bar = progress.Bar("reading prod's quotes from Snowflake", len(matches), "matches")
     for start in range(0, len(matches), chunk):
         batch = matches[start:start + chunk]
         prod_rows += snowflake_io.fetch_quotes(cur, config.STREAMS["prod"], batch)
         finals.update(snowflake_io.fetch_final_scores(cur, batch))
+        bar.update(len(batch))
+    bar.close()
     checks = fetch_checks(cur, matches, prod_rows)
     prod_tl = timeline(prod_rows)
     uplift = None
