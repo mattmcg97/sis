@@ -3,6 +3,7 @@ two models and their layers, a rerun keeping what's made, and a sim's prior read
 
 import csv
 import datetime as dt
+import io
 import json
 import os
 import tempfile
@@ -55,6 +56,27 @@ class TestProgress(unittest.TestCase):
         for _ in range(3):
             prog.tick(force=True)                       # the round of four done in 100s: 36 x 100 / 4
         self.assertIn("~15m00s left", lines[-1])
+
+
+    def test_on_a_terminal_the_progress_line_is_drawn_over_itself(self):
+        from eAMFModel import progress
+        from eAMFModel.tests.test_progress import TTY, shown
+        clock, lines, tty = Clock(), [], TTY()
+        prog = wt.Progress({"a": 100.0}, clock=clock, out=lines.append, overlay=progress.Line(tty))
+        prog.begin("a", "step a", 10, "days")
+        clock.t += 20
+        prog.tick(force=True)
+        clock.t += 1
+        prog.tick(note="day 2")
+        self.assertEqual(len(lines), 1)                 # the step's own line alone printed
+        self.assertIn("2/10 days (20%)", shown(tty.getvalue()))
+        self.assertIn("[day 2]", shown(tty.getvalue()))
+        prog.tick(8)
+        prog.end()
+        self.assertEqual(shown(tty.getvalue()), "")     # cleared before the step's last line
+        self.assertIn("step a: done in", lines[-1])
+        sent = wt.Progress({"a": 100.0}, clock=clock, out=lines.append, overlay=progress.Line(io.StringIO()))
+        self.assertIsNone(sent.overlay)                 # not a terminal: lines, as before
 
 
 def cadence_runner(arm_lines, hist):

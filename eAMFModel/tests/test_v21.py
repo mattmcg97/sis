@@ -1569,6 +1569,37 @@ class TestPaceNudge(unittest.TestCase):
             self.assertEqual([x[3] for x in price(drives=1.0)], [x[3] for x in on])
 
 
+class TestStreamProgress(unittest.TestCase):
+    """The stream's progress bar: the matches handed back as the workers finish them, put back in the
+    order the stream has always given them (each worker's every workers-th match, one after another)."""
+
+    def test_workers_price_as_one_does_with_the_bar_counting_every_match(self):
+        from .. import progress, v21_stream as vs
+        codes = sorted(MATCHES)[:4]
+        rows = {c: sorted(MATCHES[c], key=lambda r: int(r["message"])) for c in codes}
+        info = [h for h in HISTORY if h["MATCH_CODE"] in codes]
+        prod = [(c, 50, None, 50.0, 2.0, "", int(r["message"]), "OPEN", "true") for c in codes for r in rows[c][::6]]
+        counted = []
+        real_bar = progress.Bar
+
+        def bar(label, total, unit="", **kw):
+            b = real_bar(label, total, unit, stream=io.StringIO())
+            counted.append(b)
+            return b
+        with tempfile.TemporaryDirectory() as d:
+            built().save(os.path.join(d, v21.MODEL_FILE))
+            price = lambda w: vs.quotes_for_matches(rows, prod, d, n_paths=20, workers=w, match_info=info,
+                                                    lines=vs.PROD_LINES, nudge_share=0.0, label="v21-x")
+            with mock.patch.object(progress, "Bar", side_effect=bar):
+                one, two = price(1), price(2)
+        self.assertTrue(one)
+        by = lambda got: {c: [r for r in got if r[0] == c] for c in codes}
+        self.assertEqual(by(one), by(two))                      # every match priced the same
+        first = lambda got: list(dict.fromkeys(r[0] for r in got))
+        self.assertEqual(first(two), [first(one)[k] for k in (0, 2, 1, 3)])   # each worker's every 2nd match
+        self.assertEqual([(b.label, b.done, b.total) for b in counted], [("v21-x: simulating", 4, 4)] * 2)
+
+
 class TestReact(unittest.TestCase):
     """v2.1's in-play strength update (v21_react): the variants by name, each side's nudge moved the way
     its play says, the stream's prices untouched without one, and v21-react-fit's table."""
