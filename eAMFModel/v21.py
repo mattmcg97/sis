@@ -2822,7 +2822,9 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     `stats` (a dict) gathers the census: every snap (SNAP_LOG), counts and points by quarter.
     until_half: a start in the first half plays to the half's end (the scores then). `counts` (a dict):
     each game's drives (both sides', the start's own drive under way one of them) under "drives", shaped
-    as the scores. A start's "tempo" (one a start): added to both sides' time tilts (the pace nudge)."""
+    as the scores. A start's "tempo" (one a start): added to both sides' time tilts (the pace nudge). A start's
+    "convert" (the scoring side, -1 none): the game stands at the try after that side's touchdown, the six
+    on the board."""
     rng = np.random.default_rng(seed)
     S = len(start["period"])
     P = S * n_paths
@@ -2967,6 +2969,11 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         scored(ix, side, np.full(len(ix), 6), SIX)
         score[ix, side] += 6
         tally("touchdowns", len(ix))
+        convert(ix, side)
+
+    def convert(ix, side):
+        """The try after `side`'s touchdown on paths ix (the six on the board): over at once where it wins
+        overtime, else a kick or a go for two, and the kick-off to the other side."""
         lead = score[ix, side] - score[ix, 1 - side]
         ot = period[ix] >= 5
         walk = ot & ot_done[ix, 1 - side] & (lead > 0)            # the second side goes ahead: over
@@ -3366,6 +3373,12 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         clock[on] = QUARTER
         tos[on] = OT_TIMEOUTS
         prev[on] = FRESH
+
+    if "convert" in start:                    # a start at the try after a touchdown (the trader's): its scorer's
+        scorer = rep(start["convert"], np.int64)
+        cv = np.flatnonzero(scorer >= 0)
+        if len(cv):
+            convert(cv, scorer[cv])
 
     for _ in range(max_steps):
         live = np.flatnonzero(phase != DONE)

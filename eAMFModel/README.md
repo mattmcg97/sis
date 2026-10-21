@@ -3414,8 +3414,37 @@ This opens a local page (http://127.0.0.1:8765) for clicking through a game and 
 prices after every play. It needs only the v10 build; nothing else is installed. The pre-match
 model's expected points need pandas and scipy, like the build.
 
-For v2.1, and for a historic match against prod's quotes, use eAMFCalibrator's `replay-ui`
-(a match replayed a PLAY_OVER at a time, with the nudge set by hand).
+**v2.1 and v21-drives.** Given a v2.1 build (`v21model.pkl`), the trader prices as the betting
+sim's v21-drives does:
+
+```
+python -m eAMFModel trader --model C:\Users\MMcguinness\sis-v21\v21_t10 \
+    --prior eAMFCalibrator/out/form_prior/priors/avg_form4_w05.csv
+```
+
+- **The nudge.** Each side's offense is nudged toward the prior's expected points (`--nudge-share`,
+  default 1, as the betting sim was run). One tempo on both sides' time tilts moves the kick-off
+  games' drives toward the match's expected drives (`--drives-share`, default 1). Both are solved
+  once a match, at the kick-off, and carried into every state. `--no-pace` (or `--version v21`)
+  is plain v21. `--prior` defaults to the form table.
+- **A match from the prior.** *Match from the prior* lists the prior table's latest 600 matches.
+  Picking one fills the players, the teams, the expected points and the expected drives (with
+  that day's league drives beside them), so the page prices exactly what the betting sim did.
+  Otherwise *Get expected points* takes the pair's latest meeting in the table (its ends swapped
+  where they were the other way round), else the league's. Points and drives can be typed over;
+  blank drives mean no pace nudge.
+- **What it solved.** Under the expected points, a line shows the kick-off's nudge: each side's
+  points nudge and, with the pace on, the sim's own drives a match, the goal, the drives it got
+  and the tempo (below 0, quicker snaps, more drives; the tempo stops at ±3).
+- **Every state.** The trader's game becomes a v2.1 start: the scoreboard, the clock, the
+  timeouts, who kicks the second half, the snaps so far and the play before (a fresh possession,
+  nothing gained, short, a first down, a loss, a timeout: what v2.1's clock draw reads). A
+  conversion is the scorer's try as the sim plays it (kick or go for two, then the kick-off: the
+  `convert` start, `v21.simulate`). The final scores read as v14's margin and total distributions,
+  priced by v14's markets and key-number lines.
+
+For a historic match against prod's quotes, use eAMFCalibrator's `replay-ui` (a match replayed a
+PLAY_OVER at a time, with the nudge set by hand).
 
 - **Match:** pick the two players, their teams and the stream. *Get expected points* asks the
   build's pre-match model (NB2 or glmer, with its shrink) for each side's expected points. The

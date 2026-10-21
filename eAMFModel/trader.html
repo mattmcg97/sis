@@ -174,6 +174,8 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
   <div class="cell" style="grid-area:setup">
     <section class="panel" id="setup">
       <h2>Match</h2>
+      <div id="match_row" hidden style="margin-bottom:6px"><label>Match from the prior (fills the rest)</label>
+        <input id="match" list="matchlist" autocomplete="off" placeholder="a match code, or type a player"><datalist id="matchlist"></datalist></div>
       <div class="row vs">
         <div><label><span class="side-tag away-tag"></span>Away player</label><input id="away_player" list="players" autocomplete="off"></div>
         <span class="at">@</span>
@@ -186,7 +188,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
       </div>
       <div class="note" id="colournote" style="margin-top:2px"></div>
       <div class="row">
-        <div><label>Stream</label><select id="stream"></select></div>
+        <div id="stream_box"><label>Stream</label><select id="stream"></select></div>
         <div><label>Receives first</label><select id="opening_receiver"><option value="away">Away</option><option value="home" selected>Home</option></select></div>
       </div>
       <button id="nb2" style="margin-top:10px;width:100%">Get expected points</button>
@@ -195,7 +197,10 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
         <table>
           <tr><th></th><th id="c_an">Away</th><th id="c_hn">Home</th></tr>
           <tr><td>Expected points</td><td><input id="mean_away" type="number" step="0.1"></td><td><input id="mean_home" type="number" step="0.1"></td></tr>
+          <tr id="drives_row" hidden><td>Expected drives</td><td><input id="exp_drives" type="number" step="0.1" title="Both sides' drives a match: the pace nudge's goal"></td>
+            <td class="note" id="league_note"></td></tr>
         </table>
+        <div class="note" id="v21_pre"></div>
         <div><h3>Pre-match prices</h3><div id="c_pre" class="note">Start the match for its pre-match prices</div></div>
       </div>
       <button class="primary" id="start" style="width:100%">Start match</button>
@@ -268,7 +273,7 @@ details summary { cursor: pointer; color: var(--text-secondary); margin-top: 10p
 "use strict";
 const $ = id => document.getElementById(id);
 const NS = "http://www.w3.org/2000/svg";
-let META = null, SETUP = null, HIST = [], PRE = null;
+let META = null, SETUP = null, HIST = [], PRE = null, LEAGUE_DRIVES = null, MATCH_LOADED = "";
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -372,7 +377,13 @@ async function init() {
   try { META = await api("/api/meta"); } catch (e) { $("modelmeta").textContent = "could not load the model: " + e.message; return; }
   document.title = `${META.version} Trader`; $("title").textContent = `${META.version} Trader`;
   $("modelmeta").textContent = `${META.model}` + (META.prior ? ` · prior: ${META.prior}` : "") +
-    (META.prematch ? "" : " · no pre-match model");
+    (META.how ? ` · ${META.how}` : "") + (META.prematch ? "" : " · no pre-match model");
+  if (META.matches && META.matches.length) {
+    $("match_row").hidden = false;
+    $("matchlist").innerHTML = META.matches.map(m => `<option value="${esc(m.code)}">${esc(m.label)}</option>`).join("");
+  }
+  $("drives_row").hidden = !META.pace;
+  $("stream_box").hidden = !META.streams.length;
   $("players").innerHTML = META.players.map(p => `<option value="${esc(p)}">`).join("");
   $("teams").innerHTML = [...new Set([...META.teams, ...Object.keys(TEAM_COLOURS)])].sort().map(t => `<option value="${esc(t)}">`).join("");
   $("stream").innerHTML = META.streams.map(s => `<option>${esc(s)}</option>`).join("");
@@ -385,15 +396,37 @@ async function init() {
 function readSetup() {
   return {home_player: $("home_player").value.trim(), away_player: $("away_player").value.trim(),
     home_team: $("home_team").value.trim(), away_team: $("away_team").value.trim(), stream: $("stream").value,
-    opening_receiver: $("opening_receiver").value,
+    opening_receiver: $("opening_receiver").value, match: $("match").value.trim(),
+    exp_drives: parseFloat($("exp_drives").value), league_drives: LEAGUE_DRIVES,
     means: [parseFloat($("mean_home").value), parseFloat($("mean_away").value)],
     margin: parseFloat($("margin").value) / 100, paths: parseInt($("paths").value, 10)};
 }
+function fillPrematch(r) {
+  for (const k of ["home_player", "away_player", "home_team", "away_team"]) if (r[k] !== undefined) $(k).value = r[k];
+  if (r.home_team !== undefined) applyTeamColours();
+  $("mean_home").value = r.means[0]; $("mean_away").value = r.means[1];
+  if (r.exp_drives !== undefined) { $("exp_drives").value = r.exp_drives; LEAGUE_DRIVES = r.league_drives; }
+  else if (META.pace) { $("exp_drives").value = ""; LEAGUE_DRIVES = null; }
+  $("league_note").textContent = LEAGUE_DRIVES ? `the day's league ${LEAGUE_DRIVES}` : (META.pace ? "blank: no pace nudge" : "");
+}
+$("match").onchange = async () => {     // (a blur after a pick fires it again: the match loaded already is left be)
+  const code = $("match").value.trim();
+  if (code === MATCH_LOADED || !META.matches.some(m => m.code === code)) return;
+  busy(true); $("nb2note").textContent = "";
+  try {
+    const r = await api("/api/prematch", {setup: readSetup()});
+    fillPrematch(r); MATCH_LOADED = code;
+    $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` : (r.note ? esc(r.note) : "");
+    renderCalc();
+  } catch (e) { $("nb2note").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
+  busy(false);
+};
+$("exp_drives").oninput = () => { $("league_note").textContent = LEAGUE_DRIVES ? `the day's league ${LEAGUE_DRIVES}` : ""; };
 $("nb2").onclick = async () => {
   busy(true); $("nb2note").textContent = "";
   try {
     const r = await api("/api/prematch", {setup: readSetup()});
-    $("mean_home").value = r.means[0]; $("mean_away").value = r.means[1];
+    fillPrematch(r);
     $("nb2note").innerHTML = r.error ? `<span class="error">${esc(r.error)}</span>` : (r.note ? esc(r.note) : "");
     renderCalc();
   } catch (e) { $("nb2note").innerHTML = `<span class="error">${esc(e.message)}</span>`; }
@@ -425,12 +458,13 @@ async function reprice() {
   busy(false);
 }
 $("margin").onchange = reprice; $("paths").onchange = reprice;
-$("home_player").onchange = $("away_player").onchange = () => renderCalc();
+$("home_player").onchange = $("away_player").onchange = () => { $("match").value = MATCH_LOADED = ""; renderCalc(); };
 $("home_team").oninput = $("away_team").oninput = () => { applyTeamColours(); if (HIST.length) render(); };
 function renderCalc() {
   const hn = $("home_player").value.trim() || "Home", an = $("away_player").value.trim() || "Away";
   $("c_hn").textContent = hn; $("c_an").textContent = an;
   const pre = PRE && !PRE.final ? PRE : null;
+  $("v21_pre").innerHTML = pre && pre.v21 ? v21Line(pre.v21) : "";
   if (!pre) { $("c_pre").className = "note"; $("c_pre").textContent = "Start the match for its pre-match prices"; return; }
   const c = x => `<span class="odds">${x.odds.toFixed(2)}</span><span class="p">${pct(x.p)}</span>`;
   $("c_pre").className = "";
@@ -655,6 +689,14 @@ function render() {
   $("pricenote").textContent = "";
   paintClock(); showGain();
   drawField(g); renderPrices(pr, prevPrice); drawDists(pr, g); drawWin(); drawTotal(); renderLog();
+}
+function v21Line(v) {               // what v2.1's kick-off nudge came to: each side's points nudge, the pace's tempo
+  const parts = [];
+  if (v.nudge) parts.push(`points nudge ${esc(SETUP ? SETUP.home_player || "home" : "home")} ${signed(+v.nudge[0].toFixed(2))}, ` +
+    `${esc(SETUP ? SETUP.away_player || "away" : "away")} ${signed(+v.nudge[1].toFixed(2))}`);
+  if (v.tempo !== null && v.tempo !== undefined) parts.push(`drives: the sim's own ${v.own_drives} → ${v.goal_drives} ` +
+    `(got ${v.drives}; pace ${v.pace}), tempo ${signed(+v.tempo.toFixed(2))}`);
+  return parts.length ? "v2.1 at the kick-off: " + parts.join(" · ") : "";
 }
 function renderPrices(pr, prev) {
   if (pr.final) {
