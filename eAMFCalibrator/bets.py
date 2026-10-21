@@ -589,11 +589,11 @@ def check_models(streams):
             stream_mod = importlib.import_module(f"eAMFModel.{base}_stream")
             prior = getattr(config, "MODEL_PRIORS", {}).get(version)
             if prior:
-                stream_mod.model_paths(snowflake_io.build_dir(version), prior)
+                paths = stream_mod.model_paths(snowflake_io.build_dir(version), prior)
             else:
-                stream_mod.model_paths(snowflake_io.build_dir(version))
-            if getattr(stream_mod, "drives_of", lambda _n: None)(version) is not None:   # v21-drives: the pace table
-                stream_mod.drives_table(getattr(config, f"{base.upper()}_DRIVES_TABLE", None))
+                paths = stream_mod.model_paths(snowflake_io.build_dir(version))
+            if getattr(stream_mod, "drives_of", lambda _n: None)(version) is not None:   # v21-drives: the pace
+                stream_mod.drives_table(getattr(config, f"{base.upper()}_DRIVES_TABLE", None), paths[0])
 
 
 def fetch_checks(cur, matches, prod_rows, keep=None):

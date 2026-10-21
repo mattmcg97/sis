@@ -857,8 +857,8 @@ def _sim_quotes(cur, match_codes, name, lines=None):
     took = getattr(stream, "LAST_TIMING", {})
     if opts.get("drives") is not None and took.get("drives_of"):
         print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"
-              " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: rerun"
-                               " xgb.pace_eff with --score-from at or before the window's start)"), flush=True)
+              " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: write"
+                               " the pace in again over the window: python -m eAMFCalibrator pace-prior)"), flush=True)
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"

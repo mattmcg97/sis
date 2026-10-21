@@ -298,7 +298,7 @@ NUDGE_PATHS = 3000
 # added to both sides' time tilts (PHI_TIME's seconds / 10: below none, quicker snaps, more drives) until the
 # sim's kick-off drives meet the match's expected drives, by secant steps from the build's slope
 # (calibrate_tempo), the points nudge meeting its target alongside on the same random numbers. The expected
-# drives (xgb/pace_eff.py's exp_drives) are taken relative to their table's mean, at the sim's own level
+# drives (the prior table's exp_drives) are taken relative to their table's mean, at the sim's own level
 # (drive_level): the nudge moves the pace match to match, not the league's. A drive: a side's possession
 # from its first snap (a kick-return touchdown none).
 TEMPO_MAX = 3.0

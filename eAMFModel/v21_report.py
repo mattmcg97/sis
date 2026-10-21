@@ -22,7 +22,7 @@ For every settled match in the window with snapshots:
              time draw (time buckets by the play before) and the distance draw (snap classes by time
              bucket).
   the drives each match's drives (both sides') in the kick-off games against the real ones; with --drives
-             (each match's expected drives, xgb/pace_eff.py's pace_eff_prior.csv) by fifth of the expected,
+             (each match's expected drives, the prior table's exp_drives) by fifth of the expected,
              and with the pace nudge on, the sim's own before it, after it and the tempo it took.
 """
 
