@@ -417,6 +417,29 @@ It reports four things:
 It also counts `suspect` turnovers: ones whose next row carries a touchdown message for the side that
 lost the ball. Few of them means the sim's turnover count is clean.
 
+**Results** (21 Oct, the export of 20 Oct, 3,444 matches, 1 Sep – 18 Oct). There are no suspect
+turnovers, so the sim's count is clean. `drive_stats.csv` had overstated turnovers (2.66 a match
+against 1.96), and with them how much they explain.
+
+A match has 9.87 drives (sd 2.40). Most end in a touchdown (3.99 a match) or a turnover (1.96); there
+are few punts (0.73) or turnovers on downs (0.44).
+
+1. **Turnovers explain under a third of the drive count's variance.** r 0.54, R² 0.30, a turnover
+   +0.92 drives. With punts and turnovers on downs added, R² is 0.41. Of the drive count's
+   variance (in logs), the snaps a drive lasts are 64%, the snaps a game holds 27%, the two together
+   +9%.
+2. **A gamer's turnover rate is a steady trait, but a small one.** Odd against even weeks, the
+   turnovers a drive given up correlate 0.73 and those forced 0.71. Gamers' rates spread only 0.033
+   about 0.201 a drive: one sd is 0.16 turnovers a match.
+3. **Before the match they barely help.** Expected turnovers (the pace ridge, refitted daily)
+   correlate 0.21 with the real ones. Half the pace's miss is the match's own turnovers (r 0.52), but
+   adding expected turnovers to the pace moves nothing (R² 0.0896 → 0.0902, t +1.5). Turnovers are
+   in-match luck, and no turnover prior is needed for pace.
+4. **They decide the margin.** The turnover margin explains 55% of the points margin (r 0.74), +4.7
+   points a turnover. Some of that runs backwards, with a trailing side taking risks, so not all of
+   it is the turnovers' doing. v21 already gives each gamer and team, on offense and on defense, its
+   own turnover rate (the `turnover` component of the tilts, `PHI_DIST`).
+
 ## Files
 
 - `features.py`: the as-of feature table (`python -m xgb.features`).
