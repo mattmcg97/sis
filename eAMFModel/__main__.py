@@ -257,7 +257,8 @@ def cmd_trader(args):
     from . import trader
     trader.serve(args.model, port=args.port, paths=args.paths, margin=args.margin,
                  browser=not args.no_browser, version=args.version, prior=args.prior,
-                 nudge_share=args.nudge_share, drives_share=args.drives_share, pace=not args.no_pace)
+                 nudge_share=args.nudge_share, drives_share=args.drives_share, pace=not args.no_pace,
+                 ml_path=args.ml, ml_share=args.ml_share)
 
 
 def cmd_prior_vs_sim(args):
@@ -1281,6 +1282,12 @@ def build_parser():
     p.add_argument("--drives-share", type=float, default=1.0,
                    help="v2.1: how far toward the match's expected drives (default 1)")
     p.add_argument("--no-pace", action="store_true", help="v2.1: no pace nudge (plain v21)")
+    p.add_argument("--ml", metavar="CSV",
+                   help="v2.1: a pre-match moneyline model's table (MATCH_CODE, p_home) whose home win chance a match "
+                        "picked off the prior brings for the moneyline nudge (v21-ml; default $EAMF_V21_ML); one can "
+                        "be typed in without it")
+    p.add_argument("--ml-share", type=float, default=1.0,
+                   help="v2.1: how far toward the moneyline the kick-off's home chance goes (default 1; 0: none)")
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--paths", type=int, default=4000, help="simulated games for each price")
     p.add_argument("--margin", type=float, default=0.05, help="the book's margin on the odds shown")

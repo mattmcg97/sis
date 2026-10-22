@@ -9,7 +9,8 @@ The version is the build's own (v14tables.npz: v14; v21model.pkl: v2.1, V21Trade
 what INTERFACE lists; the tests check every version does. v2.1 prices as the betting sim's v21-drives
 does: its offense nudged toward the prior's expected points and one tempo toward the match's expected
 drives at the kick-off, the two carried into every state; a match picked off the prior table brings its
-own points and drives.
+own points and drives. With a home win chance typed in, or read off a moneyline table (--ml), the
+points nudge's margin is moved until the kick-off meets it too (v21-ml).
 
 The server keeps nothing between requests: the page holds the game and its history, and sends
 the state with every request."""
@@ -265,10 +266,14 @@ class V21Trader(Trader):
     one tempo on both sides' time tilts so the kick-off games' drives meet the match's expected drives, solved
     once a setup at the kick-off and carried into every state. The expected points and drives come off the
     prior table (a match picked off it, else the pair's latest meeting in it), or a build prior's own model, or
-    typed in. The sim's final scores are read as markets.py's margin and total distributions and priced there."""
+    typed in. The moneyline nudge (v21-ml): the home side's chance (a tie half) typed in, or off a moneyline
+    table (ml_path, else $EAMF_V21_ML: a pre-match moneyline model's p_home) for a match picked off the prior,
+    the points nudge's margin moved, its total kept, until the kick-off games meet it (ml_share of the way from
+    the sim's own); blank, none. The sim's final scores are read as markets.py's margin and total
+    distributions and priced there."""
 
     def __init__(self, model_dir=None, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, prior=None, nudge_share=1.0,
-                 drives_share=1.0, pace=True):
+                 drives_share=1.0, pace=True, ml_path=None, ml_share=1.0):
         from . import markets, table_prior, v21, v21_stream
         self.v21, self.m = v21, markets
         model_file = v21_stream._model_file(model_dir)
@@ -283,7 +288,11 @@ class V21Trader(Trader):
         self.nudge_share, self.drives_share = float(nudge_share), float(drives_share)
         self.nudging = self.nudge_share > 0 and getattr(self.model, "nudge_dir", None) is not None
         self.pacing = bool(pace) and self.drives_share > 0 and v21.can_pace(self.model)
-        self.version = "v21-drives" if self.pacing else "v21"
+        # the moneyline nudge moves the points nudge's alpha: a build with a strength direction, typed or the table's
+        self.ml_share = float(ml_share)
+        self.money = self.ml_share > 0 and getattr(self.model, "nudge_dir", None) is not None
+        self.ml = v21_stream.ml_table(ml_path) if self.money and (ml_path or os.environ.get("EAMF_V21_ML")) else {}
+        self.version = ("v21-drives" if self.pacing else "v21") + ("-ml" if self.ml else "")
         # the pace as v21_stream reads it: each match's drives against its day's league, at the table's average
         # league, over the table's mean (drives_table); `adj` puts a typed match's (exp / league) on that scale
         self.drives, self.level, self.adj = {}, None, 1.0
@@ -316,12 +325,15 @@ class V21Trader(Trader):
                 f"; pace on {len(self.drives):,}" if self.drives else ("; no pace in it" if self.pacing else ""))
         else:
             prior = None if self.pre is None else f"{self.prior}'s pre-match model"
+        if self.ml:
+            prior = (prior + "; " if prior else "") + f"moneyline on {len(self.ml):,}"
         how = (f"nudged {self.nudge_share:.0%} to the points" if self.nudging else "its own means") + (
-            f", {self.drives_share:.0%} to the drives" if self.pacing else "")
+            f", {self.drives_share:.0%} to the drives" if self.pacing else "") + (
+            f", {self.ml_share:.0%} to the moneyline" if self.money else "")
         return dict(players=sorted(self.model.gamers), teams=sorted(self.model.teams), streams=[], league=league,
                     prematch=bool(self.rows) or self.pre is not None, built_before=None, prior=prior, model=self.dir,
                     version=self.version, how=how, paths=self.paths, margin=self.margin, quarter=gm.QUARTER,
-                    matches=matches, pace=self.pacing)
+                    matches=matches, pace=self.pacing, ml=self.money)
 
     def profile(self, handle):
         return {}
@@ -356,6 +368,9 @@ class V21Trader(Trader):
             if self.pacing and row.get("exp_drives"):
                 out["exp_drives"] = round(float(row["exp_drives"]), 2)
                 out["league_drives"] = round(float(row.get("league_drives") or self.level or row["exp_drives"]), 2)
+            got = self.ml.get((row.get("MATCH_CODE") or "").strip())
+            if got is not None:                                       # the moneyline table's, the ends as set up
+                out["ml_home"] = round(1 - got if swapped else got, 4)
             return out
         meta = self.meta()
         if self.pre is not None:
@@ -398,6 +413,16 @@ class V21Trader(Trader):
             return exp / league * self.adj
         return exp / (self.level or self.sim_level)
 
+    def _ml(self, setup):
+        """The home side's chance the moneyline nudge meets (typed, or the table's), or None: no moneyline nudge."""
+        if not self.money:
+            return None
+        try:
+            p = float(setup.get("ml_home"))
+        except (TypeError, ValueError):
+            return None
+        return p if 0 < p < 1 else None
+
     def _kickoff(self, setup):
         """The kick-off's books, nudge and tempo for a setup (each side receiving), solved once."""
         v21 = self.v21
@@ -405,8 +430,9 @@ class V21Trader(Trader):
         teams = tuple((setup.get(k) or "").strip() for k in ("home_team", "away_team"))
         means = tuple(round(float(x), 4) for x in setup["means"])
         rel = self._pace(setup)
+        p_ml = self._ml(setup)
         paths = int(setup.get("paths") or self.paths)
-        key = (pair, teams, means, None if rel is None else round(rel, 6), paths)
+        key = (pair, teams, means, None if rel is None else round(rel, 6), paths, None if p_ml is None else round(p_ml, 6))
         if key in self._kick:
             return self._kick[key]
         seed = zlib.crc32(f"{pair}|{teams}|{means}".encode())
@@ -414,21 +440,28 @@ class V21Trader(Trader):
         target = means if self.nudging else None
         info = dict(nudge=None, tempo=None)
         with self.lock:
-            if rel is not None:
-                goal = rel * self.sim_level
+            if rel is not None or p_ml is not None:
+                goal = None if rel is None else rel * self.sim_level
+                got_ml = {}
                 (h, a), alpha, tempo, (own, got) = v21.drives_solve(self.model, start, target, goal, paths, seed=seed,
                                                                     share=self.nudge_share,
-                                                                    drives_share=self.drives_share)
-                info.update(tempo=round(float(tempo), 3), own_drives=round(float(own), 2),
-                            goal_drives=round(float(own + self.drives_share * (goal - own)), 2),
-                            drives=round(float(got), 2), pace=round(float(rel), 3))
+                                                                    drives_share=self.drives_share, ml=p_ml,
+                                                                    ml_share=self.ml_share, ml_info=got_ml)
+                if rel is not None:
+                    info.update(tempo=round(float(tempo), 3), own_drives=round(float(own), 2),
+                                goal_drives=round(float(own + self.drives_share * (goal - own)), 2),
+                                drives=round(float(got), 2), pace=round(float(rel), 3))
+                else:
+                    tempo = None
+                if p_ml is not None:                    # the home side's chance: the sim's own, the goal, the nudged
+                    info["ml"] = {k: round(float(got_ml[k]), 4) for k in ("own", "goal", "got")}
             elif target is not None:
                 (h, a), alpha = v21.nudge_solve(self.model, start, target, paths, seed=seed, share=self.nudge_share)
                 tempo = None
             else:
                 h, a = v21.simulate(self.model, start, paths, seed=seed)
                 alpha = tempo = None
-        alpha = alpha if target is not None else None
+        alpha = alpha if target is not None or p_ml is not None else None
         if alpha is not None:
             info["nudge"] = [round(float(x), 3) for x in np.asarray(alpha, float)]
         out = dict(books=self.m._distributions(np.ravel(h), np.ravel(a)), alpha=alpha, tempo=tempo, seed=seed,
@@ -549,10 +582,11 @@ def handler_for(trader):
 
 
 def serve(model_dir=None, port=8765, paths=DEFAULT_PATHS, margin=DEFAULT_MARGIN, browser=True,
-          version=None, prior=None, nudge_share=1.0, drives_share=1.0, pace=True):
+          version=None, prior=None, nudge_share=1.0, drives_share=1.0, pace=True, ml_path=None, ml_share=1.0):
     if is_v21(model_dir, version):
         trader = V21Trader(model_dir, paths, margin, prior=prior, nudge_share=nudge_share,
-                           drives_share=drives_share, pace=pace and version != "v21")
+                           drives_share=drives_share, pace=pace and version not in ("v21", "v21-ml"), ml_path=ml_path,
+                           ml_share=ml_share)
     else:
         trader = Trader(model_dir, paths, margin, version)
     server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(trader))

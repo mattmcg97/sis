@@ -30,6 +30,12 @@ with the points nudge so the kick-off games' drives go `drives share` of the way
 to the match's expected drives, taken against the table's mean at the sim's own level
 (v21.drives_solve), and carried into every state. The expected drives and the share can be changed
 on the page too; blank drives, or --no-pace, price plain v21.
+
+The moneyline nudge (v21-ml, as the betting sim prices it): with a moneyline table (--v21-ml, or
+$EAMF_V21_ML: MATCH_CODE, p_home), the kick-off solve also moves the points nudge's margin, its total kept,
+until the kick-off games' home chance (a tie half) sits `ml share` of the way from the sim's own to the
+match's p_home (v21.drives_solve's ml), the nudge carried into every state. The chance and the share can
+be changed on the page too; a blank chance prices without it.
 """
 
 import csv
@@ -52,6 +58,7 @@ DEFAULT_PATHS = 1000
 CHART_PATHS = 400              # games a state for the whole-match chart
 DEFAULT_SHARE = 0.75
 DEFAULT_DRIVES_SHARE = 1.0     # the pace nudge: all the way to the match's expected drives (v21-drives)
+DEFAULT_ML_SHARE = 1.0         # the moneyline nudge: all the way to the match's p_home (v21-ml)
 MARGIN_SHOWN = 35
 TOTAL_SHOWN = 90
 SPREAD_LADDER = 3
@@ -203,7 +210,8 @@ class Replay:
     """The v21 model, loaded once, and the matches loaded so far."""
 
     def __init__(self, source, model, prior=None, paths=DEFAULT_PATHS, share=DEFAULT_SHARE, model_file=None,
-                 prior_name=None, drives=None, drives_share=DEFAULT_DRIVES_SHARE, drives_name=None):
+                 prior_name=None, drives=None, drives_share=DEFAULT_DRIVES_SHARE, drives_name=None, ml=None,
+                 ml_share=DEFAULT_ML_SHARE, ml_name=None):
         from eAMFModel import markets, v21, v21_stream
         self.mk, self.v21, self.stream = markets, v21, v21_stream
         self.source, self.model, self.prior = source, model, prior
@@ -214,9 +222,13 @@ class Replay:
         self.pacing = bool(self.drives) and v21.can_pace(model)
         self.level = float(np.mean(list(self.drives.values()))) if self.drives else None
         self.drives_share, self.drives_name = float(drives_share), drives_name
+        # the moneyline nudge: each match's p_home (v21_stream.ml_table); it moves the nudge, so a tilt build's
+        self.ml = ml or {}
+        self.ml_on = bool(self.ml) and getattr(model, "nudge_dir", None) is not None
+        self.ml_share, self.ml_name = float(ml_share), ml_name
         self.lock = threading.Lock()
         self.matches_ = {}                              # code -> loaded match
-        self.nudges = {}                                # (code, means, share, paths, pace, drives share) -> the kick-off
+        self.nudges = {}                                # (code, means, share, paths, pace, drives share, ml) -> the kick-off
 
     # -- what the page offers -----------------------------------------------------------------
 
@@ -230,7 +242,8 @@ class Replay:
                     nudge=getattr(self.model, "nudge_dir", None) is not None,
                     mode=getattr(self.model, "mode", None), last_day=days[-1] if days else None,
                     first_day=days[0] if days else None, chart_paths=CHART_PATHS, pace=self.pacing,
-                    drives_share=self.drives_share, drives_table=self.drives_name if self.pacing else None)
+                    drives_share=self.drives_share, drives_table=self.drives_name if self.pacing else None,
+                    ml=self.ml_on, ml_share=self.ml_share, ml_table=self.ml_name if self.ml_on else None)
 
     def matches(self, day):
         """The day's matches off the history (or the export's, with no history)."""
@@ -291,11 +304,13 @@ class Replay:
         if self.pacing and code in self.drives:
             pace = dict(exp=round(self.drives[code], 2), pace=round(self.drives[code] / self.level, 3),
                         level=round(self.level, 2))
+        ml = round(float(self.ml[code]), 4) if self.ml_on and code in self.ml else None
         view = dict(code=code, home=pair[0], away=pair[1], home_team=teams[0], away_team=teams[1],
                     start=start.strftime("%Y-%m-%d %H:%M") if start else "", final=final, prior=prior,
                     prior_note=note, prematch=_prod(r0, "prematch_"),
                     timeline=timeline_rows(rows, starts), n_priced=len(starts), pace=pace,
-                    pace_note=None if pace or not self.pacing else "Not in the pace table: plain v21")
+                    pace_note=None if pace or not self.pacing else "Not in the pace table: plain v21", ml=ml,
+                    ml_note=None if ml is not None or not self.ml_on else "Not in the moneyline table: no moneyline nudge")
         self.matches_[code] = dict(view=view, starts=starts, pair=pair, teams=teams)
         return view
 
@@ -316,39 +331,59 @@ class Replay:
             exp = own                                   # the table's, to the last digit (the page shows it rounded)
         return None if exp is None or not exp > 0 else float(exp) / self.level
 
-    def nudge(self, code, means, share, paths, exp=None, drives_share=None):
+    def ml_of(self, code, p=None):
+        """The match's p_home for the moneyline nudge, `p` typed on the page else the table's; None: no moneyline
+        nudge (a typed 0, or a chance outside 0-1)."""
+        if not self.ml_on:
+            return None
+        p = self.ml.get(code) if p is None else p
+        return None if p is None or not 0 < p < 1 else float(p)
+
+    def nudge(self, code, means, share, paths, exp=None, drives_share=None, p_ml=None, ml_share=None):
         """(alpha or None, the kick-off books, the sim's own kick-off means, the nudged ones, the tempo or None,
-        the pace's drives or None), solved once a (match, expected points, share, paths, pace, drives share)."""
+        the pace's drives or None, the moneyline's chances or None), solved once a (match, expected points, share,
+        paths, pace, drives share, moneyline, its share)."""
         m = self._match(code)
         rel = self.pace_of(code, exp)
         dshare = self.drives_share if drives_share is None else float(drives_share)
         pacing = rel is not None and dshare > 0
+        goal_ml = self.ml_of(code, p_ml)
+        mshare = self.ml_share if ml_share is None else float(ml_share)
+        money = goal_ml is not None and mshare > 0
         key = (code, None if means is None else tuple(round(float(x), 2) for x in means), round(float(share), 3),
-               int(paths), round(rel, 6) if pacing else None, round(dshare, 3) if pacing else None)
+               int(paths), round(rel, 6) if pacing else None, round(dshare, 3) if pacing else None,
+               round(goal_ml, 6) if money else None, round(mshare, 3) if money else None)
         if key not in self.nudges:
             start = self.v21.kickoff_start(self.model, m["pair"], m["teams"])
             seed = self.stream._seed(code)
             nudging = means is not None and share > 0 and getattr(self.model, "nudge_dir", None) is not None
-            tempo = pace = None
+            tempo = pace = ml = None
             with self.lock:
                 h0, a0 = self.v21.simulate(self.model, start, int(paths), seed=seed)
                 own = [float(h0.mean()), float(a0.mean())]
-                if pacing:
-                    goal = rel * self.v21.drive_level(self.model)[0]
+                if pacing or money:
+                    goal = rel * self.v21.drive_level(self.model)[0] if pacing else None
+                    info = {}
                     (h, a), alpha, tempo, (own_d, got) = self.v21.drives_solve(
                         self.model, start, means if nudging else None, goal, int(paths), seed=seed, share=share,
-                        drives_share=dshare)
-                    alpha = np.asarray(alpha, float) if nudging else None
-                    pace = dict(pace=round(rel, 3), own=round(float(own_d), 2),
-                                goal=round(float(own_d + dshare * (goal - own_d)), 2), got=round(float(got), 2),
-                                tempo=round(float(tempo), 3), share=dshare)
+                        drives_share=dshare, ml=goal_ml if money else None, ml_share=mshare, ml_info=info)
+                    alpha = np.asarray(alpha, float) if nudging or money else None
+                    if pacing:
+                        pace = dict(pace=round(rel, 3), own=round(float(own_d), 2),
+                                    goal=round(float(own_d + dshare * (goal - own_d)), 2), got=round(float(got), 2),
+                                    tempo=round(float(tempo), 3), share=dshare)
+                    else:
+                        tempo = None
+                    if money:                           # the home chances: the sim's own, the goal, the nudged game's
+                        ml = dict(p=round(goal_ml, 4), own=round(info["own"], 4), goal=round(info["goal"], 4),
+                                  got=round(info["got"], 4), margin=round(info["margin"], 2), share=mshare)
                 elif nudging:
                     (h, a), alpha = self.v21.nudge_solve(self.model, start, means, int(paths), seed=seed, share=share)
                     alpha = np.asarray(alpha, float)
                 else:
                     h, a, alpha = h0, a0, None
             books = self.mk._distributions(h.ravel(), a.ravel())
-            self.nudges[key] = (alpha, books, own, [float(h.mean()), float(a.mean())], tempo, pace)
+            self.nudges[key] = (alpha, books, own, [float(h.mean()), float(a.mean())], tempo, pace, ml)
         return self.nudges[key]
 
     def _state(self, m, message, alpha, tempo=None):
@@ -359,16 +394,18 @@ class Replay:
             st["tempo"] = np.full(len(st["period"]), float(tempo))
         return st
 
-    def price(self, code, message=None, means=None, share=None, paths=None, exp=None, drives_share=None):
+    def price(self, code, message=None, means=None, share=None, paths=None, exp=None, drives_share=None, p_ml=None,
+              ml_share=None):
         """Every market at the PLAY_OVER (the kick-off with message None), v21 and prod side by side."""
         share = self.share if share is None else float(share)
         paths = int(paths or self.paths)
         m = self._match(code)
-        alpha, kick, own, nudged, tempo, pace = self.nudge(code, means, share, paths, exp, drives_share)
+        alpha, kick, own, nudged, tempo, pace, ml = self.nudge(code, means, share, paths, exp, drives_share, p_ml,
+                                                               ml_share)
         nudge = dict(alpha=None if alpha is None else [round(float(x), 3) for x in alpha],
                      own=[round(x, 2) for x in own], nudged=[round(x, 2) for x in nudged],
                      target=None if means is None else [round(float(x), 2) for x in means], share=share,
-                     available=getattr(self.model, "nudge_dir", None) is not None, pace=pace)
+                     available=getattr(self.model, "nudge_dir", None) is not None, pace=pace, ml=ml)
         view = m["view"]
         if message is None:
             prod = view["prematch"]
@@ -418,13 +455,14 @@ class Replay:
         out["at_prod"] = at
         return out
 
-    def price_all(self, code, means=None, share=None, paths=None, exp=None, drives_share=None):
+    def price_all(self, code, means=None, share=None, paths=None, exp=None, drives_share=None, p_ml=None,
+                  ml_share=None):
         """Every PLAY_OVER v21 can price, in one simulation (CHART_PATHS games a state): the home
         side's chance and the expected margin and total, for the chart."""
         share = self.share if share is None else float(share)
         paths = int(paths or CHART_PATHS)
         m = self._match(code)
-        alpha, kick, _, _, tempo, _ = self.nudge(code, means, share, paths, exp, drives_share)
+        alpha, kick, _, _, tempo, _, _ = self.nudge(code, means, share, paths, exp, drives_share, p_ml, ml_share)
         msgs = [t["message"] for t in m["view"]["timeline"] if t["message"] in m["starts"]]
         t0 = time.time()
         out = []
@@ -461,12 +499,13 @@ def respond(replay, path, body):
     means = body.get("means")
     means = None if not means or any(x in (None, "") for x in means) else [float(x) for x in means]
     exp = _f(body.get("exp_drives"))                   # typed on the page; None: the table's
+    p_ml = _f(body.get("ml"))                          # typed on the page; None: the table's, 0: none
     if path == "/api/price":
         return 200, replay.price(code, body.get("message"), means, body.get("share"), body.get("paths"), exp,
-                                 body.get("drives_share"))
+                                 body.get("drives_share"), p_ml, body.get("ml_share"))
     if path == "/api/price_all":
         return 200, replay.price_all(code, means, body.get("share"), body.get("chart_paths"), exp,
-                                     body.get("drives_share"))
+                                     body.get("drives_share"), p_ml, body.get("ml_share"))
     return 404, {"error": f"no such call {path}"}
 
 
@@ -508,9 +547,11 @@ def handler_for(replay):
 
 
 def build(model_dir=None, prior=None, export=None, history=None, cursor=None, paths=DEFAULT_PATHS,
-          share=DEFAULT_SHARE, drives_path=None, drives_share=DEFAULT_DRIVES_SHARE, pace=True):
+          share=DEFAULT_SHARE, drives_path=None, drives_share=DEFAULT_DRIVES_SHARE, pace=True, ml_path=None,
+          ml_share=DEFAULT_ML_SHARE):
     """The Replay off the command line's options: with `pace`, the pace nudge off `drives_path` (a pace table),
-    else the prior table's own exp_drives (v21_stream.drives_table); plain v21 where neither has them."""
+    else the prior table's own exp_drives (v21_stream.drives_table); plain v21 where neither has them. The
+    moneyline nudge off `ml_path` (a moneyline table), else $EAMF_V21_ML (v21_stream.ml_table); none without."""
     from eAMFModel import v21, v21_stream
     model_file = v21_stream._model_file(model_dir)
     model = v21.Model.load(model_file)
@@ -524,8 +565,12 @@ def build(model_dir=None, prior=None, export=None, history=None, cursor=None, pa
             name = drives_path or os.environ.get("EAMF_V21_DRIVES") or tables
         except SystemExit as e:
             print(f"  no pace nudge (plain v21): {e}", flush=True)
+    ml, ml_name = None, None
+    if (ml_path or os.environ.get("EAMF_V21_ML")) and ml_share > 0:
+        ml = v21_stream.ml_table(ml_path)
+        ml_name = ml_path or os.environ.get("EAMF_V21_ML")
     return Replay(source, model, pre, paths, share, model_file=model_file, prior_name=tables, drives=drives,
-                  drives_share=drives_share, drives_name=name)
+                  drives_share=drives_share, drives_name=name, ml=ml, ml_share=ml_share, ml_name=ml_name)
 
 
 def serve(replay, port=8766, browser=True):
@@ -533,6 +578,8 @@ def serve(replay, port=8766, browser=True):
     url = f"http://127.0.0.1:{port}/"
     pace = (f"pace nudge {replay.drives_share:.0%} off {replay.drives_name} ({len(replay.drives):,} matches)"
             if replay.pacing else "no pace nudge")
+    if replay.ml_on:
+        pace += f"; moneyline nudge {replay.ml_share:.0%} off {replay.ml_name} ({len(replay.ml):,} matches)"
     print(f"  v21 replay on {url} (model {replay.model_file}; prior {replay.prior_name or 'none'}; {pace}; "
           f"{replay.source.describe()}; {replay.paths:,} games a price); Ctrl+C to stop", flush=True)
     if browser:

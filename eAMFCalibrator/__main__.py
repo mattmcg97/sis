@@ -228,7 +228,8 @@ def cmd_replay_ui(args):
         config.FETCH_DISK_CACHE = os.path.join(args.out or DEFAULT_OUT, "replay_cache")
         cur = _LazyCursor()
     replay = replay_ui.build(args.v21_model, args.prior_model, args.export, args.history, cur, args.paths, args.share,
-                             drives_path=args.v21_drives, drives_share=args.drives_share, pace=not args.no_pace)
+                             drives_path=args.v21_drives, drives_share=args.drives_share, pace=not args.no_pace,
+                             ml_path=args.v21_ml, ml_share=args.ml_share)
     try:
         replay_ui.serve(replay, args.port, browser=not args.no_browser)
     finally:
@@ -1201,7 +1202,8 @@ def common_options():
                              "NAME=DIR, e.g. v21,v21-t919=v21_t919; v21 with an in-play "
                              "strength update is v21-snapT, v21-ptsT or v21-wpaC, e.g. "
                              "v21,v21-snap4,v21-wpa10 (eAMFModel's v21_react); with the pace nudge "
-                             "v21-drives (--v21-drives) "
+                             "v21-drives (--v21-drives); with the moneyline nudge v21-ml (--v21-ml), both "
+                             "v21-drives-ml "
                              f"(default {config.STREAMS['candidate']})")
     tuning.add_argument("--candidate-label", metavar="NAME",
                         help="what the HTML reports call the candidate (default: the "
@@ -1239,6 +1241,10 @@ def common_options():
                         help="--candidate v21-drives: a table of each match's expected drives the pace nudge "
                              "meets (MATCH_CODE, exp_drives; default $EAMF_V21_DRIVES, then the prior table's own "
                              "exp_drives: the walkthrough's --scouting, or pace-prior)")
+    tuning.add_argument("--v21-ml", metavar="CSV",
+                        help="--candidate v21-ml: a pre-match moneyline model's table of each match's P(home wins), "
+                             "a tie half, the moneyline nudge meets at the kick-off (MATCH_CODE, p_home; default "
+                             "$EAMF_V21_ML)")
     tuning.add_argument("--prior-for", action="append", metavar="NAME=PRIOR",
                         help="a v21 candidate's own prior, as --v21-prior-model takes (a walkthrough table or "
                              "a build), so v21 candidates nudged toward different priors are priced in one run "
@@ -1276,7 +1282,8 @@ def apply_overrides(args):
                            ("v21_lines", "V21_LINES"),
                            ("v21_prior_model", "V21_PRIOR_MODEL_DIR"),
                            ("v21_nudge_share", "V21_NUDGE_SHARE"),
-                           ("v21_drives", "V21_DRIVES_TABLE")):
+                           ("v21_drives", "V21_DRIVES_TABLE"),
+                           ("v21_ml", "V21_ML_TABLE")):
         value = getattr(args, attribute, None)
         if value is not None:
             setattr(config, key, value)
@@ -1717,6 +1724,12 @@ def build_parser():
                            help="how far the kick-off drives move toward the match's expected drives (default 1: "
                                 "v21-drives)")
     ru_parser.add_argument("--no-pace", action="store_true", help="no pace nudge: plain v21")
+    ru_parser.add_argument("--v21-ml", metavar="CSV",
+                           help="the moneyline nudge's table of each match's P(home wins), a tie half, off a pre-match "
+                                "moneyline model (MATCH_CODE, p_home; default $EAMF_V21_ML; none: no moneyline nudge)")
+    ru_parser.add_argument("--ml-share", type=float, default=1.0,
+                           help="how far the kick-off home chance moves toward the match's p_home (default 1: v21-ml; "
+                                "0: no moneyline nudge)")
     ru_parser.add_argument("--port", type=int, default=8766, help="the local port (default 8766)")
     ru_parser.add_argument("--no-browser", action="store_true", help="don't open the page")
     ru_parser.add_argument("--out", help=f"where the query cache goes (default: {DEFAULT_OUT}/replay_cache)")

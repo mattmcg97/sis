@@ -21,7 +21,12 @@ one tempo on both sides' time tilts is solved with the points nudge so the kick-
 match's expected drives (v21.drives_solve), and carried into every in-play state as the nudge is: the
 expected drives off the prior table's exp_drives (the walkthrough's pace, eAMFCalibrator/pace_prior.py), or a
 pace table named for it (drives_table; a match it lacks priced as v21), relative to the table's mean, at the
-sim's own level (v21.drive_level)."""
+sim's own level (v21.drive_level).
+With the moneyline nudge (a candidate named v21-ml, or v21-mlS for S of the way from the sim's own; with the
+pace nudge, v21-drives-ml), a pre-match moneyline model calibrates the kick-off: the points nudge's target
+keeps its total and its margin is moved until the kick-off games' home chance (a tie half) meets the match's
+p_home off a moneyline table (ml_table: --v21-ml or $EAMF_V21_ML; a match it lacks priced without it), solved
+with the points and pace nudges (v21.drives_solve's ml), the nudge carried into every in-play state as it is."""
 
 import os
 import re
@@ -129,17 +134,50 @@ def _base(pre):
 
 
 _DRIVES = re.compile(r"^drives(\d+(?:\.\d+)?)?$")
+_ML = re.compile(r"^ml(\d+(?:\.\d+)?)?$")
+
+
+def _share_of(name, pattern):
+    """The share a part of a candidate's tag asks for ('v21-drives-ml0.5': each of 'drives' and 'ml0.5'), or None."""
+    _, _, tag = str(name or "").partition("-")
+    for part in tag.strip().lower().split("-"):
+        m = pattern.match(part)
+        if m:
+            share = float(m.group(1)) if m.group(1) else 1.0
+            return share if share > 0 else None
+    return None
 
 
 def drives_of(name):
     """The pace nudge a candidate's name asks for: the share of the way from the sim's own drives to the
-    expected ('v21-drives' -> 1.0, 'v21-drives0.5' -> 0.5), or None."""
-    _, _, tag = str(name or "").partition("-")
-    m = _DRIVES.match(tag.strip().lower())
-    if not m:
-        return None
-    share = float(m.group(1)) if m.group(1) else 1.0
-    return share if share > 0 else None
+    expected ('v21-drives' -> 1.0, 'v21-drives0.5' -> 0.5, 'v21-drives-ml' -> 1.0), or None."""
+    return _share_of(name, _DRIVES)
+
+
+def ml_of(name):
+    """The moneyline nudge a candidate's name asks for: the share of the way from the sim's own kick-off home
+    chance to the moneyline table's ('v21-ml' -> 1.0, 'v21-ml0.5' -> 0.5, 'v21-drives-ml' -> 1.0), or None."""
+    return _share_of(name, _ML)
+
+
+def ml_table(path=None):
+    """{match: P(home wins), a tie half} for the moneyline nudge, off `path` (a moneyline table: MATCH_CODE,
+    p_home), else $EAMF_V21_ML. A pre-match moneyline model's, not the prior's: the prior table's own p_home is
+    its points read through its own score model, so it is only read when named. Stops with how to name one."""
+    import csv
+    p = path or os.environ.get("EAMF_V21_ML")
+    how = ("name a pre-match moneyline model's table (MATCH_CODE, p_home: the fair chance the home side wins, a tie "
+           "half): --v21-ml CSV or $EAMF_V21_ML")
+    if not p:
+        raise SystemExit(f"the moneyline nudge reads each match's p_home off a moneyline table, and none was named: {how}")
+    if not os.path.exists(p):
+        raise SystemExit(f"the moneyline nudge's table {p}: no such file")
+    with open(p, newline="", encoding="utf-8") as fh:
+        got = {(r.get("MATCH_CODE") or "").strip(): _num(r.get("p_home")) for r in csv.DictReader(fh)}
+    got = {c: x for c, x in got.items() if c and x is not None and x < 1}
+    if not got:
+        raise SystemExit(f"{p} has no moneyline (p_home between 0 and 1): {how}")
+    return got
 
 
 def drives_table(path=None, prior=None):
@@ -316,25 +354,32 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
     return out
 
 
-def _kickoff(model, pair, teams, target, n_paths, code, share, drives=None):
+def _kickoff(model, pair, teams, target, n_paths, code, share, drives=None, ml=None):
     """(kick-off margin and total distributions, the nudge alpha or None, each side's simulated mean
     and variance of its points, and the pace nudge's tempo under "tempo"). drives: (the match's expected
     drives over the table's mean, the share of the way there), the pace nudge (v21.drives_solve) to that
-    times the sim's own level (v21.drive_level), None off."""
+    times the sim's own level (v21.drive_level), None off. ml: (the match's p_home, the share of the way
+    there), the moneyline nudge (drives_solve's ml; its own, goal and last chances under "ml"), None off."""
     start = v21.kickoff_start(model, pair, teams)
     nudging = target is not None and share and getattr(model, "nudge_dir", None) is not None
-    tempo = None
-    if drives is not None:
+    money = ml is not None and getattr(model, "nudge_dir", None) is not None
+    tempo, info = None, {} if money else None
+    if drives is not None or money:
         (h, a), alpha, tempo, _ = v21.drives_solve(model, start, target if nudging else None,
-                                                   drives[0] * v21.drive_level(model)[0], n_paths, seed=_seed(code),
-                                                   share=share, drives_share=drives[1])
-        alpha = alpha if nudging else None
+                                                   None if drives is None else drives[0] * v21.drive_level(model)[0],
+                                                   n_paths, seed=_seed(code), share=share,
+                                                   drives_share=1.0 if drives is None else drives[1],
+                                                   ml=ml[0] if money else None, ml_share=ml[1] if money else 1.0,
+                                                   ml_info=info)
+        alpha = alpha if nudging or money else None
+        tempo = tempo if drives is not None else None
     elif nudging:
         (h, a), alpha = v21.nudge_solve(model, start, target, n_paths, seed=_seed(code), share=share)
     else:
         (h, a), alpha = v21.simulate(model, start, n_paths, seed=_seed(code)), None
     h, a = h.ravel(), a.ravel()
-    return markets._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()), tempo=tempo)
+    return markets._distributions(h, a), alpha, dict(mean=(h.mean(), a.mean()), var=(h.var(), a.var()), tempo=tempo,
+                                                     ml=info)
 
 
 def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, react=None, kick=None, reads=None,
@@ -344,7 +389,7 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
     nudge moved by the match so far (kick: the kick-off's points, for the points update). `reads`
     ((market, prod message) per bet): only the books those bets read (_read). `tally` (a dict): the books
     simulated and the ones prod's quotes read, added to "priced" and "of". The kick-off's pace nudge
-    (kick's "tempo") is carried into every state."""
+    (kick's "tempo") is carried into every state, and so is its alpha (the moneyline nudge's with it)."""
     rows = [_as_text(r) for r in sorted(snaps, key=lambda r: int(r["message"]))]
     if feed.lost_quarter(rows) is not None:      # a quarter's start lost: the states after it mislabelled,
         if tally is not None:                    # so no in-play book (the pre-match quotes stand)
@@ -383,12 +428,12 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None):
     """One match's quote rows by line mode: the kick-off (and the pre-match quotes published before
     results the prior's form follows came in), then the PLAY_OVERs prod's quotes read (or only the
     bets', the item's reads). Under "_states": (books simulated, books prod's quotes read)."""
-    code, snaps, prod_rows, first_play, pair, teams, target, known, reads, drives = item
+    code, snaps, prod_rows, first_play, pair, teams, target, known, reads, drives, ml = item
     modes = (lines,) if isinstance(lines, str) else tuple(lines)
-    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, drives)
+    kick, alpha, kstats = _kickoff(model, pair, teams, target, n_paths, code, share, drives, ml)
     kickoff = kick if PREMATCH else None
     if kickoff is not None and known:
-        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, drives)[0]
+        kicks = {m: _kickoff(model, pair, teams, m, n_paths, code, share, drives, ml)[0]
                  for m in sorted(set(known.values()))}
         at = {publish: kicks[m] for publish, m in known.items()}
         kickoff = (lambda row, at=at, own=kick: at.get(row[2], own))
@@ -448,7 +493,7 @@ LAST_TIMING = {}        # the last quotes_for_matches call's seconds: prematch, 
 def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_paths=DEFAULT_PATHS,
                        workers=None, match_info=None, lines=OWN, history=None, prematch_only=False,
                        prior_dir=None, nudge_share=None, handles=None, batches=None, react=None, moments=None,
-                       drives=None, drives_path=None, label=None):
+                       drives=None, drives_path=None, ml=None, ml_path=None, label=None):
     """Quote rows for many matches (v14_stream.quotes_for_matches's contract). `match_info`: each
     match's players and teams (and the prior's inputs); `history`: settled matches, for a prior whose
     form follows results; `nudge_share`: how far toward the prior's expected points (NUDGE_SHARE;
@@ -458,12 +503,14 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
     `moments`: {match: (market, prod message) per bet}, only the in-play books those bets read simulated
     (None: every book prod's quotes read; a match without any: its pre-match prices alone); `drives`: the
     pace nudge, the share of the way from the sim's own drives to each match's expected drives (drives_of;
-    None: off), those off `drives_path` (else the prior table's own, drives_table); `label`: the candidate's
-    name on the simulation's progress bar."""
+    None: off), those off `drives_path` (else the prior table's own, drives_table); `ml`: the moneyline nudge,
+    the share of the way from the sim's own kick-off home chance to each match's p_home (ml_of; None: off), those
+    off `ml_path` (else $EAMF_V21_ML, ml_table); `label`: the candidate's name on the simulation's progress bar."""
     share = NUDGE_SHARE if nudge_share is None else float(nudge_share)
     prior_tables, model_file = model_paths(model_dir, prior_dir)
     exp_drives = drives_table(drives_path, prior_tables) if drives else None
     level = float(np.mean(list(exp_drives.values()))) if exp_drives else None
+    p_home = ml_table(ml_path) if ml else None
     if react:                                        # the tables a variant reads, once with the build
         fit_it = ("fit them once on real games before the window --\n  python -m eAMFModel v21-react-fit --model"
                   " <the build> --snapshots <scouting_playover.csv> --history <match_history.csv> --until"
@@ -530,9 +577,12 @@ def quotes_for_matches(snapshots_by_match, prod_quote_rows, model_dir=None, n_pa
         target = tuple(float(x) for x in means[code]) if code in means else None
         reads = None if moments is None else set(moments.get(code, ()))
         pace_d = (exp_drives[code] / level, float(drives)) if exp_drives is not None and code in exp_drives else None
-        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads, pace_d))
+        ml_p = (p_home[code], float(ml)) if p_home is not None and code in p_home else None
+        items.append((code, snaps, prod_by[code], first_play, pair, teams, target, known.get(code), reads, pace_d, ml_p))
     if exp_drives is not None:                       # the matches the pace table has
         LAST_TIMING.update(drives_matches=sum(1 for it in items if it[9] is not None), drives_of=len(items))
+    if p_home is not None:                           # the matches the moneyline table has
+        LAST_TIMING.update(ml_matches=sum(1 for it in items if it[10] is not None), ml_of=len(items))
     if share and pre is not None:                    # which prior, and how many of the matches it has
         LAST_TIMING.update(prior=prior_tables, prior_matches=sum(1 for it in items if it[6] is not None),
                            matches=len(items))

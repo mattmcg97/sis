@@ -80,7 +80,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--spread-resolution` | `literal` or `complement` |
 | `--time-axis` | `period` or `drive` |
 | `--chunk` | matches per batch, if memory gets tight on a long window |
-| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way). The shape lever, the gap shrink, pace when ahead and the late Q4 correction were tried and removed (eAMFModel's README) |
+| `--candidate` | what stands in for the candidate: a table, or an eAMFModel version (`v14`, `v21`). v2.1's variants by name: `v21-snap4` (an in-play strength update), `v21-drives` (the pace nudge: one tempo a match so the kick-off games' drives meet its expected drives, off `--v21-drives`' table; `v21-drives0.5` half the way), `v21-ml` (the moneyline nudge: the points nudge's margin moved, its total kept, so the kick-off games' home chance meets a pre-match moneyline model's, off `--v21-ml`'s table; `v21-ml0.5` half the way; `v21-drives-ml` both). The shape lever, the gap shrink, pace when ahead and the late Q4 correction were tried and removed (eAMFModel's README) |
 | `--candidate-label NAME` | what the HTML reports call the candidate (default: the model version when one stands in, e.g. `v21`) |
 | `--v14-model DIR` | `eAMFModel v14-build` output for `--candidate v14` (default `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v14-paths N` | games simulated per snapshot for `--candidate v14` (default 2000) |
@@ -89,6 +89,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--v21-drives CSV` | `--candidate v21-drives`: a table of each match's expected drives the pace nudge meets (`MATCH_CODE`, `exp_drives`; default `$EAMF_V21_DRIVES`, then the prior table's own `exp_drives`, which `walkthrough --scouting` or `pace-prior` writes) |
+| `--v21-ml CSV` | `--candidate v21-ml`: a pre-match moneyline model's table of each match's P(home wins), a tie half, that the moneyline nudge meets at the kick-off (`MATCH_CODE`, `p_home`; default `$EAMF_V21_ML`; the prior table's own `p_home` only when named). A match it lacks is priced without it |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -3246,6 +3247,8 @@ python -m eAMFCalibrator replay-ui --v21-model v21_model --export eAMFCalibrator
     --history AMFELO_20261013.csv --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
 # v21-drives as the betting sim runs it: the form table's points and pace, both nudged the whole way
 python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0
+# v21-drives-ml: the kick-off's home chance calibrated to a pre-match moneyline model's
+python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0 --v21-ml ml_model.csv
 ```
 
 Opens a local page (`http://127.0.0.1:8766/`) to step through a historic match a PLAY_OVER at a
@@ -3268,11 +3271,11 @@ loaded: it has no PLAY_OVERs to replay.
 | controls | first / back / next / last, Play at 0.5×/1×/3×, and Skip unpriced |
 | Prices | moneyline (ML), spread and over: v21 against prod with the difference in percentage points, and fair odds beside each. Spread and over rows appear at prod's line and, if different, at v21's own line. SUSP marks a market prod had suspended. Below: v21's expected points for each side, margin and total |
 | Distribution | v21's final margin and total, with prod's line marked |
-| Nudge | the expected points and share, and the expected drives and pace share, with Apply and Reset. The table shows prior, target, v21's own means, the nudged means and alpha, then the drives (v21's own → the goal, and what the nudged game plays) and the tempo. The badge reads Off when the build has no nudge, or notes a match missing from the prior |
+| Nudge | the expected points and share, the expected drives and pace share, and (with a moneyline table) the home win chance and ML share, with Apply and Reset. The table shows prior, target, v21's own means, the nudged means and alpha, then the drives (v21's own → the goal, and what the nudged game plays) and the tempo, then the home chance and the margin aimed at. The badge reads Off when the build has no nudge, or notes a match missing from the prior |
 | Pre-match | prod's closing quote against v21's kick-off price |
 | Home win % | after Price all: v21 against prod through the match, with quarter lines. Hover for the numbers, click to jump |
 
-Header chips show the model, the prior, the pace (its share and table, or "No pace nudge") and the source. "Sims" is the games played for each price.
+Header chips show the model, the prior, the pace (its share and table, or "No pace nudge"), the moneyline (its share and table, when there's one) and the source. "Sims" is the games played for each price.
 Keys: ← / → step, Home / End jump to the ends, space plays and pauses.
 
 **The nudge:** v21 starts from its own kick-off means (the gamers' and teams' effects in the
@@ -3301,6 +3304,14 @@ The Drives box starts at the table's value and can be changed by hand: Apply sol
 again. A blank Drives box, or pace share 0, prices plain v21 (the points nudge alone).
 `--drives-share` sets the default share (1, as v21-drives runs), and `--no-pace` turns the pace
 nudge off. With no pace table, or a build that can't pace, the page says so and prices plain v21.
+
+**The moneyline nudge (v21-ml):** with a moneyline table (`--v21-ml`: `MATCH_CODE`, `p_home`; or
+`$EAMF_V21_ML`), the kick-off solve also moves the points nudge's margin, its total kept, until v21's
+home chance sits the ML share of the way from its own to the match's p_home (`v21.drives_solve`'s
+`ml`, as the betting sim's v21-ml). The nudge carries into every later state. The Home win box starts
+at the table's value and can be typed over; blank, or ML share 0, prices without it. The Nudge table
+shows the home chance (v21's own → the goal, and what the nudged game got) and the margin aimed at.
+`--ml-share` sets the default share (1). Without a table there's no moneyline nudge.
 
 **What v21 can't price:** a PLAY_OVER with a conversion still to come has no v21 state, as in the
 price stream. The page shows prod's quote there with the badge "No v21 state".
