@@ -167,7 +167,8 @@ def ml_table(path=None):
     import csv
     p = path or os.environ.get("EAMF_V21_ML")
     how = ("name a pre-match moneyline model's table (MATCH_CODE, p_home: the fair chance the home side wins, a tie "
-           "half): --v21-ml CSV or $EAMF_V21_ML")
+           "half): --v21-ml CSV or $EAMF_V21_ML (python -m eAMFCalibrator ml-prior writes one, "
+           "eAMFCalibrator/out/ml_prior/ml_prior.csv)")
     if not p:
         raise SystemExit(f"the moneyline nudge reads each match's p_home off a moneyline table, and none was named: {how}")
     if not os.path.exists(p):

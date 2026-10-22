@@ -2740,9 +2740,15 @@ meets the match's (`v21.drives_solve`'s `ml`).
 - **The table.** `MATCH_CODE` and `p_home`, named by `--v21-ml` (or `$EAMF_V21_ML`). The prior
   table's own `p_home` (its points read through its own score model) isn't read unless it's named.
   A match the table lacks is priced without the moneyline nudge, and the run says how many.
+  `python -m eAMFCalibrator ml-prior` writes one for every match in the history, the scheduled
+  ones too: a ridge on margin read through a fitted link, walk-forward. It carries an expected
+  total (an online Kalman filter) and each side's points (`Pred_P1_Points`, `Pred_P2_Points`) as
+  well, so the same file can be `--v21-prior-model` (eAMFCalibrator's README, "The moneyline
+  nudge's table, and a whole prior").
 
 ```
-python -m eAMFCalibrator bets --candidate v21,v21-ml,v21-drives-ml --v21-ml ml_model.csv
+python -m eAMFCalibrator ml-prior
+python -m eAMFCalibrator bets --candidate v21,v21-ml,v21-drives-ml --v21-ml eAMFCalibrator/out/ml_prior/ml_prior.csv
 ```
 
 On the tests' build at the stream's 1,000 games a state (36 solves: 3 pairings, the chance moved
@@ -3518,8 +3524,8 @@ python -m eAMFModel trader --model C:\Users\MMcguinness\sis-v21\v21_t10 \
   is plain v21. `--prior` defaults to the form table.
 - **The moneyline (v21-ml).** A home win chance typed into *Home win (moneyline)* moves the points
   nudge's margin until the kick-off meets it (`--ml-share`, default 1). `--ml TABLE` (or
-  `$EAMF_V21_ML`) names a moneyline model's table (`MATCH_CODE`, `p_home`), and a match picked off
-  the prior then fills the box. Blank means none.
+  `$EAMF_V21_ML`) names a moneyline model's table (`MATCH_CODE`, `p_home`; `eAMFCalibrator ml-prior`
+  writes one), and a match picked off the prior then fills the box. Blank means none.
 - **A match from the prior.** *Match from the prior* lists the prior table's latest 600 matches.
   Picking one fills the players, the teams, the expected points and the expected drives (with
   that day's league drives beside them), so the page prices exactly what the betting sim did.

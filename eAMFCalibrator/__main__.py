@@ -1044,6 +1044,22 @@ def cmd_form_prior(args):
     return 0
 
 
+def cmd_ml_prior(args):
+    """Each match's P(home wins) off a slow margin model and a fitted link, walk-forward (ml_prior.py): the
+    moneyline nudge's table."""
+    from . import ml_prior
+    history = args.history or os.path.join(DEFAULT_OUT, "match_history.csv")
+    if not os.path.isfile(history):
+        raise SystemExit(f"ml-prior: no history at {history} (python -m eAMFCalibrator history, or --history)")
+    if args.table and not os.path.isfile(args.table):
+        raise SystemExit(f"ml-prior: no table at {args.table} (--table)")
+    ml_prior.run(args.out or os.path.join(DEFAULT_OUT, "ml_prior"), history, since=args.since, until=args.until,
+                 table=args.table, half_life=args.half_life, gamer_penalty=args.gamer_penalty,
+                 team_penalty=args.team_penalty, stream_penalty=args.stream_penalty, link_days=args.link_days,
+                 min_rows=args.min_rows)
+    return 0
+
+
 def cmd_ml_states(args):
     """The moneyline by game situation, prod against a candidate (ml_states.py)."""
     from . import ml_states
@@ -1244,7 +1260,7 @@ def common_options():
     tuning.add_argument("--v21-ml", metavar="CSV",
                         help="--candidate v21-ml: a pre-match moneyline model's table of each match's P(home wins), "
                              "a tie half, the moneyline nudge meets at the kick-off (MATCH_CODE, p_home; default "
-                             "$EAMF_V21_ML)")
+                             "$EAMF_V21_ML; ml-prior writes one, out/ml_prior/ml_prior.csv)")
     tuning.add_argument("--prior-for", action="append", metavar="NAME=PRIOR",
                         help="a v21 candidate's own prior, as --v21-prior-model takes (a walkthrough table or "
                              "a build), so v21 candidates nudged toward different priors are priced in one run "
@@ -1426,6 +1442,42 @@ def build_parser():
                            help="betting-sim bets_sim.csv files: how many of their matches (and stake) the history "
                                 "and each table have")
     fp_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/form_prior)")
+
+    mp_parser = sub.add_parser(
+        "ml-prior",
+        help="each match's P(home wins), walk-forward off the history alone: a ridge on margin (gamers, teams, a home "
+             "edge per stream, results weighted by a 30-day half-life, solved again as each result comes in) read "
+             "through a logistic link refitted each day on the last 60 days' results, optionally stacked with a prior "
+             "table's margin; beside it the expected total (an online Kalman filter) and each side's points; every "
+             "match of the span, the scheduled ones too -- one table for both --v21-ml (p_home) and "
+             "--v21-prior-model (the points) (-> out/ml_prior/ml_prior.csv)")
+    mp_parser.add_argument("--history", metavar="CSV",
+                           help=f"a match_history.csv (`history`): every result, kick-off, gamer, team and stream "
+                                f"(default {os.path.join(DEFAULT_OUT, 'match_history.csv')})")
+    mp_parser.add_argument("--since", metavar="DATE",
+                           help="the first day written (default: the history's first); the fit always reads every "
+                                "result before")
+    mp_parser.add_argument("--until", metavar="DATE",
+                           help="the day after the last written (default: the history's end, its scheduled matches "
+                                "included)")
+    mp_parser.add_argument("--table", metavar="CSV",
+                           help="a prior table to stack with the ridge where it prices a match (MATCH_CODE, "
+                                "exp_margin), e.g. the walkthrough's priors/avg.csv (default: none, the ridge's link)")
+    mp_parser.add_argument("--half-life", type=float, default=30.0, metavar="DAYS",
+                           help="a result counts half as much this many days on (default 30)")
+    mp_parser.add_argument("--gamer-penalty", type=float, default=2.0, metavar="N",
+                           help="the ridge's penalty on a gamer's strength, in matches of full weight (default 2)")
+    mp_parser.add_argument("--team-penalty", type=float, default=50.0, metavar="N",
+                           help="the ridge's penalty on a team's strength (default 50)")
+    mp_parser.add_argument("--stream-penalty", type=float, default=50.0, metavar="N",
+                           help="the ridge's penalty on a stream's home edge about the common one (default 50)")
+    mp_parser.add_argument("--link-days", type=float, default=60.0, metavar="DAYS",
+                           help="the link (and stack) is fitted each day on the results of this many days before "
+                                "(default 60)")
+    mp_parser.add_argument("--min-rows", type=int, default=300, metavar="N",
+                           help="the fewest results a day's link, or stack, is fitted on; fewer and the stack falls "
+                                "back to the link, the link to no price (default 300)")
+    mp_parser.add_argument("--out", help=f"output directory (default: {DEFAULT_OUT}/ml_prior)")
 
     ms_parser = sub.add_parser(
         "ml-states",
@@ -1726,7 +1778,8 @@ def build_parser():
     ru_parser.add_argument("--no-pace", action="store_true", help="no pace nudge: plain v21")
     ru_parser.add_argument("--v21-ml", metavar="CSV",
                            help="the moneyline nudge's table of each match's P(home wins), a tie half, off a pre-match "
-                                "moneyline model (MATCH_CODE, p_home; default $EAMF_V21_ML; none: no moneyline nudge)")
+                                "moneyline model (MATCH_CODE, p_home; default $EAMF_V21_ML; none: no moneyline nudge; "
+                                "ml-prior writes one)")
     ru_parser.add_argument("--ml-share", type=float, default=1.0,
                            help="how far the kick-off home chance moves toward the match's p_home (default 1: v21-ml; "
                                 "0: no moneyline nudge)")
@@ -2003,6 +2056,8 @@ def main(argv=None):
         return cmd_ml_states(args)
     if args.command == "form-prior":
         return cmd_form_prior(args)
+    if args.command == "ml-prior":
+        return cmd_ml_prior(args)
     if args.command == "indrive":
         return cmd_indrive(args)
     if args.command == "compare":

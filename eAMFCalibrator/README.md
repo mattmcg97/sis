@@ -89,7 +89,7 @@ Nothing needs a `config.py` edit. Every command takes the same flags:
 | `--v21-prior-model DIR\|CSV` | `--candidate v21`: a walkthrough table, or the v14 build (made with `--history`), whose pre-match expected points v2.1 nudges toward (default `$EAMF_V21_PRIOR`, then the form table `form-prior` writes, `out/form_prior/priors/avg_form4_w05.csv`, then `$EAMF_V14_MODEL`, then `./v14_model`) |
 | `--v21-nudge-share S` | `--candidate v21`: how far toward the prior's expected points each side's offense is nudged from the sim's own means (default 0.75; 0: the sim's own, no prior) |
 | `--v21-drives CSV` | `--candidate v21-drives`: a table of each match's expected drives the pace nudge meets (`MATCH_CODE`, `exp_drives`; default `$EAMF_V21_DRIVES`, then the prior table's own `exp_drives`, which `walkthrough --scouting` or `pace-prior` writes) |
-| `--v21-ml CSV` | `--candidate v21-ml`: a pre-match moneyline model's table of each match's P(home wins), a tie half, that the moneyline nudge meets at the kick-off (`MATCH_CODE`, `p_home`; default `$EAMF_V21_ML`; the prior table's own `p_home` only when named). A match it lacks is priced without it |
+| `--v21-ml CSV` | `--candidate v21-ml`: a pre-match moneyline model's table of each match's P(home wins), a tie half, that the moneyline nudge meets at the kick-off (`MATCH_CODE`, `p_home`; default `$EAMF_V21_ML`; the prior table's own `p_home` only when named). A match it lacks is priced without it. `ml-prior` writes one, `out/ml_prior/ml_prior.csv`, with each side's points too, so the same file can be `--v21-prior-model` (see "The moneyline nudge's table, and a whole prior") |
 | `--candidate A,B` | several candidates side by side in one report (see below) |
 
 Every run prints the window it actually used.
@@ -3247,8 +3247,9 @@ python -m eAMFCalibrator replay-ui --v21-model v21_model --export eAMFCalibrator
     --history AMFELO_20261013.csv --v21-prior-model eAMFCalibrator/out/walkthrough/priors/avg.csv
 # v21-drives as the betting sim runs it: the form table's points and pace, both nudged the whole way
 python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0
-# v21-drives-ml: the kick-off's home chance calibrated to a pre-match moneyline model's
-python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0 --v21-ml ml_model.csv
+# v21-drives-ml: the kick-off's home chance calibrated to a pre-match moneyline model's (ml-prior's)
+python -m eAMFCalibrator ml-prior
+python -m eAMFCalibrator replay-ui --v21-model v21_model --share 1.0 --v21-ml eAMFCalibrator/out/ml_prior/ml_prior.csv
 ```
 
 Opens a local page (`http://127.0.0.1:8766/`) to step through a historic match a PLAY_OVER at a
@@ -3311,7 +3312,10 @@ home chance sits the ML share of the way from its own to the match's p_home (`v2
 `ml`, as the betting sim's v21-ml). The nudge carries into every later state. The Home win box starts
 at the table's value and can be typed over; blank, or ML share 0, prices without it. The Nudge table
 shows the home chance (v21's own → the goal, and what the nudged game got) and the margin aimed at.
-`--ml-share` sets the default share (1). Without a table there's no moneyline nudge.
+`--ml-share` sets the default share (1). Without a table there's no moneyline nudge. `ml-prior`
+writes one, every match in the history priced (`out/ml_prior/ml_prior.csv`; "The moneyline nudge's
+table, and a whole prior: `ml-prior`" below). It carries each side's points too, so the same file
+can be `--v21-prior-model`.
 
 **What v21 can't price:** a PLAY_OVER with a conversion still to come has no v21 state, as in the
 price stream. The page shows prod's quote there with the badge "No v21 state".
@@ -3883,3 +3887,94 @@ candidate `v21-<tag>` without a build directory, so it prices off
 bets, prod quotes and lags, each nudged toward its own prior. One without
 a `--prior-for` reads `--v21-prior-model`. The name must be a
 `--candidate` of the run, and the prior must exist.
+
+### The moneyline nudge's table, and a whole prior: `ml-prior`
+
+```bash
+python -m eAMFCalibrator ml-prior          # every match in out/match_history.csv: out/ml_prior/ml_prior.csv
+python -m eAMFCalibrator ml-prior --since 2026-10-01 --table eAMFCalibrator/out/walkthrough/priors/avg.csv
+python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --candidate v21,v21-ml --v21-ml eAMFCalibrator/out/ml_prior/ml_prior.csv
+# the same file as the points nudge's prior too
+python -m eAMFCalibrator bets run --since "2026-10-01 00:00:00" --candidate v21-ml --v21-ml eAMFCalibrator/out/ml_prior/ml_prior.csv --v21-prior-model eAMFCalibrator/out/ml_prior/ml_prior.csv
+```
+
+`ml-prior` prices each match's P(home wins) walk-forward off the match
+history alone. It is the table the moneyline nudge (`v21-ml`, `--v21-ml`)
+meets at the kick-off. Beside it are the expected total and each side's
+points, so the same file is also a prior for the points nudge
+(`--v21-prior-model`):
+- **The margin.** A ridge on each result's home margin: a home edge per
+  stream, plus the two gamers' strengths and the two teams'. Each result
+  is weighted 2^(−age/30 days). The penalties are 2 (gamers), 50 (teams)
+  and 50 (a stream's home edge), in matches of full weight. A result
+  counts 36 minutes after its kick-off, and the ridge is solved again at
+  each kick-off a new result has come in before. So each match is priced
+  off every result in by its kick-off.
+- **The link.** P(home wins) = logistic(a + b × margin), fitted each UTC
+  day on the ridge's own margins over the last 60 days' results in by
+  that day's midnight (ties left out; at least 300). The history's first
+  36 days are left out while the ridge learns the gamers.
+- **The stack (`--table`).** Where a prior table (`MATCH_CODE`,
+  `exp_margin`: the walkthrough's `avg.csv`) prices the match, it is
+  logistic(a + b1 × the table's margin + b2 × the ridge's), fitted the
+  same way on the matches both priced. A day with fewer than 300 of those
+  behind it gets the link.
+- **The total.** An online Kalman filter on each result's total: the
+  league's mean drifts, each gamer's and team's effect is a random walk
+  from when it is first met, and a stream's is fixed. The covariance is
+  kept in full, and each result counts 36 minutes after its kick-off, as
+  the ridge's do. Its settings were fitted on Jun–Jul. It was the totals
+  study's best single expected total: RMSE 12.47 on Aug 1–Oct 18, against
+  12.54 for a daily ridge (prod's line: 12.84).
+- **The points.** `Pred_P1_Points` and `Pred_P2_Points` are
+  (`exp_total` ± `exp_margin`) / 2, with the ridge's margin. The points
+  nudge reads them, and the moneyline nudge then moves the margin, its
+  total kept, until the kick-off meets `p_home`. `sd_total` = 12.3 ×
+  (`exp_total`/35)^0.75 is the study's fitted spread (the variance grows
+  as the total^1.5). It is informational: the sim makes its own
+  distribution.
+
+**Why:** a pre-match moneyline study (Jun–Oct 2026, every model
+walk-forward, prod's quote only a benchmark) found the drift-4 form
+rating's margins too spread out, and the shrink they need drifting (0.58
+of the margin in June, 0.45 by mid-October). The ridge's link beat prod's
+pre-match moneyline by 0.0104 log loss on Aug 1–Oct 18 (0.6744 against
+0.6848; 95% −0.0147 to −0.0061). It was level with the walkthrough avg
+table's own moneyline. Stacked with avg (trained from Jul 25), it was
+0.0117 better than prod and 0.0003 better than avg's own over the same
+span. Other findings:
+- Re-solving the ridge only at midnight cost 0.003–0.004.
+- No extra in the link moved it by more than 0.0004: the rematch's
+  residual, the session's form, the form gap, the stream, the uncertainty
+  and the total were all tried.
+- The stack needs the table's matches behind it. With the repo's avg
+  table alone (from Sep 1), it starts on Sep 5 and is 0.0006 behind avg's
+  own over Sep 1–Oct 18 (95% −0.0009 to +0.0021).
+
+`--since` and `--until` set the span written (`--until` is the day after
+the last). By default it writes the whole history, the scheduled matches
+too, so the trader can read it live. The fit always reads every result
+before. `--half-life`, `--gamer-penalty`, `--team-penalty`,
+`--stream-penalty`, `--link-days` and `--min-rows` change the settings.
+On the full history (26,649 matches) it takes about 10 seconds.
+
+Writes, to `--out` (default `out/ml_prior/`):
+- `ml_prior.csv`: each match's kick-off, gamers, teams, stream and result,
+  the ridge's `exp_margin`, `exp_total`, `sd_total`, `Pred_P1_Points` and
+  `Pred_P2_Points`, the day's link (`link_a`, `link_b`, its `p_ridge`),
+  the table's margin and the stack's coefficients, `p_home`, and
+  `priced_by` (stack or ridge; blank before the link has its results).
+  The total and points are blank before the first result is in.
+- `ml_prior.txt`: the run, and the link month by month. Where results are
+  in, it gives the log loss, Brier and calibration slope beside the
+  ridge's margin read as a normal (sd 9.35) and evens; with a table, also
+  the table's own `p_home` on the matches the stack priced. Then the
+  expected total's RMSE, bias and slope, beside the span's mean total and
+  the table's `exp_total`.
+
+**The same file serves both switches.** `--v21-ml out/ml_prior/ml_prior.csv`
+(or `$EAMF_V21_ML`) gives a `v21-ml` candidate its `p_home`.
+`--v21-prior-model out/ml_prior/ml_prior.csv` (or `$EAMF_V21_PRIOR`) gives
+any v21 candidate its points through `Pred_P1_Points` and `Pred_P2_Points`,
+as a walkthrough table does. The file has no `exp_drives`, so with
+`v21-drives` name the pace with `--v21-drives` (e.g. a walkthrough table's).
