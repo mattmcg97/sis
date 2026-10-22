@@ -1,0 +1,50 @@
+margin: k_pts_margin; total: blend_k4; drives: tuned pace ridge
+
+TUNE (5,806): corr(margin err, total err) -0.028; corr(|margin err|, total err) -0.008; corr(margin err^2, realized total) +0.040; corr(favourite's margin err, total err) -0.038
+  margin RMSE 9.129, total RMSE 11.978
+  by fifth of expected total:  27.7: m sd  8.24 t sd 10.22   31.0: m sd  9.12 t sd 11.17   33.2: m sd  9.01 t sd 11.98   35.7: m sd  9.36 t sd 12.35   39.1: m sd  9.81 t sd 13.86
+  by fifth of expected drives:   8.4: m sd  7.83 t sd 10.64    9.3: m sd  9.13 t sd 11.06    9.8: m sd  9.21 t sd 11.95   10.3: m sd  9.20 t sd 12.90   11.1: m sd 10.11 t sd 13.16
+  by fifth of the REALIZED total:  17.8: m sd  8.29   26.5: m sd 10.08   32.4: m sd  8.60   40.7: m sd  9.31   54.7: m sd  9.40
+
+TEST (6,313): corr(margin err, total err) -0.034; corr(|margin err|, total err) -0.009; corr(margin err^2, realized total) +0.028; corr(favourite's margin err, total err) +0.012
+  margin RMSE 9.463, total RMSE 12.440
+  by fifth of expected total:  29.4: m sd  9.05 t sd 11.10   32.7: m sd  9.48 t sd 11.71   35.2: m sd  9.19 t sd 12.27   37.7: m sd  9.77 t sd 13.23   41.4: m sd  9.80 t sd 13.70
+  by fifth of expected drives:   9.2: m sd  8.49 t sd 10.94   10.0: m sd  9.60 t sd 12.55   10.5: m sd  9.30 t sd 12.21   11.0: m sd  9.79 t sd 12.95   11.7: m sd 10.05 t sd 13.42
+  by fifth of the REALIZED total:  19.6: m sd  9.17   29.3: m sd  9.34   35.8: m sd  9.67   42.8: m sd  9.27   55.5: m sd  9.92
+
+SEP (3,463): corr(margin err, total err) -0.035; corr(|margin err|, total err) -0.002; corr(margin err^2, realized total) +0.047; corr(favourite's margin err, total err) -0.001
+  margin RMSE 9.567, total RMSE 12.449
+  by fifth of expected total:  29.3: m sd  9.17 t sd 11.41   32.5: m sd  9.48 t sd 11.73   34.9: m sd  9.05 t sd 12.44   37.2: m sd  9.69 t sd 12.51   41.3: m sd 10.37 t sd 13.95
+  by fifth of expected drives:   9.3: m sd  8.62 t sd 10.94   10.1: m sd  9.55 t sd 12.50   10.5: m sd  9.36 t sd 12.23   11.0: m sd  9.92 t sd 12.85   11.7: m sd 10.30 t sd 13.52
+  by fifth of the REALIZED total:  19.4: m sd  9.11   29.3: m sd  9.34   35.8: m sd  9.88   42.8: m sd  9.18   55.3: m sd 10.36
+
+margin variance function at 10-12 (log Vm = a + b log(mu/35) + c log(muD/10.3) [+ d (m/10)^2]):
+  const    +4.503
+  mu       +4.502 +0.404
+  D        +4.477 +1.429
+  muD      +4.470 -0.448 +1.850
+  muD_m2   +4.493 -0.497 +1.908 -0.545
+2026-06-01 to 2026-08-01: 5,462 matches, 60 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs   ml_const (95%)          vs       prod (95%)       
+  ml_const                       0.6637  0.2355  0.640   1.09  -0.07                                 -0.0127 (-0.0188,-0.0069)
+  ml_mu                          0.6635  0.2355  0.640   1.10  -0.07   -0.0002 (-0.0006,+0.0003)   -0.0129 (-0.0190,-0.0071)
+  ml_D                           0.6636  0.2355  0.640   1.10  -0.07   -0.0001 (-0.0008,+0.0005)   -0.0128 (-0.0188,-0.0070)
+  ml_muD                         0.6635  0.2355  0.640   1.10  -0.07   -0.0002 (-0.0008,+0.0005)   -0.0129 (-0.0190,-0.0070)
+  ml_muD_m2                      0.6638  0.2356  0.640   1.07  -0.07   +0.0001 (-0.0005,+0.0007)   -0.0126 (-0.0187,-0.0066)
+  prod                           0.6764  0.2418  0.605   1.13  -0.00   +0.0127 (+0.0069,+0.0188)                              
+2026-08-01 to 2026-10-19: 6,170 matches, 79 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs   ml_const (95%)          vs       prod (95%)       
+  ml_const                       0.6748  0.2410  0.604   1.06  -0.01                                 -0.0100 (-0.0141,-0.0059)
+  ml_mu                          0.6749  0.2411  0.604   1.06  -0.01   +0.0002 (-0.0001,+0.0004)   -0.0098 (-0.0140,-0.0058)
+  ml_D                           0.6749  0.2411  0.604   1.08  -0.01   +0.0001 (-0.0003,+0.0005)   -0.0099 (-0.0139,-0.0059)
+  ml_muD                         0.6749  0.2411  0.604   1.09  -0.01   +0.0001 (-0.0003,+0.0005)   -0.0099 (-0.0139,-0.0059)
+  ml_muD_m2                      0.6748  0.2411  0.604   1.08  -0.01   +0.0000 (-0.0003,+0.0004)   -0.0099 (-0.0140,-0.0060)
+  prod                           0.6848  0.2460  0.569   0.93  +0.05   +0.0100 (+0.0059,+0.0141)                              
+2026-09-01 to 2026-10-19: 3,426 matches, 48 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs   ml_const (95%)          vs       prod (95%)       
+  ml_const                       0.6788  0.2430  0.590   1.07  -0.03                                 -0.0106 (-0.0164,-0.0051)
+  ml_mu                          0.6788  0.2430  0.591   1.06  -0.03   -0.0000 (-0.0003,+0.0002)   -0.0106 (-0.0164,-0.0051)
+  ml_D                           0.6788  0.2430  0.591   1.08  -0.03   +0.0000 (-0.0004,+0.0004)   -0.0106 (-0.0164,-0.0052)
+  ml_muD                         0.6788  0.2430  0.591   1.08  -0.03   -0.0000 (-0.0004,+0.0004)   -0.0106 (-0.0163,-0.0052)
+  ml_muD_m2                      0.6787  0.2429  0.591   1.07  -0.03   -0.0001 (-0.0005,+0.0003)   -0.0107 (-0.0165,-0.0052)
+  prod                           0.6894  0.2482  0.550   0.68  +0.03   +0.0106 (+0.0051,+0.0164)                              

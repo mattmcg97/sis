@@ -1,0 +1,7 @@
+kal_d0.05_s7 (days:60): candidates clear of zero on TUNE: ['stream']
+  + stream: TUNE -0.0010 (-0.0018,-0.0002)
+  chosen: ('stream',) c_unc 0
+  TUNE: chosen link 0.6590 (slope 1.02), vs the plain link -0.0010 (-0.0018,-0.0002)
+  TEST: chosen link 0.6743 (slope 0.91), vs the plain link -0.0007 (-0.0020,+0.0006)
+('stream',)
+0.0

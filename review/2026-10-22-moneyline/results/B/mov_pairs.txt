@@ -1,0 +1,25 @@
+MOV version less win/loss twin, log loss (day-resampled 95%); negative = margin helps
+TUNE:
+  static BT (+team, stream home), MOV weights          -0.0016 (-0.0031,-0.0002)
+  Elo (+team, new-gamer K), MOV multiplier             -0.0015 (-0.0030,-0.0002)
+  Elo, MOV multiplier + autocorrelation damping        -0.0029 (-0.0053,-0.0007)
+  Kalman (+team), MOV-scaled information               -0.0016 (-0.0030,-0.0004)
+  Kalman kal3, MOV-scaled information                  -0.0018 (-0.0031,-0.0007)
+TEST:
+  static BT (+team, stream home), MOV weights          -0.0017 (-0.0030,-0.0004)
+  Elo (+team, new-gamer K), MOV multiplier             -0.0004 (-0.0017,+0.0008)
+  Elo, MOV multiplier + autocorrelation damping        -0.0014 (-0.0032,+0.0005)
+  Kalman (+team), MOV-scaled information               -0.0007 (-0.0021,+0.0005)
+  Kalman kal3, MOV-scaled information                  -0.0011 (-0.0025,+0.0001)
+SEP:
+  static BT (+team, stream home), MOV weights          -0.0024 (-0.0041,-0.0006)
+  Elo (+team, new-gamer K), MOV multiplier             -0.0014 (-0.0031,+0.0004)
+  Elo, MOV multiplier + autocorrelation damping        -0.0028 (-0.0054,-0.0001)
+  Kalman (+team), MOV-scaled information               -0.0018 (-0.0035,+0.0001)
+  Kalman kal3, MOV-scaled information                  -0.0021 (-0.0040,-0.0003)
+LATE:
+  static BT (+team, stream home), MOV weights          -0.0024 (-0.0049,+0.0000)
+  Elo (+team, new-gamer K), MOV multiplier             -0.0013 (-0.0042,+0.0014)
+  Elo, MOV multiplier + autocorrelation damping        -0.0034 (-0.0075,+0.0003)
+  Kalman (+team), MOV-scaled information               -0.0020 (-0.0048,+0.0005)
+  Kalman kal3, MOV-scaled information                  -0.0025 (-0.0055,+0.0003)

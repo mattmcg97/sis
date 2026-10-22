@@ -1,0 +1,36 @@
+TUNE test days 2026-10-04..2026-10-11 (exclusive): 6,199 moments, 463 matches
+
+  best stern:
+    stern k0.005 tied state                      0.6511 0.2298 0.668 0.70
+    stern k0.01 tied state                       0.6511 0.2298 0.668 0.70
+    stern k0.02 tied state                       0.6511 0.2298 0.668 0.71
+    stern k0.04 tied state                       0.6512 0.2298 0.668 0.71
+    stern k0.005 free state                      0.6512 0.2298 0.667 0.70
+    stern k0.01 free state                       0.6512 0.2298 0.667 0.70
+    stern k0.02 free state                       0.6512 0.2298 0.667 0.70
+    stern k0.04 free state                       0.6513 0.2299 0.667 0.70
+
+  best xgb:
+    xgb k0.05 match d2 m20 r100                  0.6580 0.2315 0.661 0.65
+    xgb k0.02 match d2 m20 r100                  0.6587 0.2318 0.661 0.64
+    xgb k0.05 state d4 m100 r100                 0.6598 0.2326 0.665 0.64
+    xgb k0.05 state d2 m100 r100                 0.6599 0.2328 0.658 0.67
+    xgb k0.05 state d3 m100 r100                 0.6599 0.2327 0.663 0.64
+    xgb k0.02 state d4 m100 r100                 0.6600 0.2326 0.665 0.64
+    xgb k0.02 state d2 m100 r100                 0.6603 0.2329 0.658 0.67
+    xgb k0.02 state d3 m100 r100                 0.6607 0.2330 0.663 0.64
+
+  best xgb_on:
+    xgb_on k0.05 state d2 m100 r25               0.6539 0.2305 0.668 0.67
+    xgb_on k0.02 state d2 m100 r25               0.6539 0.2306 0.668 0.66
+    xgb_on k0.02 state d3 m100 r25               0.6545 0.2308 0.668 0.66
+    xgb_on k0.05 state d3 m100 r25               0.6547 0.2308 0.668 0.66
+    xgb_on k0.05 state d4 m100 r25               0.6550 0.2309 0.668 0.65
+    xgb_on k0.02 state d4 m100 r25               0.6550 0.2310 0.668 0.65
+    xgb_on k0.02 state d2 m100 r50               0.6557 0.2311 0.668 0.64
+    xgb_on k0.05 state d2 m100 r50               0.6557 0.2311 0.668 0.64
+
+  best benchmark:
+    prod_home                                    0.6168 0.2150 0.708 0.89
+    v21_home                                     0.6190 0.2162 0.706 0.84
+    v21late_home                                 0.6198 0.2163 0.707 0.82

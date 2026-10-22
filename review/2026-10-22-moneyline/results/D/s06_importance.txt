@@ -1,0 +1,333 @@
+
+=== xgb_paired: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                       gain  shap_test  shap_sep  mean_abs_shap_test    group
+rating_margin        0.5040     0.2584    0.3823              0.2012   rating
+h2h_margin           0.1770     0.1432    0.2124              0.1115      h2h
+exp_margin_all       0.0616     0.0471    0.0514              0.0367     form
+h2h_wins_5           0.0077     0.0214    0.0230              0.0167      h2h
+home                 0.0080     0.0170    0.0152              0.0132  context
+exp_margin_15        0.0042     0.0108    0.0068              0.0084     form
+opp_team_games       0.0040     0.0108    0.0104              0.0084     team
+opp_pf_sd_15         0.0061     0.0108    0.0092              0.0084     form
+own_pf_sd_15         0.0062     0.0106    0.0096              0.0083     form
+own_team_pf          0.0117     0.0105    0.0092              0.0082     team
+own_team_games       0.0037     0.0104    0.0095              0.0081     team
+opp_team_pf          0.0121     0.0103    0.0086              0.0080     team
+opp_pf_all           0.0123     0.0089    0.0067              0.0069     form
+own_pf_all           0.0118     0.0086    0.0066              0.0067     form
+opp_drv_def_start_15 0.0016     0.0070    0.0021              0.0054   drives
+own_drv_def_start_15 0.0017     0.0069    0.0028              0.0054   drives
+own_drv_def_loss_50  0.0012     0.0065    0.0065              0.0050   drives
+opp_drv_def_loss_50  0.0012     0.0064    0.0051              0.0050   drives
+own_pa_all           0.0046     0.0062    0.0010              0.0048     form
+opp_pa_all           0.0050     0.0060    0.0013              0.0046     form
+own_rating_var       0.0048     0.0058    0.0033              0.0045   rating
+opp_rating_var       0.0049     0.0057    0.0037              0.0044   rating
+exp_margin_5         0.0014     0.0056    0.0015              0.0043     form
+opp_drv_def_loss_15  0.0008     0.0055    0.0038              0.0043   drives
+own_win_all          0.0048     0.0055    0.0047              0.0043     form
+--- xgb_paired: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+drives       0.069      0.280     0.172         152
+rating       0.517      0.276     0.393           5
+form         0.166      0.189     0.132          56
+h2h          0.186      0.166     0.236           4
+team         0.040      0.057     0.043          10
+context      0.008      0.018     0.017           4
+rest/session 0.013      0.015     0.008          14
+--- xgb_paired: top drive features
+                       gain  shap_test  shap_sep  mean_abs_shap_test   group
+opp_drv_def_start_15 0.0016     0.0070    0.0021              0.0054  drives
+own_drv_def_start_15 0.0017     0.0069    0.0028              0.0054  drives
+own_drv_def_loss_50  0.0012     0.0065    0.0065              0.0050  drives
+opp_drv_def_loss_50  0.0012     0.0064    0.0051              0.0050  drives
+opp_drv_def_loss_15  0.0008     0.0055    0.0038              0.0043  drives
+own_drv_off_third_50 0.0011     0.0054    0.0041              0.0042  drives
+own_drv_def_loss_15  0.0008     0.0050    0.0034              0.0039  drives
+opp_drv_off_third_50 0.0012     0.0048    0.0042              0.0037  drives
+opp_drv_def_plays_50 0.0009     0.0045    0.0055              0.0035  drives
+own_drv_def_plays_50 0.0008     0.0042    0.0044              0.0033  drives
+
+=== xgb_cls: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                        gain  shap_test  shap_sep  mean_abs_shap_test    group
+rating_margin         0.4950     0.2757    0.3308              0.1968   rating
+h2h_margin            0.1898     0.1619    0.1909              0.1156      h2h
+exp_margin_all        0.0583     0.0500    0.0474              0.0357     form
+p1_team_pf            0.0246     0.0380    0.0433              0.0271     team
+h2h_wins_5            0.0108     0.0200    0.0214              0.0143      h2h
+p1_win_all            0.0068     0.0174    0.0264              0.0124     form
+weekday               0.0027     0.0171    0.0158              0.0122  context
+p2_pf_all             0.0136     0.0160    0.0090              0.0114     form
+p1_games              0.0060     0.0147    0.0114              0.0105     form
+p1_team_games         0.0030     0.0134    0.0124              0.0096     team
+p2_games              0.0101     0.0128    0.0098              0.0092     form
+p2_pf_sd_15           0.0070     0.0128    0.0076              0.0091     form
+p2_team_games         0.0053     0.0105    0.0074              0.0075     team
+p1_drv_off_loss_15    0.0032     0.0101    0.0052              0.0072   drives
+p1_pf_all             0.0064     0.0088    0.0072              0.0063     form
+p1_drv_off_rz_15      0.0014     0.0087    0.0079              0.0062   drives
+p2_rating_var         0.0027     0.0083    0.0082              0.0059   rating
+p1_drv_off_loss_50    0.0022     0.0083    0.0068              0.0059   drives
+p1_pf_sd_15           0.0029     0.0072    0.0065              0.0051     form
+p1_drv_def_success_50 0.0015     0.0071    0.0092              0.0050   drives
+p2_drv_def_rz_td_50   0.0015     0.0070    0.0060              0.0050   drives
+exp_margin_15         0.0033     0.0062    0.0046              0.0045     form
+p2_drv_def_big40_15   0.0013     0.0057    0.0032              0.0040   drives
+p1_drv_def_start_15   0.0009     0.0055    0.0058              0.0039   drives
+p2_win_all            0.0063     0.0052    0.0035              0.0037     form
+--- xgb_cls: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+rating       0.508      0.293     0.344           5
+drives       0.054      0.208     0.182         152
+form         0.168      0.200     0.161          56
+h2h          0.204      0.185     0.212           4
+team         0.045      0.078     0.071          10
+context      0.003      0.021     0.019           3
+rest/session 0.018      0.015     0.010          14
+--- xgb_cls: top drive features
+                        gain  shap_test  shap_sep  mean_abs_shap_test   group
+p1_drv_off_loss_15    0.0032     0.0101    0.0052              0.0072  drives
+p1_drv_off_rz_15      0.0014     0.0087    0.0079              0.0062  drives
+p1_drv_off_loss_50    0.0022     0.0083    0.0068              0.0059  drives
+p1_drv_def_success_50 0.0015     0.0071    0.0092              0.0050  drives
+p2_drv_def_rz_td_50   0.0015     0.0070    0.0060              0.0050  drives
+p2_drv_def_big40_15   0.0013     0.0057    0.0032              0.0040  drives
+p1_drv_def_start_15   0.0009     0.0055    0.0058              0.0039  drives
+p1_drv_def_pace_50    0.0008     0.0047    0.0044              0.0034  drives
+p1_drv_def_fg_50      0.0016     0.0044    0.0040              0.0031  drives
+p2_drv_def_drives_15  0.0007     0.0044    0.0013              0.0031  drives
+
+=== xgb_margin: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                       gain  shap_test  shap_sep  mean_abs_shap_test    group
+rating_margin        0.4914     0.2824    0.3116              0.9716   rating
+h2h_margin           0.1706     0.1767    0.2054              0.6078      h2h
+exp_margin_all       0.1015     0.1095    0.1221              0.3767     form
+home                 0.0099     0.0392    0.0369              0.1348  context
+h2h_wins_5           0.0045     0.0230    0.0180              0.0790      h2h
+opp_team_pf          0.0142     0.0225    0.0214              0.0775     team
+own_team_pf          0.0134     0.0205    0.0186              0.0705     team
+own_drv_def_plays_50 0.0013     0.0087    0.0102              0.0301   drives
+own_pf_all           0.0099     0.0084    0.0076              0.0290     form
+opp_team_games       0.0035     0.0083    0.0068              0.0286     team
+opp_pf_sd_15         0.0044     0.0082    0.0053              0.0281     form
+opp_drv_def_plays_50 0.0013     0.0081    0.0092              0.0280   drives
+exp_margin_15        0.0030     0.0081    0.0047              0.0279     form
+own_team_games       0.0035     0.0080    0.0066              0.0274     team
+own_pf_sd_15         0.0043     0.0079    0.0052              0.0271     form
+opp_pf_all           0.0101     0.0076    0.0047              0.0262     form
+opp_drv_def_loss_50  0.0008     0.0051    0.0051              0.0175   drives
+own_drv_def_loss_50  0.0007     0.0050    0.0048              0.0173   drives
+own_drv_off_loss_15  0.0009     0.0047    0.0025              0.0163   drives
+opp_drv_def_plays_15 0.0015     0.0045    0.0043              0.0155   drives
+opp_drv_def_start_50 0.0014     0.0044    0.0042              0.0153   drives
+own_drv_def_plays_15 0.0013     0.0042    0.0038              0.0145   drives
+own_drv_def_start_50 0.0014     0.0041    0.0039              0.0143   drives
+opp_drv_off_loss_15  0.0010     0.0041    0.0024              0.0142   drives
+opp_drv_off_pace_50  0.0006     0.0040    0.0060              0.0138   drives
+--- xgb_margin: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+rating       0.499      0.286     0.314           5
+h2h          0.177      0.200     0.224           4
+form         0.205      0.195     0.181          56
+drives       0.049      0.194     0.173         152
+team         0.046      0.073     0.063          10
+context      0.010      0.040     0.039           4
+rest/session 0.014      0.011     0.007          14
+--- xgb_margin: top drive features
+                       gain  shap_test  shap_sep  mean_abs_shap_test   group
+own_drv_def_plays_50 0.0013     0.0087    0.0102              0.0301  drives
+opp_drv_def_plays_50 0.0013     0.0081    0.0092              0.0280  drives
+opp_drv_def_loss_50  0.0008     0.0051    0.0051              0.0175  drives
+own_drv_def_loss_50  0.0007     0.0050    0.0048              0.0173  drives
+own_drv_off_loss_15  0.0009     0.0047    0.0025              0.0163  drives
+opp_drv_def_plays_15 0.0015     0.0045    0.0043              0.0155  drives
+opp_drv_def_start_50 0.0014     0.0044    0.0042              0.0153  drives
+own_drv_def_plays_15 0.0013     0.0042    0.0038              0.0145  drives
+own_drv_def_start_50 0.0014     0.0041    0.0039              0.0143  drives
+opp_drv_off_loss_15  0.0010     0.0041    0.0024              0.0142  drives
+
+=== xgb_offset: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                       gain  shap_test  shap_sep  mean_abs_shap_test         group
+rating_margin        0.0943     0.1171    0.2000              0.0599        rating
+exp_margin_5         0.0574     0.0479    0.0881              0.0245          form
+h2h_wins_5           0.0186     0.0388    0.0541              0.0199           h2h
+exp_margin_all       0.0287     0.0288    0.0339              0.0147          form
+h2h_margin           0.0214     0.0259    0.0179              0.0132           h2h
+own_teamlg_pa        0.0310     0.0158    0.0132              0.0081          team
+opp_teamlg_pa        0.0308     0.0154    0.0128              0.0079          team
+opp_pf_sd_15         0.0140     0.0127    0.0101              0.0065          form
+own_pf_sd_15         0.0135     0.0127    0.0107              0.0065          form
+opp_team_games       0.0106     0.0116    0.0114              0.0059          team
+own_team_games       0.0096     0.0107    0.0109              0.0055          team
+own_rating_var       0.0147     0.0107    0.0036              0.0055        rating
+opp_rating_var       0.0145     0.0103    0.0032              0.0053        rating
+opp_session_win      0.0233     0.0098    0.0123              0.0050  rest/session
+own_drv_off_third_50 0.0053     0.0097    0.0061              0.0050        drives
+own_session_win      0.0231     0.0096    0.0112              0.0049  rest/session
+opp_drv_off_third_50 0.0052     0.0095    0.0061              0.0049        drives
+opp_teamlg_pf        0.0089     0.0084    0.0127              0.0043          team
+exp_margin_50        0.0065     0.0082    0.0083              0.0042          form
+own_pa_all           0.0150     0.0081    0.0034              0.0041          form
+own_teamlg_pf        0.0090     0.0080    0.0115              0.0041          team
+opp_pa_all           0.0137     0.0079    0.0033              0.0041          form
+own_drv_def_start_15 0.0040     0.0074    0.0034              0.0038        drives
+opp_drv_def_rz_50    0.0032     0.0070    0.0063              0.0036        drives
+opp_drv_def_start_15 0.0039     0.0068    0.0019              0.0035        drives
+--- xgb_offset: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+drives       0.280      0.431     0.339         152
+form         0.318      0.225     0.243          56
+rating       0.129      0.141     0.211           5
+team         0.139      0.095     0.093          10
+h2h          0.046      0.066     0.073           4
+rest/session 0.087      0.042     0.039          14
+context      0.001      0.001     0.000           4
+--- xgb_offset: top drive features
+                       gain  shap_test  shap_sep  mean_abs_shap_test   group
+own_drv_off_third_50 0.0053     0.0097    0.0061              0.0050  drives
+opp_drv_off_third_50 0.0052     0.0095    0.0061              0.0049  drives
+own_drv_def_start_15 0.0040     0.0074    0.0034              0.0038  drives
+opp_drv_def_rz_50    0.0032     0.0070    0.0063              0.0036  drives
+opp_drv_def_start_15 0.0039     0.0068    0.0019              0.0035  drives
+own_drv_def_rz_50    0.0032     0.0067    0.0072              0.0034  drives
+own_drv_off_plays_50 0.0035     0.0067    0.0057              0.0034  drives
+own_drv_off_big40_15 0.0036     0.0064    0.0067              0.0033  drives
+own_drv_def_loss_50  0.0030     0.0064    0.0056              0.0033  drives
+opp_drv_off_loss_50  0.0033     0.0063    0.0025              0.0032  drives
+
+=== xgb_margin_nodrv: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                 gain  shap_test  shap_sep  mean_abs_shap_test         group
+rating_margin  0.4782     0.3006    0.3204              1.0054        rating
+h2h_margin     0.1756     0.1840    0.2038              0.6156           h2h
+exp_margin_all 0.1070     0.1113    0.1192              0.3723          form
+home           0.0103     0.0498    0.0507              0.1666       context
+h2h_wins_5     0.0061     0.0289    0.0246              0.0968           h2h
+opp_team_pf    0.0143     0.0261    0.0253              0.0873          team
+own_team_pf    0.0148     0.0260    0.0248              0.0870          team
+opp_pf_sd_15   0.0054     0.0125    0.0107              0.0417          form
+own_pf_sd_15   0.0055     0.0123    0.0107              0.0413          form
+exp_margin_15  0.0039     0.0115    0.0107              0.0386          form
+opp_team_games 0.0048     0.0112    0.0109              0.0376          team
+own_team_games 0.0044     0.0111    0.0118              0.0373          team
+own_pf_all     0.0102     0.0108    0.0087              0.0361          form
+opp_pf_all     0.0105     0.0107    0.0086              0.0359          form
+opp_session_pa 0.0048     0.0072    0.0022              0.0239  rest/session
+own_team_pa    0.0030     0.0070    0.0061              0.0234          team
+own_session_pa 0.0047     0.0068    0.0023              0.0227  rest/session
+opp_teamlg_pf  0.0026     0.0068    0.0083              0.0227          team
+opp_team_pa    0.0025     0.0067    0.0054              0.0224          team
+own_ewma_pa    0.0035     0.0060    0.0082              0.0201          form
+opp_pa_all     0.0046     0.0057    0.0034              0.0191          form
+opp_ewma_pa    0.0037     0.0055    0.0080              0.0184          form
+opp_teamlg_pa  0.0038     0.0054    0.0022              0.0180          team
+exp_margin_5   0.0022     0.0053    0.0030              0.0178          form
+own_pa_all     0.0044     0.0052    0.0036              0.0175          form
+--- xgb_margin_nodrv: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+rating       0.488      0.311     0.329           5
+form         0.242      0.287     0.266          56
+h2h          0.185      0.215     0.230           4
+team         0.056      0.110     0.103          10
+context      0.011      0.053     0.055           4
+rest/session 0.018      0.024     0.018          14
+--- xgb_margin_nodrv: top drive features
+Empty DataFrame
+Columns: [gain, shap_test, shap_sep, mean_abs_shap_test, group]
+Index: []
+
+=== xgb_paired_nodrv: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                 gain  shap_test  shap_sep  mean_abs_shap_test    group
+rating_margin  0.4831     0.3345    0.4321              0.2052   rating
+h2h_margin     0.1818     0.1759    0.2258              0.1079      h2h
+exp_margin_all 0.0690     0.0610    0.0616              0.0374     form
+h2h_wins_5     0.0108     0.0308    0.0325              0.0189      h2h
+home           0.0088     0.0282    0.0200              0.0173  context
+own_pf_sd_15   0.0084     0.0160    0.0117              0.0098     form
+opp_pf_sd_15   0.0081     0.0159    0.0118              0.0098     form
+own_team_pf    0.0135     0.0149    0.0124              0.0092     team
+opp_pf_all     0.0144     0.0143    0.0097              0.0088     form
+opp_team_pf    0.0126     0.0135    0.0108              0.0083     team
+exp_margin_15  0.0060     0.0134    0.0101              0.0082     form
+opp_team_games 0.0050     0.0134    0.0127              0.0082     team
+own_team_games 0.0045     0.0125    0.0117              0.0077     team
+own_pf_all     0.0125     0.0120    0.0085              0.0074     form
+own_win_all    0.0070     0.0100    0.0066              0.0061     form
+opp_win_all    0.0061     0.0094    0.0067              0.0058     form
+exp_margin_5   0.0039     0.0091    0.0037              0.0056     form
+opp_pa_all     0.0072     0.0087    0.0020              0.0053     form
+own_pa_all     0.0067     0.0083    0.0027              0.0051     form
+own_rating_var 0.0061     0.0082    0.0043              0.0050   rating
+opp_rating_var 0.0063     0.0081    0.0044              0.0050   rating
+opp_teamlg_pf  0.0028     0.0069    0.0020              0.0043     team
+opp_games      0.0093     0.0068    0.0048              0.0042     form
+own_margin_15  0.0022     0.0067    0.0019              0.0041     form
+own_teamlg_pf  0.0026     0.0066    0.0016              0.0041     team
+--- xgb_paired_nodrv: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+rating       0.501      0.360     0.447           5
+form         0.222      0.290     0.192          56
+h2h          0.195      0.209     0.260           4
+team         0.051      0.080     0.058          10
+context      0.010      0.034     0.024           4
+rest/session 0.020      0.028     0.019          14
+--- xgb_paired_nodrv: top drive features
+Empty DataFrame
+Columns: [gain, shap_test, shap_sep, mean_abs_shap_test, group]
+Index: []
+
+=== xgb_paired_ident: top 25 features by mean |SHAP| on TEST (shares of the total; gain = share of total gain)
+                       gain  shap_test  shap_sep  mean_abs_shap_test     group
+rating_margin        0.4579     0.2382    0.3838              0.2009    rating
+h2h_margin           0.1954     0.1345    0.2201              0.1134       h2h
+exp_margin_all       0.0625     0.0448    0.0553              0.0377      form
+h2h_wins_5           0.0069     0.0198    0.0249              0.0167       h2h
+home                 0.0078     0.0160    0.0133              0.0135   context
+opp_team_games       0.0040     0.0110    0.0092              0.0093      team
+own_team_games       0.0039     0.0107    0.0089              0.0090      team
+opp_team_pf          0.0119     0.0107    0.0092              0.0090      team
+own_pf_sd_15         0.0066     0.0103    0.0079              0.0087      form
+own_team_pf          0.0120     0.0103    0.0093              0.0087      team
+opp_pf_sd_15         0.0065     0.0103    0.0081              0.0087      form
+exp_margin_15        0.0058     0.0096    0.0085              0.0081      form
+own_pf_all           0.0117     0.0081    0.0061              0.0069      form
+opp_pf_all           0.0128     0.0079    0.0071              0.0066      form
+own_drv_def_start_15 0.0020     0.0075    0.0031              0.0063    drives
+exp_margin_5         0.0074     0.0074    0.0021              0.0063      form
+opp_pa_all           0.0051     0.0066    0.0011              0.0056      form
+opp_drv_def_start_15 0.0018     0.0065    0.0018              0.0055    drives
+own_pa_all           0.0051     0.0065    0.0014              0.0055      form
+gamer                0.0026     0.0065    0.0058              0.0055  identity
+own_drv_def_loss_50  0.0014     0.0063    0.0051              0.0054    drives
+opp_drv_def_loss_50  0.0013     0.0063    0.0050              0.0053    drives
+opp_win_all          0.0049     0.0063    0.0046              0.0053      form
+own_win_all          0.0056     0.0062    0.0051              0.0053      form
+opp                  0.0027     0.0059    0.0049              0.0050  identity
+--- xgb_paired_ident: by group
+              gain  shap_test  shap_sep  n_features
+group                                              
+drives       0.074      0.297     0.153         152
+rating       0.473      0.256     0.393           5
+form         0.181      0.190     0.135          56
+h2h          0.204      0.155     0.246           4
+team         0.041      0.058     0.041          10
+context      0.008      0.018     0.015           4
+rest/session 0.013      0.014     0.006          14
+identity     0.005      0.012     0.011           2
+--- xgb_paired_ident: top drive features
+                       gain  shap_test  shap_sep  mean_abs_shap_test   group
+own_drv_def_start_15 0.0020     0.0075    0.0031              0.0063  drives
+opp_drv_def_start_15 0.0018     0.0065    0.0018              0.0055  drives
+own_drv_def_loss_50  0.0014     0.0063    0.0051              0.0054  drives
+opp_drv_def_loss_50  0.0013     0.0063    0.0050              0.0053  drives
+opp_drv_def_loss_15  0.0009     0.0058    0.0035              0.0049  drives
+own_drv_def_loss_15  0.0009     0.0058    0.0038              0.0049  drives
+opp_drv_def_plays_50 0.0008     0.0051    0.0042              0.0043  drives
+own_drv_off_third_50 0.0012     0.0051    0.0035              0.0043  drives
+own_drv_def_plays_50 0.0009     0.0050    0.0044              0.0042  drives
+opp_drv_off_third_50 0.0011     0.0046    0.0032              0.0039  drives

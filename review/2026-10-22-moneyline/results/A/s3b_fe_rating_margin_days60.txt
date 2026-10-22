@@ -1,0 +1,8 @@
+fe_rating_margin (days:60): candidates clear of zero on TUNE: ['fast_gap', 'h2h', 'stream']
+  + fast_gap: TUNE -0.0113 (-0.0148,-0.0080)
+  + h2h: TUNE -0.0004 (-0.0010,+0.0004)
+  chosen: ('fast_gap',) c_unc 0
+  TUNE: chosen link 0.6585 (slope 1.05), vs the plain link -0.0113 (-0.0146,-0.0080)
+  TEST: chosen link 0.6731 (slope 0.96), vs the plain link -0.0089 (-0.0115,-0.0060)
+('fast_gap',)
+0.0

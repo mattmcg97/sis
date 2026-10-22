@@ -1,0 +1,24 @@
+bets in play, moneyline + spread: 89,324 on 1,215 matches; joined to the money file's lead: 89.6%; lead read cleanly (whole number within 0.25, inside the band): 88.4%
+  lead rounding |raw - round| > 0.02: 5.3% (the clock at the money's seen time against bets_sim's at bet time)
+training states (ML + spread bets, Q1-Q4, lead read, one per match and message): 30,109 on 1,204 matches
+moneyline in-play bets with prod's price: 56,448; moments (match, message): 24,923
+
+moments: 24,923; the filters, in turn:
+  in Q1-Q4 (overtime has no lead)                                           24,731
+  lead read cleanly                                                         20,966
+  feed did not move between the price and the bet (moved = nothing)         15,682
+  v2.1 priced the same state as prod (candidate_ok_v21)                     14,902
+  not excluded by the bet checks                                            14,902
+  v2.1 price present                                                        14,902
+  pre-match A_best / C_strength / prod present                              14,902
+  not a tie                                                                 14,902
+  broad set (any `moved`, the state read at the bet): 19,922
+
+prod's P(home) from the bet's side against the money file's market-50 price: median |diff| 0.0000, 99th pct 0.0361
+prod's price spread within a message (sd over its bets): mean 0.0005; v2.1's: 0.000000
+
+clean moments: 14,902 on 1,197 matches, 19 days (2026-09-30 to 2026-10-18)
+  by quarter: Q1 4,712, Q2 4,871, Q3 3,032, Q4 2,287
+  by moment: between plays 14,867, kick-off to come 27, quarter break 5, timeout 2, interruption 1
+  |lead|: 0.0 6,133, 1.0 242, 2.0 101, 3.0 1,813, 4.0 1,039, 5.0 80, 6.0 262, 7.0 4,052, 8.0 130, 9.0 1,050 (9 = 9+)
+  by day: 09-30 24, 10-01 1030, 10-02 910, 10-03 629, 10-04 534, 10-05 826, 10-06 946, 10-07 991, 10-08 935, 10-09 1155, 10-10 812, 10-11 547, 10-12 682, 10-13 885, 10-14 735, 10-15 1006, 10-16 916, 10-17 845, 10-18 494
