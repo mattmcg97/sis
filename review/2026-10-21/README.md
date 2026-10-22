@@ -33,3 +33,8 @@ history). The high findings were then re-checked against the code.
 Severity: High changes a price or a headline result materially, or crashes a normal run; Medium is
 wrong in a realistic but narrower case, or biases a result modestly; Low is an edge case. VERIFIED means
 a run showed it, REASONED that it was read from the code.
+
+## Fixed since
+
+- D2, bet times read in the machine's local time: every conversion now goes through `bets.epoch`, which
+  reads a naive time as UTC (also the form rating's and xgb features' day counts).

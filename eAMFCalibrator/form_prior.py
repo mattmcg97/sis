@@ -29,6 +29,7 @@ have, first.
 """
 
 import csv
+import datetime as dt
 import math
 import os
 
@@ -67,7 +68,7 @@ def rating(matches, drift, sigma=SIGMA, v0=V0, team_rate=TEAM_RATE):
     mu, var, last, team = {}, {}, {}, {}
     out = {}
     for t, code, home, away, th, ta, hs, as_ in matches:
-        day = t.timestamp() / 86400.0
+        day = t.replace(tzinfo=dt.timezone.utc).timestamp() / 86400.0     # UTC, not the machine's local time
         for g in (home, away):
             if g not in mu:
                 mu[g], var[g] = 0.0, v0

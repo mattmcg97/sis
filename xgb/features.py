@@ -74,6 +74,11 @@ RATING_TEAM_RATE = 0.002
 WINDOWS = (5, 15, 50)
 
 
+def _day(t):
+    """Days since 1970 for a naive UTC time (read as UTC, not in the machine's local time)."""
+    return t.replace(tzinfo=dt.timezone.utc).timestamp() / 86400.0
+
+
 def _time(text):
     text = (text or "").strip().replace("T", " ")
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
@@ -267,7 +272,7 @@ def build(matches, glmer=None, drive_table=None):
             ts[1] += b
             ts[2] += 1
         # the rating, as form_prior.rating updates it
-        day = m["t"].timestamp() / 86400.0
+        day = _day(m["t"])
         for g in (m["p1"], m["p2"]):
             if g not in r_mu:
                 r_mu[g], r_var[g] = 0.0, RATING_V0
@@ -291,7 +296,7 @@ def build(matches, glmer=None, drive_table=None):
     def rating_now(g, t):
         if g not in r_mu:
             return 0.0, RATING_V0
-        day = t.timestamp() / 86400.0
+        day = _day(t)
         return r_mu[g], r_var[g] + RATING_DRIFT * max(day - r_last.get(g, day), 0.0)
 
     rows = []

@@ -235,7 +235,7 @@ def feed_message(tl, t):
     """The feed's latest message at time t (on prod's clock), or None."""
     if tl is None or t is None:
         return None
-    j = bisect_right(tl.times, t.timestamp()) - 1
+    j = bisect_right(tl.times, bets.epoch(t)) - 1
     return tl.msgs[j] if j >= 0 and tl.times[j] > -math.inf else None
 
 
