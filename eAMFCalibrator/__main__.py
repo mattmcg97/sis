@@ -1324,7 +1324,8 @@ def uplift_options(parser):
     group.add_argument("--all-moments", action="store_true",
                        help="price v21 at every moment prod's quotes read, not only the ones the bets read "
                             "(the default, several times quicker): slower, and the margin uplift then bets "
-                            "every in-play tick rather than the bets' moments alone")
+                            "every in-play tick rather than the bets' moments alone, which favour the "
+                            "candidate (punters bet where prod is wrong): quote an uplift only from this")
 
 
 def apply_uplift(args):

@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from eAMFModel import progress
 
 from . import config, markets, snowflake_io
+from .metrics import day_of
 from .pipeline import to_unit_probability
 from .snowflake_io import fetch_all
 
@@ -453,6 +454,59 @@ def summarise(rows, by=None, keep=None):
         out[g] = (len(rs), stake, rev, 100 * rev / stake if stake else None, rev_c,
                   100 * rev_c / stake if stake else None)
     return out
+
+
+def at_own_line(r):
+    """A bet the candidate re-priced at the bet's own line: only its odds change, and it settles as it did.
+    A bet moved to the candidate's line keeps the punter's side and stake at a line they didn't take, and
+    its result can flip there; most of a same-bets gain can be those flips, so the headline is these."""
+    return r["simulated"] and r.get("same_line", True)
+
+
+def change_draws(results, ii, n_boot=None, seed=0):
+    """([each candidate's change in margin against prod, points], resamples x candidates of it) on the
+    bets ii (by position), the days resampled: a day's matches share gamers and form, so its bets go
+    together (resampling matches made the intervals about 1.7x too narrow)."""
+    import numpy as np
+    n_boot = config.SIM_BOOT if n_boot is None else n_boot
+    base = results[0][1]
+    stake = sum(base[i]["stake"] for i in ii)
+    if not ii or not stake:
+        return [None] * len(results), np.empty((0, len(results)))
+    days = sorted({day_of(base[i].get("match_code")) for i in ii})
+    at = {d: j for j, d in enumerate(days)}
+    day = np.array([at[day_of(base[i].get("match_code"))] for i in ii])
+    per = lambda v: np.bincount(day, weights=np.asarray(v, float), minlength=len(days))
+    st, rev = per([base[i]["stake"] for i in ii]), per([base[i]["revenue"] for i in ii])
+    W = np.random.default_rng(seed).multinomial(len(days), [1 / len(days)] * len(days), size=n_boot).astype(float)
+    ws = W @ st
+    points, draws = [], []
+    for _, rows in results:
+        gain = per([rows[i]["candidate_revenue"] for i in ii]) - rev
+        points.append(100 * gain.sum() / st.sum())
+        draws.append(np.where(ws > 0, 100 * (W @ gain) / np.where(ws > 0, ws, 1.0), np.nan))
+    return points, np.array(draws).T
+
+
+def interval(draws):
+    """(lo, hi): the 95% interval of resampled values (NaN where none)."""
+    import numpy as np
+    d = np.asarray(draws, float)
+    d = d[np.isfinite(d)]
+    return (float(np.percentile(d, 2.5)), float(np.percentile(d, 97.5))) if len(d) else (float("nan"), float("nan"))
+
+
+def leaning(rows, ii):
+    """The change in margin, points, the candidate's odds bring on the bets ii if prod's probabilities were
+    right: shortening the side the money is on gains this with no forecasting skill, since the re-price
+    keeps every stake whatever the price. The rest of the change is what the outcomes added."""
+    stake = sum(rows[i]["stake"] for i in ii)
+    gain = 0.0
+    for i in ii:
+        r = rows[i]
+        if r.get("result") in (WON, LOST) and r.get("stream_prob") is not None and r.get("candidate_odds") and r.get("odds"):
+            gain += r["stake"] * r["stream_prob"] * (r["odds"] - r["candidate_odds"])
+    return 100 * gain / stake if stake else None
 
 
 def coverage(rows):
@@ -1054,7 +1108,7 @@ def prematch_report(results, n_boot=None, seed=0):
     """Lines of text: the pre-match models' own test. On the pre-match bets every candidate
     re-priced (the same money for each), prod's margin and each candidate's change against it --
     overall, by market and week by week -- then each candidate against the first with a bootstrap
-    interval over matches (config.SIM_BOOT resamples): a week of bets says little, many do."""
+    interval over days (config.SIM_BOOT resamples): a week of bets says little, many do."""
     import random
     n_boot = config.SIM_BOOT if n_boot is None else n_boot
     names = [n for n, _ in results]
@@ -1089,16 +1143,16 @@ def prematch_report(results, n_boot=None, seed=0):
                          + " ".join(f"{c - prod:+10.2f}" for c in cands))
     lines.append("  (candidate columns: the change in the book's margin, points, against prod's)")
     if len(results) > 1:
-        by_match = defaultdict(list)
+        by_day = defaultdict(list)                  # a day's matches resampled together
         for i in ii:
-            by_match[base[i]["match_code"]].append(i)
-        keys = sorted(by_match)
+            by_day[day_of(base[i].get("match_code"))].append(i)
+        keys = sorted(by_day)
         rng = random.Random(seed)
         weeks = defaultdict(list)
         for i in ii:
             weeks[_iso_week(base[i]["bet_time"])].append(i)
         lines.append(f"\n  each candidate against {names[0]}: the change in margin, points "
-                     f"(95% interval: {n_boot:,} resamples of the {len(keys):,} matches), and the "
+                     f"(95% interval: {n_boot:,} resamples of the {len(keys):,} days), and the "
                      "weeks it came out ahead")
         for k in range(1, len(results)):
             def diff(idx):
@@ -1107,7 +1161,7 @@ def prematch_report(results, n_boot=None, seed=0):
             point = diff(ii)
             draws = []
             for _ in range(n_boot):
-                idx = [i for m in (rng.choice(keys) for _ in keys) for i in by_match[m]]
+                idx = [i for d in (rng.choice(keys) for _ in keys) for i in by_day[d]]
                 d = diff(idx)
                 if d is not None:
                     draws.append(d)
@@ -1125,12 +1179,15 @@ def common(results):
     return [i for i in range(len(results[0][1])) if all(rows[i]["simulated"] for _, rows in results)]
 
 
-def compare(results, by=None, keep=None):
+def compare(results, by=None, keep=None, every=None):
     """{group: (bets, stake, prod margin %, [each candidate's margin %], [(price, result) effect])}
-    over the bets every candidate re-priced, so each is judged on the same money."""
+    over the bets every candidate re-priced, so each is judged on the same money; `every` a test each
+    candidate's row must pass (at_own_line: the bets every candidate re-priced at the bet's own line)."""
     base = results[0][1]
     groups = defaultdict(list)
     for i in common(results):
+        if every is not None and not all(every(rows[i]) for _, rows in results):
+            continue
         if keep is None or keep(base[i]):
             groups["all" if by is None else base[i].get(by)].append(i)
     out = {}
@@ -1145,8 +1202,53 @@ def compare(results, by=None, keep=None):
     return out
 
 
+def headline_lines(results, n_boot=None, seed=0):
+    """Lines of text: each candidate's change in margin against prod, points, on the bets every candidate
+    re-priced -- at the bets' own lines (the headline: the odds alone), moved to a candidate's line, and
+    every one -- each with its 95% interval over days; what leaning with the money alone would give; and,
+    with more than one, each candidate against the first, paired by day."""
+    n_boot = config.SIM_BOOT if n_boot is None else n_boot
+    names = [n for n, _ in results]
+    base = results[0][1]
+    every_ii = common(results)
+    own = [i for i in every_ii if all(at_own_line(rows[i]) for _, rows in results)]
+    taken = set(own)
+    moved = [i for i in every_ii if i not in taken]
+    days = len({day_of(base[i].get("match_code")) for i in every_ii})
+    L = [f"\n  the change in margin against prod, points, 95% over the {days:,} days ({n_boot:,} resamples)",
+         f"  {'':36s} {'bets':>7s} {'stake':>12s} " + " ".join(f"{n[:22]:>24s}" for n in names)]
+    own_draws = None
+    for label, ii in (("at the bets' own lines (odds alone)", own), ("moved to a candidate's line", moved),
+                      ("every re-priced bet", every_ii)):
+        points, draws = change_draws(results, ii, n_boot, seed)
+        if own_draws is None:
+            own_draws = (points, draws)
+        cells = []
+        for k, p in enumerate(points):
+            lo, hi = interval(draws[:, k]) if p is not None else (None, None)
+            cells.append(f"{'-' if p is None else f'{p:+6.2f} [{lo:+.2f}, {hi:+.2f}]':>24s}")
+        L.append(f"  {label:36s} {len(ii):7,d} {sum(base[i]['stake'] for i in ii):12,.0f} " + " ".join(cells))
+    lean = [leaning(rows, own) for _, rows in results]
+    L.append(f"  {'of it, leaning with the money':36s} {'':7s} {'':12s} "
+             + " ".join(f"{'-' if x is None else f'{x:+6.2f}':>24s}" for x in lean))
+    L.append("  (the bets' own lines are the test of the price. Leaning with the money is what the odds alone would gain"
+             " if prod's probabilities were right, as the re-price keeps every stake whatever the price. Moved-line"
+             " bets keep the punter's side and stake at a line they didn't take, so a result flipping there is a"
+             " lottery on the line: price a candidate at prod's lines, e.g. v21-drives@prod, to test its line"
+             " markets. Every candidate's errors that differ from prod's gain on the same bets, as punters back"
+             " where prod is wrong: the two-book comparison and the uplift with --all-moments are the fair tests)")
+    points, draws = own_draws
+    if len(results) > 1 and points[0] is not None:
+        L.append(f"\n  each candidate against {names[0]} at the bets' own lines, paired by day:")
+        for k in range(1, len(results)):
+            lo, hi = interval(draws[:, k] - draws[:, 0])
+            L.append(f"  {names[k]:22s} {points[k] - points[0]:+6.2f} [{lo:+.2f}, {hi:+.2f}]")
+    return L
+
+
 def compare_report(results):
-    """Lines of text: every candidate side by side on the bets they all re-priced."""
+    """Lines of text: every candidate side by side on the bets they all re-priced, the headline at the
+    bets' own lines."""
     names = [n for n, _ in results]
     lines = ["\n  side by side: the margin change on the bets every candidate re-priced "
              "(each also alone above, on its own coverage)"]
@@ -1154,6 +1256,8 @@ def compare_report(results):
         n = sum(r["simulated"] for r in rows)
         stake = sum(r["stake"] for r in rows if r["simulated"])
         lines.append(f"  {name:20s} re-priced {n:8,d} bets, {stake:12,.0f} stake")
+    lines += headline_lines(results)
+    lines.append("\n  side by side at the bets' own lines, by cut:")
     lines.append(f"  {'':24s} {'bets':>7s} {'stake':>12s} {'prod':>7s} "
                  + " ".join(f"{n[:9]:>9s}" for n in names))
     vip = config.BET_VIP_VALUE.lower()
@@ -1162,7 +1266,7 @@ def compare_report(results):
             ("in_play", None, ""), (config.BET_GROUP_COLUMN, None, ""), ("market", None, ""),
             ("period", None, "")]
     for by, keep, name in cuts:
-        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep).items(),
+        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep, every=at_own_line).items(),
                                                      key=lambda kv: str(kv[0])):
             if by == "in_play":
                 text = "in play" if g else "pre-match"
@@ -1233,15 +1337,17 @@ def report_candidate(rows, cand_name):
     price, result = effects(rows)
     print(f"  change in revenue: {price:+,.0f} from the candidate's odds on bets settled the same, "
           f"{result:+,.0f} from bets its line settles differently")
+    print("\n".join(headline_lines([(cand_name, rows)])))
     vip = config.BET_VIP_VALUE.lower()
     not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
-    print(f"\n  margin, prod as priced against {cand_name} re-priced (operator margin kept)")
+    print(f"\n  margin at the bets' own lines, prod as priced against {cand_name} re-priced (operator margin kept)")
     print(f"  {'':24s} {'bets':>7s} {'stake':>12s} {'prod':>8s} {'candidate':>10s} {'change':>8s}")
     cuts = [(None, None, ""), (None, not_vip, f"all but {config.BET_VIP_VALUE}"),
             ("in_play", None, ""), (config.BET_GROUP_COLUMN, None, ""),
             (config.BET_VIP_COLUMN, None, ""), ("market", None, ""), ("period", None, "")]
     for by, keep, name in cuts:
-        for g, (n, stake, rev, m, rev_c, m_c) in sorted(summarise(rows, by, keep).items(),
+        own = lambda r, keep=keep: at_own_line(r) and (keep is None or keep(r))
+        for g, (n, stake, rev, m, rev_c, m_c) in sorted(summarise(rows, by, own).items(),
                                                           key=lambda kv: str(kv[0])):
             if by == "in_play":
                 label = "in play" if g else "pre-match"
@@ -1355,14 +1461,16 @@ def html_section(summary):
     names = [n for n, _ in results]
     own = []
     for name, rows in results:
-        s_ = summarise(rows).get("all")
+        s_ = summarise(rows, keep=at_own_line).get("all")
+        moved = summarise(rows, keep=lambda r: not r.get("same_line", True)).get("all")
         price, result = effects(rows)
         if s_ is None:
-            own.append(f"<tr><th>{_esc(name)}</th><td colspan=\"7\">no bet re-priced</td></tr>")
+            own.append(f"<tr><th>{_esc(name)}</th><td colspan=\"8\">no bet re-priced at its own line</td></tr>")
             continue
         n, stake, rev, m, rev_c, m_c = s_
         own.append(f"<tr><th>{_esc(name)}</th><td>{n:,}</td><td>{stake:,.0f}</td>{_signed(m, f'{m:.2f}%')}"
-                   f"{_signed(m_c, f'{m_c:.2f}%')}{_change_cell(m_c - m)}{_signed(price, f'{price:+,.0f}')}"
+                   f"{_signed(m_c, f'{m_c:.2f}%')}{_change_cell(m_c - m)}"
+                   f"{_change_cell(moved[5] - moved[3] if moved else None)}{_signed(price, f'{price:+,.0f}')}"
                    f"{_signed(result, f'{result:+,.0f}')}</tr>")
     vip = config.BET_VIP_VALUE.lower()
     not_vip = lambda r: str(r.get(config.BET_VIP_COLUMN, "")).strip().lower() != vip
@@ -1371,7 +1479,7 @@ def html_section(summary):
             ("period", None, "")]
     side = []
     for by, keep, name in cuts:
-        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep).items(),
+        for g, (n, stake, m, margins, _) in sorted(compare(results, by, keep, every=at_own_line).items(),
                                                      key=lambda kv: str(kv[0])):
             if by == "in_play":
                 label = "In play" if g else "Pre-match"
@@ -1399,7 +1507,9 @@ def html_section(summary):
     lag_line = "; ".join(f"{_esc(str(op).replace('_BET_BY_BET', '').title())} {lag.seconds:+.0f}s "
                          f"({lag.bets:,} bets)" for op, lag in sorted(lags.items(), key=lambda kv: str(kv[0])))
     head = "".join(f"<th>{_esc(n)}</th>" for n in names)
-    common_n = split[0] if split else 0
+    own_all = compare(results, every=at_own_line).get("all")
+    common_n = own_all[0] if own_all else 0
+    headline = _esc("\n".join(headline_lines(results)).strip("\n"))
     from . import bet_moments
     moments = bet_moments.html_tables(results, _esc, _change_cell)
     from . import book_comparison, margin_uplift
@@ -1412,11 +1522,16 @@ def html_section(summary):
       bet re-priced at the candidate's probability with the operator's own margin kept</p>
     <h3>Re-priced</h3>
     <table class="reach">
-      <thead><tr><th>Candidate</th><th>Bets</th><th>Stake</th><th>Prod</th><th>Candidate</th><th>Change</th>
-        <th>From odds</th><th>From line</th></tr></thead>
+      <thead><tr><th>Candidate</th><th>Bets at own line</th><th>Stake</th><th>Prod</th><th>Candidate</th>
+        <th>Change</th><th>Moved-line change</th><th>From odds</th><th>From line</th></tr></thead>
       <tbody>{''.join(own)}</tbody>
     </table>
-    <h3>Side by side <span class="dim">{common_n:,} bets</span></h3>
+    <p class="dim">The headline is each bet at its own line, where only the odds change. A bet moved to the
+      candidate's line keeps the punter's side and stake at a line they didn't take, and its result can flip
+      there: those are shown apart. Price a candidate at prod's lines (e.g. v21-drives@prod) to test its line
+      markets.</p>
+    <pre class="dim" style="overflow-x:auto">{headline}</pre>
+    <h3>Side by side at the bets' own lines <span class="dim">{common_n:,} bets</span></h3>
     <table class="reach">
       <thead><tr><th>Cut</th><th>Bets</th><th>Stake</th><th>Prod margin</th>{head}</tr></thead>
       <tbody>{''.join(side)}</tbody>

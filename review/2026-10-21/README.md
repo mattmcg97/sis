@@ -38,3 +38,10 @@ a run showed it, REASONED that it was read from the code.
 
 - D2, bet times read in the machine's local time: every conversion now goes through `bets.epoch`, which
   reads a naive time as UTC (also the form rating's and xgb features' day counts).
+- A1, A5, and A3 labelled: the bets report leads with the change at the bets' own lines (odds alone), the
+  bets moved to a candidate's line apart, each with a 95% interval over days, and "leaning with the money"
+  beside it; the book comparison, the uplift, the pre-match test and prior-bets resample days. The uplift
+  at the bets' moments is labelled as favouring the candidate (`--all-moments` stays opt-in, as it is
+  several times slower). A2 isn't fixed by code: the same-bets change still credits any model that errs
+  differently from prod, and the report says so; the fair tests are the two books and the uplift with
+  `--all-moments`.

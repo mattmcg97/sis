@@ -15,7 +15,7 @@ bettor would take when both quote, and how sure each margin is.
               selection, where both quote the same line (moneyline always; a line market only
               where the candidate's line is the bet's). Each book is scored on what it is left
               with: a book generous in the wrong places is picked off
-  intervals   95% bootstrap over matches (SIM_BOOT resamples) on each margin and its change
+  intervals   95% bootstrap over days (SIM_BOOT resamples; a day's matches go together) on each margin and its change
 
 Revenue is the book's (positive: the book won).
 """
@@ -23,6 +23,7 @@ Revenue is the book's (positive: the book won).
 from collections import defaultdict
 
 from . import bets, config
+from .metrics import day_of
 
 SHARP, RECREATIONAL = "sharp", "recreational"
 
@@ -109,12 +110,23 @@ def _per_match(items):
     return out
 
 
+def _by_day(per_match):
+    """{day: [stake, revenue]} off {match: [stake, revenue]} (metrics.day_of)."""
+    out = defaultdict(lambda: [0.0, 0.0])
+    for m, (s, v) in per_match.items():
+        out[day_of(m)][0] += s
+        out[day_of(m)][1] += v
+    return out
+
+
 def boot(series, n=None, seed=0):
-    """95% intervals over matches for several margins at once. `series` is {name: {match: [stake,
-    revenue]}}; every name is resampled on the same matches, so a difference keeps its pairing.
-    Returns {name: (margin %, lo, hi)}, with the draws under "_draws" for diff()."""
+    """95% intervals over days for several margins at once. `series` is {name: {match: [stake,
+    revenue]}}; the matches are put together by day (a day's matches share gamers and form) and every
+    name is resampled on the same days, so a difference keeps its pairing. Returns {name: (margin %,
+    lo, hi)}, with the draws under "_draws" for diff()."""
     import numpy as np
     n = config.SIM_BOOT if n is None else n
+    series = {k: _by_day(s) for k, s in series.items()}
     matches = sorted(set().union(*[set(s) for s in series.values()]))
     weights = np.random.default_rng(seed).multinomial(len(matches), [1 / len(matches)] * len(matches),
                                                        size=n).astype(float)
@@ -211,7 +223,7 @@ TWO_NOTE = ("Each bet both books quote at the same line goes to the one that pay
 
 def text(data):
     """Lines of text off compute()."""
-    L = ["\n  book comparison (95% intervals over matches; margin = the book's)",
+    L = ["\n  book comparison (95% intervals over days; margin = the book's)",
          f"  sharp: {', '.join(config.SIM_SHARP_GROUPS)} (bet for an edge, shop on price); "
          f"everyone else bets as placed (elasticity {config.SIM_ELASTICITY:g}); "
          f"stake at most x{config.SIM_MAX_SCALE:g}"]

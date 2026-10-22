@@ -441,12 +441,50 @@ class TestHtmlSection(unittest.TestCase):
                                   "lags": {"FANDUEL_BET_BY_BET": bets.Lag(1, 100)}, "bets": 2,
                                   "matches": 1})
         self.assertIn('id="bets"', html)
-        self.assertIn("<h3>Side by side <span class=\"dim\">1 bets</span></h3>", html)
+        self.assertIn("<h3>Side by side at the bets' own lines <span class=\"dim\">1 bets</span></h3>", html)
+        self.assertIn("the change in margin against prod, points, 95% over the", html)
         self.assertNotIn("is re-priced with the candidate", html)
         self.assertIn("<th>v6</th>", html)
         self.assertIn("Fanduel +1s (100 bets)", html)
         self.assertIn('class="good">+10.00', html)
         self.assertEqual(bets.html_section({}), "")
+
+
+class TestHeadline(unittest.TestCase):
+    """The headline is each bet at its own line (the odds alone); a bet moved to the candidate's line,
+    whose result can flip there, is shown apart; the intervals resample days."""
+
+    @staticmethod
+    def row(code, stake, rev, rev_c, same_line=True, odds_c=1.8, result=bets.WON):
+        return {"match_code": code, "stake": stake, "revenue": rev, "candidate_revenue": rev_c, "simulated": True,
+                "same_line": same_line, "stream_prob": 0.5, "odds": 1.9, "candidate_odds": odds_c, "result": result}
+
+    def test_the_bets_own_lines_lead_and_a_flip_is_apart(self):
+        rows = [self.row("AF001011026", 10, -9, -8),                              # won, its odds 1.9 -> 1.8: +1
+                self.row("AF002021026", 10, 10, 10, odds_c=1.9, result=bets.LOST),  # lost, odds as prod's: 0
+                self.row("AF003021026", 100, -90, 100, same_line=False)]          # moved, won -> lost: +190
+        lines = bets.headline_lines([("v21", rows)], n_boot=50)
+        text = "\n".join(lines)
+        self.assertIn("95% over the 2 days", text)                              # Oct 1 and Oct 2
+        own = next(x for x in lines if "own lines (odds alone)" in x)
+        self.assertIn("+5.00", own)                                             # +1 on 20 staked
+        self.assertIn("+190.00", next(x for x in lines if "moved to a candidate's line" in x))
+        self.assertIn("+2.50", next(x for x in lines if "leaning with the money" in x))   # 10 x 0.5 x 0.1 on 20
+
+    def test_a_pair_of_candidates_is_compared_on_the_same_days(self):
+        a = [self.row("AF001011026", 10, -9, -8), self.row("AF002021026", 10, -9, -9)]
+        b = [self.row("AF001011026", 10, -9, -9), self.row("AF002021026", 10, -9, -9)]
+        points, draws = bets.change_draws([("a", a), ("b", b)], [0, 1], n_boot=200)
+        self.assertAlmostEqual(points[0], 5.0)
+        self.assertAlmostEqual(points[1], 0.0)
+        self.assertEqual(draws.shape, (200, 2))
+        lo, hi = bets.interval(draws[:, 1] - draws[:, 0])
+        self.assertLessEqual(hi, 0.0)                                           # b never ahead of a
+
+    def test_a_match_code_gives_its_day(self):
+        from eAMFCalibrator.metrics import day_of
+        self.assertEqual(day_of("AF001121026"), "2026-10-12")
+        self.assertEqual(day_of("M1"), "M1")                                    # no date: its own unit
 
 
 def game(code, minutes, p1, p2, s1, s2):

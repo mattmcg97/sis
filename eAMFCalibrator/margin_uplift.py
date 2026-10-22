@@ -11,7 +11,8 @@ underconfident one (x 0.85) 6.1% -- and flat stakes turn it round (underconfiden
 leave no such reward: a book too sure, or not sure enough, offers the better price where it is wrong and
 is taken there (against a flat prod: calibrated 8.2% on what it takes, x 1.15 2.5%, x 1.3 -3.0%). Every
 tick of a match settles on the one result, so the matches, not the ticks, are the sample: each match
-weighs the same (each tick 1 / its match's ticks in the market) and every interval is over matches.
+weighs the same (each tick 1 / its match's ticks in the market) and every interval resamples days (a
+day's matches share gamers and form, so they go together).
 
 The ticks (unchanged): minutes from the match's scheduled start, in play once past half a minute, scaled
 to a 60-minute game clock (normalised = round(minutes x factor), the factor set so prod's matches end at
@@ -30,7 +31,7 @@ The dummy bets, per matched tick and selection:
               is left out
   kept        more than CUT_LAST game minutes left, a fair price above FAIR_FLOOR for both books
 
-Per candidate and market -- moneyline, spread and totals (each with its 95% interval over matches,
+Per candidate and market -- moneyline, spread and totals (each with its 95% interval over days,
 SIM_BOOT resamples):
 
   to candidate      the share of the dummy handle the candidate's prices take
@@ -53,6 +54,7 @@ from collections import defaultdict
 import numpy as np
 
 from . import config, markets
+from .metrics import day_of
 from .pipeline import to_unit_probability
 
 GAME_MINUTES = 60                        # the clock the minutes are scaled to (four 15-minute quarters)
@@ -358,7 +360,7 @@ def _ci(x):
 
 
 def stats_of(pm, W):
-    """The cut's numbers, each difference with its 95% interval over matches."""
+    """The cut's numbers, each difference with its 95% interval (W: resampled days, spread over their matches)."""
     if not pm["n"]:
         return None
     t, td = _ratio(pm["g_t"], pm["h_t"], W)
@@ -396,7 +398,12 @@ def compute(feeds, chart=None, chart_name=None, factor=None, window=None, boot=N
     chart = chart or fallback_chart()
     n_matches = max(prod.matches.values()) + 1
     boot = config.SIM_BOOT if boot is None else boot
-    W = np.random.default_rng(seed).multinomial(n_matches, [1 / n_matches] * n_matches, size=boot).astype(float)
+    days = sorted({day_of(code) for code in prod.matches})
+    day_ix = np.zeros(n_matches, int)
+    for code, i in prod.matches.items():
+        day_ix[i] = days.index(day_of(code))
+    Wd = np.random.default_rng(seed).multinomial(len(days), [1 / len(days)] * len(days), size=boot).astype(float)
+    W = Wd[:, day_ix]                       # each match weighs its day's draw: the days are resampled, not matches
     cands = []
     for label, t in feeds[1:]:
         b = _books(prod, t, factor, chart)
@@ -535,11 +542,12 @@ def text(data):
              f" matches: prod's ticks with a price in every feed no more than {PAIR_MAX_AGE:g} minutes old, every"
              f" probability {PROB_RANGE[0]:g}-{PROB_RANGE[1]:g}",
              f"  margin chart: {data['chart']}; clock: minutes x {data['factor']:.3f} -> {GAME_MINUTES} game minutes;"
-             f" the last {CUT_LAST} left out; 95% over matches ({data['boot']:,} resamples)",
+             f" the last {CUT_LAST} left out; 95% over days ({data['boot']:,} resamples)",
              "  " + "; ".join(f"{f['label']} {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])]
     if _at_bets(data):
         lines.append(f"  {_at_bets(data)} priced only at the moments the bets read: the dummy bets are prod's ticks"
-                     " there alone, each at its own price (bets --all-moments for every tick)")
+                     " there alone. Punters bet where prod is wrong, so these ticks favour the candidate (a model"
+                     " no better than prod comes out ahead): run bets --all-moments for a fair test")
     for c in data["cands"]:
         for g, gd in c["groups"].items():
             st = gd["all"]
@@ -725,15 +733,16 @@ def html(data, esc):
     </details>"""
     feeds = " &middot; ".join(f"{esc(f['label'])}: {f['ticks']:,} of {f['of']:,} ticks matched" for f in data["feeds"])
     at_bets = (f'\n    <p class="dim">{esc(_at_bets(data))} priced only at the moments the bets read: the dummy bets'
-               " are prod's ticks there alone, each at its own price (bets --all-moments for every tick).</p>"
-               if _at_bets(data) else "")
+               " are prod's ticks there alone. Punters bet where prod is wrong, so these ticks favour the"
+               " candidate (a model no better than prod comes out ahead): run bets --all-moments for a fair"
+               " test.</p>" if _at_bets(data) else "")
     return f"""
     <p class="dim">Two books, {esc(data.get('window') or 'the report window')}, {data['matches']:,} matches: every
       live in-play price tick is a dummy bet to win {STAKE_TO_WIN:.0f} at the margin chart's price
       ({esc(data['chart'])}), given to whichever book pays more, settled on the result. Each book is scored on
       what it is left with, so a book too sure (or not sure enough) is taken where it is wrong. Every match
       counts the same (each tick one over its match's ticks in the market) and every interval is 95% over
-      matches. Matched ticks only: prod's ticks where every candidate has a live price for the same match,
+      days (a day's matches resampled together). Matched ticks only: prod's ticks where every candidate has a live price for the same match,
       market and selection no more than {PAIR_MAX_AGE:g} minutes old, every probability
       {PROB_RANGE[0]:g}&ndash;{PROB_RANGE[1]:g}; the spread and totals only where the candidate's line is
       prod's. Minutes from the scheduled start &times; {data['factor']:.3f} make a {GAME_MINUTES}-minute game;
