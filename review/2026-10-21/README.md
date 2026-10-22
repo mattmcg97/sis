@@ -45,3 +45,6 @@ a run showed it, REASONED that it was read from the code.
   several times slower). A2 isn't fixed by code: the same-bets change still credits any model that errs
   differently from prod, and the report says so; the fair tests are the two books and the uplift with
   `--all-moments`.
+- B2, B3, B4: auto_end counts the play clock only while the clock runs, and the two-minute warning once;
+  every start carries whose overtime possessions are done (`v21.ot_history`, the trader's
+  `game.ot_had_ball`); the stream quotes a selection that won k of n games at (k + 1/2) / (n + 1).

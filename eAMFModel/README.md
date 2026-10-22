@@ -2372,10 +2372,18 @@ missing something. Nothing is ever fitted to close those gaps.
 
   A timeout moves only the time draw.
 
-  Overtime is played as in v14.
+  Overtime is played as in v14. A start in overtime carries whose possessions are done
+  (`ot_history`, off the match's overtime snaps; the trader's off `game.ot_had_ball`). Before, a
+  level overtime after one side's possession started as a fresh one: from 7-7 with home having had
+  the ball and away on it, the sim gave home 53% and let both sides score again in 26% of games;
+  carried, home is 37% and the first score ends it.
 - **The game's own end.** In Q4 the side ahead with the ball wins there and then when two things
-  hold: its downs left, each taking the 40-second play clock, outlast the clock, and the defense
-  has no timeouts. The clock goes to 0; there are no kneel-downs to play out.
+  hold: its downs left outlast the clock, and the defense has no timeouts. Before each down the
+  40-second play clock runs off the game clock, but only if it's running. Off a stopped clock (an
+  incompletion, a timeout, a fresh possession) the first snap takes none of it, and the two-minute
+  warning stops the clock once. So 1st and 10 at 2:20 just after a kick-off snaps at 2:20, 2:00,
+  1:20 and 0:40, and the ball goes back; before, the game ended there and then. The clock goes to
+  0; there are no kneel-downs to play out.
 
 ### In the calibrator (`--candidate v21`, `v21_stream.py`)
 
@@ -2391,7 +2399,9 @@ after a conversion or a field goal.
 
 A touchdown's PLAY_OVER, with its conversion still to come, has no book, so prod's quotes in that
 window go unpaired. Only the PLAY_OVERs prod's quotes read are simulated, at `--v21-paths` (1000)
-games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`).
+games each. The lines are v14's rules (`--v21-lines own|even|prod|anchored|hyst`). A selection that
+won k of the n games is quoted (k + 1/2) / (n + 1): one that won none of 1,000 is 0.05%, not the
+0.01% floor it used to hit, which cost 9 nats of log loss whenever it then happened.
 
 A betting simulation (`eAMFCalibrator bets`) hands over `moments`: each bet's market and the prod
 message it reads. Then only the books those bets read are simulated, and the kick-off as ever, which

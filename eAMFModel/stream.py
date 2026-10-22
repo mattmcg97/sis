@@ -243,9 +243,11 @@ def _line(market_id, prod_row, mpmf, tpmf, lines, held=None):
     return sign * x
 
 
-def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=None):
+def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=None, games=None):
     """One prod-shaped quote row off a margin and total distribution, at the line `lines` sets;
-    None where it cannot be priced."""
+    None where it cannot be priced. `games`: how many simulated games the distributions are shares of.
+    A selection that won k of them is priced (k + 1/2) / (n + 1): none of 1,000 is about half a game
+    in a thousand (0.05%), not the 0.01% floor, and one is 0.15%; the two sides still add to 100."""
     if market_id in (ML_HOME, ML_AWAY):
         line = None
     else:
@@ -255,6 +257,8 @@ def _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held=Non
     p = float(markets.market_prob(market_id, 0.0 if line is None else line, mpmf, tpmf))
     if not math.isfinite(p):
         return None
+    if games:
+        p = (p * games + 0.5) / (games + 1)
     p = min(0.9999, max(0.0001, p))
     return (match_code, market_id, prod_row[2], round(100.0 * p, 2), round(1.0 / p, 4),
             description(market_id, line), message, OPEN, "true")

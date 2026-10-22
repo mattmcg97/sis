@@ -444,6 +444,10 @@ class V21Trader(Trader):
                   tos=[[game.timeouts_home, game.timeouts_away]], kick2=[1 - side(game.opening_receiver)],
                   elapsed=[int(getattr(game, "snaps", 0) or 0)], down=[1], dist=[10], y=[25], prev=[v21.FRESH],
                   phase=[v21.KICK], team=[side(game.side)])
+        had = [s in (getattr(game, "ot_had_ball", None) or []) for s in (gm.HOME, gm.AWAY)]
+        cur = side(game.side) if game.period >= 5 and game.phase in (gm.SCRIMMAGE, gm.CONVERSION) else -1
+        # overtime: a side that has had the ball is done unless it has it now (game.ot_had_ball)
+        st.update(ot_done=[[had[s] and s != cur for s in (0, 1)]], ot_cur=[cur if cur >= 0 and had[cur] else -1])
         if game.phase == gm.SCRIMMAGE:
             st.update(phase=[v21.SNAP], down=[game.down], dist=[max(1, min(game.distance, 100 - game.field))],
                       y=[game.field],

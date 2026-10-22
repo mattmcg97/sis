@@ -69,7 +69,8 @@ real decisions against the league's in the same states (those that took a struck
 and shrunk toward none, so it carries into every state. What follows is real data too: the kicks'
 fields and clock, field goals made by distance, punts' net yards and safety free kicks; a timeout moves
 only the time draw. The game's own end (auto_end): in Q4, the side ahead with the ball whose downs left
-at the 40-second play clock outlast the clock, the defense out of timeouts, wins there and then.
+at the 40-second play clock outlast the clock, the defense out of timeouts, wins there and then (off a
+stopped clock the first snap takes none of it, and the two-minute warning stops the clock once).
 Overtime is v14's: over once both sides have had the
 ball and one leads, a touchdown that puts the second side ahead ends it at once, and a period's end
 decides it only when the side behind has had the ball.
@@ -637,12 +638,26 @@ def ot_mask(name, n, must_score=None, other_done_close=None):
     return None
 
 
-def auto_end(period, clock, lead, down, def_timeouts):
-    """Whether the game is over by its own end: Q4, the side with the ball ahead, its downs left at the
-    play clock each outlasting the clock, the defense out of timeouts."""
-    period, clock, lead = np.asarray(period), np.asarray(clock, float), np.asarray(lead)
-    return (period == 4) & (lead > 0) & (np.asarray(def_timeouts) == 0) \
-        & ((5 - np.asarray(down)) * feed.PLAY_CLOCK > clock)
+def auto_end(period, clock, lead, down, def_timeouts, running=True):
+    """Whether the game is over by its own end: Q4, the side with the ball ahead, the defense out of
+    timeouts, and its downs left outlasting the clock. Before each down the play clock runs off the game
+    clock, if it's running: off a stopped one (an incompletion, a timeout, a fresh possession) the first
+    snap comes with none off, and a kneel keeps it running after. Above 2:00 the two-minute warning stops
+    it once, so the snap after the warning again comes with none off."""
+    period, clock, lead, down, def_timeouts, running = np.broadcast_arrays(
+        np.asarray(period), np.asarray(clock, float), np.asarray(lead), np.asarray(down),
+        np.asarray(def_timeouts), np.asarray(running, bool))
+    t, run = clock.astype(float), running.copy()
+    out = np.zeros(t.shape, bool)
+    for k in range(4):
+        snap = k < 5 - down                                   # a down still to play
+        off = snap & run
+        after = np.where(off, t - feed.PLAY_CLOCK, t)
+        warned = off & (period == 4) & (t > LATE) & (after <= LATE)
+        t = np.where(warned, LATE, after)
+        out |= snap & (t < 0)                                 # the clock runs out before this down
+        run = np.where(snap, True, run)                       # a kneel: the clock runs on
+    return (period == 4) & (lead > 0) & (def_timeouts == 0) & out
 
 
 def combine(*masks):
@@ -2721,13 +2736,28 @@ def _start(model, n, pair, teams):
                 team_ix=np.tile([model.team_index(teams[0]), model.team_index(teams[1])], (n, 1)))
 
 
+def ot_history(recs, message):
+    """(each side's overtime possession done, the side with the ball in overtime or -1) before the state at
+    `message`, off a match's snaps (match_snaps): a side's possession is done once the other side snaps after
+    it, and a kick-off ends the one under way (simulate's own reading, so a start carries it on)."""
+    done, cur = [False, False], -1
+    for r in recs:
+        if r["period"] < 5 or r["start"] >= message:
+            continue
+        if cur >= 0 and r["side"] != cur:
+            done[cur] = True
+        cur = r["side"]
+    return done, cur
+
+
 def kickoff_start(model, pair=("", ""), teams=("", "")):
     """The two kick-off states (each side receiving), with the gamers and teams."""
     return dict(period=np.array([1, 1]), clock=np.array([QUARTER, QUARTER]), team=np.array([0, 1]),
                 phase=np.array([KICK, KICK]), down=np.array([1, 1]), dist=np.array([10, 10]),
                 y=np.array([25, 25]), home=np.zeros(2, np.int64), away=np.zeros(2, np.int64),
                 prev=np.array([FRESH, FRESH]), elapsed=np.zeros(2, np.int64),
-                tos=np.full((2, 2), TIMEOUTS), kick2=np.array([1, 0]), **_start(model, 2, pair, teams))
+                tos=np.full((2, 2), TIMEOUTS), kick2=np.array([1, 0]), ot_done=np.zeros((2, 2), bool),
+                ot_cur=np.full(2, -1), **_start(model, 2, pair, teams))
 
 
 def match_starts(model, rows, pair=("", ""), teams=("", ""), every=1):
@@ -2768,13 +2798,15 @@ def match_starts(model, rows, pair=("", ""), teams=("", ""), every=1):
         tos_a = [max(0, have - u) if u is not None else have for u in used]
         tos = tos_a if a_home else tos_a[::-1]
         home, away = feed._i(r["score_p1"]) or 0, feed._i(r["score_p2"]) or 0
+        ot = ot_history(recs, msg) if period >= 5 else ([False, False], -1)
         out.append((i, dict(period=np.array([period]), clock=np.array([clock]),
                             team=np.array([_side_of(r["offense"], a_home)]), phase=np.array([SNAP]),
                             down=np.array([feed._i(r["down"])]), dist=np.array([max(1, feed._i(r["distance"]) or 10)]),
                             y=np.array([feed._i(r["field_position"])]), home=np.array([home]),
                             away=np.array([away]), prev=np.array([prev]),
                             elapsed=np.array([bisect_left(starts, msg)]), tos=np.array([tos]),
-                            kick2=np.array([1 - first]), **_start(model, 1, pair, teams))))
+                            kick2=np.array([1 - first]), ot_done=np.array([ot[0]]), ot_cur=np.array([ot[1]]),
+                            **_start(model, 1, pair, teams))))
     return out
 
 
@@ -2844,10 +2876,13 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
     tz_time = model.time.tilt_z(th_time, P) if th_time is not None else None
     tz_dist = model.dist.tilt_z(th_dist, P) if th_dist is not None else None
     tz_of = lambda tz, ix, off: None if tz is None else (tz[0], tz[1][ix, off])
-    ot_cur = np.full(P, -1, np.int64)
-    ot_done = np.zeros((P, 2), bool)
-    ahead = (period >= 5) & (score[:, 0] != score[:, 1])
-    ot_done[ahead, np.where(score[ahead, 0] > score[ahead, 1], 0, 1)] = True
+    if "ot_done" in start:                    # a start in overtime carries whose possessions are done (ot_history)
+        ot_done, ot_cur = rep(start["ot_done"], bool), rep(start["ot_cur"], np.int64)
+    else:                                     # without it: the side ahead has had the ball, no one else
+        ot_cur = np.full(P, -1, np.int64)
+        ot_done = np.zeros((P, 2), bool)
+        ahead = (period >= 5) & (score[:, 0] != score[:, 1])
+        ot_done[ahead, np.where(score[ahead, 0] > score[ahead, 1], 0, 1)] = True
     st = stats
     tally = (lambda k, v: st.__setitem__(k, st.get(k, 0) + int(v))) if st is not None else (lambda k, v: None)
     if st is not None:
@@ -3409,7 +3444,8 @@ def simulate(model, start, n_paths, seed=0, stats=None, max_steps=MAX_STEPS, unt
         if AUTO_END and len(sn):
             # the game's own end: the side ahead in Q4 can run the clock out, the defense has no timeouts
             off = team[sn]
-            over = auto_end(period[sn], clock[sn], score[sn, off] - score[sn, 1 - off], down[sn], tos[sn, 1 - off])
+            over = auto_end(period[sn], clock[sn], score[sn, off] - score[sn, 1 - off], down[sn], tos[sn, 1 - off],
+                            running_of(prev[sn]).astype(bool))
             if over.any():
                 clock[sn[over]] = 0.0
                 tally("auto_end", over.sum())
