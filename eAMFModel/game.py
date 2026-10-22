@@ -1,14 +1,15 @@
 """A game to click through, play by play, for the trader: where it stands and what each play does
 to it, under the rules the simulation plays (4-minute quarters, three timeouts a side each half,
-the second half kicked to the side that kicked the first, overtime off a kick-off with two
-timeouts a side each period)."""
+the second half kicked to the side that kicked the first, overtime off a coin toss and a kick-off
+with two timeouts a side each period). Level after four, the game waits at the toss (TOSS): who
+receives isn't known until it's entered, so the trader prices nothing there."""
 
 from dataclasses import asdict, dataclass, field as _default, fields
 from types import SimpleNamespace
 
 QUARTER = 240.0
-KICKOFF, SCRIMMAGE, CONVERSION, FINAL = "kickoff", "scrimmage", "conversion", "final"
-PHASES = (KICKOFF, SCRIMMAGE, CONVERSION, FINAL)
+KICKOFF, SCRIMMAGE, CONVERSION, FINAL, TOSS = "kickoff", "scrimmage", "conversion", "final", "toss"
+PHASES = (KICKOFF, SCRIMMAGE, CONVERSION, FINAL, TOSS)
 HOME, AWAY = "home", "away"
 # the play before a snap, as v2.1's time draw reads it: a fresh possession or quarter, a gain of nothing (an
 # incompletion), short of the line, a first down, a loss, a timeout
@@ -77,8 +78,8 @@ class Game:
             raise ValueError("scores and timeouts cannot go below 0")
 
     def model_state(self):
-        """The state as v14.start_from reads it (None when the game is over)."""
-        if self.phase == FINAL:
+        """The state as v14.start_from reads it (None when the game is over, or at overtime's toss)."""
+        if self.phase in (FINAL, TOSS):
             return None
         base = dict(period=self.period, clock_seconds=float(self.clock), home_score=self.home,
                     away_score=self.away, opening_receiver=self.opening_receiver,
@@ -97,6 +98,8 @@ class Game:
         """The scoreboard line: what is next."""
         if self.phase == FINAL:
             return "Final"
+        if self.phase == TOSS:
+            return "Overtime: the coin toss, who receives?"
         if self.phase == KICKOFF:
             return f"Kick-off to {self.side}"
         if self.phase == CONVERSION:
@@ -209,8 +212,8 @@ def _end_period(g):
         g.period, g.clock = 5, QUARTER
         g.timeouts_home = g.timeouts_away = OT_TIMEOUTS
         g.ot_had_ball = []
-        _kick_to(g, HOME)
-        return "overtime"
+        g.phase, g.fresh, g.last = TOSS, True, "fresh"         # who receives: entered at the toss
+        return "overtime, the coin toss"
     behind = HOME if g.home < g.away else AWAY
     if (not level and behind in g.ot_had_ball) or g.period >= 4 + MAX_OT:
         g.phase = FINAL
@@ -246,6 +249,11 @@ def apply(game, play):
     if kind == "set":
         g = Game.from_dict({**g.to_dict(), **(play.get("state") or {})})
         return g, "state set"
+    if g.phase == TOSS:
+        if kind != "toss" or play.get("side") not in (HOME, AWAY):
+            raise ValueError("overtime starts at the coin toss: who receives?")
+        _kick_to(g, play["side"])
+        return g, f"overtime: kick-off to {play['side']}"
     if kind == "clock":
         if g.phase == FINAL:
             raise ValueError("the game is over")

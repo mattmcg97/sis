@@ -213,6 +213,24 @@ class TestV21Trader(unittest.TestCase):
         gained = td["price"]["expected"]["home"] - g["price"]["expected"]["home"]     # the six and the try, less the
         self.assertTrue(3 < gained < 8, gained)                                          # drive's own expected points
 
+    def test_overtime_waits_for_the_toss_then_carries_who_has_had_the_ball(self):
+        setup = self.setup_of(self.codes[1])
+        level = gm.Game(period=4, clock=5.0, home=10, away=10, phase=gm.SCRIMMAGE, side=gm.HOME, field=25,
+                        fresh=False).to_dict()
+        r = self.call("/api/play", setup=setup, game=level, play={"type": "kneel"})
+        self.assertEqual(r["game"]["phase"], gm.TOSS)
+        self.assertTrue(r["price"]["waiting"])                                          # no price at the toss
+        self.assertNotIn("moneyline", r["price"])
+        r = self.call("/api/play", setup=setup, game=r["game"], play={"type": "toss", "side": "away"})
+        self.assertEqual((r["game"]["phase"], r["game"]["side"]), (gm.KICKOFF, gm.AWAY))
+        self.assertIn("moneyline", r["price"])
+        k = self.t._kickoff(setup)                                                      # away has had the ball,
+        g = gm.Game(period=5, clock=200.0, home=10, away=10, phase=gm.SCRIMMAGE, side=gm.HOME, field=30,
+                    ot_had_ball=[gm.AWAY])                                              # home has it now
+        S = self.t.start_of(g, k["pair"], k["teams"])
+        self.assertEqual(S["ot_done"].tolist(), [[False, True]])
+        self.assertEqual(int(S["ot_cur"][0]), -1)
+
     def test_v21_is_read_off_the_build_and_named(self):
         self.assertTrue(trader.is_v21(self.tmp.name))
         self.assertTrue(trader.is_v21(None, "v21-drives"))

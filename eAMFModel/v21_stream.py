@@ -206,7 +206,8 @@ def state_starts(model, rows, pair=("", ""), teams=("", "")):
     for i, s in v21.match_starts(model, rows, pair, teams):
         out[feed._i(rows[i]["message"])] = s
     a_home = rows[0]["team_a_side"] != "away"
-    starts = sorted(r["start"] for r in v21.match_snaps(rows))
+    recs = v21.match_snaps(rows)
+    starts = sorted(r["start"] for r in recs)
     opening = rows[0].get("opening_offense")
     first = v21._side_of(opening, a_home) if opening in ("TEAM_A", "TEAM_B") else 0
     for r in rows:
@@ -224,12 +225,14 @@ def state_starts(model, rows, pair=("", ""), teams=("", "")):
         have = v21.TIMEOUTS if period <= 4 else v21.OT_TIMEOUTS
         tos_a = [max(0, have - u) if u is not None else have for u in used]
         tos = tos_a if a_home else tos_a[::-1]
+        ot = v21.ot_history(recs, m) if period >= 5 else ([False, False], -1)
         out[m] = dict(period=np.array([period]), clock=np.array([float(clock)]),
                       team=np.array([_side(st.offense)]), phase=np.array([v21.KICK]),
                       down=np.array([1]), dist=np.array([10]), y=np.array([25]),
                       home=np.array([st.home_score]), away=np.array([st.away_score]),
                       prev=np.array([v21.FRESH]), elapsed=np.array([bisect_left(starts, m)]),
-                      tos=np.array([tos]), kick2=np.array([1 - first]), **v21._start(model, 1, pair, teams))
+                      tos=np.array([tos]), kick2=np.array([1 - first]), ot_done=np.array([ot[0]]),
+                      ot_cur=np.array([ot[1]]), **v21._start(model, 1, pair, teams))
     return sorted(out.items())
 
 
@@ -274,9 +277,12 @@ def _read(keys, prod_quote_rows, windows, reads):
 
 
 def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, lines=OWN, windows=None,
-               kickoff=None):
+               kickoff=None, games=None):
     """Prod-shaped quote rows (v14_stream.quote_rows's pairing) off v21's books: (message, margin
-    pmf, total pmf), None where a book was not simulated -- no quote then."""
+    pmf, total pmf), None where a book was not simulated -- no quote then. `games`: the games each
+    in-play book played (the kick-off's twice that, each side receiving), so a selection that won none
+    of them is priced as about half a game (stream._quote), not nothing."""
+    kick_games = 2 * games if games else None
     keys = [b[0] for b in books]
     out, held = [], {}
     kickoff_at = kickoff if callable(kickoff) else (lambda row: kickoff)
@@ -284,7 +290,7 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
         for r in prod_quote_rows:
             if r[1] in MARKET_IDS and r[3] is not None and r[6] is None:
                 mpmf, tpmf = kickoff_at(r)
-                q = _quote(match_code, r[1], r, mpmf, tpmf, lines, None, held)
+                q = _quote(match_code, r[1], r, mpmf, tpmf, lines, None, held, kick_games)
                 if q:
                     out.append(q)
     for (market_id, message), prod_row in sorted(paired_prod_rows(prod_quote_rows).items(),
@@ -295,7 +301,7 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
         if i < 0:
             if kickoff is not None and _before_play(message, first_play_message):
                 mpmf, tpmf = kickoff_at(prod_row)
-                q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held)
+                q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held, kick_games)
                 if q:
                     out.append(q)
             continue
@@ -304,7 +310,7 @@ def quote_rows(match_code, books, prod_quote_rows, first_play_message=None, line
         _, mpmf, tpmf = books[i]
         if mpmf is None:
             continue
-        q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held)
+        q = _quote(match_code, market_id, prod_row, mpmf, tpmf, lines, message, held, games)
         if q:
             out.append(q)
     return out
@@ -388,7 +394,7 @@ def _price(model, item, n_paths, lines, prematch_only, share, react=None):
                                      tally)
     else:
         books, windows = [], {}
-    out = {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff) for mode in modes}
+    out = {mode: quote_rows(code, books, prod_rows, first_play, mode, windows, kickoff, n_paths) for mode in modes}
     out["_states"] = (tally.get("priced", 0), tally.get("of", 0))
     return out
 

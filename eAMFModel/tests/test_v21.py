@@ -1000,6 +1000,32 @@ class TestRules(unittest.TestCase):
         self.assertFalse(v21.auto_end(4, 130.0, 3, 2, 0))
         self.assertFalse(v21.auto_end(4, 100.0, 3, 2, 1))                       # a timeout left
         self.assertFalse(v21.auto_end(4, 100.0, 0, 2, 0))                       # level
+
+    def test_a_stopped_clock_and_the_warning_leave_the_other_side_time(self):
+        # off a stopped clock the first snap takes none of the play clock: 3rd down at 1:15 snaps then,
+        # and 4th down at 0:35, so the ball goes back; with the clock running the game is over
+        self.assertFalse(v21.auto_end(4, 75.0, 3, 3, 0, running=False))
+        self.assertTrue(v21.auto_end(4, 75.0, 3, 3, 0, running=True))
+        self.assertFalse(v21.auto_end(4, 35.0, 3, 4, 0, running=False))       # 4th down must be played
+        self.assertTrue(v21.auto_end(4, 35.0, 3, 4, 0, running=True))
+        # 1st down at 2:20 just after a kick-off: snaps at 2:20, 2:00 (the warning), 1:20 and 0:40
+        self.assertFalse(v21.auto_end(4, 140.0, 3, 1, 0, running=False))
+        self.assertTrue(v21.auto_end(4, 119.0, 3, 1, 0, running=False))       # under 2:00: 79, 39, -1
+        got = v21.auto_end(np.array([4, 4]), np.array([75.0, 75.0]), np.array([3, 3]), np.array([3, 3]),
+                           np.array([0, 0]), np.array([False, True]))
+        self.assertEqual(got.tolist(), [False, True])
+
+    def test_an_overtime_start_carries_whose_possessions_are_done(self):
+        recs = [dict(period=4, start=1, side=0), dict(period=5, start=10, side=0), dict(period=5, start=11, side=0),
+                dict(period=5, start=20, side=1), dict(period=5, start=21, side=1)]
+        self.assertEqual(v21.ot_history(recs, 20), ([False, False], 0))        # home's possession under way
+        self.assertEqual(v21.ot_history(recs, 22), ([True, False], 1))         # away snapped after it: home's done
+        m = built()
+        s = _state(m, period=5, clock=240.0, team=1, y=25, home=7, away=7)      # level, home has had the ball
+        s["tos"] = np.array([[v21.OT_TIMEOUTS] * 2])
+        s["ot_done"], s["ot_cur"] = np.array([[True, False]]), np.array([-1])
+        h, a = v21.simulate(m, s, 400, seed=3)
+        self.assertFalse(((h > 7) & (a > 7)).any())                             # the first score after it ends it
         m = built()
         start = _state(m, period=4, clock=100.0, down=2, y=40, prev=v21.SHORT, home=7, away=4)
         start["tos"] = np.array([[3, 0]])
@@ -1938,6 +1964,20 @@ class TestCli(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):
                 cli.main(["v21-sweep", snaps, "--history", os.path.join(d, "none.csv"), "--out", os.path.join(d, "sw")])
             self.assertTrue(os.path.exists(os.path.join(d, "sw", "v21_sweep.txt")))
+
+
+class TestTailQuotes(unittest.TestCase):
+    """A selection that won none of the games is priced as about half a game in them, not nothing."""
+
+    def test_a_count_of_none_reads_half_a_game(self):
+        from .. import markets, stream
+        mpmf, tpmf = markets._distributions(np.full(1000, 30), np.full(1000, 10))     # home won every game
+        prod = ("M", 51, None, 50.0, 2.0, "", 5, "OPEN", "true")
+        away = stream._quote("M", 51, prod, mpmf, tpmf, stream.OWN, 5, games=1000)
+        home = stream._quote("M", 50, prod, mpmf, tpmf, stream.OWN, 5, games=1000)
+        self.assertEqual(away[3], 0.05)                                         # 0.5 / 1001
+        self.assertAlmostEqual(home[3] + away[3], 100.0)
+        self.assertEqual(stream._quote("M", 51, prod, mpmf, tpmf, stream.OWN, 5)[3], 0.01)   # no count: the floor
 
 
 if __name__ == "__main__":

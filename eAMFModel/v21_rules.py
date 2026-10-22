@@ -320,7 +320,9 @@ def auto_end_check(matches):
             m = feed._margin(a, a["offense"])
             _, opp = v21._tos_left(a, a["offense"], 4)
             c = feed._f(a["clock_seconds"])
-            if m is None or opp != 0 or c <= 0 or not v21.auto_end(4, c, m, feed._i(a["down"]), 0):
+            rec = recs.get(feed._i(a["message"]))
+            running = True if rec is None else bool(v21.running_of(rec["prev_cls"]))
+            if m is None or opp != 0 or c <= 0 or not v21.auto_end(4, c, m, feed._i(a["down"]), 0, running):
                 continue
             later = [r for r in rows[i + 1:] if r.get("period") == "4"]
             last = rows[-1]

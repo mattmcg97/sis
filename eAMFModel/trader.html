@@ -489,7 +489,7 @@ $("theme").onclick = () => {
 let SPOT = {half: "home", yard: 25};
 const LIVE = {running: false, base: 240, t0: 0, shown: 240};
 const STOPS = new Set(["incomplete", "touchdown", "field_goal", "punt", "turnover", "safety", "spike", "timeout",
-  "kickoff", "conversion", "set"]);
+  "kickoff", "conversion", "set", "toss"]);
 const curGame = () => HIST.length ? HIST[HIST.length - 1].game : null;
 const sideName = side => SETUP && (side === "home" ? SETUP.home_player : SETUP.away_player) || (side === "home" ? "Home" : "Away");
 const fromHome = sp => sp.half === "home" ? sp.yard : 100 - sp.yard;              // yards from the home goal
@@ -531,7 +531,7 @@ function paintClock() {
   $("clock").classList.toggle("running", LIVE.running);
   $("run").textContent = LIVE.running ? "⏸" : "▶"; $("run").classList.toggle("on", LIVE.running);
   const can = g && g.phase === "scrimmage";
-  $("run").disabled = !can && !LIVE.running; $("ffbtn").disabled = !g || g.phase === "final" || g.phase === "conversion";
+  $("run").disabled = !can && !LIVE.running; $("ffbtn").disabled = !g || ["final", "conversion", "toss"].includes(g.phase);
   if (LIVE.running && !$("pricenote").querySelector(".error")) $("pricenote").textContent = `· priced at ${fmtClock(g.clock)}, clock running`;
 }
 setInterval(() => {
@@ -563,6 +563,9 @@ function spotHTML(label) {
 function padHTML(g) {
   const undo = `<button class="danger" data-a="undo" ${HIST.length < 2 ? "disabled" : ""}>Undo</button>`;
   if (g.phase === "final") return `<div class="empty">Final</div><div class="btns five">${undo}</div>` + editHTML(g);
+  if (g.phase === "toss") return `<div class="empty">Overtime: who receives the kick-off?</div>
+    <div class="btns five"><button data-a="toss_home">${esc(sideName("home"))} receives</button>
+      <button data-a="toss_away">${esc(sideName("away"))} receives</button><span></span><span></span>${undo}</div>` + editHTML(g);
   if (g.phase === "kickoff") return spotHTML("Returned to") +
     `<div class="btns five"><button class="primary" data-a="kick">Kick-off ▸</button><button data-a="touchback">Touchback</button>
       <button data-a="kick_td">Return TD</button><span></span><span></span>${undo}</div>` + editHTML(g);
@@ -588,7 +591,7 @@ function editHTML(g) {
   return `<details><summary>Edit state</summary>
     <div class="row3"><div><label>Period</label><select id="e_period">${periods}</select></div>
       <div><label>Clock</label><input id="e_clock" value="${fmtClock(g.clock)}"></div>
-      <div><label>Phase</label><select id="e_phase">${["scrimmage", "kickoff", "conversion", "final"].map(p => opt(p, g.phase, p)).join("")}</select></div></div>
+      <div><label>Phase</label><select id="e_phase">${["scrimmage", "kickoff", "conversion", "toss", "final"].map(p => opt(p, g.phase, p)).join("")}</select></div></div>
     <div class="row3"><div><label>Home pts</label><input id="e_home" type="number" value="${g.home}"></div>
       <div><label>Away pts</label><input id="e_away" type="number" value="${g.away}"></div>
       <div><label>Side</label><select id="e_side">${opt("home", g.side, "Home")}${opt("away", g.side, "Away")}</select></div></div>
@@ -614,6 +617,7 @@ $("padbody").addEventListener("click", ev => {
     kick: () => ({type: "kickoff", spot}), touchback: () => ({type: "kickoff", at: 25}), kick_td: () => ({type: "kickoff", touchdown: true}),
     xp: () => ({type: "conversion", kind: "xp"}), xp_miss: () => ({type: "conversion", kind: "xp_miss"}),
     two: () => ({type: "conversion", kind: "two"}), two_fail: () => ({type: "conversion", kind: "two_fail"}),
+    toss_home: () => ({type: "toss", side: "home"}), toss_away: () => ({type: "toss", side: "away"}),
     set: () => {
       const [m, sec] = $("e_clock").value.split(":").map(Number);
       return {type: "set", state: {period: +$("e_period").value, clock: Math.min(240, (m || 0) * 60 + (sec || 0)), phase: $("e_phase").value,
@@ -678,9 +682,10 @@ function render() {
   const tos = n => [0, 1, 2].map(i => `<i class="${i < n ? "on" : ""}"></i>`).join("");
   $("htos").innerHTML = tos(g.timeouts_home); $("atos").innerHTML = tos(g.timeouts_away);
   // the ball: the offence at a snap, the receiver at a kick-off, the scorer at a conversion
-  const has = g.phase === "final" ? null : g.side;
+  const has = g.phase === "final" || g.phase === "toss" ? null : g.side;
   $("hball").classList.toggle("on", has === "home"); $("aball").classList.toggle("on", has === "away");
-  $("hto").disabled = !g.timeouts_home || g.phase === "final"; $("ato").disabled = !g.timeouts_away || g.phase === "final";
+  const noTO = g.phase === "final" || g.phase === "toss";
+  $("hto").disabled = !g.timeouts_home || noTO; $("ato").disabled = !g.timeouts_away || noTO;
   $("period").textContent = g.phase === "final" ? "Final" : periodName(g.period);
   if (!LIVE.running) LIVE.shown = g.clock;
   SPOT = g.phase === "kickoff" ? spotOf(g.side, 25) : g.phase === "scrimmage" ? spotOf(g.side, g.field) : SPOT;
@@ -699,12 +704,13 @@ function v21Line(v) {               // what v2.1's kick-off nudge came to: each 
   return parts.length ? "v2.1 at the kick-off: " + parts.join(" · ") : "";
 }
 function renderPrices(pr, prev) {
+  if (pr.waiting) { $("prices").innerHTML = `<div class="empty">${esc(pr.text)}</div>`; return; }
   if (pr.final) {
     $("prices").innerHTML = `<div class="empty">Settled: ${pr.expected.away} @ ${pr.expected.home}</div>`; return;
   }
   const d = (a, b) => b === undefined || b === null ? "" : (() => { const x = 100 * (a - b); return Math.abs(x) < 0.05 ? "" : `<span class="delta">${x > 0 ? "▲" : "▼"}${Math.abs(x).toFixed(1)}</span>`; })();
   const cell = (s, ps) => `<span class="odds">${s.odds.toFixed(2)}</span><span class="p">${pct(s.p)}</span>${d(s.p, ps && ps.p)}`;
-  const pv = prev && !prev.final ? prev : null;
+  const pv = prev && !prev.final && !prev.waiting ? prev : null;
   const an = esc(SETUP.away_player || "Away"), hn = esc(SETUP.home_player || "Home");
   $("prices").innerHTML = `<table><tr><th>Market</th><th>Line</th><th>${an} / Over</th><th>${hn} / Under</th></tr>
     <tr><td class="mk">Moneyline</td><td class="line">—</td><td>${cell(pr.moneyline.away, pv && pv.moneyline.away)}</td><td>${cell(pr.moneyline.home, pv && pv.moneyline.home)}</td></tr>
@@ -723,7 +729,7 @@ function renderPrices(pr, prev) {
 function renderLog() {
   $("log").innerHTML = HIST.map((h, i) => {
     const p = h.price, g = h.game;
-    const v = p.final ? "final" : `${pct(p.moneyline.home.p)} · ${p.total.line.toFixed(1)}`;
+    const v = p.final ? "final" : p.waiting ? "toss" : `${pct(p.moneyline.home.p)} · ${p.total.line.toFixed(1)}`;
     return `<div><span class="n">#${i}</span><span class="t">${g.phase === "final" ? "Final" : periodName(g.period) + " " + fmtClock(g.clock)}</span>
       <span>${esc(h.what || "")} <span style="color:var(--text-muted)">${g.away}–${g.home}</span></span><span class="v">${v}</span></div>`;
   }).reverse().join("");
@@ -794,7 +800,7 @@ function lineChart(host, series, opts) {
   hit.addEventListener("mouseleave", () => { cross.setAttribute("visibility", "hidden"); dots.forEach(d => d.setAttribute("visibility", "hidden")); hideTip(); });
 }
 function drawWin() {
-  const vals = HIST.map(h => h.price.final ? h.price.moneyline.home.p * 100 : h.price.moneyline.home.p * 100);
+  const vals = HIST.map(h => h.price.waiting ? null : h.price.moneyline.home.p * 100);
   const pre = PRE.moneyline.home.p * 100;
   lineChart($("winchart"), [
     {name: "Pre-match", values: HIST.map(() => pre), color: css("--text-muted"), dash: true, flat: true},
@@ -802,8 +808,9 @@ function drawWin() {
     {range: () => [0, 100], ticks: () => [0, 25, 50, 75, 100], fmt: (v, full) => full ? v.toFixed(1) + "%" : v + "%"});
 }
 function drawTotal() {
-  const exp = HIST.map(h => h.price.expected.total), line = HIST.map(h => h.price.final ? null : h.price.total.line);
-  const all = exp.concat(line.filter(v => v !== null));
+  const exp = HIST.map(h => h.price.waiting ? null : h.price.expected.total);
+  const line = HIST.map(h => h.price.final || h.price.waiting ? null : h.price.total.line);
+  const all = exp.concat(line).filter(v => v !== null);
   const lo = Math.floor((Math.min(...all) - 3) / 5) * 5, hi = Math.ceil((Math.max(...all) + 3) / 5) * 5;
   lineChart($("totchart"), [
     {name: "Quoted line", values: line, color: css("--text-muted"), dash: true},
@@ -835,7 +842,7 @@ function barChart(host, start, probs, cut, colors, names, fmtX) {
   el("line", {x1: xl, x2: xl, y1: f.y0 - 6, y2: f.y1, stroke: css("--text-primary"), "stroke-width": 1.5, "stroke-dasharray": "3 3"}, f.svg);
 }
 function drawDists(pr, g) {
-  if (pr.final) { $("mdist").innerHTML = $("tdist").innerHTML = `<div class="empty">Final</div>`; $("mlegend").innerHTML = $("tlegend").innerHTML = ""; return; }
+  if (pr.final || pr.waiting) { $("mdist").innerHTML = $("tdist").innerHTML = `<div class="empty">${pr.final ? "Final" : "Coin toss"}</div>`; $("mlegend").innerHTML = $("tlegend").innerHTML = ""; return; }
   const h = pr.spread.line, t = pr.total.line;
   $("mlegend").innerHTML = `<span style="--c:var(--away)">${esc(SETUP.away_player || "Away")} covers ${handicap(h, "away")}</span><span style="--c:var(--home)">${esc(SETUP.home_player || "Home")} covers ${handicap(h, "home")}</span>`;
   barChart($("mdist"), pr.margin_dist.start, pr.margin_dist.p, h, [css("--home"), css("--away")], [`home covers ${handicap(h, "home")}`, `away covers ${handicap(h, "away")}`], v => signed(v));
