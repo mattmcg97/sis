@@ -48,3 +48,7 @@ a run showed it, REASONED that it was read from the code.
 - B2, B3, B4: auto_end counts the play clock only while the clock runs, and the two-minute warning once;
   every start carries whose overtime possessions are done (`v21.ot_history`, the trader's
   `game.ot_had_ball`); the stream quotes a selection that won k of n games at (k + 1/2) / (n + 1).
+- B1, the tilts' shrinkage: the penalty is scaled by what a snap tells within its own state (`--tilt-scale
+  state`, the default for new builds), so a gamer with `--tilt-prior` snaps moves half way; the time tilts
+  can take their own prior (`--tilt-prior-time`), and `v21-tilt-tune` picks both on held-out matches.
+  Existing builds keep their tilts until rebuilt.

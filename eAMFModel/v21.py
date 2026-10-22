@@ -272,6 +272,12 @@ MODES = ("full", "adjusted", "tilt")
 PHI_DIST = ("yards", "touchdown", "turnover", "first down", "loss")
 PHI_TIME = ("seconds",)
 TILT_PRIOR = 200.0
+# What a prior snap is worth (TILT_SCALE). "state": phi's variance within a snap's own state's draw, what a
+# snap tells, so an entity with TILT_PRIOR snaps moves half way to its own. "league" (every build before 22
+# Oct): phi's variance over all snaps, larger wherever the state explains phi (the time's stopped and running
+# clocks most), so those tilts were shrunk several times harder than TILT_PRIOR said, the time's most.
+TILT_SCALE = "state"
+TILT_SCALES = ("state", "league")
 TILT_ROUNDS = 4
 TILT_CANDIDATES = 16
 TILT_HALF_LIFE = 30.0         # days: a real snap's weight in the fit halves every so many days before the last
@@ -1720,7 +1726,7 @@ def match_people(code, rows, hist):
 
 def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=True, refine=REFINE_REMAINING,
           seed=0, gamer_decisions=True, rules=True, split=SPLIT, key=KEY, blend=0.0, field=0.0, decision_blend=0.0,
-          clock=0.0, tilt_prior=TILT_PRIOR):
+          clock=0.0, tilt_prior=TILT_PRIOR, tilt_scale=TILT_SCALE, tilt_prior_time=None):
     """The model off the export's matches ({code: rows}) and the history (gamers and teams).
     gamer_decisions=False: every gamer decides as the league does in the same state; rules=False: no
     global rules, the real shares alone; split: the draws' part of the game (SPLIT); key: the league's
@@ -1728,7 +1734,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     field: the distance draws' field windows, this share of the yards to go (0: off, FIELD_YARDS);
     decision_blend: the decisions' cells blended with this prior (0: off, Choice); clock: the time draws'
     clock windows in a half's last CLOCK_LATE seconds, this share of the seconds left (0: off); tilt_prior:
-    the tilts' shrinkage, in snaps (TILT_PRIOR)."""
+    the tilts' shrinkage, in snaps (TILT_PRIOR), at tilt_scale (TILT_SCALE); tilt_prior_time: the time
+    tilts' own (None: tilt_prior's)."""
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     draw_spec(split, key)
@@ -1742,6 +1749,10 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     m.decision_blend = float(decision_blend or 0.0)
     m.clock = float(clock or 0.0)
     m.tilt_prior = float(tilt_prior)
+    if tilt_scale not in TILT_SCALES:
+        raise ValueError(f"no such tilt scale {tilt_scale!r} (there are {', '.join(TILT_SCALES)})")
+    m.tilt_scale = tilt_scale
+    m.tilt_prior_time = float(tilt_prior if tilt_prior_time is None else tilt_prior_time)
     m.use_rules = bool(rules and RULES)
     hist = {r["MATCH_CODE"]: r for r in (history or [])}
     recs, kick_dec, safeties = [], [], []
@@ -2078,19 +2089,37 @@ def recency_weights(recs, half_life=TILT_HALF_LIFE):
     return np.power(0.5, (days.max() - days) / half_life)
 
 
-def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUNDS, weights=None):
+def tilt_gain(H, obs, phi_b, theta, who, weights=None):
+    """The log-likelihood a snap that the tilts `theta` gain over none on snaps (their bases H, their bins
+    obs, their entities who), each at its weight: what a fit is scored on, in sample or held out."""
+    th = sum(theta[k][who[k]] for k in who)
+    z = np.log(np.maximum(H, 1e-300)) + th @ phi_b.T
+    zm = z.max(1, keepdims=True)
+    logZ = (zm + np.log(np.exp(z - zm).sum(1, keepdims=True)))[:, 0]
+    logZ0 = np.log(np.maximum(H, 1e-300).sum(1))
+    return float(np.average((th * phi_b[obs]).sum(1) - logZ + logZ0, weights=weights))
+
+
+def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUNDS, weights=None, scale=TILT_SCALE):
     """({effect: (entities, dims) tilt}, the in-sample log-likelihood gained a snap): each entity's
     theta, fitted in turn by Newton steps on the penalized log-likelihood of its real snaps' own bins
     (obs) under their bases H reweighted by exp(theta . phi_b), theta the summed tilts of the snap's
-    entities, each snap counted at its weight (recency_weights); the penalty prior x the league's
-    variance of phi, so an entity with prior snaps' worth of evidence moves half way. The unknown entity
-    (the last) stays at none."""
+    entities, each snap counted at its weight (recency_weights); the penalty prior x a snap's worth of
+    information (TILT_SCALE: "state", phi's variance within its state's draw, so an entity with prior snaps
+    moves half way; "league", phi's variance over all snaps, as builds before 22 Oct had it). The unknown
+    entity (the last) stays at none."""
     S, B = H.shape
     D = phi_b.shape[1]
     w8 = np.ones(S) if weights is None else np.asarray(weights, float)
     logH = np.log(np.maximum(H, 1e-300))
     phi_o = phi_b[obs]
-    lam = prior * np.maximum(phi_o.var(0), 1e-6)
+    if scale == "league":
+        lam = prior * np.maximum(phi_o.var(0), 1e-6)
+    elif scale == "state":
+        mu0 = H @ phi_b
+        lam = prior * np.maximum(np.average(H @ phi_b ** 2 - mu0 ** 2, axis=0, weights=w8), 1e-6)
+    else:
+        raise ValueError(f"no such tilt scale {scale!r} (there are {', '.join(TILT_SCALES)})")
     theta = {k: np.zeros((sizes[k], D)) for k in who}
     outer = phi_b[:, :, None] * phi_b[:, None, :]
     def moments(th):
@@ -2115,15 +2144,13 @@ def fit_exp_tilts(H, obs, phi_b, who, sizes, prior=TILT_PRIOR, rounds=TILT_ROUND
             Hs += np.diag(lam)[None]
             theta[name] = theta[name] + np.linalg.solve(Hs, g[:, :, None])[:, :, 0]
             theta[name][-1] = 0.0
-    th = sum(theta[k][who[k]] for k in who)
-    _, logZ = moments(th)
-    gain = float(np.average((th * phi_o).sum(1) - logZ, weights=w8))
-    return theta, gain
+    return theta, tilt_gain(H, obs, phi_b, theta, who, w8)
 
 
-def fit_model_tilts(m, recs, verbose=True):
-    """The tilt mode's thetas for the distance and the time draws (m.etilt) off the real snaps, against
-    the model's own league draws as the sim takes them."""
+def tilt_inputs(m, recs, weighted=True):
+    """{"dist", "time": (bases H, bins obs, phi by bin, {effect: entity a snap}, {effect: entities}, weights)}
+    for the tilts off real snaps, against the model's own league draws as the sim takes them; weighted:
+    each snap at its recency weight (recency_weights), else at 1 (scoring held-out snaps)."""
     feats = _features(recs, m)
     who, sizes = _tilt_who(m, recs)
     blend = getattr(m, "blend", 0.0)
@@ -2141,15 +2168,13 @@ def fit_model_tilts(m, recs, verbose=True):
     fd = {k: v for k, v in feats.items()}
     H = tilt_bases(m.dist, fd, pbin, DIST_BINS, blend, near, near_blended(m))
     obs = dist_bin(kind, gain, td, first)
-    wts = recency_weights(recs)
+    wts = recency_weights(recs) if weighted else np.ones(len(recs))
     phi_all = pd_["phi"].astype(float)
     phi_b = np.zeros((DIST_BINS, len(PHI_DIST)))
     cnt = np.bincount(pbin, minlength=DIST_BINS)
     for d in range(len(PHI_DIST)):
         phi_b[:, d] = np.bincount(pbin, phi_all[:, d], minlength=DIST_BINS) / np.maximum(cnt, 1)
-    m.etilt = {}
-    prior = getattr(m, "tilt_prior", TILT_PRIOR)
-    m.etilt["dist"], gain_d = fit_exp_tilts(H, obs, phi_b, who, sizes, weights=wts, prior=prior)
+    out = dict(dist=(H, obs, phi_b, who, sizes, wts))
     # the time: the uncut real snaps, against their whole groups (the clock windows' late states aside)
     seconds = np.array([min(MAX_SECONDS, r["seconds"]) for r in recs], float)
     timed = ~np.array([r["cut"] for r in recs], bool)
@@ -2160,11 +2185,81 @@ def fit_model_tilts(m, recs, verbose=True):
     tb_cnt = np.bincount(tbin[keep], minlength=TIME_BINS)
     phi_t = (np.bincount(tbin[keep], pt["seconds"][keep].astype(float), minlength=TIME_BINS)
              / np.maximum(tb_cnt, 1) / 10.0)[:, None]
-    m.etilt["time"], gain_t = fit_exp_tilts(Ht, time_bin(seconds[timed]), phi_t,
-                                            {k: v[timed] for k, v in who.items()}, sizes, weights=wts[timed],
-                                            prior=prior)
-    m._etilt_gain = (gain_d, gain_t)
+    out["time"] = (Ht, time_bin(seconds[timed]), phi_t, {k: v[timed] for k, v in who.items()}, sizes, wts[timed])
+    return out
+
+
+def fit_model_tilts(m, recs, verbose=True):
+    """The tilt mode's thetas for the distance and the time draws (m.etilt) off the real snaps, against
+    the model's own league draws as the sim takes them, shrunk by m.tilt_prior snaps (the time's by
+    m.tilt_prior_time) at m.tilt_scale."""
+    prior, scale = getattr(m, "tilt_prior", TILT_PRIOR), getattr(m, "tilt_scale", "league")
+    priors = dict(dist=prior, time=getattr(m, "tilt_prior_time", prior))
+    got = tilt_inputs(m, recs)
+    m.etilt, gains = {}, []
+    for part in ("dist", "time"):
+        H, obs, phi_b, who, sizes, wts = got[part]
+        m.etilt[part], g = fit_exp_tilts(H, obs, phi_b, who, sizes, weights=wts, prior=priors[part], scale=scale)
+        gains.append(g)
+    m._etilt_gain = tuple(gains)
     return m.etilt
+
+
+def real_snaps(matches, history=None):
+    """The real snaps of the export's matches ({code: rows}) as the build reads them (match_snaps), each
+    with its gamers and teams off the history and its match code."""
+    hist = {r["MATCH_CODE"]: r for r in (history or [])}
+    recs = []
+    for code, rows in matches.items():
+        rows = _with_side(rows)
+        pair, teams = match_people(code, rows, hist)
+        for r in match_snaps(rows, pair, teams):
+            r["code"] = code
+            recs.append(r)
+    return [r for r in recs if r["period"] <= 4 + MAX_OT]
+
+
+TUNE_PRIORS = (25, 50, 100, 200, 400, 800)
+
+
+def tune_tilts(m, train, test, history=None, priors=TUNE_PRIORS, scales=TILT_SCALES):
+    """[{scale, prior, dist: (in-sample gain, held-out gain), time: (...)}]: the tilts refitted on the train
+    matches' snaps at each prior and scale against the model's own league draws, each scored on the test
+    matches' snaps (log-likelihood a snap over none). The draws stay the build's; only the tilts move."""
+    fit_in = tilt_inputs(m, real_snaps(train, history))
+    test_in = tilt_inputs(m, real_snaps(test, history), weighted=False)
+    out = []
+    for scale in scales:
+        for prior in priors:
+            row = dict(scale=scale, prior=float(prior))
+            for part in ("dist", "time"):
+                H, obs, phi_b, who, sizes, wts = fit_in[part]
+                theta, inside = fit_exp_tilts(H, obs, phi_b, who, sizes, prior=prior, weights=wts, scale=scale)
+                Ht, ot, pt, wt, _, w1 = test_in[part]
+                row[part] = (inside, tilt_gain(Ht, ot, pt, theta, wt, w1))
+            out.append(row)
+    return out
+
+
+def tune_lines(rows, n_train, n_test):
+    """Lines of text: tune_tilts' table, the best prior each scale and part marked."""
+    out = [f"  the tilts refitted on {n_train:,} snaps and scored on {n_test:,} held-out ones: log-likelihood"
+           " gained a snap over none, x1000 (higher is better)",
+           f"  {'scale':7s} {'prior':>6s}   {'distance in':>11s} {'held out':>9s}   {'time in':>8s} {'held out':>9s}"]
+    best = {}
+    for scale in dict.fromkeys(r["scale"] for r in rows):
+        rs = [r for r in rows if r["scale"] == scale]
+        best[scale] = {p: max(rs, key=lambda r: r[p][1]) for p in ("dist", "time")}
+        for r in rs:
+            mark = lambda p: "*" if r is best[scale][p] else " "
+            out.append(f"  {scale:7s} {r['prior']:6g}   {1000 * r['dist'][0]:+11.3f} {1000 * r['dist'][1]:+8.3f}{mark('dist')}"
+                       f"   {1000 * r['time'][0]:+8.3f} {1000 * r['time'][1]:+8.3f}{mark('time')}")
+    out.append("  (* the best held-out prior for that scale and draw)")
+    for scale, b in best.items():
+        held = 1000 * (b["dist"]["dist"][1] + b["time"]["time"][1])
+        out.append(f"  best at the {scale} scale: v21-build --mode tilt --tilt-scale {scale} --tilt-prior {b['dist']['prior']:g}"
+                   f" --tilt-prior-time {b['time']['prior']:g}  (held out {held:+.3f} a snap, distance and time)")
+    return out
 
 
 def nudge_direction(m):
@@ -2316,7 +2411,8 @@ def etilt_lines(m):
         return []
     names = {i: g for g, i in m.gamers.items()}
     gd, gt = getattr(m, "_etilt_gain", (float("nan"), float("nan")))
-    out = [f"  tilts (exp(theta . phi) on the league's draws, shrunk by {getattr(m, 'tilt_prior', TILT_PRIOR):g} snaps):"
+    out = [f"  tilts (exp(theta . phi) on the league's draws, shrunk by {getattr(m, 'tilt_prior', TILT_PRIOR):g} snaps"
+           f" at the {getattr(m, 'tilt_scale', 'league')} scale):"
            f" in-sample log-likelihood"
            f" gained a snap, distance {gd:+.4f}, time {gt:+.4f}"]
     for kind_, feats_ in (("dist", PHI_DIST), ("time", PHI_TIME)):

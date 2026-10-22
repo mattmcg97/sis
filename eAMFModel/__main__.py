@@ -308,10 +308,45 @@ def cmd_v21_build(args):
     model = v21.build(data, history, mode=args.mode, min_records=args.min_records, refine=not args.no_refine,
                       gamer_decisions=not args.no_gamer_decisions, rules=not args.no_rules, split=args.split,
                       key=args.key, blend=args.blend, field=args.field, decision_blend=args.decision_blend,
-                      clock=args.clock, tilt_prior=args.tilt_prior)
+                      clock=args.clock, tilt_prior=args.tilt_prior, tilt_scale=args.tilt_scale,
+                      tilt_prior_time=args.tilt_prior_time)
     os.makedirs(args.out, exist_ok=True)
     model.save(os.path.join(args.out, v21.MODEL_FILE))
     print(f"  wrote {args.out}/{v21.MODEL_FILE} ({time.time() - t0:.0f}s)")
+    return 0
+
+
+def cmd_v21_tilt_tune(args):
+    import datetime as dt
+    from . import nb2_prior, v21
+    from .remaining import day
+    model = v21.Model.load(os.path.join(args.model, v21.MODEL_FILE))
+    if getattr(model, "mode", None) != "tilt":
+        raise SystemExit(f"{args.model} is a {getattr(model, 'mode', '?')} build: the tilts are a tilt build's "
+                         "(v21-build --mode tilt)")
+    data = playover.load(args.snapshots)
+    timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
+    if timeouts:
+        playover.annotate_timeouts(data, timeouts)
+    cut = dt.date.fromisoformat(args.test_from)
+    end = dt.date.fromisoformat(args.test_until) if args.test_until else None
+    train = {c: rows for c, rows in data.items() if day(c) < cut}
+    test = {c: rows for c, rows in data.items() if day(c) >= cut and (end is None or day(c) < end)}
+    if not train or not test:
+        raise SystemExit(f"no matches {'before' if not train else 'from'} {cut} in {args.snapshots}")
+    history = nb2_prior.load_history(args.history) if args.history and os.path.exists(args.history) else None
+    priors = [float(x) for x in args.priors.split(",")]
+    scales = [s.strip() for s in args.scales.split(",")]
+    print(f"  {args.model}: tilts refitted on {len(train):,} matches before {cut}, scored on {len(test):,}"
+          f" from it{f' to {end}' if end else ''}; priors {', '.join(f'{p:g}' for p in priors)}", flush=True)
+    rows = v21.tune_tilts(model, train, test, history, priors, scales)
+    n_train = len(v21.real_snaps(train, history))
+    n_test = len(v21.real_snaps(test, history))
+    lines = v21.tune_lines(rows, n_train, n_test)
+    print("\n".join(lines))
+    if args.out:
+        with open(args.out, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(lines) + "\n")
     return 0
 
 
@@ -954,8 +989,14 @@ def build_parser():
                         "long left in the half, within CLOCK x the seconds left (2 at least; the 20 nearest where "
                         "fewer); 0 (default): anywhere in its group (try 0.2)")
     p.add_argument("--tilt-prior", type=float, default=200.0,
-                   help="--mode tilt: each tilt shrunk toward none as if it had this many league-average snaps "
-                        "(default 200)")
+                   help="--mode tilt: each tilt shrunk toward none as if it had this many snaps (default 200; "
+                        "v21-tilt-tune picks it)")
+    p.add_argument("--tilt-prior-time", type=float,
+                   help="--mode tilt: the time tilts' own prior, in snaps (default --tilt-prior's)")
+    p.add_argument("--tilt-scale", choices=("state", "league"), default="state",
+                   help="--mode tilt: what a prior snap is worth -- state: what a snap tells within its own "
+                        "state, so a gamer with --tilt-prior snaps moves half way (default); league: the spread "
+                        "over every snap, as builds before 22 Oct had it, several times stronger for the time")
     p.add_argument("--decision-blend", type=float, default=0.0,
                    help="blend the decisions' cells: a cell of n real decisions weighs n / (n + K) of its state's "
                         "shares, the rest its parents' (cells of 5+ kept); 0 (default): the first level with 25")
@@ -969,6 +1010,24 @@ def build_parser():
                    help="without the rules learned off the real decisions (options never or all but never taken "
                         "in a situation, see v21-sweep): the real shares alone")
     p.set_defaults(func=cmd_v21_build)
+
+    p = sub.add_parser("v21-tilt-tune", help="a tilt build's tilts refitted at several priors and scales on the "
+                                             "matches before a day, each scored on the matches from it")
+    p.add_argument("snapshots", nargs="?", default=DATA["snapshots"],
+                   help=f"scouting_playover.csv (default {DATA['snapshots']})")
+    p.add_argument("--model", default="v21_model", help="a v21-build --mode tilt directory (default v21_model)")
+    p.add_argument("--history", default=DATA["history"], help=f"the match history CSV, for the gamers "
+                                                               f"(default {DATA['history']})")
+    p.add_argument("--timeouts", help=f"the calibrator's timeouts.csv (default {DATA['timeouts']} if there)")
+    p.add_argument("--test-from", required=True,
+                   help="the held-out matches' first day, YYYY-MM-DD: the build's --until, so the draws never saw "
+                        "them; the tilts are refitted on the matches before it")
+    p.add_argument("--test-until", help="held-out matches before this day only, YYYY-MM-DD")
+    p.add_argument("--priors", default=",".join(str(p) for p in (25, 50, 100, 200, 400, 800)),
+                   help="the priors to try, in snaps (default 25,50,100,200,400,800)")
+    p.add_argument("--scales", default="state,league", help="the scales to try (default state,league)")
+    p.add_argument("--out", help="also write the table here")
+    p.set_defaults(func=cmd_v21_tilt_tune)
 
     p = sub.add_parser("v21-sweep", help="every real decision in the export swept for the situations where an "
                                          "option never happens, or all but never (and who did it anyway)")
