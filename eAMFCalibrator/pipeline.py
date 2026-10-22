@@ -74,10 +74,18 @@ def nearest_quote(times, target, tolerance, direction):
     return best
 
 
-def index_quotes(quote_rows):
-    """(match_code, market_id) -> (sorted times, parallel quote records)."""
+def index_quotes(quote_rows, stats=None):
+    """(match_code, market_id) -> (sorted times, parallel quote records), off snowflake_io.fetch_quotes'
+    rows (match, market, publish time, probability, odds, description, message, status, is active). The
+    liveness filter left the SQL for its callers: with config.REQUIRE_LIVE_QUOTE a row nobody could have
+    taken is dropped here, and counted in stats["quotes_not_live"]."""
     grouped = defaultdict(list)
-    for match_code, market_id, publish_time, probability, decimal_odd, description, msg in quote_rows:
+    for r in quote_rows:
+        match_code, market_id, publish_time, probability, _, description = r[:6]
+        if config.REQUIRE_LIVE_QUOTE and len(r) > 8 and str(r[8]).lower() != config.LIVE_IS_ACTIVE:
+            if stats is not None:
+                stats["quotes_not_live"] += 1
+            continue
         grouped[(match_code, market_id)].append((publish_time, probability, description))
     indexed = {}
     for key, rows in grouped.items():
@@ -134,7 +142,7 @@ def observations_for_chunk(cur, stream_table, match_codes, time_column, stats,
 
     plays_by_match = group_rows(play_rows, 0)
     scores_by_match = group_rows(score_rows, 0)
-    quote_index = index_quotes(quote_rows)
+    quote_index = index_quotes(quote_rows, stats)
 
     observations = []
     for match_code in match_codes:

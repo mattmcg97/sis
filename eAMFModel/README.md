@@ -1993,6 +1993,10 @@ missing something. Nothing is ever fitted to close those gaps.
   - the fixture: the gamers and teams;
   - the state: clock, down, distance, field, score and timeouts;
   - the action log: what the play before did to the clock, and the snaps so far.
+- **Matches left out of a build.** A match whose clock goes back up within a quarter lost the next
+  quarter's start in the feed, so every later play has the wrong period and clock (`feed.lost_quarter`;
+  the build prints how many). So do the matches the calibrator's `scouting-check` flagged `QUARTERS`
+  or `GAPS`, where its `scouting_check_matches.csv` is there (`--feed-check`).
 - **The time draw.** The clock from the end of the play before to the end of this one, covering the
   wait for the snap and the play itself. It is drawn from real snaps alike in:
   - the play before: nothing gained, a short gain, a first down, a loss, a fresh possession or a

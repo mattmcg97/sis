@@ -2002,6 +2002,41 @@ class TestCli(unittest.TestCase):
             self.assertTrue(os.path.exists(os.path.join(d, "sw", "v21_sweep.txt")))
 
 
+class TestLostQuarter(unittest.TestCase):
+    """A feed that lost a quarter's start labels the next quarter's plays with the last one's period, the
+    clock back up within it: such a match is left out of the build and priced in play no more."""
+
+    @staticmethod
+    def corrupt(rows):
+        """Q4's rows labelled Q3, as when FOURTH_QUARTER_STARTED is lost."""
+        return [dict(r, period="3") if r.get("period") == "4" else r for r in rows]
+
+    def test_the_clock_back_up_within_a_quarter(self):
+        from .. import feed
+        code = sorted(MATCHES)[0]
+        rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))
+        self.assertIsNone(feed.lost_quarter(rows))
+        self.assertEqual(feed.lost_quarter(self.corrupt(rows)), 3)
+        self.assertEqual(v21.real_snaps({code: self.corrupt(rows)}, HISTORY), [])        # left out of a build
+        self.assertTrue(v21.real_snaps({code: rows}, HISTORY))
+
+    def test_no_in_play_book_for_it_and_the_flagged_matches_gated(self):
+        from .. import loading, v21_stream
+        m = built("tilt")
+        code = sorted(MATCHES)[0]
+        tally = {}
+        got = v21_stream.match_books(m, self.corrupt(MATCHES[code]), ("", ""), ("", ""), 20, code, None, [],
+                                     tally=tally)
+        self.assertEqual(got, ([], {}))
+        self.assertEqual(tally["lost_quarter"], 1)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "scouting_check_matches.csv")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("match_code,problems\nA,\"['GAPS']\"\nB,\"['NO_DETAIL']\"\nC,\n")
+            kept, gone = loading.gate({"A": [], "B": [], "C": [], "D": []}, path)
+        self.assertEqual((sorted(kept), gone), (["B", "C", "D"], 1))                  # only QUARTERS or GAPS go
+
+
 class TestTailQuotes(unittest.TestCase):
     """A selection that won none of the games is priced as about half a game in them, not nothing."""
 

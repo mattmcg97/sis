@@ -21,7 +21,26 @@ from unittest import mock
 from .. import (buckets, clock, config, directional, drives, handles,
                 indrive, markets, metrics, prematch, report, scouting)
 from ..drives import PlayRow, ScoreRow, build_snapshots, clean_plays, score_at
-from ..pipeline import nearest_quote, to_unit_probability
+from ..pipeline import index_quotes, nearest_quote, to_unit_probability
+
+
+class TestIndexQuotes(unittest.TestCase):
+    """fetch_quotes' rows carry STATUS and IS_ACTIVE (9 columns): run prod/candidate/both read them, and
+    drop a row nobody could have taken."""
+
+    def test_the_live_rows_by_match_and_market_in_time_order(self):
+        t = dt.datetime(2026, 10, 1, 12)
+        rows = [("M", 50, t + dt.timedelta(seconds=5), 55.0, 1.8, "home", 3, "open", "true"),
+                ("M", 50, t, 50.0, 2.0, "home", 2, "open", "true"),
+                ("M", 50, t + dt.timedelta(seconds=9), 60.0, 1.6, "home", 4, "CLOSED", "false")]
+        stats = collections.defaultdict(int)
+        idx = index_quotes(rows, stats)
+        times, recs = idx[("M", 50)]
+        self.assertEqual(times, [t, t + dt.timedelta(seconds=5)])
+        self.assertEqual([r[1] for r in recs], [50.0, 55.0])
+        self.assertEqual(stats["quotes_not_live"], 1)
+        with mock.patch.object(config, "REQUIRE_LIVE_QUOTE", False):
+            self.assertEqual(len(index_quotes(rows)[("M", 50)][0]), 3)
 
 
 class TestParseLine(unittest.TestCase):
