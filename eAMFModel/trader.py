@@ -219,6 +219,8 @@ class Trader:
         margin = float(setup.get("margin", self.margin))
         if game is not None and game.phase == gm.FINAL:
             return self._settled(game)
+        if game is not None and game.phase == gm.TOSS:         # who receives isn't known yet: no price
+            return dict(waiting=True, text="Overtime: no price until the coin toss says who receives")
         mpmf, tpmf = self._books(setup, game)
         kept = kept or {}
         prob = lambda market, line: float(self.m.market_prob(market, line, mpmf, tpmf))
@@ -474,7 +476,7 @@ class V21Trader(Trader):
 
     def price(self, setup, game=None, kept=None):
         out = super().price(setup, game, kept)
-        if not out.get("final"):
+        if not out.get("final") and not out.get("waiting"):
             out["v21"] = self._kickoff(setup)["info"]
         return out
 

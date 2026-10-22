@@ -3482,7 +3482,10 @@ PLAY_OVER at a time, with the nudge set by hand).
   downs and distance, first downs, touchdowns and conversions, field goals, punts, turnovers
   and safeties. Three timeouts a side each half, called with the *Timeout* button under each
   side's timeouts on the scoreboard; the second half is kicked to
-  the side that kicked first. A level game goes to overtime off a kick-off, two timeouts each.
+  the side that kicked first. A level game goes to overtime, two timeouts each, and stops at the
+  coin toss: nothing is priced until *Home receives* or *Away receives* says who gets the
+  kick-off (the sim only knows it's a coin flip). In overtime, the side that has had the ball and
+  lost it is done, as the sim reads it.
   *Ball now at* is where the ball is after the play: a half (home's or away's) and a yard line
   1-50, set to the ball's spot before it, with the gain shown beside it. Scrolling up over the
   yard line (or ↑) moves the ball forward for the side with it, through the 50 into the other

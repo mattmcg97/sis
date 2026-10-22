@@ -82,7 +82,12 @@ class TestPlays(unittest.TestCase):
 
     def test_level_after_four_goes_to_overtime_which_ends_once_the_side_behind_has_had_the_ball(self):
         g = run(snap(period=4, clock=5, home=10, away=10), {"type": "kneel"})
-        self.assertEqual((g.period, g.phase, g.timeouts_home), (5, gm.KICKOFF, gm.OT_TIMEOUTS))
+        self.assertEqual((g.period, g.phase, g.timeouts_home), (5, gm.TOSS, gm.OT_TIMEOUTS))
+        self.assertIsNone(g.model_state())                                          # nothing to price yet
+        with self.assertRaises(ValueError):
+            gm.apply(g, {"type": "kickoff"})                                        # the toss comes first
+        g, what = gm.apply(g, {"type": "toss", "side": gm.HOME})
+        self.assertEqual((g.phase, g.side, what), (gm.KICKOFF, gm.HOME, "overtime: kick-off to home"))
         g = run(g, {"type": "kickoff"}, {"type": "field_goal", "made": True})        # home 13-10
         g = run(g, {"type": "kickoff"}, {"type": "play", "yards": 2, "seconds": 300})
         self.assertEqual(g.phase, gm.FINAL)                                         # away had its go
