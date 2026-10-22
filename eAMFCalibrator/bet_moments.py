@@ -24,6 +24,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from .bet_checks import OVER_STATUS
+from .bets import epoch
 from .scouting import PERIOD_START, _text
 
 BEFORE, OVER, INTERRUPTION, BREAK, TIMEOUT = (
@@ -177,7 +178,7 @@ def build(scouting_rows, prod_times):
         gaps = [(at[m] - f).total_seconds() for m, f in zip(msgs, files) if f is not None and m in at]
         if gaps:
             shift = statistics.median(gaps)
-            times = [None if f is None else f.timestamp() + shift for f in files]
+            times = [None if f is None else epoch(f) + shift for f in files]
         else:
             times = [None] * len(files)
         known = [t for t in times if t is not None]
@@ -185,7 +186,7 @@ def build(scouting_rows, prod_times):
             times = [None] * len(msgs)
             for k, m in enumerate(msgs):
                 j = bisect_right(pm, m) - 1
-                times[k] = pt[j].timestamp() if j >= 0 else None
+                times[k] = epoch(pt[j]) if j >= 0 else None
         last = -math.inf
         for k, t in enumerate(times):
             last = max(last, t) if t is not None else last
@@ -243,7 +244,7 @@ def moment_of(tl, checks, match, bet_time, price_message):
                clock_left=None, clock_band=None, down=None, score_margin=None)
     if tl is None or bet_time is None:
         return out
-    t = bet_time.timestamp()
+    t = epoch(bet_time)
     j = bisect_right(tl.times, t) - 1
     if j < 0 or tl.times[j] == -math.inf:
         out["moment"] = BEFORE

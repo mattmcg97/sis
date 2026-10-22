@@ -1,10 +1,13 @@
 """Tests for bet_moments: the feed's state at each bet and the margin bucketed by it."""
 
 import datetime as dt
+import os
+import time
 import unittest
 from types import SimpleNamespace
+from unittest import mock
 
-from .. import bet_checks, bet_moments as bm
+from .. import bet_checks, bet_moments as bm, bets
 
 T0 = dt.datetime(2026, 9, 20, 20, 0, 0)
 FEED = [  # message, file second, clock, status, in-play message, down
@@ -78,7 +81,7 @@ class TestMoments(unittest.TestCase):
 
     def test_feed_times_are_put_on_prods_clock(self):
         self.assertAlmostEqual(self.tl.times[8] - self.tl.times[0], 16.0)
-        self.assertAlmostEqual(self.tl.times[0], _at(0).timestamp())
+        self.assertAlmostEqual(self.tl.times[0], bets.epoch(_at(0)))
 
     def test_a_bet_mid_play_on_the_last_play_over_price(self):
         out = bm.moment_of(self.tl, self.checks, "M", _at(42), 9)
@@ -121,6 +124,40 @@ def _row(moment, revenue, stake=10.0, odds=2.0, prob=0.45, **kw):
     r["candidate_odds"] = odds
     r.update(kw)
     return r
+
+
+UK = "GMT0BST,M3.5.0/1,M10.5.0"      # the UK's clock rule as a POSIX TZ: no zone database needed
+
+
+@unittest.skipUnless(hasattr(time, "tzset"), "needs time.tzset to set the machine's time zone")
+class TestClockChange(unittest.TestCase):
+    """A UK machine on 25 Oct 2026: feed and bet times are UTC, so a gap across the clock change is its
+    real seconds, not an hour more."""
+
+    def setUp(self):
+        self.was = os.environ.get("TZ")
+        os.environ["TZ"] = UK
+        time.tzset()
+
+    def tearDown(self):
+        if self.was is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = self.was
+        time.tzset()
+
+    def test_a_gap_across_the_change_is_its_real_seconds(self):
+        a, b = dt.datetime(2026, 10, 25, 1, 59, 50), dt.datetime(2026, 10, 25, 2, 0, 30)
+        self.assertEqual(bets.epoch(b) - bets.epoch(a), 40.0)
+        self.assertEqual(bets.epoch(a), bets.epoch(a.replace(tzinfo=dt.timezone.utc)))
+
+    def test_a_bet_across_the_change_reads_its_moment(self):
+        with mock.patch(f"{__name__}.T0", dt.datetime(2026, 10, 25, 1, 59, 30)):
+            checks = _checks()
+            out = bm.moment_of(checks.timelines["M"], checks, "M", _at(42), 9)
+        self.assertEqual(out["moment"], bm.LIVE)
+        self.assertAlmostEqual(out["price_age_seconds"], 26.0)
+        self.assertAlmostEqual(out["next_score_seconds"], 2.0)
 
 
 class TestBuckets(unittest.TestCase):

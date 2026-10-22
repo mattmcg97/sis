@@ -91,6 +91,14 @@ def _naive(t):
     return t.astimezone(dt.timezone.utc).replace(tzinfo=None)
 
 
+def epoch(t):
+    """Seconds since 1970 for a UTC datetime, naive or not (None for None). A naive one is read as UTC:
+    its own .timestamp() would read it in the machine's local time, an hour out across a clock change."""
+    if t is None:
+        return None
+    return (t if t.tzinfo is not None else t.replace(tzinfo=dt.timezone.utc)).timestamp()
+
+
 def bet_table():
     """config.BET_TABLE, qualified: taken as it is when it names its database and schema."""
     name = config.BET_TABLE

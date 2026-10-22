@@ -61,7 +61,7 @@ class TestMoney(unittest.TestCase):
                                                  extra={config.BET_IN_PLAY_COLUMN: "Yes", config.BET_VIP_COLUMN: temp})
         money = bm.Money([b(-200, 1, 50, "VIP"), b(-60, 1, 30, "Standard"), b(-30, 2, 10, "Standard"), b(0, 2, 100, "VIP")],
                          {}, 120)
-        f, stake = money.at("M1", "moneyline", t.timestamp(), True)
+        f, stake = money.at("M1", "moneyline", bets.epoch(t), True)
         self.assertAlmostEqual(f["all"], (30 - 10) / 40)              # the last two minutes, the bet at t itself out
         self.assertAlmostEqual(f["Standard"], 0.5)
         self.assertEqual(f["VIP"], 0.0)

@@ -63,7 +63,7 @@ def records(every, joined, lags, column, checks=None):
         if b.in_play and checks is not None:
             s = since_score(checks, b.match_code, seen)
             recent = float(s is not None and s <= RECENT)
-        out.append(dict(match=b.match_code, group=g, in_play=bool(b.in_play), t=seen.timestamp(), side=SIGN[b.feed_market],
+        out.append(dict(match=b.match_code, group=g, in_play=bool(b.in_play), t=bets.epoch(seen), side=SIGN[b.feed_market],
                         stake=float(b.stake), customer=customer_of(b, column), operator=b.operator,
                         temperature=str(b.extra.get(config.BET_VIP_COLUMN) or ""), recent=recent, settled=settled,
                         won=(1.0 if r.get("result") == bets.WON else 0.0) if settled else None,

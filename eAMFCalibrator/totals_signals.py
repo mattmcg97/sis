@@ -270,7 +270,7 @@ def match_row(match, rows, tl, prod_tl, scores, final, match_bets, pre_bets=(), 
         i = bisect_right(tl.msgs, msg) - 1
         if i < 0 or tl.times[i] == -math.inf:
             return None
-        return dt.datetime.fromtimestamp(tl.times[i])     # bet_moments keeps naive .timestamp()
+        return dt.datetime.fromtimestamp(tl.times[i], dt.timezone.utc).replace(tzinfo=None)   # bets.epoch's
 
     start = time_at(cps.get("FIRST_QUARTER_STARTED"))
     q = bets.price_at_time(prod_tl, match, 54, start - dt.timedelta(milliseconds=1)) if start else None

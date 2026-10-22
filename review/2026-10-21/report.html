@@ -1,0 +1,572 @@
+<title>eAMF Code Sweep</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; a summary first, then findings grouped by where they bite, each finding a labelled block split by hairlines. */
+:root {
+  --bg: #f4f6f3;
+  --surface: #ffffff;
+  --ink: #18211c;
+  --muted: #59655e;
+  --rule: #d6dcd6;
+  --accent: #2b6a4c;
+  --accent-soft: #e2eee6;
+  --high: #b42318;
+  --high-soft: #fbe9e7;
+  --med: #a35a00;
+  --med-soft: #fbf0dd;
+  --low: #4a5560;
+  --low-soft: #e9edf0;
+  --bar-pos: #2b6a4c;
+  --bar-neg: #b42318;
+  --display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1412; --surface: #161d1a; --ink: #e4ebe6; --muted: #98a59d; --rule: #2a342f;
+    --accent: #74c49a; --accent-soft: #1c2c24; --high: #f4877b; --high-soft: #3a1d1a;
+    --med: #f2b45a; --med-soft: #33281a; --low: #a7b1bb; --low-soft: #222a30;
+    --bar-pos: #74c49a; --bar-neg: #f4877b; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1412; --surface: #161d1a; --ink: #e4ebe6; --muted: #98a59d; --rule: #2a342f;
+  --accent: #74c49a; --accent-soft: #1c2c24; --high: #f4877b; --high-soft: #3a1d1a;
+  --med: #f2b45a; --med-soft: #33281a; --low: #a7b1bb; --low-soft: #222a30;
+  --bar-pos: #74c49a; --bar-neg: #f4877b; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 17px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 0 64px;
+}
+.wrap { max-width: 860px; margin: 0 auto; display: flex; flex-direction: column; gap: 48px; }
+.hash { height: 12px; background-image: repeating-linear-gradient(90deg, var(--rule) 0 2px, transparent 2px 36px); margin-top: 28px; }
+header.top { display: flex; flex-direction: column; gap: 14px; padding-top: 20px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; color: var(--muted); text-transform: uppercase; }
+h1 { font-family: var(--display); font-stretch: 78%; font-weight: 800; font-size: clamp(40px, 7vw, 64px); line-height: 1; margin: 0; letter-spacing: -.01em; text-wrap: balance; }
+h2 { font-family: var(--display); font-stretch: 85%; font-weight: 750; font-size: 28px; line-height: 1.15; margin: 0; text-wrap: balance; }
+h2 .sec { color: var(--accent); margin-right: .35em; }
+h3 { font-family: var(--display); font-stretch: 92%; font-weight: 650; font-size: 20px; line-height: 1.25; margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 19px; color: var(--ink); }
+.scope { color: var(--muted); font-size: 15.5px; }
+code { font-family: var(--mono); font-size: .82em; background: var(--low-soft); padding: .08em .35em; border-radius: 4px; overflow-wrap: anywhere; }
+section { display: flex; flex-direction: column; gap: 20px; }
+.intro { color: var(--muted); }
+
+.bottom { display: grid; gap: 14px; padding: 0; margin: 0; list-style: none; }
+.bottom li { display: grid; grid-template-columns: 7.5rem 1fr; gap: 6px 18px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.bottom li b { font-family: var(--display); font-stretch: 90%; font-weight: 650; font-size: 15px; color: var(--accent); letter-spacing: .01em; }
+.bottom li > span { min-width: 0; }
+
+ol.first { margin: 0; padding: 0; list-style: none; counter-reset: step; display: grid; gap: 12px; }
+ol.first li { counter-increment: step; display: grid; grid-template-columns: 2.2rem 1fr; gap: 12px; align-items: baseline; }
+ol.first li::before { content: counter(step); font-family: var(--display); font-weight: 800; font-size: 22px; color: var(--accent); text-align: right; font-variant-numeric: tabular-nums; }
+ol.first li > span { min-width: 0; }
+.refs { font-family: var(--mono); font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+
+.split { background: var(--surface); border: 1px solid var(--rule); border-radius: 10px; padding: 18px 18px 14px; display: flex; flex-direction: column; gap: 12px; }
+.split h3 { font-size: 17px; }
+.tablewrap { overflow-x: auto; }
+table.bars { width: 100%; border-collapse: collapse; font-size: 15px; min-width: 520px; }
+table.bars th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: .05em; padding: 0 8px 6px 0; border-bottom: 1px solid var(--rule); }
+table.bars td { padding: 8px 8px 8px 0; border-bottom: 1px solid var(--rule); vertical-align: middle; }
+table.bars tr:last-child td { border-bottom: 0; font-weight: 600; }
+table.bars .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; font-family: var(--mono); font-size: 13.5px; }
+.track { position: relative; height: 14px; min-width: 160px; }
+.track .zero { position: absolute; top: -4px; bottom: -4px; width: 1px; background: var(--muted); left: 10.47%; }
+.track .bar { position: absolute; top: 2px; height: 10px; border-radius: 2px; }
+.track .pos { background: var(--bar-pos); }
+.track .neg { background: var(--bar-neg); }
+.note { font-size: 14.5px; color: var(--muted); }
+
+.f { display: flex; flex-direction: column; gap: 10px; padding-top: 18px; border-top: 1px solid var(--rule); scroll-margin-top: 16px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.id { font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--muted); }
+.sev, .kind, .ver { font-size: 12px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; line-height: 1.6; }
+.sev.high { background: var(--high-soft); color: var(--high); }
+.sev.med { background: var(--med-soft); color: var(--med); }
+.sev.low { background: var(--low-soft); color: var(--low); }
+.kind { border: 1px solid var(--rule); color: var(--muted); }
+.ver { color: var(--accent); background: var(--accent-soft); }
+dl { display: grid; grid-template-columns: 4.2rem 1fr; gap: 6px 16px; margin: 0; }
+dt { font-weight: 600; color: var(--muted); font-size: 14px; padding-top: 2px; }
+dd { margin: 0; min-width: 0; max-width: 68ch; }
+dd ul, .method ul, ul.sound ul { margin: 6px 0 0; padding-left: 1.1em; display: grid; gap: 4px; }
+
+ul.lows { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; }
+ul.lows li { display: grid; grid-template-columns: auto 1fr; gap: 12px; align-items: baseline; padding: 10px 0; border-top: 1px solid var(--rule); }
+ul.lows li > span:last-child { min-width: 0; }
+.sub { font-family: var(--display); font-stretch: 90%; font-weight: 650; font-size: 16px; color: var(--muted); margin-top: 6px; }
+
+ul.sound { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; }
+ul.sound li { max-width: 68ch; }
+.method > div, .method > p { max-width: 68ch; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+@media (max-width: 560px) {
+  body { font-size: 16px; }
+  .bottom li { grid-template-columns: 1fr; }
+  dl { grid-template-columns: 1fr; gap: 2px; }
+  dt { padding-top: 6px; }
+  ul.lows li { grid-template-columns: 1fr; gap: 4px; }
+  ul.lows li .sev { justify-self: start; }
+}
+</style>
+
+<div class="wrap">
+  <div class="hash" aria-hidden="true"></div>
+
+  <header class="top">
+    <div class="eyebrow">Code review · main at a7c4639 · 21 Oct 2026</div>
+    <h1>eAMF Code Sweep</h1>
+    <p class="lede">Sixteen review agents read the live pricing code one area at a time, looking for bugs and methodology problems. Each tested what it suspected with short scripts, on synthetic matches or on the run outputs already in the repo. I then re-checked every high finding against the code and re-ran the key numbers.</p>
+    <p class="scope">Covered: eAMFModel (v2.1, its stream, the trader and the shared modules), eAMFCalibrator, glmer, nb2 and xgb, about 55k lines. Left out: the legacy v14 and sim14 files, which v2.1 no longer imports, and the exploratory <code>analysis/</code> scripts. Nothing in the repo was changed.</p>
+  </header>
+
+  <section aria-labelledby="bl">
+    <h2 id="bl">Bottom line</h2>
+    <ul class="bottom">
+      <li><b>Headline</b><span>The v21-drives result against prod (+3.85 points on the same bets, Oct 12–18) isn't evidence yet that v21 prices better. +3.40 of it comes from the 6% of stake whose spread or total bets flip result at v21's own line. Spread and total bets at the same line add +0.05. See <a href="#A1">A1</a>.</span></li>
+      <li><b>Tests</b><span>The same-bets reprice and the default margin uplift both reward any model whose errors differ from prod's, because punters choose where prod is wrong. Neither can tell a better model from a differently wrong one (<a href="#A2">A2</a>, <a href="#A3">A3</a>).</span></li>
+      <li><b>Prior</b><span>v2.1's default prior was picked on the same October bets it's then scored on. Its fast rating over-reacts as a forecast (calibration slope 0.39). Its held-out gain on every bet isn't significant (<a href="#A4">A4</a>).</span></li>
+      <li><b>Variants</b><span>v21-drives against v21 is +0.12 [−0.46, +0.75], and form against avg is also inside the noise. The pace nudge isn't shown to help or hurt yet (<a href="#A5">A5</a>).</span></li>
+      <li><b>Model</b><span>Four model problems stand out. The tilts are shrunk several times harder than documented, most of all on pace. The game ends too early in some late states with the clock stopped. Overtime starts forget who has had the ball. Very unlikely outcomes are quoted at 0.01% (<a href="#B1">B1</a>–<a href="#B4">B4</a>).</span></li>
+      <li><b>Sunday</b><span>Several bet tools turn UTC times into seconds as if they were local time. On a UK-time machine, any run that includes the 25 Oct clock change gets gaps an hour wrong (<a href="#D2">D2</a>).</span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="ff">
+    <h2 id="ff">Fix first</h2>
+    <ol class="first">
+      <li><span>Re-score v21-drives against prod three ways: line bets at prod's line (odds only), a two-book uplift with <code>--all-moments</code>, and intervals resampled by day. Add a placebo to each, prod plus noise and prod's total line moved a point. <span class="refs">A1 A2 A3 A5</span></span></li>
+      <li><span>Freeze every prior setting (drift, weight, blend, nudge share) on pre-October data, and score against prod only after that. <span class="refs">A4 A7 A8</span></span></li>
+      <li><span>Fix the time conversion in the bet tools before running anything over 25 Oct. <span class="refs">D2</span></span></li>
+      <li><span>In the sim: stopped-clock game endings, overtime possession in the starts, and smoothed tail probabilities. <span class="refs">B2 B3 B4</span></span></li>
+      <li><span>Rescale the tilt penalty and re-tune <code>TILT_PRIOR</code> walk-forward. Then check whether plain v21 spreads drives without the pace nudge. <span class="refs">B1</span></span></li>
+      <li><span>Gate incomplete feed matches out of builds and pricing, and require a time check for "pre-match". <span class="refs">C1 C2</span></span></li>
+      <li><span>Fix or drop <code>run prod|candidate|both</code>, which crashes. <span class="refs">D1</span></span></li>
+    </ol>
+  </section>
+
+  <section aria-labelledby="sp">
+    <div class="split">
+      <h3 id="sp">Where v21-drives' +3.85 points came from</h3>
+      <div class="tablewrap">
+        <table class="bars">
+          <thead><tr><th>Bets</th><th class="num">Share of stake</th><th class="num">Points</th><th>Change against prod</th></tr></thead>
+          <tbody>
+            <tr><td>Moneyline (price only)</td><td class="num">39%</td><td class="num">+0.86</td><td><div class="track"><span class="zero"></span><span class="bar pos" style="left:10.47%;width:20%"></span></div></td></tr>
+            <tr><td>Spread and total, same line</td><td class="num">5%</td><td class="num">+0.05</td><td><div class="track"><span class="zero"></span><span class="bar pos" style="left:10.47%;width:1.16%"></span></div></td></tr>
+            <tr><td>Moved line, same result</td><td class="num">49%</td><td class="num">−0.45</td><td><div class="track"><span class="zero"></span><span class="bar neg" style="left:0%;width:10.47%"></span></div></td></tr>
+            <tr><td>Moved line, result flips</td><td class="num">6%</td><td class="num">+3.40</td><td><div class="track"><span class="zero"></span><span class="bar pos" style="left:10.47%;width:79.07%"></span></div></td></tr>
+            <tr><td>All bets</td><td class="num">3.48M</td><td class="num">+3.85</td><td><div class="track"><span class="zero"></span><span class="bar pos" style="left:10.47%;width:89.53%"></span></div></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Points are revenue change as a share of all stake, re-run here from <code>out_bets_drives/bets_sim.csv</code>. The moneyline part is not "expected even if prod were right" (that term is −0.10). It still can't be told apart from v21 simply erring differently from prod, as <a href="#A2">A2</a> explains.</p>
+    </div>
+  </section>
+
+  <section aria-labelledby="sa">
+    <h2 id="sa"><span class="sec">A</span>Headline results</h2>
+    <p class="intro">How the comparisons against prod, and between priors, are run and read.</p>
+
+    <article class="f" id="A1">
+      <div class="tags"><span class="id">A1</span><span class="sev high">High</span><span class="kind">Methodology</span><span class="ver">Re-checked</span></div>
+      <h3>Most of the same-bets gain is line bets whose result flips at v21's line</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFCalibrator/bets.py:362</code> (settles at the candidate's line), <code>book_comparison.py:94</code>, <code>margin_uplift.py:315</code></dd>
+        <dt>Found</dt><dd>See the table above. One VIP spread bet is about 20% of the gain on its own: 14,179 staked, prod 10.5 against v21 11.5, and the margin landed on 11. On totals, v21-drives' line sits 0.85 below prod's on Under bets. Under carries 60% of the stake, so a placebo that just moves prod's line down a point scores +3.05 against v21-drives' +5.11. The two-book checks cover only same-line bets (1,400 of 13,366 spread bets). There, v21's totals came out −20.75 [−59.5, +17.8].</dd>
+        <dt>Fix</dt><dd>Headline line bets at prod's line, odds only. Report the result-flip part on its own, with its interval and a line-shift placebo.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A2">
+      <div class="tags"><span class="id">A2</span><span class="sev high">High</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>The same-bets reprice credits any model whose errors differ from prod's</h3>
+      <dl>
+        <dt>Where</dt><dd><code>bets.py:376</code> (reprice), <code>book_comparison.py:65</code> (elasticity 0)</dd>
+        <dt>Found</dt><dd>Punters back the spots where prod is generous, and the reprice keeps their side and stake. A candidate with unrelated errors removes prod's mistakes on those bets and is never charged for its own. In a synthetic test, a model twice as noisy as prod scored +4.01 [+3.17, +4.80] on the same bets and −13.25 [−19.19, −7.03] in two books. The effect inflates two other results:
+          <ul>
+            <li>The money layer's +2.3 points splits into +1.54 that is expected even if prod were right, and +0.75 that is information.</li>
+            <li>About half of the form prior's in-play moneyline edge over avg needs no forecasting skill.</li>
+          </ul></dd>
+        <dt>Fix</dt><dd>Lead with a two-book comparison on all moments. Show same-bets only beside a placebo (prod plus noise the size of prod's own error) and the "expected if prod were right" term.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A3">
+      <div class="tags"><span class="id">A3</span><span class="sev high">High</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>The margin uplift only uses the moments real bets were placed</h3>
+      <dl>
+        <dt>Where</dt><dd><code>config.ALL_MOMENTS = False</code>, <code>bets.py:687</code>, <code>margin_uplift.py:244</code></dd>
+        <dt>Found</dt><dd>The moments punters bet are picked for prod's mistakes. A synthetic candidate exactly as good as prod scored −0.3 to −1.8 over every tick, and +2.5 to +5.2 over the bets' moments only. The real Oct 12–18 runs use 81,282 of 275,392 prod ticks and report +7.31 for v21 and +7.09 for v21-drives.</dd>
+        <dt>Fix</dt><dd>Run any uplift you report with <code>--all-moments</code>.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A4">
+      <div class="tags"><span class="id">A4</span><span class="sev high">High</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>The default prior was chosen on the bets it's scored on, and its rating over-reacts</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFCalibrator/form_prior.py:52</code> (drift 4, weight 0.5), <code>v21_stream.DEFAULT_PRIOR_TABLE</code></dd>
+        <dt>Found</dt><dd>avg_form4_w05 was picked from 8 variants on the Oct 1–12 same-bets reprice. The Oct 1–18 lever runs and the Oct 12–18 drives run then use it.
+          <ul>
+            <li>Held out on Oct 13–17, its gain on every bet is +1.05 [−0.34, +2.39], and weight 1.0 beat the chosen 0.5.</li>
+            <li>As a forecast, the drift-4 rating's margin has a calibration slope of 0.39 (0.95 at drift 0.1).</li>
+            <li>Blending it in half way worsens moneyline log loss by about 0.006.</li>
+          </ul>
+          The README notes its Brier score was no better than prod's. The same-bets reprice rewards it for leaning with the money (<a href="#A2">A2</a>).</dd>
+        <dt>Fix</dt><dd>Choose drift and weight walk-forward on results (log loss, calibration slope) using pre-October data. Then score v21 against prod only after that.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A5">
+      <div class="tags"><span class="id">A5</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>Intervals against prod are about 1.7× too narrow, and the variants can't be told apart</h3>
+      <dl>
+        <dt>Where</dt><dd><code>book_comparison.py:112</code>, <code>margin_uplift.py:399</code>, <code>bets.py:1101</code>, <code>prior_bets.py:414</code> (all resample matches)</dd>
+        <dt>Found</dt><dd>Matches share gamers and days. For v21 on Oct 1–18 the standard error is 0.53 resampling matches and 0.95 resampling days. On the same bets:
+          <ul>
+            <li>v21-drives against v21 is +0.12 [−0.46, +0.75].</li>
+            <li>form against avg on Oct 12–18 is +0.70 [−0.52, +1.87].</li>
+            <li>The real-bets two-book result changes sign between windows: −3.75, then +14.13.</li>
+          </ul></dd>
+        <dt>Fix</dt><dd>Resample by day, or cluster by gamer. Treat the pace nudge and form-versus-avg as open until more weeks are pooled.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A6">
+      <div class="tags"><span class="id">A6</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>Pre-match prices from the tables already know a result that wasn't in yet</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFModel/table_prior.py:30</code> (<code>FOLLOWS_RESULTS = False</code>, so no as-of cut), <code>form_prior.rating</code>, glmer <code>cadence.R</code> form</dd>
+        <dt>Found</dt><dd>A gamer's matches start 36 minutes apart and last about 27. So a table built at kick-off includes the previous match, even for bets placed while that match was still running.
+          <ul>
+            <li>13% of pre-match stake came within 28 minutes of the previous kick-off.</li>
+            <li>43% came before the 36-minute result mark.</li>
+            <li>v21-drives gains +4.56 on those bets against +1.79 on clean ones.</li>
+          </ul>
+          v21 with a v14 prior does get the cut, so the comparisons are uneven. The effect is about 0.2–0.3 points on all-bets headlines.</dd>
+        <dt>Fix</dt><dd>Give table priors an as-of view for pre-match quotes. Or report pre-match on clean bets only, with <code>RESULT_IN</code> set from the real match length.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A7">
+      <div class="tags"><span class="id">A7</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>Earlier prior choices were tuned on the span they're reported on</h3>
+      <dl>
+        <dt>Where</dt><dd>glmer settings in <code>fit.R</code>, the walkthrough's avg blend (nb2+infer with glmer+both), <code>inference_layer.py</code></dd>
+        <dt>Found</dt><dd>On 10 Sep–18 Oct, after the tuning windows, moneyline log loss against nb2 is:
+          <ul>
+            <li>glmer −0.0009 (t −0.7), against the README's −0.0016 (t −2.9);</li>
+            <li>avg −0.0008 (t −0.6), against −0.0028 (t −5.4).</li>
+          </ul>
+          The inference layer moves rematches 1.4× too far (slope 0.70) and first meetings about 3× (slope 0.31). nb2 with it gains nothing over nb2; nb2 with the rematch layer does better.</dd>
+        <dt>Fix</dt><dd>Freeze the settings and report on a later held-out span. Use the rematch layer on the nb2 arm, or shrink the inference layer's moves by a walk-forward slope.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A8">
+      <div class="tags"><span class="id">A8</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>The points-nudge share differs between runs and tools</h3>
+      <dl>
+        <dt>Where</dt><dd><code>config.V21_NUDGE_SHARE</code> 0.75; trader and <code>v21-report</code> default 1.0; <code>replay-ui</code> 0.75</dd>
+        <dt>Found</dt><dd>The 0.75 share was chosen on October data. The Oct 12–18 drives and avg runs appear to have run at 1.0 (commit 4996238). Their kick-off prices differ from the 0.75 runs: only 27 of 3,365 pre-match moneylines match. The trader's docstring says 0.75 but it defaults to 1.0. The replay command I gave you uses <code>--share 1.0</code> to match the drives run.</dd>
+        <dt>Fix</dt><dd>Pick one share on September data, write it into each run's output, and default every tool to it.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="A9">
+      <div class="tags"><span class="id">A9</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified</span></div>
+      <h3>Walkthrough caches survive a history refresh</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFCalibrator/walkthrough.py:198</code> (<code>history_stamp</code>), <code>nb2_fits</code>, the <code>nb2_prices</code> stamp</dd>
+        <dt>Found</dt><dd>The stamp is only the row count, newest start and span. Blanking 1,220 October finals left it unchanged. The repo's walkthrough and walkthrough_ho disagree on NB2 for 3,153 of 3,398 shared matches, with a mean total gap of 0.6 around Oct 1–7. That pattern fits per-day fits kept from an incomplete history. A new half-life on an old <code>--out</code> also reuses the old fits.</dd>
+        <dt>Fix</dt><dd>Stamp with a hash of each match's code, start and final plus the options. Key each day's fit on the rows before that day.</dd>
+      </dl>
+    </article>
+  </section>
+
+  <section aria-labelledby="sb">
+    <h2 id="sb"><span class="sec">B</span>Model and pricing</h2>
+    <p class="intro">Problems that change v2.1's prices.</p>
+
+    <article class="f" id="B1">
+      <div class="tags"><span class="id">B1</span><span class="sev high">High</span><span class="kind">Methodology</span><span class="ver">Re-checked</span></div>
+      <h3>Tilts are shrunk far harder than "200 snaps", most of all on pace</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFModel/v21.py:2078</code> <code>fit_exp_tilts</code>: <code>lam = prior × var(phi)</code> over all snaps</dd>
+        <dt>Found</dt><dd>The penalty uses phi's spread across all snaps, but each snap only carries the spread within its own state. For time, the stopped-versus-running split makes that gap large. In a test with stopped and running states:
+          <ul>
+            <li>a gamer with 200 snaps moved 0.13 of the way to their own fit (documented 0.50);</li>
+            <li>a gamer with 1,000 snaps moved 0.41 (documented 0.83).</li>
+          </ul>
+          On a fake build the effective prior is about 500 snaps for time. This fits the README's note that v21's spread barely moves with a match's pace. The size on the real build hasn't been measured.</dd>
+        <dt>Fix</dt><dd>Scale the penalty by the mean within-state variance (the average Hessian at theta 0). Then re-tune <code>TILT_PRIOR</code> walk-forward.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="B2">
+      <div class="tags"><span class="id">B2</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Two reviewers · code checked</span></div>
+      <h3>The game ends early in late states with the clock stopped</h3>
+      <dl>
+        <dt>Where</dt><dd><code>v21.py:640</code> <code>auto_end</code>, used in <code>simulate</code></dd>
+        <dt>Found</dt><dd>The rule assumes 40 seconds run off before every remaining down. It never checks whether the clock is stopped, and it ignores the two-minute warning.
+          <ul>
+            <li>Leader on 1st and 10 at 2:20 just after a kick-off, defense out of timeouts: the sim ends the game at once. Really, the leader snaps at 2:20, 2:00, 1:18 and 0:36, then faces 4th down with about 30 seconds left.</li>
+            <li>4th and 6 at 0:35 after an incompletion: the game ended in 200 of 200 paths.</li>
+          </ul>
+          In those states the leader's moneyline is too high and the Under too likely.</dd>
+        <dt>Fix</dt><dd>Pass whether the clock is running. With it stopped, use (4 − down) × 40 plus kneel time, and allow for the warning above 2:00 in Q4.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="B3">
+      <div class="tags"><span class="id">B3</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Two reviewers · code checked</span></div>
+      <h3>Overtime starts forget who has had the ball</h3>
+      <dl>
+        <dt>Where</dt><dd><code>v21.py:2848</code> (set from the score only), <code>match_starts</code>, <code>v21_stream.state_starts</code>, <code>trader.start_of</code></dd>
+        <dt>Found</dt><dd>At a level overtime after one possession, the sim starts as if overtime were fresh. Take OT at 7-7, home has punted, away has the ball: home wins 0.489 as built, but 0.349 with home's possession marked done. That 14-point gap reaches both the trader and the betting sim's in-play overtime books.</dd>
+        <dt>Fix</dt><dd>Carry each side's had-the-ball flag into the start: from the feed's overtime rows in the stream, and from <code>game.ot_had_ball</code> in the trader.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="B4">
+      <div class="tags"><span class="id">B4</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>Very unlikely outcomes are quoted at 0.01%</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFModel/stream.py:255</code> <code>_quote</code>, 1,000 games a price</dd>
+        <dt>Found</dt><dd>On fake matches, 6.2% of moneyline quotes sat at exactly 0.01% or 99.99%. A true 0.3% event comes up 0 of 1,000 about 5% of the time.
+          <ul>
+            <li>When such an event happens it costs 9.2 nats of log loss. Sim noise alone then pushes the calibration slope below 1.</li>
+            <li>In the reprice, a longshot bet gets up to 100× prod's odds.</li>
+          </ul></dd>
+        <dt>Fix</dt><dd>Smooth the shares, e.g. (k + 0.5)/(n + 1), and floor quotes around 0.5%. Or play more games in decided states.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="B5">
+      <div class="tags"><span class="id">B5</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>A buzzer 4th down with no result row is kept only if the kick was good</h3>
+      <dl>
+        <dt>Where</dt><dd><code>v21.py:1364</code> <code>decision_points</code></dd>
+        <dt>Found</dt><dd>Missed kicks, go-for-its and run-outs are dropped, so the half's last-seconds cells are all made field goals. The build log counts 305 such missing rows. This leans the sim toward kicking when 3 behind late, which means overtime. The sim's overtime rate is already too high: 3.9% against 2.1% real.</dd>
+        <dt>Fix</dt><dd>Treat these rows the same way whatever the score did: drop them all, or record a no-score as "go".</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="B6">
+      <div class="tags"><span class="id">B6</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>The react layer treats a nudge unit as one point on one side</h3>
+      <dl>
+        <dt>Where</dt><dd><code>v21_react.py:337</code>, <code>v21_react_fit.py:273</code>; the unit is set at <code>v21.py:1889</code></dd>
+        <dt>Found</dt><dd>The unit is measured with both sides nudged alike. Nudging one side moves its own points 1.44× and the other side's −0.50×, and the real build prints 1.57 points a unit. As a result:
+          <ul>
+            <li>the pts and wpa variants move prices 1.4–1.8× further than intended;</li>
+            <li>react-fit's slopes are measured on the wrong scale;</li>
+            <li>g-variants apply gamer scales fitted at another setting without a check (gsnap8 hits the nudge cap 21% of the time).</li>
+          </ul>
+          This affects the experimental react variants only, not v21-drives.</dd>
+        <dt>Fix</dt><dd>Measure an own/cross response matrix and convert points to units with it. Refuse a g-variant whose T differs from the fitted setting.</dd>
+      </dl>
+    </article>
+
+    <div class="sub">Smaller model items</div>
+    <ul class="lows">
+      <li><span class="sev low">Low</span><span>After a missed field goal, the sim gives the ball back at the line of scrimmage, but game.py gives it at the spot of the kick, 7 yards apart. That's about 0.1 points a game. <code>v21.py:3031</code> <code>game.py:322</code></span></li>
+      <li><span class="sev low">Low</span><span>A missed field goal's PLAY_OVER is priced as a kick-off. The end-of-Q1 and end-of-Q3 rows get no price, so bets placed there drop out of the reprice. <code>v21_stream.state_starts</code></span></li>
+      <li><span class="sev low">Low</span><span>Safeties are dropped from the snap pool, and a 4th-down safety is recorded as a punt. Punt-return touchdowns land as defensive TDs on 4th-down go plays. <code>v21.py:1227</code></span></li>
+      <li><span class="sev low">Low</span><span>A play that crosses 2:00 never brings the two-minute warning. On real snaps, the warning cut doesn't match the sim's own rule. <code>v21.py:3267</code> <code>v21.py:1267</code></span></li>
+      <li><span class="sev low">Low</span><span>With no opening receiver on the rows, the second-half kick always goes to away. The README says each path tosses a coin. <code>v21.py:2745</code></span></li>
+      <li><span class="sev low">Low</span><span>An unresolved <code>team_a_side</code> defaults to home in the build; pricing already drops these matches. <code>v21.py:1177</code></span></li>
+      <li><span class="sev low">Low</span><span>A "unit of nudge" is really about 1.57 points, so the 10-point nudge cap acts near 16. <code>v21.py:1887</code></span></li>
+      <li><span class="sev low">Low</span><span>v21-report grades a table prior marked "normal" as plain Poisson. The committed <code>v21_margin.txt</code> overstates the sim's edge over its prior about 5×. <code>table_prior.py:49</code></span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sc">
+    <h2 id="sc"><span class="sec">C</span>Data feed</h2>
+    <p class="intro">What reaches the build and the stream from SCOUTING_FULL and the quote tables.</p>
+
+    <article class="f" id="C1">
+      <div class="tags"><span class="id">C1</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>Incomplete matches go into builds and pricing unchecked</h3>
+      <dl>
+        <dt>Where</dt><dd><code>scouting.py:480</code> (period from quarter-start messages only), the feed's row reading; nothing reads scouting-check's flags</dd>
+        <dt>Found</dt><dd>If a quarter-start message is lost, the whole quarter is mislabelled: a Q4 play at 1:12 reads as Q3, with 5:12 left in the half. If one PLAY_OVER is lost, two plays merge into one. Data was lost from 23 Sep, so this does happen; how often is unknown.</dd>
+        <dt>Fix</dt><dd>Drop matches that scouting-check flags (QUARTERS, GAPS) from export, build and pricing. Cross-check the period against clock resets.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="C2">
+      <div class="tags"><span class="id">C2</span><span class="sev med">Medium</span><span class="kind">Methodology</span><span class="ver">Verified</span></div>
+      <h3>"Pre-match" has no time check</h3>
+      <dl>
+        <dt>Where</dt><dd><code>snowflake_io.py:640</code> <code>fetch_first_plays</code>, <code>scouting.py:570</code>, <code>bets.closing_quote</code></dd>
+        <dt>Found</dt><dd>Pre-match means anything before the first surviving PLAY_STARTED. If a match's first messages are missing, an in-play quote from 12 minutes after kick-off becomes prod's closing price: 0.80 instead of 0.55. That flatters prod's closing benchmark. It also leaks in-play prices into the prematch columns that react, ats and xgb read.</dd>
+        <dt>Fix</dt><dd>Also require a publish time at or before the scheduled kick-off, plus a small tolerance.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="C3">
+      <div class="tags"><span class="id">C3</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified</span></div>
+      <h3>A conversion's point is lost when the touchdown posts late</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFModel/playover.py:199</code> <code>_on_the_board</code></dd>
+        <dt>Found</dt><dd>If the touchdown's score arrives 3 messages late, the state after the extra point reads 0-6 instead of 0-7. The kick-off state is then priced a point short until the next snap, which is a busy moment for bets.</dd>
+        <dt>Fix</dt><dd>Take the board at the touchdown play's start, plus 6, plus the conversion's points.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="C4">
+      <div class="tags"><span class="id">C4</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified</span></div>
+      <h3>Timeouts are set to zero for matches missing from timeouts.csv</h3>
+      <dl>
+        <dt>Where</dt><dd><code>playover.py:49</code>; <code>v21-build</code> and <code>v21-sweep</code> in <code>eAMFModel/__main__.py:299, 323</code></dd>
+        <dt>Found</dt><dd>Running <code>scouting</code> alone rewrites the export but not timeouts.csv, and nothing warns about the mismatch. Matches missing from the file then show no timeouts called all game. That pulls the late clock-management fits toward "never calls one".</dd>
+        <dt>Fix</dt><dd>Annotate only the matches in the calls file, and warn about coverage.</dd>
+      </dl>
+    </article>
+
+    <div class="sub">Smaller data items</div>
+    <ul class="lows">
+      <li><span class="sev low">Low</span><span>The disk query cache never expires open-ended queries, so "rerun the history step" changes nothing unless you use <code>--fresh</code>. <code>snowflake_io.py:124</code></span></li>
+      <li><span class="sev low">Low</span><span>The export still windows SCOUTING_FULL rows, which cuts the head or tail off matches at the window's edges. The pricing path was fixed in ba18c13. <code>scouting.py:627</code></span></li>
+      <li><span class="sev low">Low</span><span>A missed field goal's PLAY_OVER isn't a snap state, so a one-snap drive goes missing from the drive count. <code>feed.py:54</code></span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="sd">
+    <h2 id="sd"><span class="sec">D</span>Tools and pages</h2>
+    <p class="intro">Commands that crash, and pages that show something other than what was graded.</p>
+
+    <article class="f" id="D1">
+      <div class="tags"><span class="id">D1</span><span class="sev high">High</span><span class="kind">Bug</span><span class="ver">Code checked</span></div>
+      <h3><code>run prod|candidate|both</code> crashes on any chunk with quotes</h3>
+      <dl>
+        <dt>Where</dt><dd><code>eAMFCalibrator/pipeline.py:80</code> <code>index_quotes</code></dd>
+        <dt>Found</dt><dd><code>fetch_quotes</code> now returns 9 columns, since STATUS and IS_ACTIVE were added, but <code>index_quotes</code> unpacks only 7. So the README's quick-start commands end in a ValueError. Once that's fixed, the pipeline also needs the liveness filter that moved out of the SQL.</dd>
+        <dt>Fix</dt><dd>Unpack all 9 columns, and drop rows that aren't live when <code>REQUIRE_LIVE_QUOTE</code> is set.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="D2">
+      <div class="tags"><span class="id">D2</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified</span></div>
+      <h3>Bet times read as local time break on the 25 Oct clock change</h3>
+      <dl>
+        <dt>Where</dt><dd><code>bet_moments.py:180, 188, 246</code>, <code>bet_losers.py:238</code>, <code>bet_money.py:62, 140</code>, <code>bet_runs.py:61</code></dd>
+        <dt>Found</dt><dd>These call <code>.timestamp()</code> on naive UTC times. On a UK-time machine, two bets 40 seconds apart either side of 01:00 UTC on 25 Oct come out 3,640 seconds apart. That breaks price age, the 120-second money window, and runs.</dd>
+        <dt>Fix</dt><dd>Treat the times as UTC, with <code>calendar.timegm</code> or <code>replace(tzinfo=timezone.utc)</code>.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="D3">
+      <div class="tags"><span class="id">D3</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified in a browser</span></div>
+      <h3>Trader: requests overlap, and a play can vanish</h3>
+      <dl>
+        <dt>Where</dt><dd><code>trader.html:500</code> (<code>send</code>), <code>:537</code> (clock run-out), <code>:550</code> and <code>:659</code> (keys)</dd>
+        <dt>Found</dt><dd>The clock timer and the keyboard aren't blocked while a price is in flight. A play entered as Q1 ran out lost its +15 yards; the clock-out was kept. Double-pressing Enter or Space does the same at any time.</dd>
+        <dt>Fix</dt><dd>Queue requests, and skip the timer's run-out while one is pending.</dd>
+      </dl>
+    </article>
+
+    <article class="f" id="D4">
+      <div class="tags"><span class="id">D4</span><span class="sev med">Medium</span><span class="kind">Bug</span><span class="ver">Verified</span></div>
+      <h3>The trader reads a different pace table from the betting sim</h3>
+      <dl>
+        <dt>Where</dt><dd><code>trader.py:288</code> calls <code>drives_table(tables)</code></dd>
+        <dt>Found</dt><dd>It always reads the prior table's own pace, even when <code>--v21-drives</code> or <code>$EAMF_V21_DRIVES</code> names another table. For one match that gave pace 1.15 in the trader against 0.80 in the stream. Its share default also differs (<a href="#A8">A8</a>).</dd>
+        <dt>Fix</dt><dd>Call <code>drives_table(None, tables)</code>, or add a <code>--drives</code> option.</dd>
+      </dl>
+    </article>
+
+    <div class="sub">Smaller tool items</div>
+    <ul class="lows">
+      <li><span class="sev low">Low</span><span>Replay page: the chart solves the nudge at 400 paths and the stepped price at 1,000, so the chart line mixes two solves. This came from my change this week. <code>replay_ui.py:425</code></span></li>
+      <li><span class="sev low">Low</span><span>Replay page: a match code that isn't in <code>--history</code> loads with no prod quotes and no team tilts, and gives no warning. <code>replay_ui.py:105</code></span></li>
+      <li><span class="sev low">Low</span><span>Trader: a blank Margin % box breaks Start and every later play. <code>trader.py:219</code></span></li>
+      <li><span class="sev low">Low</span><span>Trader: <code>--version v21-drives0.5</code> or <code>v21-snap4</code> runs as plain v21-drives with no warning. <code>trader.py:478</code></span></li>
+      <li><span class="sev low">Low</span><span>Trader: overtime only ends at the end of a period, and Edit state always prices as if the clock were running. <code>game.py:204</code> <code>trader.html:617</code></span></li>
+      <li><span class="sev low">Low</span><span><code>v21-build</code> and <code>v21-sweep</code> silently ignore a <code>--history</code> path that doesn't exist.</span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="se">
+    <h2 id="se"><span class="sec">E</span>Analysis and diagnostics</h2>
+    <p class="intro">These bias numbers and conclusions in the READMEs, not prices.</p>
+    <ul class="lows">
+      <li><span class="sev med">Medium</span><span>Cashed-out bets are left out of the residuals and of the margin against expected. Whether a bet is cashed out depends on how the game went after it. In a test where prod is exactly right, dropping them moved the residual by +2 points. This bears on "bettors beat prod by about 9.5 points". <code>bet_losers.py:363</code> <code>bet_moments.py:294</code> <code>bet_favourite.py:109</code></span></li>
+      <li><span class="sev med">Medium</span><span>bet_moments' ±2se treats every bet as independent. On pure noise, 109 of 200 buckets were flagged red or green. <code>bet_moments.py:312</code></span></li>
+      <li><span class="sev med">Medium</span><span>ml-losers reads prod's opening pre-match price instead of the closing one, so every favourite and underdog cut is off. <code>bet_losers.py:323</code></span></li>
+      <li><span class="sev med">Medium</span><span>bet_money's "prod's move in the last minute" misses re-lining on spreads and totals. Its money also includes late resettled bets. <code>bet_money.py:167</code> <code>bet_money.py:76</code></span></li>
+      <li><span class="sev med">Medium</span><span>ml-moves and totals-moves split on "no score in the next 60 seconds". That's a future event, and it moves prices by itself (time decay, the leader's clock). <code>bet_ml_moves.py:80</code> <code>bet_totals.py:394</code></span></li>
+      <li><span class="sev med">Medium</span><span>The expected-points table ends drives at every quarter break and scores them 0. The shipped <code>expected_points.json</code> carries this. <code>expected_points.py:72</code></span></li>
+      <li><span class="sev med">Medium</span><span>In-drive: head-to-head gives "one flat, one wrong" to prod, and totals expect the total to fall on a defensive TD. <code>indrive.py:726</code> <code>indrive.py:194</code></span></li>
+      <li><span class="sev med">Medium</span><span>halves and kickoffs put a buzzer field goal that has no Q2 row into the second half; the build counts 305 such kicks in 2,131 matches. <code>halves.py:91</code> <code>kickoffs.py:229</code></span></li>
+      <li><span class="sev med">Medium</span><span>xgb/drives.py reads rows the opposite way to the feed. It drops each drive's first snap and counts punts as 4th-down tries, which biases "snap rates add nothing" toward a null result. Drive counts are unaffected. <code>xgb/drives.py:86</code></span></li>
+      <li><span class="sev med">Medium</span><span>turnovers.py's "suspect" check can never fire. About 0.1 late touchdowns a match may be counted as the scorer's turnovers. <code>xgb/turnovers.py:70</code></span></li>
+      <li><span class="sev med">Medium</span><span>pace_eff's ridge has half the production pace prior's shrinkage, so <code>pace_eff_prior.csv</code> is about 10% over-spread. The production pace prior itself is fine. <code>xgb/pace_eff.py:218</code></span></li>
+      <li><span class="sev med">Medium</span><span>v21-endgame's late-state table weights states by per-match averages, which is biased even when the sim is right. Its September comparison is in-sample for v21_t10, and react-fit scores on the build's own training window. <code>v21_endgame.py:325</code> <code>v21_react_fit.py:364</code></span></li>
+      <li><span class="sev med">Medium</span><span>backtest-suite's leak checks can't see a leak within a day, even a layer that reads its own match's result. <code>backtest_suite.py:484</code></span></li>
+      <li><span class="sev med">Medium</span><span>player-stats reads a missing spot as the ball changing hands. That makes third downs and red-zone rates read low and turnovers read high. <code>player_stats.py:195</code></span></li>
+      <li><span class="sev med">Medium</span><span>The same-line breakdown's P counts each decision twice, once for each selection, so it overstates significance by roughly 10×. <code>report.py:683</code></span></li>
+      <li><span class="sev med">Medium</span><span>totals-calibrate sets form to 0 for matches after the history ends, and the README's own command hits this for 11–30 Sep. <code>totals_calibrate.py:96</code></span></li>
+      <li><span class="sev low">Low</span><span>glmer's weights are scaled to mean 1, so the data counts for more as the history grows: a same-day match weighs 1.73 in April and 3.81 now. <code>glmer/common.R:355</code></span></li>
+      <li><span class="sev low">Low</span><span>NB2 has no home term, leaving a +0.16 margin bias in the nb2 and avg priors. <code>nb2/NBRatingTrial.py</code></span></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="ok">
+    <h2 id="ok">Checked and sound</h2>
+    <ul class="sound">
+      <li>v21_t10 was fitted on matches before 1 Oct. The cut uses the match code's date, which equals the UTC start date on every row.</li>
+      <li>The priors are built walk-forward:
+        <ul>
+          <li>NB2 and glmer are refitted daily;</li>
+          <li>the pace prior and <code>cadence.R</code> wait 36 minutes for a result;</li>
+          <li>the layers are fitted on earlier days.</li>
+        </ul></li>
+      <li>The production pace prior is calibrated on the sim's own drive count (r 0.30, slope 1.01, 1 Sep–18 Oct). Its ridge reproduces the README's r 0.279 and slope 1.02.</li>
+      <li>The market maths holds up:
+        <ul>
+          <li>home and away, and over and under, add to 100 in every state under all five line modes;</li>
+          <li>pushes are handled right;</li>
+          <li>market 53's sign is right.</li>
+        </ul></li>
+      <li>Home/away and TEAM_A/TEAM_B are mapped correctly in the build, the starts, the trader and the bets.</li>
+      <li>glmer's R code has no problems: features come strictly from before each row, and the pricing and refit windows are correct.</li>
+      <li>The xgb models are built properly:
+        <ul>
+          <li>features come only from the past;</li>
+          <li>early stopping uses training data only;</li>
+          <li>the REML fit matches the textbook.</li>
+        </ul></li>
+    </ul>
+  </section>
+
+  <section aria-labelledby="hw" class="method">
+    <h2 id="hw">How this was done</h2>
+    <p>Each of the 16 agents took one area and read its code and the matching README sections. They tested suspicions with short scripts, on synthetic matches from <code>eAMFModel/tests/fakes.py</code> or on the repo's own outputs: the <code>out_bets_*</code> bet files, the walkthrough priors and the AMFELO history. Where several reviewers found the same thing, it's merged into one finding. I re-checked each high finding in the code, and re-ran the same-bets split and the shrinkage test.</p>
+    <div>The tags on each finding:
+      <ul>
+        <li><strong>Verified</strong>: a run showed the problem.</li>
+        <li><strong>Re-checked</strong>: I ran it again myself.</li>
+        <li><strong>Code checked</strong>: I confirmed it by reading the code.</li>
+      </ul></div>
+    <div>Severity levels:
+      <ul>
+        <li><strong>High</strong>: changes a price or a headline result materially, or crashes a normal run.</li>
+        <li><strong>Medium</strong>: wrong in a realistic but narrower case, or biases a result modestly.</li>
+        <li><strong>Low</strong>: an edge case.</li>
+      </ul></div>
+  </section>
+</div>

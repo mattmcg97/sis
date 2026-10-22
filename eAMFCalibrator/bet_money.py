@@ -59,7 +59,7 @@ def _segment(b):
 
 
 def _ts(t):
-    return None if t is None else t.timestamp()
+    return bets.epoch(t)
 
 
 def _logit(p):
@@ -137,7 +137,7 @@ def state_at(checks, match, t):
     tl = (getattr(checks, "timelines", None) or {}).get(match)
     left = None
     if tl is not None:
-        j = bisect_right(tl.times, t.timestamp()) - 1
+        j = bisect_right(tl.times, bets.epoch(t)) - 1
         if 0 <= j < len(tl.period) and tl.period[j] is not None and tl.clock[j] is not None:
             period, clock = int(tl.period[j]), float(tl.clock[j])
             left = 0.0 if period >= 5 else max(0.0, ((4 - min(period, 4)) * QUARTER + clock) / (4 * QUARTER))
