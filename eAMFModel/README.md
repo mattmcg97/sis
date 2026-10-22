@@ -2193,11 +2193,36 @@ missing something. Nothing is ever fitted to close those gaps.
     maximum likelihood. Each real snap's own outcome is scored against what the league's draw gave
     its state: blended over the levels, near the field, as a histogram by yards, touchdown and
     turnover (the time's cut snaps left out). Each tilt is fitted in turn by Newton steps, the others
-    held, over four rounds. Each is shrunk toward none by a penalty of 200 snaps' worth of the
-    league's variance, so a gamer with 200 snaps moves half way to their own. In the sim, a draw
+    held, over four rounds. Each is shrunk toward none by a penalty of 200 snaps' worth of what a
+    snap tells within its own state (phi's variance in the state's draw), so a gamer with 200 snaps
+    moves half way to their own. In the sim, a draw
     takes 16 real snaps evenly from its group or window and keeps one on its weight. The build
     prints each tilt's spread on each feature, the gamers furthest each way and the log-likelihood
-    gained a snap. `--tilt-prior N` sets the shrinkage (snaps; default 200). Unlike `adjusted`, the
+    gained a snap. `--tilt-prior N` sets the shrinkage (snaps; default 200), `--tilt-prior-time N`
+    the time tilts' own.
+
+    **The scale (`--tilt-scale`, 22 Oct).** Builds before 22 Oct scaled the penalty by phi's
+    variance over every snap (`--tilt-scale league`). That is larger than what a snap tells wherever
+    the state explains phi: the time draws key on the play before, so their 5–8 s stopped clocks and
+    25–40 s running ones count as spread no snap's own state has. Those tilts were shrunk several
+    times harder than 200 snaps: in a test of stopped and running states a gamer with 200 snaps moved
+    0.13 of the way (not 0.50), with 1,000 0.41 (not 0.83), and the fake build's time tilts sat as if
+    the prior were about 500 snaps. Gamers' and teams' pace was pulled hardest toward the league,
+    which fits v2.1's spread hardly moving with a match's pace before the pace nudge. Now it's
+    `--tilt-scale state`, the default: a gamer with 200 snaps moves half way, as said. Only a new
+    build changes; v21_t10 keeps the tilts it was built with.
+
+    **Picking the prior (`v21-tilt-tune`).** 200 was never tuned, and at the state scale it shrinks
+    less than the old builds did, so tune before rebuilding:
+
+        python -m eAMFModel v21-tilt-tune eAMFCalibrator/out/scouting_playover.csv --model v21_t10 \
+            --history AMFELO.csv --test-from 2026-10-01
+
+    It refits only the tilts, at each prior (25 to 800 snaps) and both scales, on the build's
+    matches before `--test-from` (the build's `--until`, so its draws never saw the rest), and
+    scores each fit on the matches from that day: the log-likelihood a held-out snap gains over no
+    tilt, distance and time apart. It ends with the build line for the best held-out priors, e.g.
+    `v21-build --mode tilt --tilt-scale state --tilt-prior 400 --tilt-prior-time 200`. Unlike `adjusted`, the
     tilt can move touchdowns and turnovers on their own, not
     only the yards, and is fitted on the whole outcome, not its mean. The fit weighs recent form: a
     real snap's weight halves every 30 days before the build's last match day.

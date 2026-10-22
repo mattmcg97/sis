@@ -516,12 +516,48 @@ class TestBuild(unittest.TestCase):
         self.assertGreater(up, plain + 40)
         self.assertGreater(near, plain + 30)
 
+    def test_a_gamer_with_prior_snaps_moves_half_way_at_the_state_scale(self):
+        # time-like: half the states stopped (4-10 s), half running (20-40 s); the gamer's snaps quicker
+        rng = np.random.default_rng(0)
+        secs = np.arange(4, 41, 2)
+        phi_b = (secs / 10.0)[:, None]
+        stopped = np.where(secs <= 10, 1.0, 0.0) / (secs <= 10).sum()
+        running = np.where(secs >= 20, 1.0, 0.0) / (secs >= 20).sum()
+        S, n = 8000, 200
+        H = np.where((rng.random(S) < 0.5)[:, None], stopped[None], running[None])
+        ent = np.full(S, 1)
+        ent[:n] = 0
+        p = H * np.exp(np.where(ent == 0, -0.5, 0.0)[:, None] @ phi_b.T)
+        p /= p.sum(1, keepdims=True)
+        obs = (p.cumsum(1) > rng.random(S)[:, None]).argmax(1)
+        who, sizes = {"gamer_off": ent}, {"gamer_off": 2}
+        free = v21.fit_exp_tilts(H, obs, phi_b, who, sizes, prior=1e-9, rounds=8)[0]["gamer_off"][0, 0]
+        share = lambda scale: v21.fit_exp_tilts(H, obs, phi_b, who, sizes, prior=200.0, rounds=8,
+                                                scale=scale)[0]["gamer_off"][0, 0] / free
+        self.assertAlmostEqual(share("state"), n / (n + 200), delta=0.08)     # half way, as documented
+        self.assertLess(share("league"), 0.25)                                  # the old scale: far harder
+        with self.assertRaises(ValueError):
+            v21.fit_exp_tilts(H, obs, phi_b, who, sizes, scale="other")
+
+    def test_the_tilts_tuned_on_held_out_matches(self):
+        m = built("tilt")
+        codes = sorted(MATCHES)
+        train, test = {c: MATCHES[c] for c in codes[:60]}, {c: MATCHES[c] for c in codes[60:]}
+        rows = v21.tune_tilts(m, train, test, HISTORY, priors=(25, 1600))
+        self.assertEqual([(r["scale"], r["prior"]) for r in rows],
+                         [("state", 25.0), ("state", 1600.0), ("league", 25.0), ("league", 1600.0)])
+        self.assertGreater(rows[0]["dist"][0], rows[0]["dist"][1])              # in sample flatters
+        self.assertGreater(rows[1]["dist"][1], rows[0]["dist"][1])              # the fakes' gamers are alike:
+        text = "\n".join(v21.tune_lines(rows, 1, 1))                            # shrinking harder holds up
+        self.assertIn("best at the state scale: v21-build --mode tilt --tilt-scale state --tilt-prior 1600", text)
+
     def test_the_tilt_mode(self):
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             m = v21.build(MATCHES, HISTORY, min_records=20, verbose=True, refine=False, mode="tilt", key="lean",
                           blend=40.0, field=0.2, clock=0.2)
         self.assertIn("tilts (exp(theta . phi)", out.getvalue())
+        self.assertEqual((m.tilt_scale, m.tilt_prior, m.tilt_prior_time), ("state", 200.0, 200.0))
         self.assertEqual(m.etilt["dist"]["gamer_off"].shape, (len(m.gamers) + 1, len(v21.PHI_DIST)))
         self.assertEqual(m.etilt["time"]["team_def"].shape, (len(m.teams) + 1, len(v21.PHI_TIME)))
         h, a = v21.simulate(m, v21.kickoff_start(m), 40)
