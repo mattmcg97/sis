@@ -41,6 +41,7 @@ import random
 from collections import defaultdict
 
 from . import markets, score_model
+from .metrics import day_of
 from .money_layer import SIDE, _logit, _num, _sigmoid, _time, read_sim_bets, read_table, sim_columns
 from .prior_replay import arm_chance
 
@@ -370,7 +371,7 @@ def _pct(x, fmt="{:+7.2f}%"):
 def bet_lines(book, names, n_boot=N_BOOT, seed=0):
     """Lines: the bets by group and market, each price's margin, change and two books against prod."""
     L = ["\n  the bets re-priced at each price (odds x prod / price, the operator's margin kept; two books: each bet to"
-         " the price that pays more), the change and takes-less-keeps with 95% over matches"]
+         " the price that pays more), the change and takes-less-keeps with 95% over days"]
     cuts = []
     for group in ("pre-match, clean", "pre-match, a previous result not yet in", f"kick-off, first {KICKOFF_SECONDS}s",
                   "kick-off, later"):
@@ -408,10 +409,13 @@ def bet_lines(book, names, n_boot=N_BOOT, seed=0):
                     a[5] += b["rev"]
             if not n:
                 continue
-            keys = sorted(sums)
-            full = _stats([sums[k] for k in keys])
+            days = defaultdict(lambda: [0.0] * 6)          # a day's matches resampled together
+            for k, v in sums.items():
+                days[day_of(k)] = [a + x for a, x in zip(days[day_of(k)], v)]
+            keys = sorted(days)
+            full = _stats([days[k] for k in keys])
             rng = random.Random(seed)
-            draws = [d for d in (_stats([sums[keys[rng.randrange(len(keys))]] for _ in keys]) for _ in range(n_boot)) if d]
+            draws = [d for d in (_stats([days[keys[rng.randrange(len(keys))]] for _ in keys]) for _ in range(n_boot)) if d]
             ch = sorted(d[2] for d in draws)
             tk = sorted(d[5] for d in draws if d[5] is not None)
             lo, hi = int(0.025 * len(ch)), int(0.975 * len(ch)) - 1

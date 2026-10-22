@@ -1858,8 +1858,30 @@ The report prints:
   won→lost, lost→won, ...), by market, and the change in revenue split into
   the candidate's odds on bets settled the same and bets its line settles
   differently;
-- the margin both ways: overall, all but VIPs, and by pre-match or in play,
-  operator, customer temperature, market and period.
+- **the headline:** the change in margin against prod, points, with a 95%
+  interval over days (a day's matches share gamers and form, so they're
+  resampled together). It comes in three rows:
+  - **At the bets' own lines (odds alone):** the moneyline, and spread and
+    total bets the candidate quoted at the bet's own line. Only the odds
+    change and every bet settles as it did. This is the test of the price.
+  - **Moved to a candidate's line:** spread and total bets re-priced at
+    another line. They keep the punter's side and stake at a line the
+    punter didn't take, and the result can flip there, so they're a lottery
+    on the line rather than a test of it. On Oct 12–18, +3.40 of
+    v21-drives' +3.85 points came from the 6% of stake whose result flipped.
+    Run a candidate at prod's lines (`v21-drives@prod`) to test its line
+    markets on the same bets.
+  - **Every re-priced bet:** the two together, as the report led with before.
+
+  Beside the own-line row, "leaning with the money" is what the candidate's
+  odds would gain if prod's probabilities were right. Shortening the side
+  the money is on gains this with no forecasting skill, because the re-price
+  keeps every stake whatever the price. Even the own-line change credits any
+  model whose errors differ from prod's: punters back where prod is wrong, and
+  a model that is merely different gains there. The fair tests are the two
+  books below and the margin uplift with `--all-moments`;
+- the margin both ways at the bets' own lines: overall, all but VIPs, and by
+  pre-match or in play, operator, customer temperature, market and period.
 
 ### Only the moments the bets read (the default), `--all-moments`
 
@@ -1883,10 +1905,13 @@ quotes read, roughly every play of every match. The bets read far fewer, so `bet
     Even, prod and anchored lines don't depend on it.
   - The margin uplift has a model's prices only at those moments. It bets prod's ticks there alone,
     each at the model's own price there, never a price held over from an earlier moment, and says
-    so on the page.
+    so on the page. Those moments are where punters bet, which is where prod is wrong, so they
+    favour the candidate: a model no better than prod came out +2.5 to +5.2 there against −0.3 to
+    −1.8 over every tick. Quote an uplift only from a run with `--all-moments`.
 - **The run prints it,** e.g. `v21: 1,214 of 18,905 in-play states simulated, the ones the bets
   read`.
-- **`--all-moments`** prices every moment, as before: slower, with the margin uplift on every tick.
+- **`--all-moments`** prices every moment, as before: slower, with the margin uplift on every tick,
+  the fair two-book test.
   A table candidate, and a model version before v21, are priced as ever.
 
 ### A chosen few matches: `bets --only-matches`
@@ -1997,7 +2022,7 @@ the bets it takes:
   - The spread and the totals are compared only where the candidate's line is prod's, so it's the
     same bet. The page shows how many matched ticks that leaves.
 - **Every match counts the same.** Each tick weighs 1 / its match's ticks in that market, and every
-  interval is a 95% bootstrap over matches (`--boot`).
+  interval is a 95% bootstrap over days (`--boot`): a day's matches are resampled together.
 - **The clock.** Minutes run from the scheduled start, scaled so prod's matches end at 60 game
   minutes on average (`--uplift-factor` sets the factor). The bets leave out the last 6 minutes
   (their last 2 of 20), and anything with a fair price of 1.001 or less.
@@ -2010,7 +2035,8 @@ the bets it takes:
     covers: those with at least one bet.
   - v21 is priced by default only at the moments the bets read (see "Only the moments the bets
     read" above). Its dummy bets are then prod's ticks at those moments alone, each matched only to
-    v21's own price at that very tick. Run with `--all-moments` for every tick.
+    v21's own price at that very tick. Those moments favour the candidate, as punters bet where
+    prod is wrong. Run with `--all-moments` for every tick, and quote only that.
 
 **What it shows, per candidate and market:**
 - **To candidate:** the share of the dummy handle the candidate's prices take.
@@ -2086,7 +2112,7 @@ python -m eAMFCalibrator bets prematch --since 2026-08-01 --until 2026-09-30 --c
       in points: overall, by market and week by week (the week the bet was
       placed);
     - then each candidate against the first: the change in margin, its 95%
-      interval over `--boot` resamples of the matches, and in how many
+      interval over `--boot` resamples of the days, and in how many
       weeks it came out ahead.
 - **Builds age.** Both builds are fitted once, on the same cut-off, so
   both age over a long window. NB2's ratings and glmer's player effects
@@ -2131,10 +2157,12 @@ python -m eAMFCalibrator report --since 2026-09-10 --until 2026-09-23 --snapshot
 
 `--bets` runs the betting simulation for the same window and candidates, and
 adds two sections at the bottom of the report's HTML. **Re-pricing** has:
-- each candidate on the bets it re-priced: prod's margin, the candidate's,
-  the change, and the change split into odds and line;
-- every candidate side by side on the bets they all re-priced, by the same
-  cuts as the console;
+- each candidate on the bets it re-priced at their own lines: prod's
+  margin, the candidate's, the change, the change on bets moved to its line,
+  and the revenue change split into odds and line;
+- the headline rows with their intervals over days;
+- every candidate side by side on the bets they all re-priced at their own
+  lines, by the same cuts as the console;
 - why bets were not re-priced;
 - the lag by operator.
 
@@ -2171,8 +2199,9 @@ does, so every reading is a like-for-like comparison with prod.
     where the candidate's prices hold up better where the two differ.
   - Both − alone is the two books together against prod taking every bet alone. Any second book
     lowers it, as the bettor always gets the better price.
-- **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over matches
-  (`--boot` resamples, 1000 by default). A change is coloured only where its whole interval is one
+- **Intervals.** Each margin, and each change, comes with a 95% bootstrap interval over days
+  (`--boot` resamples, 1000 by default): a day's matches share gamers and form, so they're
+  resampled together. Resampling matches made these about 1.7x too narrow. A change is coloured only where its whole interval is one
   side of zero.
 - **On the page** (under Book comparison, Two books): each margin is green where the book is ahead,
   red behind; its interval sits underneath. Acceptance is in `bets_book_comparison.txt` only. With
@@ -2340,9 +2369,11 @@ its pre-match bets aren't re-priced. Each model simulates every match in the
 window (`--vN-paths` sets how many games per snapshot).
 
 The report prints the lag and line checks once, then each candidate's own
-sections as above. It ends side by side: the margin change of each candidate
-on the bets every one of them re-priced (the same money), by the same cuts,
-and each one's price and result effects.
+sections as above. It ends side by side on the bets every one of them
+re-priced (the same money): the headline rows with their intervals over
+days, each candidate against the first paired by day, the margin change at
+the bets' own lines by the same cuts, and each one's price and result
+effects.
 
 `bets lines` draws prod's spread and total lines through each match against
 the lines customers bet. If an operator only offers the lines GAMEPLAI
@@ -3705,7 +3736,7 @@ match's last pre-match bet in the market.
 
 **The bets.** Each bet is re-priced as the betting sim does (odds × prod /
 price, the operator's margin kept), on the same bets and in two books, with
-95% intervals over matches. The groups are:
+95% intervals over days. The groups are:
 - **every pre-match bet, by market:** the clean ones first, placed once both
   gamers' previous results were in;
 - **the kick-off money:** in-play moneyline bets struck while prod's price was

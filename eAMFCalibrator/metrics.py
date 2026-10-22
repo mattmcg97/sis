@@ -26,6 +26,17 @@ import math
 LOG_LOSS_CLIP = 1e-6
 
 
+def day_of(match_code):
+    """The day a match was played, off its code (AFnnnDDMMYY: its UTC start date) as YYYY-MM-DD: the unit
+    an interval against prod resamples. A day's matches share gamers, form and the money's mood, so they
+    are not independent, and resampling matches alone made those intervals about 1.7x too narrow. A code
+    without a date is its own unit."""
+    s = str(match_code)[-6:]
+    if len(s) == 6 and s.isdigit() and 1 <= int(s[2:4]) <= 12 and 1 <= int(s[:2]) <= 31:
+        return f"20{s[4:]}-{s[2:4]}-{s[:2]}"
+    return str(match_code)
+
+
 def brier_score(pairs):
     """pairs: iterable of (predicted_probability, realized_outcome_bool)."""
     pairs = list(pairs)
