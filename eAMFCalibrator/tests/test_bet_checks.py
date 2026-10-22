@@ -101,6 +101,31 @@ class TestState(unittest.TestCase):
         self.assertFalse(c.state("M1", 3)["state_ok"])
         self.assertEqual(bet_checks.build_feeds(SCOUTING)["M1"].first_play, 2)
 
+    def test_a_feed_that_lost_its_head_has_no_first_play(self):
+        # twelve matches starting at message 1; M12's first 39 messages were lost, so its first surviving
+        # PLAY_STARTED (at 45) is not the start, and a quote below it can't be called pre-match
+        rows = [r for k in range(12) for r in (srow(1, "FIRST_QUARTER_STARTED", match=f"M{k}"),
+                                                srow(3, kind="PLAY_STARTED", match=f"M{k}"))]
+        rows += [srow(40, kind="PLAY_OVER", match="M12"), srow(45, kind="PLAY_STARTED", match="M12")]
+        feeds = bet_checks.build_feeds(rows)
+        self.assertEqual(feeds["M0"].first_play, 3)
+        self.assertIsNone(feeds["M12"].first_play)
+        from .. import scouting
+        by = {}
+        for r in rows:
+            by.setdefault(r[0], []).append(r)
+        self.assertEqual(scouting.first_plays_of(by)["M0"], 3)
+        self.assertIsNone(scouting.first_plays_of(by)["M12"])
+        self.assertIsNone(scouting.usual_first([1, 1, 40]))                       # too few matches to know
+        from .. import snowflake_io
+        got = [(f"M{k}", 1, 3) for k in range(12)] + [("M12", 40, 45), ("M13", 1, None)]
+        with mock.patch.object(snowflake_io, "scouting_table", return_value=mock.Mock(qualified="T")), \
+                mock.patch.object(snowflake_io, "fetch_all", return_value=([], got)):
+            first = snowflake_io.fetch_first_plays(None, [g[0] for g in got])
+        self.assertEqual(first["M0"], 3)
+        self.assertNotIn("M12", first)                                           # the kick-off decides there
+        self.assertNotIn("M13", first)                                           # no PLAY_STARTED at all
+
     def test_a_candidate_is_held_to_the_feed_between_its_quote_and_prods(self):
         c = checks()
         self.assertTrue(c.candidate("M1", 11, 14)["candidate_ok"])

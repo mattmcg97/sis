@@ -52,3 +52,8 @@ a run showed it, REASONED that it was read from the code.
   state`, the default for new builds), so a gamer with `--tilt-prior` snaps moves half way; the time tilts
   can take their own prior (`--tilt-prior-time`), and `v21-tilt-tune` picks both on held-out matches.
   Existing builds keep their tilts until rebuilt.
+- D1, C1, C2: `run prod|candidate|both` reads the 9-column quote rows and drops the ones that weren't live;
+  a build leaves out a match whose clock goes back up within a quarter (a lost quarter start) and, from
+  scouting-check's file, those flagged QUARTERS or GAPS, and the stream prices such a match in play no
+  more; a match whose feed lost its head gets no first play, so its pre-match cut falls back to the
+  kick-off.

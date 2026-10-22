@@ -152,6 +152,25 @@ def _timeouts_at(rec, row):
 
 
 
+LOST_START_JUMP = 60.0       # the clock back up this many seconds within a quarter: that quarter's start was lost
+
+
+def lost_quarter(rows):
+    """The period in which a match's feed lost the next quarter's start, or None: within a quarter the
+    clock only runs down, so a row in message order whose clock is LOST_START_JUMP seconds above the
+    row before it, in the same period, belongs to the next quarter, mislabelled. Every later state then
+    has the wrong period and clock (a Q4 play at 1:12 read as Q3, with 5:12 left in the half)."""
+    prev = None
+    for r in rows:
+        p, c = _i(r.get("period")), _f(r.get("clock_seconds"))
+        if p is None or c is None:
+            continue
+        if prev is not None and p == prev[0] and c > prev[1] + LOST_START_JUMP:
+            return p
+        prev = (p, c)
+    return None
+
+
 # ---------------------------------------------------------------- the snaps' classes
 
 def play_class(gain, dist):

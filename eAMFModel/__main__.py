@@ -118,7 +118,26 @@ def cmd_sim_build(args):
 OPTIMUM = ("v14",)
 DATA = {"snapshots": os.path.join("eAMFCalibrator", "out", "scouting_playover.csv"),
         "history": os.path.join("eAMFCalibrator", "out", "match_history.csv"),
-        "timeouts": os.path.join("eAMFCalibrator", "out", "timeouts.csv")}
+        "timeouts": os.path.join("eAMFCalibrator", "out", "timeouts.csv"),
+        "feed_check": os.path.join("eAMFCalibrator", "out", "scouting_check_matches.csv")}
+
+
+def _feed_gate(args, data):
+    """The export's matches less those scouting-check flagged as unfit for a build (loading.FEED_GATE),
+    read off --feed-check (default the calibrator's scouting_check_matches.csv where there; none: off)."""
+    from . import loading
+    path = getattr(args, "feed_check", None)
+    if path == "none":
+        return data
+    path = path or (DATA["feed_check"] if os.path.exists(DATA["feed_check"]) else None)
+    if not path:
+        return data
+    if not os.path.exists(path):
+        raise SystemExit(f"--feed-check {path}: no such file")
+    data, gone = loading.gate(data, path)
+    print(f"  feed check {path}: {gone:,} matches left out, flagged {' or '.join(loading.FEED_GATE)}"
+          " (a quarter's start lost, holes in the messages)")
+    return data
 
 
 def _optimum_inputs(args):
@@ -300,6 +319,7 @@ def cmd_v21_build(args):
     if timeouts and not args.no_timeouts:
         found = playover.annotate_timeouts(data, timeouts)
         print(f"  timeouts: {found:,} real calls placed before their snaps ({timeouts})")
+    data = _feed_gate(args, data)
     if args.until:
         cut = dt.date.fromisoformat(args.until)
         data = {c: rows for c, rows in data.items() if day(c) < cut}
@@ -328,6 +348,7 @@ def cmd_v21_tilt_tune(args):
     timeouts = args.timeouts or (DATA["timeouts"] if os.path.exists(DATA["timeouts"]) else None)
     if timeouts:
         playover.annotate_timeouts(data, timeouts)
+    data = _feed_gate(args, data)
     cut = dt.date.fromisoformat(args.test_from)
     end = dt.date.fromisoformat(args.test_until) if args.test_until else None
     train = {c: rows for c, rows in data.items() if day(c) < cut}
@@ -991,6 +1012,9 @@ def build_parser():
     p.add_argument("--tilt-prior", type=float, default=200.0,
                    help="--mode tilt: each tilt shrunk toward none as if it had this many snaps (default 200; "
                         "v21-tilt-tune picks it)")
+    p.add_argument("--feed-check", metavar="CSV|none",
+                   help=f"scouting-check's scouting_check_matches.csv: matches it flagged QUARTERS or GAPS are "
+                        f"left out (default {DATA['feed_check']} where there; none: off)")
     p.add_argument("--tilt-prior-time", type=float,
                    help="--mode tilt: the time tilts' own prior, in snaps (default --tilt-prior's)")
     p.add_argument("--tilt-scale", choices=("state", "league"), default="state",
@@ -1022,6 +1046,9 @@ def build_parser():
     p.add_argument("--test-from", required=True,
                    help="the held-out matches' first day, YYYY-MM-DD: the build's --until, so the draws never saw "
                         "them; the tilts are refitted on the matches before it")
+    p.add_argument("--feed-check", metavar="CSV|none",
+                   help=f"scouting-check's scouting_check_matches.csv: matches it flagged QUARTERS or GAPS are "
+                        f"left out (default {DATA['feed_check']} where there; none: off)")
     p.add_argument("--test-until", help="held-out matches before this day only, YYYY-MM-DD")
     p.add_argument("--priors", default=",".join(str(p) for p in (25, 50, 100, 200, 400, 800)),
                    help="the priors to try, in snaps (default 25,50,100,200,400,800)")

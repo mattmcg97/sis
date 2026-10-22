@@ -346,6 +346,10 @@ def match_books(model, snaps, pair, teams, n_paths, code, alpha, prod_rows, reac
     simulated and the ones prod's quotes read, added to "priced" and "of". The kick-off's pace nudge
     (kick's "tempo") is carried into every state."""
     rows = [_as_text(r) for r in sorted(snaps, key=lambda r: int(r["message"]))]
+    if feed.lost_quarter(rows) is not None:      # a quarter's start lost: the states after it mislabelled,
+        if tally is not None:                    # so no in-play book (the pre-match quotes stand)
+            tally["lost_quarter"] = tally.get("lost_quarter", 0) + 1
+        return [], {}
     starts = state_starts(model, rows, pair, teams)
     keys = [m for m, _ in starts]
     windows = confident_windows(snaps, keys)

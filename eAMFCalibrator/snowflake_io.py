@@ -640,22 +640,28 @@ def scouting_table(cur):
 def fetch_first_plays(cur, match_codes):
     """match -> the message count of its first PLAY_STARTED row in SCOUTING_FULL: a quote with a
     message count below it was published before the match got under way (prematch.is_prematch). A
-    match the play feed has no PLAY_STARTED for is left out."""
+    match the play feed has no PLAY_STARTED for is left out, and so is one whose head was lost (its first
+    message later than the usual first, scouting.head_lost): its callers fall back to the kick-off."""
     from . import scouting
     table = scouting_table(cur)
     codes = sorted(set(match_codes))
-    out = {}
+    got = []
     for k in range(0, len(codes), config.MATCH_CHUNK_SIZE):
         batch = codes[k:k + config.MATCH_CHUNK_SIZE]
         _, rows = fetch_all(cur, f"""
-            SELECT MATCH_CODE, MIN(EVENT_MESSAGE_COUNT)
+            SELECT MATCH_CODE, MIN(EVENT_MESSAGE_COUNT),
+                   MIN(CASE WHEN UPPER(TRIM({scouting.MESSAGE})) = 'PLAY_STARTED' THEN EVENT_MESSAGE_COUNT END)
             FROM {table.qualified}
             WHERE MATCH_CODE IN ({_in_clause(batch)})
-              AND UPPER(TRIM({scouting.MESSAGE})) = 'PLAY_STARTED'
             GROUP BY MATCH_CODE
         """, tuple(batch))
-        out.update({r[0]: int(r[1]) for r in rows if r[1] is not None})
-    return out
+        got += rows
+    usual = scouting.usual_first(r[1] for r in got)
+    lost = {r[0] for r in got if r[2] is not None and scouting.head_lost(r[1], usual)}
+    if lost:
+        print(f"  {len(lost):,} matches whose feed lost its head (first message after {usual}): their pre-match"
+              " cut falls back to the kick-off", flush=True)
+    return {r[0]: int(r[2]) for r in got if r[2] is not None and r[0] not in lost}
 
 
 def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=None, keep=None):
@@ -695,12 +701,12 @@ def _play_over_snapshots(cur, match_codes, with_handles=False, prod_by_match=Non
             scores_by[s[0]].append(s)
         for q in prod:
             prod_by[q[0]].append(q)
+        first_plays = scouting.first_plays_of(by_match)
         for match_code in batch:
             match_rows = by_match.get(match_code)
             if not match_rows:
                 continue
-            first_play = next((r[1] for r in match_rows
-                               if scouting._text(r[4]) == "PLAY_STARTED"), None)
+            first_play = first_plays.get(match_code)
             snaps, _ = scouting.snapshots_for_match(
                 match_code, match_rows, scores_by.get(match_code, []), finals.get(match_code),
                 index, scouting._prematch(prod_by.get(match_code, []), first_play),

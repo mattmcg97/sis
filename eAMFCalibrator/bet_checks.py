@@ -26,7 +26,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 
 from . import config
-from .scouting import PERIOD_START, _text
+from .scouting import PERIOD_START, _text, head_lost, usual_first
 
 OVER_STATUS = re.compile(r"^ENDED$|^(MATCH|GAME)_(OVER|END|ENDED|FINISHED|COMPLETE|COMPLETED)$")
 TWO_MINUTES = 120
@@ -70,12 +70,14 @@ class MatchFeed:
 def build_feeds(scouting_rows):
     """match -> MatchFeed off scouting.fetch_scouting rows. The start is the first quarter's start
     message (the first PLAY_STARTED without one); `late` is each status's first message from two
-    minutes left in Q4, and `tail` the last few statuses."""
+    minutes left in Q4, and `tail` the last few statuses. first_play is None where the feed lost its
+    head (scouting.head_lost): nothing then says which quotes came before the start."""
     by = defaultdict(list)
     for r in scouting_rows:
         if r[1] is not None:
             by[r[0]].append(r)
     out = {}
+    usual = usual_first(min(int(r[1]) for r in rs) for rs in by.values())
     for match, rs in by.items():
         rs.sort(key=lambda r: int(r[1]))
         period = start = kick = two = over = over_status = None
@@ -109,7 +111,8 @@ def build_feeds(scouting_rows):
         start = start if start is not None and (kick is None or start <= kick) else kick
         out[match] = MatchFeed(frozenset(msgs), overs, start, two, over, over_status, int(rs[-1][1]),
                                late, tuple(statuses[-3:]), [m for m, _ in moves],
-                               [label for _, label in moves], first_play=kick)
+                               [label for _, label in moves],
+                               first_play=None if head_lost(rs[0][1], usual) else kick)
     return out
 
 

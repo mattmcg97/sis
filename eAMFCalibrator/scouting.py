@@ -567,6 +567,37 @@ def _score_at(score_changes, message):
     return p1, p2
 
 
+HEAD_MIN_MATCHES = 10            # matches needed to know the count a feed usually starts at
+
+
+def usual_first(firsts):
+    """The count a match's feed usually starts at: the commonest first message count among matches, or
+    None with fewer than HEAD_MIN_MATCHES of them."""
+    got = Counter(int(f) for f in firsts if f is not None)
+    return got.most_common(1)[0][0] if sum(got.values()) >= HEAD_MIN_MATCHES else None
+
+
+def head_lost(first, usual):
+    """Whether a match's feed lost its head: its first message later than the usual first (scouting-check's
+    HEAD_MISSING). Its first surviving PLAY_STARTED is then not the start, so a quote's message below it
+    doesn't make the quote pre-match: an in-play price would pass for prod's closing one."""
+    return usual is not None and first is not None and int(first) > usual
+
+
+def first_plays_of(by_match):
+    """{match: the message count of its first PLAY_STARTED} off {match: SCOUTING_FULL rows}, None for a
+    match without one or whose head was lost (head_lost)."""
+    usual = usual_first(min(int(r[1]) for r in rows if r[1] is not None) if rows else None
+                        for rows in by_match.values())
+    out = {}
+    for match, rows in by_match.items():
+        msgs = [int(r[1]) for r in rows if r[1] is not None]
+        first = min(msgs) if msgs else None
+        starts = [int(r[1]) for r in rows if r[1] is not None and _text(r[4]) == "PLAY_STARTED"]
+        out[match] = None if head_lost(first, usual) or not starts else min(starts)
+    return out
+
+
 def _prematch(prod_rows, first_play_message):
     """Prod's last quote before the first PLAY_STARTED, markets 50/52/54."""
     out = {}
@@ -639,11 +670,12 @@ def export(cur, table, path, limit=None, verbose=True):
             prod_by = defaultdict(list)
             for q in prod:
                 prod_by[q[0]].append(q)
+            first_plays = first_plays_of(by_match)
             for match_code in batch:
                 match_rows = by_match.get(match_code, [])
                 if not match_rows:
                     continue
-                first_play = next((r[1] for r in match_rows if _text(r[4]) == "PLAY_STARTED"), None)
+                first_play = first_plays.get(match_code)
                 snaps, dropped = snapshots_for_match(
                     match_code, match_rows, scores_by.get(match_code, []),
                     finals.get(match_code), index, _prematch(prod_by.get(match_code, []), first_play),

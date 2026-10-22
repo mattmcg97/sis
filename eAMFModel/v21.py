@@ -1761,8 +1761,12 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     dec = {k: [] for k in DECISIONS}
     dec.update(kick_pool=[], fg_clock=[], conv=[])
     ot_games = {}
+    lost = 0
     for code, rows in matches.items():
         rows = _with_side(rows)
+        if feed.lost_quarter(rows) is not None:          # a quarter's start lost: every later state mislabelled
+            lost += 1
+            continue
         ot_games[code] = any((feed._i(r.get("period")) or 0) >= 5 for r in rows)
         pair, teams = match_people(code, rows, hist)
         fin = match_final(hist[code]) if code in hist else None
@@ -1787,7 +1791,8 @@ def build(matches, history=None, mode="full", min_records=MIN_RECORDS, verbose=T
     if not recs:
         raise ValueError("no real snaps to build on")
     if verbose:
-        print(f"  v2.1: {len(recs):,} real snaps from {len(matches):,} matches ({mode})", flush=True)
+        print(f"  v2.1: {len(recs):,} real snaps from {len(matches) - lost:,} matches ({mode}); left out, the feed"
+              f" having lost a quarter's start: {lost:,}", flush=True)
         print(f"  kicks at a half's end the feed missed, read off the score after it (3 more to the side with"
               f" the ball, none to the other): {missed_kicks:,}", flush=True)
         print(f"  scoring snaps with no TOUCHDOWN row, read off the score after them (6 or more to one side, none"
@@ -2212,6 +2217,8 @@ def real_snaps(matches, history=None):
     recs = []
     for code, rows in matches.items():
         rows = _with_side(rows)
+        if feed.lost_quarter(rows) is not None:          # as the build: left out
+            continue
         pair, teams = match_people(code, rows, hist)
         for r in match_snaps(rows, pair, teams):
             r["code"] = code

@@ -15,7 +15,7 @@ py -m eAMFCalibrator directional            # paired head-to-head
 py -m eAMFCalibrator cross                  # cell view, under the line rule
 py -m eAMFCalibrator run prod
 py -m eAMFCalibrator run candidate
-py -m eAMFCalibrator run both               # runs both, then diffs them
+py -m eAMFCalibrator run both               # runs both, then diffs them (live quotes only: REQUIRE_LIVE_QUOTE)
 py -m eAMFCalibrator compare out/prod_cells.csv out/candidate_cells.csv
 ```
 
@@ -1427,6 +1427,19 @@ before `--break`. Matches that started in the last 4 hours are `LIVE` and not ju
 | `NO_DOWN` | a usable down and distance (down 1–4, distance above 0) on under half the `PLAY_OVER`s, where the baseline had them |
 | `SCORE` | the scoring messages (TD 6, XP 1, two-point 2, FG 3, safety 2) do not add up to the final |
 | `NOT_SCHEDULED`, `NO_FINAL`, `DUPLICATES` | information only: not in EVENT, not settled yet, a message loaded more than once |
+
+**What the flags now gate.**
+- `v21-build` and `v21-tilt-tune` leave out the matches flagged `QUARTERS` or `GAPS`, read off
+  `out/scouting_check_matches.csv` (`--feed-check` names another file, `--feed-check none` turns it
+  off). A lost quarter start mislabels every later play's period and clock, and a lost `PLAY_OVER`
+  merges two plays into one long one, so neither is fit to draw from.
+- Without the file, a build still leaves out a match whose clock goes back up within a quarter:
+  the feed lost the next quarter's start (`eAMFModel.feed.lost_quarter`). The betting sim and the
+  calibrator give such a match no v21 price once it's under way; its pre-match quotes stand.
+- `HEAD_MISSING` is read from the feed itself, a match's first message against the usual first: the
+  first surviving `PLAY_STARTED` of a match that lost its head isn't its start, so a quote with a
+  message below it isn't known to be pre-match. Such a match gets no first play, and its closing
+  price falls back to the kick-off time (or is left blank), never an in-play price.
 
 | File | What |
 |---|---|
