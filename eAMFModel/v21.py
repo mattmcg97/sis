@@ -314,6 +314,29 @@ TEMPO_PROBE = 0.5
 # the build's slope, else the build's slope: the levers move each other's results, so a small move's secant
 # is mostly the other lever's
 SECANT_MIN = (0.25, 0.05)
+# The moneyline nudge (v21-ml, a switch for pricing: drives_solve's ml): a pre-match moneyline model's P(home
+# wins) (a tie half) as a calibration. The points nudge's target keeps its total (none: the sim's own, at the
+# drives the tempo is moving to) and its margin is moved until the sim's kick-off chance (win_chance) meets
+# the match's, or ml_share of the way there from the sim's own, in ML_ITERS steps on the same random numbers,
+# the pace nudge alongside. Each step aims the margin at the last run's plus the shift of its margins that
+# meets the chance (ml_shift: each margin spread over a logistic of ML_SMOOTH points sd, so the key numbers'
+# lumps don't make the step; the margins as they'd be at the drives the tempo is moving to), at most ML_MAX
+# from the points nudge's own. alpha moves as its common part (the total) and half its difference (the margin,
+# the other side's points moving with it), each off its own secant from the build's (ml_step, worked out
+# once), and so does the chance's own move against the smoothing's (a strength flips games a shift doesn't):
+# on the tests' build the margin moves about 1.8x what a point a side says, the chance 1.4x the smoothing's.
+# The sim's chance moves with every move of alpha by about its own noise (a move re-draws most games), so the
+# run that meets the chance, the total and the drives best is the one kept (_ml_miss). One step more than the
+# points nudge's: the margin's response grows with the move, and the third step's run still missed by up to
+# 0.03 at 2,000 kick-off games.
+ML_ITERS = NUDGE_ITERS + 1
+ML_MAX = 10.0                 # points of margin
+ML_SMOOTH = 3.0               # points
+# a run's total and drives misses count over at least these (points, drives): what the points and pace nudges
+# meet them to, so the run kept isn't picked for a total or a pace a hair closer at the chance's cost. With the
+# pace nudge on, the tempo moves the total and the chance as much as alpha does (the projection is only in
+# proportion to the drives): the total's and the chance's steps keep the build's slopes there.
+ML_FLOOR = (0.25, 0.1)
 YARD_BIN_EDGES = np.array([-5, 0, 1, 3, 5, 8, 12, 16, 20, 30, 40, 50])     # the fit's histograms
 SECOND_BIN_EDGES = np.arange(2, 61, 2)
 ADJUST_GRID = np.round(np.linspace(-1.5, 1.5, 31), 3)     # log tilts tried
@@ -2348,8 +2371,89 @@ def nudge_solve(model, start, target, n_paths, seed=0, iters=NUDGE_ITERS, stats=
     return scores, alpha
 
 
-def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITERS, stats=None, share=1.0,
-                 drives_share=1.0):
+def win_chance(home, away):
+    """The home side's chance of winning (a tie half) over final scores."""
+    m = (np.asarray(home) - np.asarray(away)).ravel()
+    return float(np.mean(m > 0) + 0.5 * np.mean(m == 0))
+
+
+def smooth_chance(margins, shift=0.0):
+    """The home side's chance over final margins moved by `shift`, each margin spread over a logistic of
+    ML_SMOOTH points sd (a tie half, as win_chance): the moneyline nudge's step, the key numbers' lumps smoothed."""
+    vals, cnt = np.unique(np.asarray(margins, float).ravel(), return_counts=True)
+    s = ML_SMOOTH * np.sqrt(3.0) / np.pi
+    return float(cnt @ (0.5 + 0.5 * np.tanh((vals + shift) / (2 * s)))) / float(cnt.sum())
+
+
+def ml_shift(margins, goal, now=None, gain=1.0):
+    """The points the margins move by so the chance meets `goal`: smooth_chance's moves, each `gain` times as
+    big in the sim (its own response, drives_solve's secant), from the real chance (win_chance) of the margins
+    `now` (the run's own; None: `margins`), so a goal they already meet moves nothing. Within +-2 ML_MAX."""
+    m = np.asarray(margins, float).ravel()
+    now = m if now is None else np.asarray(now, float).ravel()
+    vals, cnt = np.unique(m, return_counts=True)
+    s, w = ML_SMOOTH * np.sqrt(3.0) / np.pi, cnt / float(cnt.sum())
+    smooth = lambda d: float(w @ (0.5 + 0.5 * np.tanh((vals + d) / (2 * s))))
+    aim = smooth_chance(now) + (goal - float(np.mean(now > 0) + 0.5 * np.mean(now == 0))) / gain
+    if abs(aim - smooth(0.0)) < 1e-12:
+        return 0.0
+    lo, hi = -2 * ML_MAX, 2 * ML_MAX
+    if smooth(lo) >= aim:
+        return lo
+    if smooth(hi) <= aim:
+        return hi
+    for _ in range(50):
+        mid = 0.5 * (lo + hi)
+        lo, hi = (mid, hi) if smooth(mid) < aim else (lo, mid)
+    return 0.5 * (lo + hi)
+
+
+def _at_drives(m, r):
+    """Final margins as they'd be at r times the drives: the mean x r, the spread about it x sqrt(r)."""
+    return m if r == 1.0 else m.mean() * r + (m - m.mean()) * np.sqrt(r)
+
+
+def ml_step(m, n_paths=NUDGE_PATHS // 3, seed=0):
+    """(points of margin a unit of the moneyline nudge's lever adds -- half the sides' difference in nudge, the
+    other side's points moving too --, the home chance's move against smooth_chance's for that move of the
+    margins): its first step, unknown gamers, worked out once a process and kept on the loaded build."""
+    if getattr(m, "ml_slopes", None) is None:
+        start = kickoff_start(m)
+        runs = [simulate(m, dict(start, nudge=np.full((2, 2), [e, -e])), n_paths // 2, seed=seed + 13)
+                for e in (-1.0, 0.0, 1.0)]
+        mar, p = [float((h - a).mean()) for h, a in runs], [win_chance(h, a) for h, a in runs]
+        m0 = (runs[1][0] - runs[1][1]).ravel()
+        told = smooth_chance(m0, mar[2] - mar[1]) - smooth_chance(m0, mar[0] - mar[1])
+        m.ml_slopes = (max(0.05, (mar[2] - mar[0]) / 2),
+                       float(np.clip((p[2] - p[0]) / told, 0.3, 3.0)) if told > 1e-9 else 1.0)
+    return m.ml_slopes
+
+
+def _secant(move, change, old, slope):
+    """A lever's points a unit off its last move (a secant), where the move is SECANT_MIN[0] or more and the
+    secant within 0.3-3x the build's slope; else the one it had."""
+    if abs(move) < SECANT_MIN[0]:
+        return old
+    ratio = change / move / slope
+    return ratio * slope if 0.3 <= ratio <= 3.0 else old
+
+
+def _ml_miss(run, goal, total, drives):
+    """A moneyline-nudged run's misses, each squared over its own noise in the run's games: the home chance, the
+    total aimed at (None: none) and the drives (None: none), these two over at least ML_FLOOR."""
+    _, _, h, a, d, d_var, p, _ = run
+    g = h.size
+    out = (p - goal) ** 2 / max(goal * (1 - goal), 1e-6) * g
+    if total is not None:
+        t = (h + a).ravel()
+        out += (t.mean() - total) ** 2 / max(t.var() / g, ML_FLOOR[0] ** 2)
+    if drives is not None:
+        out += (d - drives) ** 2 / max(d_var / g, ML_FLOOR[1] ** 2)
+    return out
+
+
+def drives_solve(model, start, target, drives, n_paths, seed=0, iters=None, stats=None, share=1.0,
+                 drives_share=1.0, ml=None, ml_share=1.0, ml_info=None):
     """((home, away) final scores, alpha, tempo, (the sim's own drives a game, its drives at the last)):
     nudge_solve with the pace nudge alongside -- one tempo on both sides' time tilts, moved until the
     sim's kick-off drives (both sides' a game) meet `drives`, or drives_share of the way there from the
@@ -2358,32 +2462,60 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
     own), so the two levers do not chase each other; share takes the target from the sim's own means as
     they are, so the pace nudge leaves the expected points where the points nudge alone puts them.
     target None: the points as the sim has them (alpha stays 0); drives None: nudge_solve's steps alone
-    (tempo 0, no drives)."""
-    nudging, pacing = target is not None, drives is not None
+    (tempo 0, no drives). ml, the moneyline nudge: the target's margin moved, its total kept (target None:
+    the sim's own), until the kick-off games' home chance (a tie half) meets ml, or ml_share of the way
+    there from the sim's own; alpha stepped as its common part (the total) and half its difference (the
+    margin), each off its own secant. Every move of alpha draws most games again, so the chance it meets is
+    as good as their noise: the run that meets the chance, the total and the drives best (each miss over its
+    own noise, _ml_miss) is the one returned, its census played again. `ml_info` (a dict) gets the sim's own
+    chance, the goal, the returned run's and the margin it was aimed at. ml None: as before it, bit for bit.
+    iters None: NUDGE_ITERS steps, ML_ITERS with ml."""
+    nudging, pacing, money = target is not None, drives is not None, ml is not None
+    iters = (ML_ITERS if money else NUDGE_ITERS) if iters is None else iters
     alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
     tempo, t_slope = 0.0, None
     if pacing:
         t_slope = drive_level(model)[1]
         drives = float(drives)
-    prev = prev_t = own = None
+    prev = prev_t = own = aimed = None
+    runs = []                                         # the moneyline nudge's runs
+    if money:                                         # the total's and the margin's points a unit, the chance's gain
+        (k_ml, gain), k_tot = ml_step(model), 2.0 * slope
+        k_mar = k_ml
     target = np.asarray(target, float) if nudging else None
     n = len(start["period"])
     for it in range(iters + 1):
         st = dict(start)
-        if nudging:
+        if nudging or money:
             st["nudge"] = np.tile(alpha, (n, 1))
         if pacing:
             st["tempo"] = np.full(n, tempo)
         last = it == iters
         c = {} if pacing else None
-        h, a = simulate(model, st, n_paths, seed=seed, stats=stats if last else None, counts=c)
+        h, a = simulate(model, st, n_paths, seed=seed, stats=stats if last and not money else None, counts=c)
         d = float(c["drives"].mean()) if pacing else None
         own = d if it == 0 else own
+        if money:
+            p = win_chance(h, a)
+            if it == 0:
+                p_own, goal = p, p + ml_share * (float(ml) - p)
+            runs.append((alpha.copy(), tempo, h, a, d, float(c["drives"].var()) if pacing else None, p, aimed))
         if last:
+            if money:
+                alpha, tempo, h, a, d, _, p, aimed = min(runs, key=lambda r: _ml_miss(
+                    r, goal, float(target.sum()) if nudging else None, drives if pacing else None))
+                if stats is not None:                 # the census off its games, played again
+                    st = dict(start, nudge=np.tile(alpha, (n, 1)), **({"tempo": np.full(n, tempo)} if pacing else {}))
+                    simulate(model, st, n_paths, seed=seed, stats=stats)
+                if ml_info is not None:
+                    ml_info.update(own=p_own, goal=goal, got=p, margin=aimed)
             return (h, a), alpha, tempo, (own, d)
         x = np.array([h.mean(), a.mean()])
         if nudging and it == 0 and share != 1.0:
             target = x + share * (target - x)         # from the sim's own means as they are: pace moves no mean
+        if money and it == 0:                         # the margin the points nudge has (or the sim): the cap's centre
+            base = float(target[0] - target[1]) if nudging else float(x[0] - x[1])
+        r = 1.0
         if pacing:
             if it == 0 and drives_share != 1.0:
                 drives = d + drives_share * (drives - d)
@@ -2393,7 +2525,33 @@ def drives_solve(model, start, target, drives, n_paths, seed=0, iters=NUDGE_ITER
                 step_t = t_slope * ratio if 0.3 <= ratio <= 3.0 else t_slope
             prev_t = (tempo, d)
             tempo = float(np.clip(tempo + (drives - d) / step_t, -TEMPO_MAX, TEMPO_MAX))
+            r = drives / max(d, 1e-9)
             x = x * drives / max(d, 1e-9)
+        if money:
+            # alpha as its common part (moving the total) and its half difference (the margin, the other side's
+            # points moving with it): each stepped off its own secant, from the build's (ml_step's for the margin)
+            m = (h - a).ravel().astype(float)
+            com, half = alpha.mean(), (alpha[0] - alpha[1]) / 2
+            tot, mar = float(x.sum()), float(x[0] - x[1])
+            if prev is not None:
+                k_mar = _secant(half - prev[1], mar - prev[3], k_mar, k_ml)
+            if prev is not None and not pacing:      # with the pace nudge on, the tempo moves the total and the
+                k_tot = _secant(com - prev[0], tot - prev[2], k_tot, 2.0 * slope)       # chance as much: the build's
+                # the chance's own response to the last move of the margin against the smoothing's: the sim's
+                # flips aren't a shift's
+                moved = m.mean() - prev[4].mean()
+                told = smooth_chance(prev[4], moved) - smooth_chance(prev[4])
+                if abs(moved) >= SECANT_MIN[0] and abs(told) > 1e-9 and 0.3 <= (p - prev[5]) / told <= 3.0:
+                    gain = (p - prev[5]) / told
+            prev = (com, half, tot, mar, m, p)
+            # the run's margins at the drives the tempo is moving to, moved by the shift that meets the goal, at
+            # most ML_MAX from the points nudge's margin; the total the points nudge's, else the sim's own
+            aimed = float(np.clip(mar + ml_shift(_at_drives(m, r), goal, now=m, gain=gain), base - ML_MAX,
+                                  base + ML_MAX))
+            com += (float(target.sum()) - tot) / k_tot if nudging else 0.0
+            half += (aimed - mar) / k_mar
+            alpha = np.clip(np.array([com + half, com - half]), -NUDGE_MAX, NUDGE_MAX)
+            continue
         if not nudging:
             continue
         step = np.full(2, slope)

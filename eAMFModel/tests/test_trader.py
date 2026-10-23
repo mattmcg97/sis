@@ -231,6 +231,37 @@ class TestV21Trader(unittest.TestCase):
         self.assertEqual(S["ot_done"].tolist(), [[False, True]])
         self.assertEqual(int(S["ot_cur"][0]), -1)
 
+    def test_the_moneyline_typed_or_off_its_table(self):
+        import os
+        ml = os.path.join(self.tmp.name, "ml.csv")
+        with open(ml, "w", newline="", encoding="utf-8") as fh:
+            fh.write(f"MATCH_CODE,p_home\n{self.codes[1]},0.75\n")
+        t = trader.V21Trader(self.tmp.name, paths=300, prior=self.table, ml_path=ml)
+        m = t.meta()
+        self.assertEqual(m["version"], "v21-drives-ml")
+        self.assertTrue(m["ml"])
+        self.assertIn("100% to the moneyline", m["how"])
+        self.assertIn("moneyline on 1", m["prior"])
+        r = trader.respond(t, "/api/prematch", {"setup": {"match": self.codes[1]}})[1]
+        self.assertEqual(r["ml_home"], 0.75)
+        setup = dict(r, match=self.codes[1], opening_receiver="home", margin=0.05)
+        v = t.price(setup)["v21"]
+        self.assertEqual(v["ml"]["goal"], 0.75)
+        self.assertLess(abs(v["ml"]["got"] - 0.75), 0.06)
+        k = t._kickoff(setup)
+        self.assertGreater(k["alpha"][0], k["alpha"][1])
+        self.assertLess(abs(sum(k["books"][1] * np.arange(len(k["books"][1]))) - 34.0), 2.0)     # the total kept
+        self.assertNotIn("ml", t.price(dict(setup, ml_home=""))["v21"])                           # blank: none
+        self.assertLess(t._kickoff(dict(setup, ml_home=0.4))["alpha"][0], k["alpha"][0])          # typed over
+        g = gm.Game.start(gm.HOME)
+        g, _ = gm.apply(g, {"type": "kickoff"})
+        self.assertGreater(t.price(setup, g)["moneyline"]["home"]["p"],
+                           t.price(dict(setup, ml_home=""), g)["moneyline"]["home"]["p"] + 0.05)   # in play: carried
+        self.assertNotIn("ml_home", self.call("/api/prematch", setup={"match": self.codes[1]}))   # no table: typed
+        self.assertTrue(self.t.meta()["ml"])
+        self.assertIsNotNone(self.t._ml(dict(setup, ml_home=0.6)))
+        self.assertIsNone(self.t._ml(dict(setup, ml_home=1.0)))
+
     def test_v21_is_read_off_the_build_and_named(self):
         self.assertTrue(trader.is_v21(self.tmp.name))
         self.assertTrue(trader.is_v21(None, "v21-drives"))

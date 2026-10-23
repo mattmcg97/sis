@@ -14,6 +14,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 from unittest import mock
 
+import numpy as np
+
 from .. import config, replay_ui as ru, snowflake_io
 
 HISTORY_COLUMNS = ["MATCH_CODE", "SPORT_CODE", "STREAM_NUMBER", "SCHEDULED_START_TIME_UTC", "PLAYER_1_HANDLE",
@@ -241,7 +243,7 @@ class TestPace(unittest.TestCase):
         self.assertLess(pace["tempo"], 0)                                            # below 0: quicker
         slow = self.rp.price(self.codes[1], None, [20.0, 14.0], 1.0)["nudge"]["pace"]
         self.assertGreater(slow["tempo"], pace["tempo"])
-        alpha, _, _, _, tempo, _ = self.rp.nudge(code, [20.0, 14.0], 1.0, 200)
+        alpha, _, _, _, tempo, _, _ = self.rp.nudge(code, [20.0, 14.0], 1.0, 200)
         m = self.rp._match(code)
         msg = next(t["message"] for t in m["view"]["timeline"] if t["message"] in m["starts"])
         st = self.rp._state(m, msg, alpha, tempo)
@@ -263,6 +265,69 @@ class TestPace(unittest.TestCase):
         self.assertAlmostEqual(r["nudge"]["pace"]["pace"], 1.2)
         status, r = ru.respond(self.rp, "/api/price", {"code": code, "means": [20, 14], "share": 1.0, "exp_drives": 0})
         self.assertIsNone(r["nudge"]["pace"])
+
+
+class TestMoneyline(unittest.TestCase):
+    """v21-ml in the replay: the match's p_home off the moneyline table, the points nudge's margin moved at the
+    kick-off until its home chance meets it, the nudge carried into every state; typed over on the page."""
+
+    def setUp(self):
+        self.codes = sorted(SETUP["matches"])[:2]
+        self.rp = replay(paths=300, ml={self.codes[0]: 0.8}, ml_share=1.0, ml_name="ml.csv")
+
+    def test_the_moneyline_off_the_table(self):
+        meta = self.rp.meta()
+        self.assertTrue(meta["ml"])
+        self.assertEqual((meta["ml_share"], meta["ml_table"]), (1.0, "ml.csv"))
+        self.assertEqual(self.rp.load(self.codes[0])["ml"], 0.8)
+        lacks = self.rp.load(self.codes[1])
+        self.assertIsNone(lacks["ml"])
+        self.assertIn("Not in the moneyline table", lacks["ml_note"])
+        self.assertEqual((self.rp.ml_of(self.codes[0]), self.rp.ml_of(self.codes[0], 0.6)), (0.8, 0.6))
+        self.assertIsNone(self.rp.ml_of(self.codes[0], 0.0))                       # 0: no moneyline nudge
+        self.assertFalse(replay().meta()["ml"])                                       # no table: none
+        self.assertFalse(replay("plain", ml={self.codes[0]: 0.8}).ml_on)             # no strength direction
+
+    def test_the_kick_off_meets_it_and_the_states_carry_it(self):
+        code = self.codes[0]
+        kick = self.rp.price(code, None, [17.0, 17.0], 1.0)
+        ml = kick["nudge"]["ml"]
+        self.assertEqual(set(ml), {"p", "own", "goal", "got", "margin", "share"})
+        self.assertEqual((ml["p"], ml["goal"]), (0.8, 0.8))
+        self.assertLess(abs(ml["got"] - 0.8), 0.06)
+        self.assertGreater(ml["margin"], 0)
+        self.assertGreater(kick["nudge"]["alpha"][0], kick["nudge"]["alpha"][1])
+        self.assertLess(abs(sum(kick["nudge"]["nudged"]) - 34.0), 1.5)               # the points' total kept
+        plain = self.rp.price(code, None, [17.0, 17.0], 1.0, p_ml=0.0)
+        self.assertIsNone(plain["nudge"]["ml"])
+        self.assertGreater(kick["moneyline"]["home"], plain["moneyline"]["home"] + 0.1)
+        alpha = self.rp.nudge(code, [17.0, 17.0], 1.0, 300)[0]
+        m = self.rp._match(code)
+        msg = next(t["message"] for t in m["view"]["timeline"] if t["message"] in m["starts"])
+        self.assertTrue(np.array_equal(self.rp._state(m, msg, alpha)["nudge"][0], alpha))     # the states carry it
+        state = self.rp.price(code, msg, [17.0, 17.0], 1.0)
+        self.assertGreater(state["moneyline"]["home"],
+                           self.rp.price(code, msg, [17.0, 17.0], 1.0, p_ml=0.0)["moneyline"]["home"])
+        status, r = ru.respond(self.rp, "/api/price", {"code": code, "means": [17, 17], "share": 1.0, "ml": 0.6,
+                                                       "ml_share": 0.5})
+        self.assertEqual(status, 200)
+        self.assertEqual(r["nudge"]["ml"]["p"], 0.6)
+        self.assertAlmostEqual(r["nudge"]["ml"]["goal"], ml["own"] + 0.5 * (0.6 - ml["own"]), places=3)
+        status, r = ru.respond(self.rp, "/api/price", {"code": code, "means": [17, 17], "share": 1.0, "ml": 0})
+        self.assertIsNone(r["nudge"]["ml"])
+
+    def test_build_reads_the_table_named_or_none(self):
+        path = os.path.join(SETUP["dir"].name, "ml.csv")
+        with open(path, "w", newline="") as fh:
+            fh.write(f"MATCH_CODE,p_home\n{self.codes[0]},0.7\n")
+        model_file = os.path.join(SETUP["dir"].name, "v21model.pkl")
+        SETUP["model"].save(model_file)
+        with mock.patch.dict(os.environ, {"EAMF_V21_ML": ""}):
+            rp = ru.build(model_file, export=SETUP["export"], history=SETUP["history"], ml_path=path, pace=False)
+            self.assertEqual((rp.ml, rp.ml_name, rp.ml_on), ({self.codes[0]: 0.7}, path, True))
+            self.assertFalse(ru.build(model_file, export=SETUP["export"], history=SETUP["history"], pace=False).ml_on)
+        with mock.patch.dict(os.environ, {"EAMF_V21_ML": path}):
+            self.assertTrue(ru.build(model_file, export=SETUP["export"], history=SETUP["history"], pace=False).ml_on)
 
 
 class TestSources(unittest.TestCase):

@@ -1,0 +1,49 @@
+  TUNE stats[pbp_nopts]_C0.003: 0.6758
+  TUNE stats[pbp_nopts]_C0.01: 0.6760
+  TUNE stats[pbp_nopts]_C0.03: 0.6761
+  TUNE stats[pbp_noscore]_C0.003: 0.6775
+  TUNE stats[pbp_noscore]_C0.01: 0.6779
+  TUNE stats[pbp_noscore]_C0.03: 0.6781
+chosen on TUNE: {"pbp_nopts": "stats[pbp_nopts]_C0.003", "pbp_noscore": "stats[pbp_noscore]_C0.003"}
+== stats-only without points, TUNE
+2026-06-01 to 2026-08-01: 5,462 matches, 60 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs       prod (95%)          vs C_strength (95%)       
+  C_strength                     0.6635  0.2355  0.639   1.01  -0.01   -0.0128 (-0.0193,-0.0068)                              
+  C_stats                        0.6720  0.2396  0.616   1.07  -0.01   -0.0044 (-0.0095,+0.0002)   +0.0084 (+0.0036,+0.0132)
+  pbp_nopts                      0.6761  0.2416  0.606   1.26  -0.01   -0.0002 (-0.0046,+0.0042)   +0.0126 (+0.0077,+0.0177)
+  pbp_noscore                    0.6779  0.2424  0.601   1.25  -0.01   +0.0015 (-0.0031,+0.0062)   +0.0143 (+0.0090,+0.0198)
+  C_four_factors                 0.6784  0.2427  0.599   1.26  -0.01   +0.0020 (-0.0022,+0.0064)   +0.0148 (+0.0099,+0.0202)
+  prod                           0.6764  0.2418  0.605   1.13  -0.00                                 +0.0128 (+0.0068,+0.0193)
+== stats-only without points, TEST
+2026-08-01 to 2026-10-19: 6,170 matches, 79 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs       prod (95%)          vs C_strength (95%)       
+  C_strength                     0.6743  0.2408  0.606   0.97  +0.04   -0.0105 (-0.0151,-0.0061)                              
+  C_stats                        0.6786  0.2428  0.594   0.97  +0.03   -0.0062 (-0.0106,-0.0020)   +0.0043 (+0.0017,+0.0069)
+  pbp_nopts                      0.6799  0.2434  0.591   1.09  +0.05   -0.0049 (-0.0086,-0.0015)   +0.0056 (+0.0026,+0.0084)
+  pbp_noscore                    0.6831  0.2450  0.581   0.99  +0.07   -0.0017 (-0.0052,+0.0015)   +0.0088 (+0.0051,+0.0124)
+  C_four_factors                 0.6852  0.2460  0.572   0.87  +0.06   +0.0004 (-0.0035,+0.0041)   +0.0109 (+0.0069,+0.0148)
+  prod                           0.6848  0.2460  0.569   0.93  +0.05                                 +0.0105 (+0.0061,+0.0151)
+== SEP: strength and stats models against the walkthrough tables
+2026-09-01 to 2026-10-19: 3,426 matches, 48 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs       prod (95%)          vs tbl_glmer_both_p (95%)       
+  C_strength                     0.6781  0.2427  0.593   0.97  +0.02   -0.0113 (-0.0175,-0.0053)   +0.0007 (-0.0016,+0.0031)
+  C_stats_strength               0.6783  0.2427  0.593   1.00  +0.01   -0.0111 (-0.0172,-0.0054)   +0.0009 (-0.0014,+0.0034)
+  C_stats_strength_mlink         0.6782  0.2427  0.593   0.96  +0.01   -0.0112 (-0.0176,-0.0051)   +0.0008 (-0.0016,+0.0033)
+  tbl_glmer_both_p               0.6774  0.2423  0.595   1.10  -0.01   -0.0120 (-0.0185,-0.0059)                              
+  tbl_avg_p                      0.6777  0.2425  0.593   1.11  +0.01   -0.0116 (-0.0179,-0.0058)   +0.0003 (-0.0010,+0.0017)
+  tbl_form_p                     0.6828  0.2449  0.584   0.71  +0.02   -0.0066 (-0.0150,+0.0013)   +0.0053 (+0.0018,+0.0088)
+  prod                           0.6894  0.2482  0.550   0.68  +0.03                                 +0.0120 (+0.0059,+0.0185)
+== LATE: strength and stats models against the walkthrough tables
+2026-09-22 to 2026-10-19: 1,840 matches, 27 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs       prod (95%)          vs tbl_glmer_both_p (95%)       
+  C_strength                     0.6793  0.2432  0.589   0.98  +0.01   -0.0086 (-0.0164,-0.0012)   +0.0016 (-0.0007,+0.0040)
+  C_stats_strength               0.6799  0.2435  0.588   1.00  +0.00   -0.0080 (-0.0149,-0.0014)   +0.0022 (-0.0001,+0.0044)
+  C_stats_strength_mlink         0.6799  0.2435  0.588   0.96  +0.01   -0.0081 (-0.0156,-0.0008)   +0.0021 (-0.0003,+0.0046)
+  tbl_glmer_both_p               0.6777  0.2424  0.597   1.16  -0.03   -0.0102 (-0.0174,-0.0034)                              
+  tbl_avg_p                      0.6786  0.2429  0.593   1.16  +0.00   -0.0094 (-0.0163,-0.0023)   +0.0009 (-0.0008,+0.0024)
+  tbl_form_p                     0.6843  0.2455  0.583   0.68  +0.01   -0.0036 (-0.0137,+0.0056)   +0.0066 (+0.0027,+0.0105)
+  prod                           0.6880  0.2475  0.557   0.79  +0.03                                 +0.0102 (+0.0034,+0.0174)
+== TEST: C_stats_strength less C_strength_nested by the lesser gamer's matches played
+  0-200 matches: 787 matches, logit -0.0025 (-0.0049,-0.0002), mlink -0.0009 (-0.0023,+0.0005)
+  200-500 matches: 2,095 matches, logit -0.0001 (-0.0012,+0.0011), mlink -0.0004 (-0.0012,+0.0003)
+  500-1e+09 matches: 3,429 matches, logit +0.0005 (-0.0005,+0.0013), mlink +0.0004 (-0.0000,+0.0009)

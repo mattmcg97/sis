@@ -804,6 +804,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         opts["drives"] = drives
         if getattr(config, f"{key}_DRIVES_TABLE", None):
             opts["drives_path"] = getattr(config, f"{key}_DRIVES_TABLE")
+    ml = getattr(stream, "ml_of", lambda _n: None)(name)          # v21-ml: the moneyline nudge
+    if ml is not None:
+        opts["ml"] = ml
+        if getattr(config, f"{key}_ML_TABLE", None):
+            opts["ml_path"] = getattr(config, f"{key}_ML_TABLE")
     # a betting simulation's: only the moments its bets read (config.BET_MOMENTS), where the stream can
     moments = getattr(config, "BET_MOMENTS", None) if getattr(stream, "PRICES_MOMENTS", False) else None
     read = None if moments is None else frozenset((c, frozenset(v)) for c, v in moments.items())
@@ -840,6 +845,11 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         print(f"  {name}: the pace nudge, one tempo on both sides' clocks so the kick-off games' drives go"
               + ("" if drives == 1.0 else f" {100 * drives:.0f}% of the way")
               + f" to the match's expected drives ({opts.get('drives_path') or 'the pace table'})", flush=True)
+    if ml is not None:
+        print(f"  {name}: the moneyline nudge, the points nudge's margin moved so the kick-off games' home chance goes"
+              + ("" if ml == 1.0 else f" {100 * ml:.0f}% of the way")
+              + f" to the match's p_home ({opts.get('ml_path') or os.environ.get('EAMF_V21_ML') or 'the moneyline table'})",
+              flush=True)
     if react:
         print(f"  {name}: in-play strength update {react[0]}, "
               + (f"{react[1]:g} points a game for a whole win chance added" if react[0].endswith("wpa")
@@ -865,6 +875,10 @@ def _sim_quotes(cur, match_codes, name, lines=None):
         print(f"  {name}: {took['drives_matches']:,} of {took['drives_of']:,} matches have their expected drives in the"
               " pace table" + ("" if took["drives_matches"] == took["drives_of"] else " (the rest priced as v21: write"
                                " the pace in again over the window: python -m eAMFCalibrator pace-prior)"), flush=True)
+    if opts.get("ml") is not None and took.get("ml_of"):
+        print(f"  {name}: {took['ml_matches']:,} of {took['ml_of']:,} matches have their p_home in the moneyline table"
+              + ("" if took["ml_matches"] == took["ml_of"] else " (the rest priced without the moneyline nudge)"),
+              flush=True)
     if took.get("prior") and took.get("matches"):
         miss = took["matches"] - took.get("prior_matches", 0)
         print(f"  {name}: its prior, {took['prior']}, has {took.get('prior_matches', 0):,} of {took['matches']:,} matches"

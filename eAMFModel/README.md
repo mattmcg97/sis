@@ -2712,6 +2712,54 @@ On the tests' build (its snap times spread out), a tempo of −1 plays 11.6 driv
 8.0 and +1 plays 6.6. The solve meets a goal a drive either side within 0.15, with the points within
 half a point.
 
+### The moneyline nudge (`--candidate v21-ml`)
+
+A pre-match moneyline model's P(home wins) (a tie half) is the sim's calibration at the kick-off: the
+points nudge's target keeps its total, and its margin moves until the kick-off games' home chance
+meets the match's (`v21.drives_solve`'s `ml`).
+- **The step.** Each step aims the margin at the last run's plus the shift of its margins that meets
+  the chance. The margins are smoothed first (`ml_shift`: each spread over a logistic of `ML_SMOOTH`,
+  3 points sd), so the 3s and 7s don't make the step. With the pace nudge on, the margins are read
+  as they'd be at the drives the tempo is moving to (the mean × r, the spread × √r).
+- **The levers.** alpha moves as its common part (the total) and half its difference (the margin),
+  each off its own secant. A side's nudge moves the other side's points too, so the margin moves
+  more than a point a side says: about 1.8× on the tests' build. The chance also moves more than a
+  shift of the margins would (1.4×): a strength flips games a shift doesn't. Both are measured once
+  (`ml_step`, unknown gamers, 3,000 games: about 2.5 CPU seconds a process) and corrected by secants as
+  the solve goes. With the pace nudge on, the tempo moves the total and the chance as much as alpha
+  does, so those two keep the build's slopes.
+- **The noise.** Every move of alpha draws most games again, so the realised chance moves by about its
+  own noise each step (±0.011 at the stream's 2,000 kick-off games). The solve takes 4 steps
+  (`ML_ITERS`, one more than the points nudge's) on the same random numbers and returns the run that
+  meets the chance, the total and the drives best, each miss over its own noise (the total's and the
+  drives' over at least 0.25 points and 0.1 drives, `ML_FLOOR`: what their nudges meet them to).
+- **Its limits.** The margin moves at most `ML_MAX` (10 points) from the points nudge's own.
+  `v21-ml0.5` goes half way from the sim's own chance. Without a points target (share 0, or a match
+  the prior lacks), the total stays the sim's own. In play the kick-off's alpha carries into every
+  state, as the points nudge does. Without it (`v21`, `v21-drives`), the solve is bit for bit as before.
+- **The table.** `MATCH_CODE` and `p_home`, named by `--v21-ml` (or `$EAMF_V21_ML`). The prior
+  table's own `p_home` (its points read through its own score model) isn't read unless it's named.
+  A match the table lacks is priced without the moneyline nudge, and the run says how many.
+  `python -m eAMFCalibrator ml-prior` writes one for every match in the history, the scheduled
+  ones too: a ridge on margin read through a fitted link, walk-forward. It carries an expected
+  total (an online Kalman filter) and each side's points (`Pred_P1_Points`, `Pred_P2_Points`) as
+  well, so the same file can be `--v21-prior-model` (eAMFCalibrator's README, "The moneyline
+  nudge's table, and a whole prior").
+
+```
+python -m eAMFCalibrator ml-prior
+python -m eAMFCalibrator bets --candidate v21,v21-ml,v21-drives-ml --v21-ml eAMFCalibrator/out/ml_prior/ml_prior.csv
+```
+
+On the tests' build at the stream's 1,000 games a state (36 solves: 3 pairings, the chance moved
+±0.05 and ±0.15 from the sim's own, with the points nudge at 0.75, with the pace nudge too, and with
+neither), the kick-off's games meet the chance within 0.005 on average (0.021 at worst; their own
+noise is ±0.011). 8,000 fresh games at the solved nudge miss it by 0.009 on average, about their own
+noise, and are 0.004 high on average. The total stays within 0.06 points of the points nudge's
+target on average (0.2 with the pace nudge on; 0.25 of the sim's own with no target). A kick-off
+costs 5.5 CPU seconds against the points nudge's 4.2 (+32%), and 5.75 against 4.9 with the pace
+nudge (+17%), plus `ml_step` once a process. Every other state is priced as before.
+
 ### In-play strength update (`v21_react.py`, `--candidate v21-snap4`)
 
 Without one, every in-play state carries the kick-off's nudge. With one, each state gets its own:
@@ -3474,6 +3522,10 @@ python -m eAMFModel trader --model C:\Users\MMcguinness\sis-v21\v21_t10 \
   games' drives toward the match's expected drives (`--drives-share`, default 1). Both are solved
   once a match, at the kick-off, and carried into every state. `--no-pace` (or `--version v21`)
   is plain v21. `--prior` defaults to the form table.
+- **The moneyline (v21-ml).** A home win chance typed into *Home win (moneyline)* moves the points
+  nudge's margin until the kick-off meets it (`--ml-share`, default 1). `--ml TABLE` (or
+  `$EAMF_V21_ML`) names a moneyline model's table (`MATCH_CODE`, `p_home`; `eAMFCalibrator ml-prior`
+  writes one), and a match picked off the prior then fills the box. Blank means none.
 - **A match from the prior.** *Match from the prior* lists the prior table's latest 600 matches.
   Picking one fills the players, the teams, the expected points and the expected drives (with
   that day's league drives beside them), so the page prices exactly what the betting sim did.

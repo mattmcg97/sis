@@ -1,0 +1,45 @@
+
+The pre-match moneyline and total: 26,649 matches in /home/user/sis/eAMFCalibrator/out/match_history.csv (2025-12-10 to 2026-10-18, 26,649 with a result); 26,649 written, 2025-12-10 to 2026-10-18, 0 of them without a result yet
+  the margin: a ridge on every result in by the kick-off (36 minutes after its own), each weighted 2^(-age/30 days); penalties in matches of full weight: gamers 2, teams 50, a stream's home edge 50
+  the link: logistic(a + b x margin), fitted each day on the last 60 days' results in by its midnight (at least 300; the history's first 36 days left out)
+  the stack: avg.csv's exp_margin beside the ridge's, logistic(a + b_table x its + b_ridge x the ridge's), fitted the same way on the matches both priced: avg.csv has 3,463 of the matches written, 3,099 priced by the stack and the rest by the link
+  the ridge as of 2026-10-18 23:59: the home edge by stream 1 +0.74, 2 -0.24, 3 -0.03 points; 89 gamers (sd 3.97 points), 10 teams (-0.80 to +1.05)
+  23,590 matches priced, 3,059 not: fewer than 300 results behind their day's link
+  the total: an online Kalman filter on each result's total (the league's mean, gamers' and teams' effects drifting, a stream's), each result in as the ridge's; Pred_P1_Points / Pred_P2_Points = (exp_total +- exp_margin) / 2; sd_total = 12.3 x (exp_total / 35)^0.75, informational
+
+The link month by month (the means of its days' fits; sd = 1.702 / b, the normal sd the link reads the margin at, against the 9.35 the sims assume):
+  month    matches  graded  logloss       a      b    sd   stacked       a b_table b_ridge
+  2025-12    1,651       0                                       0
+  2026-01    2,234     826   0.6332  +0.113  0.132 12.85         0
+  2026-02    2,112   2,111   0.6316  +0.034  0.177  9.61         0
+  2026-03    2,733   2,729   0.6498  +0.013  0.187  9.10         0
+  2026-04    2,864   2,862   0.6687  +0.001  0.182  9.36         0
+  2026-05    2,936   2,935   0.6613  -0.020  0.177  9.59         0
+  2026-06    2,895   2,894   0.6610  -0.039  0.191  8.93         0
+  2026-07    2,911   2,908   0.6570  -0.042  0.202  8.42         0
+  2026-08    2,850   2,850   0.6671  -0.031  0.212  8.03         0
+  2026-09    2,243   2,242   0.6789  -0.011  0.218  7.81     1,879  -0.045   0.106   0.121
+  2026-10    1,220   1,219   0.6755  -0.003  0.207  8.22     1,220  -0.020   0.113   0.094
+
+Graded on the results, on the matches every column prices:
+  2026-01-20 to 2026-10-18: 23,576 matches with a result (ties left out)
+                                                logloss   brier  slope
+  p_home (the model)                             0.6598  0.2339   1.03
+  the link on the ridge alone                    0.6598  0.2339   1.03
+  the ridge's margin as a normal, sd 9.35        0.6599  0.2339   1.13
+  evens                                          0.6931  0.2500      -
+  where the stack prices and avg.csv has its own p_home: 3,097 matches
+  p_home (the stack)                             0.6818  0.2444   0.86
+  the link on the ridge alone                    0.6823  0.2446   0.89
+  avg.csv's own p_home                           0.6811  0.2441   1.01
+
+The expected total on the results:
+  26,646 matches with a result; the residuals' sd 12.13 against sd_total's mean 11.92
+                                                   RMSE    bias  slope
+  exp_total (the filter)                         12.131   -0.05   0.91
+  the span's mean total, in hindsight            12.910   -0.00      -
+  where avg.csv has an exp_total: 3,463 matches
+  exp_total (the filter)                         12.498   -0.12   0.81
+  avg.csv's exp_total                            12.499   -0.37   0.84
+
+  done in 6.7s

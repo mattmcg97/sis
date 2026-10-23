@@ -1,0 +1,35 @@
+paired model, refits 06-01..07-31 only: top gain shares
+rating_margin     0.499834
+h2h_margin        0.166309
+exp_margin_all    0.071381
+own_pf_all        0.014683
+opp_pf_all        0.014403
+own_team_pf       0.013538
+opp_team_pf       0.013212
+opp_games         0.010272
+lr4 coverage from 2025-12-20; TUNE ll 0.66228
+xgb_offset_lr4: TUNE ll 0.66152; rounds med 192, refits with 0 trees: 5 of 72
+2026-06-01 to 2026-08-01: 5,462 matches, 60 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs        lr4 (95%)          vs       prod (95%)       
+  xgb_offset_lr4                 0.6634  0.2355  0.638   1.04  -0.05   -0.0005 (-0.0021,+0.0012)   -0.0130 (-0.0189,-0.0073)
+  lr4                            0.6639  0.2357  0.638   1.05  -0.05                                 -0.0125 (-0.0182,-0.0073)
+  prod                           0.6764  0.2418  0.605   1.13  -0.00   +0.0125 (+0.0073,+0.0182)                              
+
+2026-08-01 to 2026-10-19: 6,170 matches, 79 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs        lr4 (95%)          vs       prod (95%)       
+  xgb_offset_lr4                 0.6765  0.2418  0.599   0.99  +0.03   +0.0003 (-0.0007,+0.0013)   -0.0083 (-0.0125,-0.0044)
+  lr4                            0.6762  0.2417  0.599   0.99  +0.02                                 -0.0086 (-0.0130,-0.0044)
+  prod                           0.6848  0.2460  0.569   0.93  +0.05   +0.0086 (+0.0044,+0.0130)                              
+
+2026-09-01 to 2026-10-19: 3,426 matches, 48 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs        lr4 (95%)          vs       prod (95%)       
+  xgb_offset_lr4                 0.6806  0.2439  0.584   0.94  +0.01   +0.0005 (-0.0003,+0.0014)   -0.0088 (-0.0150,-0.0030)
+  lr4                            0.6801  0.2436  0.586   0.94  +0.00                                 -0.0093 (-0.0157,-0.0036)
+  prod                           0.6894  0.2482  0.550   0.68  +0.03   +0.0093 (+0.0036,+0.0157)                              
+
+2026-09-22 to 2026-10-19: 1,840 matches, 27 days (priced by every column)
+  model                         logloss   brier    auc  slope    int   vs        lr4 (95%)          vs       prod (95%)       
+  xgb_offset_lr4                 0.6818  0.2444  0.582   0.94  +0.00   +0.0003 (-0.0010,+0.0018)   -0.0061 (-0.0124,-0.0006)
+  lr4                            0.6815  0.2443  0.583   0.94  +0.00                                 -0.0065 (-0.0134,-0.0001)
+  prod                           0.6880  0.2475  0.557   0.79  +0.03   +0.0065 (+0.0001,+0.0134)                              
+

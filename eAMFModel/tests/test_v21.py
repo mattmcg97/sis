@@ -40,6 +40,25 @@ def built(mode="full"):
     return copy.deepcopy(_BUILT[mode])
 
 
+def paced():
+    """A tilt build that can pace (the pace and moneyline nudges' tests): the fakes' snaps take nearly the same
+    time in a group, so they're spread out, and a tempo has room to work."""
+    if "paced" not in _BUILT:
+        with contextlib.redirect_stdout(io.StringIO()):
+            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
+                          blend=40.0, field=0.2)
+        b = m.time
+        secs = np.random.default_rng(0).uniform(4.0, 40.0, len(b.payload["seconds"]))
+        b.payload["seconds"] = secs.astype(b.payload["seconds"].dtype)
+        b.payload["cut"] = np.zeros(len(secs), bool)
+        b.payload["phi"] = (secs / 10.0)[:, None].astype(b.payload["phi"].dtype)
+        for k in [k for k in b.__dict__ if k.startswith(("_tilt", "_by_"))]:
+            del b.__dict__[k]
+        m.pace_level, m.tempo_slope = v21.calibrate_tempo(m)
+        _BUILT["paced"] = m
+    return copy.deepcopy(_BUILT["paced"])
+
+
 def _row(msg, period, clock, kind, off, down, dist, y, a=0, b=0, messages=""):
     return dict(match_code="AF900", message=str(msg), period=str(period), clock_seconds=str(clock), play_kind=kind,
                 offense=off, down=str(down), distance=str(dist), field_position=str(y), score_p1=str(a),
@@ -1489,18 +1508,7 @@ class TestPaceNudge(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
-        with contextlib.redirect_stdout(io.StringIO()):
-            m = v21.build(MATCHES, HISTORY, min_records=20, verbose=False, refine=False, mode="tilt", key="lean",
-                          blend=40.0, field=0.2)
-        # the fakes' snaps take nearly the same time in a group: spread them, so a tempo has room to work
-        b = m.time
-        secs = np.random.default_rng(0).uniform(4.0, 40.0, len(b.payload["seconds"]))
-        b.payload["seconds"] = secs.astype(b.payload["seconds"].dtype)
-        b.payload["cut"] = np.zeros(len(secs), bool)
-        b.payload["phi"] = (secs / 10.0)[:, None].astype(b.payload["phi"].dtype)
-        for k in [k for k in b.__dict__ if k.startswith(("_tilt", "_by_"))]:
-            del b.__dict__[k]
-        m.pace_level, m.tempo_slope = v21.calibrate_tempo(m)
+        m = paced()
         m.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
         cls.model = m
         cls.codes = sorted(MATCHES)[:12]
@@ -1639,6 +1647,207 @@ class TestPaceNudge(unittest.TestCase):
             fh.write(f"MATCH_CODE,home_pts,away_pts\n{code},20,17\n")
         with self.assertRaises(SystemExit):
             price(drives=1.0, prior_dir=prior)
+
+
+def _drives_solve_before(model, start, target, drives, n_paths, seed=0, iters=v21.NUDGE_ITERS, share=1.0,
+                         drives_share=1.0):
+    """drives_solve as it was before the moneyline nudge, line for line: without one it must give the same."""
+    nudging, pacing = target is not None, drives is not None
+    alpha, slope = np.zeros(2), getattr(model, "nudge_slope", 1.0) or 1.0
+    tempo, t_slope = 0.0, None
+    if pacing:
+        t_slope = v21.drive_level(model)[1]
+        drives = float(drives)
+    prev = prev_t = own = None
+    target = np.asarray(target, float) if nudging else None
+    n = len(start["period"])
+    for it in range(iters + 1):
+        st = dict(start)
+        if nudging:
+            st["nudge"] = np.tile(alpha, (n, 1))
+        if pacing:
+            st["tempo"] = np.full(n, tempo)
+        last = it == iters
+        c = {} if pacing else None
+        h, a = v21.simulate(model, st, n_paths, seed=seed, counts=c)
+        d = float(c["drives"].mean()) if pacing else None
+        own = d if it == 0 else own
+        if last:
+            return (h, a), alpha, tempo, (own, d)
+        x = np.array([h.mean(), a.mean()])
+        if nudging and it == 0 and share != 1.0:
+            target = x + share * (target - x)
+        if pacing:
+            if it == 0 and drives_share != 1.0:
+                drives = d + drives_share * (drives - d)
+            step_t = t_slope
+            if prev_t is not None and abs(tempo - prev_t[0]) >= v21.SECANT_MIN[1]:
+                ratio = (d - prev_t[1]) / (tempo - prev_t[0]) / t_slope
+                step_t = t_slope * ratio if 0.3 <= ratio <= 3.0 else t_slope
+            prev_t = (tempo, d)
+            tempo = float(np.clip(tempo + (drives - d) / step_t, -v21.TEMPO_MAX, v21.TEMPO_MAX))
+            x = x * drives / max(d, 1e-9)
+        if not nudging:
+            continue
+        step = np.full(2, slope)
+        if prev is not None:
+            da, dx = alpha - prev[0], x - prev[1]
+            if pacing:
+                ok = np.abs(da) >= v21.SECANT_MIN[0]
+                ratio = dx / np.where(ok, da, 1.0) / slope
+                step = np.where(ok & (ratio >= 0.3) & (ratio <= 3.0), ratio * slope, slope)
+            else:
+                ok = np.abs(da) > 1e-6
+                step = np.where(ok, np.clip(dx / np.where(ok, da, 1.0), 0.3 * slope, 3.0 * slope), slope)
+        prev = (alpha.copy(), x)
+        alpha = np.clip(alpha + (target - x) / step, -v21.NUDGE_MAX, v21.NUDGE_MAX)
+    return (h, a), alpha, tempo, (own, d)
+
+
+class TestMoneylineNudge(unittest.TestCase):
+    """The moneyline nudge (v21-ml): a pre-match moneyline model's home chance as a calibration -- the points
+    nudge's margin moved, its total kept, until the kick-off games meet it, with the pace nudge alongside on the
+    same random numbers, and the nudge carried into every in-play state."""
+
+    N = 500                       # games a kick-off state (the stream's 1000 halved: the test's own time)
+    TOL = 0.04                    # the chance met within: 2.5x the noise of the 1,000 games' own
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = tempfile.TemporaryDirectory()
+        cls.model = paced()
+        cls.model.save(os.path.join(cls.tmp.name, v21.MODEL_FILE))
+        cls.start = v21.kickoff_start(cls.model)
+        cls.h0, cls.a0 = v21.simulate(cls.model, cls.start, cls.N, seed=3)
+        cls.p0 = v21.win_chance(cls.h0, cls.a0)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def solve(self, target=None, ml=None, drives=None, **kw):
+        info = {}
+        (h, a), alpha, tempo, (own, d) = v21.drives_solve(self.model, self.start, target, drives, self.N, seed=3, ml=ml,
+                                                          ml_info=info, **kw)
+        return h, a, alpha, tempo, d, info
+
+    def test_the_step_reads_the_margins_smoothed(self):
+        self.assertEqual(v21.win_chance([3, 0, -1, 7], [0, 0, 0, 0]), 0.625)            # a tie half
+        m = np.array([-10, -7, -7, -3, -3, 0, 3, 3, 4, 7, 7, 7, 10, 14], float)
+        own = v21.win_chance(m, np.zeros_like(m))
+        self.assertEqual(v21.ml_shift(m, own), 0.0)                                       # met already: no move
+        up, down = v21.ml_shift(m, own + 0.1), v21.ml_shift(m, own - 0.1)
+        self.assertTrue(up > 0 > down)
+        self.assertAlmostEqual(v21.smooth_chance(m, up) - v21.smooth_chance(m), 0.1, places=6)
+        self.assertAlmostEqual(v21.ml_shift(m, own + 0.1, gain=2.0), v21.ml_shift(m, own + 0.05), places=9)
+        self.assertEqual(v21.ml_shift(m - 40, 0.9), 2 * v21.ML_MAX)                      # never there: the cap
+        # the margins at the drives the tempo is moving to: the real chance read off the run's own (`now`)
+        wide = m.mean() + (m - m.mean()) * 1.2
+        self.assertAlmostEqual(v21.smooth_chance(wide, v21.ml_shift(wide, own, now=m)), v21.smooth_chance(m), places=9)
+        k, gain = v21.ml_step(self.model)
+        self.assertGreater(k, 2 * self.model.nudge_slope)                                # the other side's points move too
+        self.assertIs(v21.ml_step(self.model), self.model.ml_slopes)                     # worked out once
+        self.assertTrue(1.0 < gain <= 3.0)                                                # a strength flips more games
+
+    def test_the_solve_meets_the_moneyline_and_keeps_the_total(self):
+        target = (self.h0.mean() + 1.0, self.a0.mean() + 0.5)
+        for goal in (self.p0 - 0.15, self.p0 + 0.15):
+            h, a, alpha, _, _, info = self.solve(target, goal)
+            got = v21.win_chance(h, a)
+            self.assertLess(abs(got - goal), self.TOL, (goal, got))
+            self.assertEqual((info["own"], info["got"]), (self.p0, got))
+            self.assertAlmostEqual(info["goal"], goal, places=12)
+            self.assertLess(abs((h + a).mean() - sum(target)), 1.0)                     # the points nudge's total
+            self.assertEqual(alpha[0] > alpha[1], goal > self.p0)
+            self.assertEqual(info["margin"] > 0, goal > 0.5)
+        h, a, _, _, _, info = self.solve(None, self.p0 + 0.15, ml_share=0.5)             # half the way, the sim's total
+        self.assertAlmostEqual(info["goal"], self.p0 + 0.075, places=12)
+        self.assertLess(abs(v21.win_chance(h, a) - info["goal"]), self.TOL)
+        self.assertLess(abs((h + a).mean() - (self.h0 + self.a0).mean()), 1.0)
+        level = v21.drive_level(self.model)[0]                                            # with the pace nudge
+        h, a, alpha, tempo, d, info = self.solve(target, self.p0 + 0.15, drives=level + 1.5)
+        self.assertLess(abs(v21.win_chance(h, a) - info["goal"]), self.TOL)
+        self.assertLess(abs(d - (level + 1.5)), 0.6)
+        self.assertLess(tempo, 0)                                                         # more drives: quicker
+        self.assertLess(abs((h + a).mean() - sum(target)), 2.0)                     # as the pace nudge keeps it
+
+    def test_a_moneyline_the_sim_meets_moves_nothing(self):
+        h, a, alpha, tempo, _, info = self.solve(None, self.p0)
+        self.assertTrue(np.array_equal(alpha, np.zeros(2)))
+        self.assertTrue(np.array_equal(h, self.h0) and np.array_equal(a, self.a0))      # the sim's own games
+        self.assertEqual((info["own"], info["goal"], info["got"]), (self.p0, self.p0, self.p0))
+        self.assertEqual(tempo, 0.0)
+        got, again = {}, {}                                                               # the census: the returned
+        (h, a), alpha, _, _ = v21.drives_solve(self.model, self.start, (self.h0.mean() + 2.0, self.a0.mean()), None,
+                                               self.N, seed=3, stats=got, ml=self.p0 + 0.1)   # run's games, once
+        h2, a2 = v21.simulate(self.model, dict(self.start, nudge=np.tile(alpha, (2, 1))), self.N, seed=3, stats=again)
+        self.assertTrue(np.array_equal(h, h2) and np.array_equal(a, a2))
+        scalars = lambda s: {k: v for k, v in s.items() if isinstance(v, int)}
+        self.assertTrue(scalars(got))
+        self.assertEqual(scalars(got), scalars(again))
+
+    def test_without_one_the_solve_is_as_it_was(self):
+        target, level = (self.h0.mean() + 3.0, self.a0.mean() - 1.0), v21.drive_level(self.model)[0]
+        for drives, share in ((None, 1.0), (None, 0.75), (level + 1.0, 1.0), (level - 1.0, 0.75)):
+            old = _drives_solve_before(self.model, self.start, target, drives, 200, seed=5, share=share)
+            new = v21.drives_solve(self.model, self.start, target, drives, 200, seed=5, share=share)
+            for x, y in zip(old[0] + (old[1],), new[0] + (new[1],)):
+                self.assertTrue(np.array_equal(x, y))
+            self.assertEqual(old[2:], new[2:])
+
+    def test_the_stream_reads_the_table_and_carries_the_alpha_in_play(self):
+        from .. import v21_stream as vs
+        self.assertEqual((vs.ml_of("v21-ml"), vs.ml_of("V21-ML0.5"), vs.ml_of("v21-drives-ml")), (1.0, 0.5, 1.0))
+        self.assertEqual((vs.drives_of("v21-drives-ml"), vs.drives_of("v21-ml-drives0.5")), (1.0, 0.5))
+        for name in ("v21", "v21-ml0", "v21-mlx", "v21-drives", "v21-snap4", "v21-t919"):
+            self.assertIsNone(vs.ml_of(name), name)
+        code = sorted(MATCHES)[0]
+        rows = sorted(MATCHES[code], key=lambda r: int(r["message"]))
+        info = [h for h in HISTORY if h["MATCH_CODE"] == code]
+        lines = ((50, ""), (54, "Total points over 40.5"))
+        prod = [(code, k, "2026-10-01 00:00:00", 50.0, 2.0, line, None, "OPEN", "true") for k, line in lines]
+        prod += [(code, k, None, 50.0, 2.0, line, int(r["message"]), "OPEN", "true") for r in rows[::4] for k, line in lines]
+        table = os.path.join(self.tmp.name, "ml.csv")
+        with open(table, "w", newline="", encoding="utf-8") as fh:
+            w = csv.writer(fh)
+            w.writerow(["MATCH_CODE", "p_home", "home_pts"])
+            w.writerows([[code, 0.8, 20], ["OTHER", 0.3, 17], ["BLANK", "", 17]])
+        self.assertEqual(vs.ml_table(table), {code: 0.8, "OTHER": 0.3})
+        with mock.patch.dict(os.environ, {"EAMF_V21_ML": table}):
+            self.assertEqual(vs.ml_table(), {code: 0.8, "OTHER": 0.3})
+        with mock.patch.dict(os.environ, {"EAMF_V21_ML": ""}), self.assertRaises(SystemExit):
+            vs.ml_table()                                                                 # none named: the prior's isn't read
+        with self.assertRaises(SystemExit):
+            vs.ml_table(os.path.join(self.tmp.name, "missing.csv"))
+        price = lambda **kw: vs.quotes_for_matches({code: rows}, prod, self.tmp.name, n_paths=100, workers=1,
+                                                   match_info=info, lines=vs.PROD_LINES, nudge_share=0.0, **kw)
+        seen = {}
+        real_books = vs.match_books
+
+        def books(model, snaps, pair, teams, n_paths, code_, alpha, *a, **k):
+            seen["alpha"] = alpha
+            return real_books(model, snaps, pair, teams, n_paths, code_, alpha, *a, **k)
+
+        off = price()
+        with mock.patch.object(vs, "match_books", books):
+            on = price(ml=1.0, ml_path=table)
+        self.assertEqual(len(off), len(on))
+        kick = lambda q: next(x[3] for x in q if x[1] == 50 and x[6] is None)
+        self.assertGreater(kick(on), kick(off) + 10)                                       # toward the 80%
+        self.assertEqual((vs.LAST_TIMING["ml_matches"], vs.LAST_TIMING["ml_of"]), (1, 1))
+        pair, teams = v21.match_people(code, rows, {code: info[0]})
+        _, alpha, kstats = vs._kickoff(self.model, pair, teams, None, 100, code, 0.0, None, (0.8, 1.0))
+        self.assertTrue(np.array_equal(seen["alpha"], alpha))                            # in play: the kick-off's alpha
+        self.assertGreater(alpha[0], alpha[1])
+        self.assertLess(abs(kstats["ml"]["got"] - 0.8), 0.08)
+        self.assertNotEqual([x[3] for x in off if x[6] is not None], [x[3] for x in on if x[6] is not None])
+        with mock.patch.dict(os.environ, {"EAMF_V21_ML": table}):
+            self.assertEqual([x[3] for x in price(ml=1.0)], [x[3] for x in on])
+        other = os.path.join(self.tmp.name, "ml_other.csv")                               # a match the table lacks:
+        with open(other, "w", newline="", encoding="utf-8") as fh:                         # priced without it
+            fh.write("MATCH_CODE,p_home\nOTHER,0.3\n")
+        self.assertEqual(price(ml=1.0, ml_path=other), off)
+        self.assertEqual(vs.LAST_TIMING["ml_matches"], 0)
 
 
 class TestStreamProgress(unittest.TestCase):

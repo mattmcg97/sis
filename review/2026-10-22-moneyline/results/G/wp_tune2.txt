@@ -1,0 +1,29 @@
+TUNE round 2, test days 2026-10-04..2026-10-11 (exclusive): 6,199 moments
+  stern pre_A_best tied                        0.6511 0.2298 0.668 0.71
+  stern pre_A_best free                        0.6512 0.2298 0.667 0.70
+  stern pre_prod tied                          0.6512 0.2300 0.666 0.73
+  stern pre_C_strength tied                    0.6513 0.2298 0.667 0.71
+  stern pre_C_strength free                    0.6513 0.2298 0.667 0.70
+  stern pre_prod free                          0.6513 0.2300 0.666 0.73
+  stern pre_v21f free                          0.6515 0.2302 0.666 0.70
+  stern pre_v21f tied                          0.6516 0.2302 0.666 0.70
+  xgb k0.05 match d2 m20 r50                   0.6522 0.2301 0.659 0.81
+  xgb k0.05 match d2 m20 r50 ls                0.6524 0.2302 0.659 0.81
+  xgb_on k0.05 state d2 m100 r10               0.6526 0.2302 0.667 0.68
+  stern pre_A_best tied ls                     0.6527 0.2304 0.666 0.69
+  stern pre_C_strength tied ls                 0.6528 0.2303 0.667 0.69
+  stern pre_A_best free ls                     0.6528 0.2304 0.666 0.68
+  stern pre_C_strength free ls                 0.6529 0.2303 0.666 0.68
+  stern pre_prod free ls                       0.6529 0.2304 0.663 0.71
+  stern pre_prod tied ls                       0.6529 0.2304 0.663 0.71
+  stern pre_v21f free ls                       0.6531 0.2306 0.665 0.68
+  stern pre_v21f tied ls                       0.6531 0.2307 0.665 0.69
+  xgb k0.05 match d2 m20 r25                   0.6537 0.2310 0.654 1.07
+  xgb k0.05 match d2 m20 r25 ls                0.6538 0.2310 0.653 1.07
+  xgb_on k0.05 state d2 m100 r25               0.6539 0.2305 0.668 0.67
+  xgb_on k0.05 state d2 m100 r10 ls            0.6543 0.2308 0.666 0.67
+  xgb_on k0.05 state d2 m100 r50               0.6557 0.2311 0.668 0.64
+  xgb_on k0.05 state d2 m100 r25 ls            0.6562 0.2314 0.666 0.65
+  xgb k0.05 match d2 m20 r100 ls               0.6574 0.2314 0.661 0.66
+  xgb k0.05 match d2 m20 r100                  0.6580 0.2315 0.661 0.65
+  xgb_on k0.05 state d2 m100 r50 ls            0.6580 0.2319 0.666 0.63

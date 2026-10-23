@@ -1,0 +1,45 @@
+late states: 27,878 on 2,593 matches (2026-09-01 to 2026-10-17), ties left out; the side with the ball is home on 49.2%
+
+TUNE 2026-09-08..2026-10-01: 13,667 states, 1,264 matches
+  logit k0.005   0.4675  slope 1.01
+  logit k0.01    0.4680  slope 1.00
+  logit k0.02    0.4685  slope 1.00
+  logit k0.05    0.4691  slope 1.00
+  xgb d2 r100    0.4621  slope 1.05
+  xgb d2 r200    0.4618  slope 0.97
+  xgb d2 r400    0.4631  slope 0.93
+  xgb d3 r100    0.4615  slope 1.00
+  xgb d3 r200    0.4631  slope 0.94
+  xgb d3 r400    0.4649  slope 0.91
+  v21 platt      0.4278  slope 1.01
+  v21 sim_win    0.4308  slope 1.14
+  frozen: logit k0.005, xgb d3 r100
+
+REPORT 2026-10-01..2026-10-19 (frozen): 9,240 states, 868 matches, 17 days
+  model                           logloss   brier  slope   less v21 sim_win (days 95%; matches 95%)
+  v21                              0.4519  0.1492   1.02
+  logit                            0.4852  0.1595   0.93   +0.0332 (+0.0220,+0.0448; +0.0210,+0.0457)
+  xgb                              0.4784  0.1579   0.94   +0.0265 (+0.0186,+0.0350; +0.0168,+0.0365)
+  v21_platt                        0.4509  0.1484   0.90   -0.0010 (-0.0048,+0.0028; -0.0042,+0.0025)
+  logit k0.005 pre=pre_C_strength   0.4852  0.1594   0.93   +0.0332 (+0.0222,+0.0448; +0.0209,+0.0455)
+  logit k0.005 pre=prod_p_home     0.4867  0.1601   0.93   +0.0348 (+0.0239,+0.0456; +0.0221,+0.0472)
+
+  by time left and the side with the ball's lead (REPORT; real / v21 / logit, % the side with the ball wins)
+  Q4 1:00-0:00   4-8 behind    916    23.7 /  26.9 /  22.9   log loss v21 0.444, logit 0.527
+  Q4 1:00-0:00   3 behind      470    57.0 /  43.2 /  45.2   log loss v21 0.591, logit 0.691
+  Q4 1:00-0:00   1-2 behind    298    66.1 /  51.1 /  64.0   log loss v21 0.521, logit 0.648
+  Q4 1:00-0:00   level         336    87.5 /  84.4 /  75.7   log loss v21 0.304, logit 0.424
+  Q4 1:00-0:00   1-3 ahead     277    95.3 /  96.8 /  89.7   log loss v21 0.132, logit 0.210
+  Q4 1:00-0:00   4-8 ahead     359    99.7 /  98.2 /  97.2   log loss v21 0.036, logit 0.038
+  Q4 2:00-1:01   4-8 behind    753    28.8 /  30.4 /  27.3   log loss v21 0.565, logit 0.587
+  Q4 2:00-1:01   3 behind      386    66.6 /  47.8 /  51.6   log loss v21 0.705, logit 0.677
+  Q4 2:00-1:01   1-2 behind    137    74.5 /  55.4 /  65.3   log loss v21 0.631, logit 0.600
+  Q4 2:00-1:01   level         508    79.7 /  75.0 /  75.6   log loss v21 0.475, logit 0.507
+  Q4 2:00-1:01   1-3 ahead     393    86.8 /  87.8 /  88.2   log loss v21 0.353, logit 0.383
+  Q4 2:00-1:01   4-8 ahead     649    97.5 /  94.7 /  96.0   log loss v21 0.110, logit 0.116
+  Q4 4:00-2:01   4-8 behind   1043    24.1 /  27.9 /  29.6   log loss v21 0.546, logit 0.545
+  Q4 4:00-2:01   3 behind      452    56.6 /  43.6 /  53.4   log loss v21 0.703, logit 0.677
+  Q4 4:00-2:01   1-2 behind    164    64.6 /  49.8 /  66.0   log loss v21 0.697, logit 0.673
+  Q4 4:00-2:01   level         685    68.5 /  66.3 /  75.2   log loss v21 0.612, logit 0.627
+  Q4 4:00-2:01   1-3 ahead     528    75.2 /  81.2 /  88.0   log loss v21 0.553, logit 0.617
+  Q4 4:00-2:01   4-8 ahead     886    91.6 /  91.9 /  95.7   log loss v21 0.267, logit 0.292

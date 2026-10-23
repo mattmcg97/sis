@@ -106,6 +106,9 @@ V21_NUDGE_SHARE = 0.75
 # The pace nudge's table for a v21-drives candidate: each match's expected drives (MATCH_CODE, exp_drives;
 # None: $EAMF_V21_DRIVES, then the candidate's prior table's own exp_drives, the walkthrough's pace).
 V21_DRIVES_TABLE = None
+# The moneyline nudge's table for a v21-ml candidate: each match's P(home wins), a tie half, off a pre-match
+# moneyline model (MATCH_CODE, p_home; None: $EAMF_V21_ML -- never the prior's own p_home unless named).
+V21_ML_TABLE = None
 # A candidate's own prior, by its name (--prior-for v21-avgf2=<table or build>), so several v21
 # candidates nudged toward different priors are priced in one run on the same bets.
 MODEL_PRIORS = {}

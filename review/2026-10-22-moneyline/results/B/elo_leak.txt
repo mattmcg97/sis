@@ -1,0 +1,51 @@
+AMFELO rows 26264 unique codes 26264 with start elo 25978
+features matches 26649 in AMFELO 26249 start mismatch 0 p1 mismatch 0 score mismatch 0
+
+start == previous ending: 43,505 of 44,359 (98.1%)
+start == this match's ending: 8  (of which ending==starting also for opp side?)
+non-equal: diff start-prev_end summary
+ count    854.000000
+mean      -0.129977
+std       28.721539
+min     -134.000000
+25%       -9.000000
+50%       -1.000000
+75%        9.000000
+max      127.000000
+dtype: float64
+corr(jump, this match's change) on non-equal starts: 0.005  corr(jump, result-0.5): 0.037
+jump == this match's change: 68
+non-equal starts that equal the ending two matches back: 74
+month
+2026-01    0.682
+2026-02    0.990
+2026-03    0.972
+2026-04    0.996
+2026-05    0.932
+2026-06    0.994
+2026-07    0.999
+2026-08    0.996
+2026-09    0.989
+2026-10    0.998
+Freq: M
+
+gap (min) to the gamer's previous kick-off, matches with a start rating:
+count     44359.0
+mean        549.9
+std        2759.9
+min          36.0
+1%           36.0
+5%           36.0
+10%          36.0
+25%          36.0
+50%          72.0
+max      267122.0
+previous kick-off < 36 min before: 0 gamer-matches; of these start==prev end: 0
+
+fitted K (change = K*(res-E)): [16.7]  resid sd 2.65
+chg/(res-E) quantiles: {0.05: 12.97, 0.25: 14.6, 0.5: 16.98, 0.75: 21.94, 0.95: 29.91}
+
+AMFELO raw logistic, log loss by whether a side's starting rating came from a match < 36 min earlier:
+  ('2025-12-01', '2026-10-19') short=False: n=25972 elo ll=0.6725 auc=0.634 slope=0.63 | prod n=13088 ll=0.6784 auc=0.596
+  ('2026-06-01', '2026-08-01') short=False: n= 5771 elo ll=0.6795 auc=0.626 slope=0.58 | prod n=5456 ll=0.6764 auc=0.605
+  ('2026-08-01', '2026-10-19') short=False: n= 5920 elo ll=0.6878 auc=0.589 slope=0.55 | prod n=5805 ll=0.6840 auc=0.573

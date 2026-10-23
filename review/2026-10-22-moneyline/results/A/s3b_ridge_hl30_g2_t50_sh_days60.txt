@@ -1,0 +1,6 @@
+ridge_hl30_g2_t50_sh (days:60): candidates clear of zero on TUNE: []
+  chosen: () c_unc 0
+  TUNE: chosen link 0.6590 (slope 1.05), vs the plain link +0.0000 (+0.0000,+0.0000)
+  TEST: chosen link 0.6732 (slope 0.98), vs the plain link +0.0000 (+0.0000,+0.0000)
+()
+0.0
